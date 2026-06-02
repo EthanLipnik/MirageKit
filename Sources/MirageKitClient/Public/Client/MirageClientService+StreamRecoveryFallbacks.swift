@@ -74,15 +74,18 @@ extension MirageClientService {
                 let keyframeProgressIsFresh = snapshot.latestPendingKeyframeProgress.map { progress in
                     now - progress.lastProgressTime < packetProgressFreshThreshold(for: snapshot)
                 } ?? false
-                let packetProgressIsFresh = !snapshot.isAwaitingKeyframe &&
-                    snapshot.latestPacketReceivedTime > 0 &&
-                    now - snapshot.latestPacketReceivedTime < packetProgressFreshThreshold(for: snapshot)
+                let packetProgressIsFresh = await controller.acceptedPacketFlowCanDeferRecovery(
+                    snapshot: snapshot,
+                    now: now
+                )
 
                 if noProgressDuration >= hardRecoveryFloor {
                     MirageLogger.client(
                         "Foreground recovery escalating to hard recovery for stream \(streamID) " +
                             "noProgressMs=\(Int((noProgressDuration * 1000).rounded())) " +
                             "packetProgressFresh=\(packetProgressIsFresh) " +
+                            "rawPackets=\(snapshot.packetAcceptanceSnapshot.rawPacketsReceived) " +
+                            "acceptedPackets=\(snapshot.packetAcceptanceSnapshot.acceptedPacketsReceived) " +
                             "keyframeProgressFresh=\(keyframeProgressIsFresh) trigger=\(trigger.logLabel)"
                     )
                     await controller.requestRecovery(

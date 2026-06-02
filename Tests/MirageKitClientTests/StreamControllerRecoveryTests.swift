@@ -36,6 +36,14 @@ private extension StreamController {
     func testSeedClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) {
         clientRecoveryStatus = status
     }
+
+    func testSeedRecoveryProgress(
+        decodedAt: CFAbsoluteTime = 0,
+        presentedAt: CFAbsoluteTime = 0
+    ) {
+        lastDecodedProgressTime = decodedAt
+        lastPresentedProgressTime = presentedAt
+    }
 }
 
 @Suite("Stream Controller Recovery", .serialized)
@@ -250,6 +258,217 @@ struct StreamControllerRecoveryTests {
 
             await controller.stop()
         }
+    }
+
+    @Test("Recovery gates defer only for accepted non-AWDL packet progress")
+    func recoveryGatesDeferOnlyForAcceptedNonAwdlPacketProgress() async {
+        let clock = StreamControllerManualTimeProvider(start: 1120)
+        let controller = StreamController(
+            streamID: 107,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - 10)
+
+        let rejectedFlowSnapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: false,
+            awaitingSince: 0,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestAcceptedPacketReceivedTime: 0,
+            packetAcceptanceSnapshot: FrameReassembler.PacketAcceptanceSnapshot(
+                rawPacketsReceived: 8,
+                acceptedPacketsReceived: 0
+            ),
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi,
+            pendingFrameCount: 0,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+        let acceptedFlowSnapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: false,
+            awaitingSince: 0,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestAcceptedPacketReceivedTime: clock.now - 0.05,
+            packetAcceptanceSnapshot: FrameReassembler.PacketAcceptanceSnapshot(
+                rawPacketsReceived: 8,
+                acceptedPacketsReceived: 8
+            ),
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi,
+            pendingFrameCount: 0,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        let rejectedDecision = await controller.keyframeRequestDecision(
+            now: clock.now,
+            reason: .frameLoss,
+            snapshot: rejectedFlowSnapshot
+        )
+        let acceptedDecision = await controller.keyframeRequestDecision(
+            now: clock.now,
+            reason: .frameLoss,
+            snapshot: acceptedFlowSnapshot
+        )
+
+        #expect(rejectedDecision == .requestKeyframe)
+        #expect(acceptedDecision == .deferPacketsFlowing)
+
+        await controller.stop()
+    }
+
+    @Test("AWDL accepted packet flow requires decoded or display progress to defer recovery")
+    func awdlAcceptedPacketFlowRequiresUsefulProgressToDeferRecovery() async {
+        let clock = StreamControllerManualTimeProvider(start: 1130)
+        let controller = StreamController(
+            streamID: 117,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.testSeedLastRecoveryRequestDispatchTime(
+            clock.now - StreamController.localDuplicateKeyframeRequestGrace - 0.1
+        )
+
+        let acceptedFlowSnapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: false,
+            awaitingSince: 0,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestAcceptedPacketReceivedTime: clock.now - 0.05,
+            packetAcceptanceSnapshot: FrameReassembler.PacketAcceptanceSnapshot(
+                rawPacketsReceived: 8,
+                acceptedPacketsReceived: 8
+            ),
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            pendingFrameCount: 0,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        let noUsefulProgressDecision = await controller.keyframeRequestDecision(
+            now: clock.now,
+            reason: .frameLoss,
+            snapshot: acceptedFlowSnapshot
+        )
+        #expect(noUsefulProgressDecision == .requestKeyframe)
+
+        await controller.testSeedRecoveryProgress(decodedAt: clock.now - 0.05)
+        let decodedProgressDecision = await controller.keyframeRequestDecision(
+            now: clock.now,
+            reason: .frameLoss,
+            snapshot: acceptedFlowSnapshot
+        )
+        #expect(decodedProgressDecision == .deferPacketsFlowing)
+
+        await controller.testSeedRecoveryProgress(decodedAt: 0, presentedAt: clock.now - 0.05)
+        let displayProgressDecision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: acceptedFlowSnapshot,
+            pendingRenderFrameCount: 0,
+            pendingRenderFrameAgeMs: 0
+        )
+        #expect(displayProgressDecision == .deferPacketsFlowing)
+
+        await controller.stop()
+    }
+
+    @Test("AWDL path kind uses progress gate when media profile is stale")
+    func awdlPathKindUsesProgressGateWhenMediaProfileIsStale() async {
+        let clock = StreamControllerManualTimeProvider(start: 1140)
+        let controller = StreamController(
+            streamID: 118,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.testSeedLastRecoveryRequestDispatchTime(
+            clock.now - StreamController.localDuplicateKeyframeRequestGrace - 0.1
+        )
+
+        let acceptedFlowSnapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: false,
+            awaitingSince: 0,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestAcceptedPacketReceivedTime: clock.now - 0.05,
+            packetAcceptanceSnapshot: FrameReassembler.PacketAcceptanceSnapshot(
+                rawPacketsReceived: 12,
+                acceptedPacketsReceived: 12
+            ),
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .awdl,
+            mediaPathProfile: .unknown,
+            pendingFrameCount: 0,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        let decision = await controller.keyframeRequestDecision(
+            now: clock.now,
+            reason: .frameLoss,
+            snapshot: acceptedFlowSnapshot
+        )
+
+        #expect(decision == .requestKeyframe)
+
+        await controller.stop()
+    }
+
+    @Test("AWDL recovery ignores useful progress older than last request")
+    func awdlRecoveryIgnoresUsefulProgressOlderThanLastRequest() async {
+        let clock = StreamControllerManualTimeProvider(start: 1150)
+        let controller = StreamController(
+            streamID: 119,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - 0.10)
+        await controller.testSeedRecoveryProgress(decodedAt: clock.now - 0.20)
+
+        let acceptedFlowSnapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: false,
+            awaitingSince: 0,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestAcceptedPacketReceivedTime: clock.now - 0.05,
+            packetAcceptanceSnapshot: FrameReassembler.PacketAcceptanceSnapshot(
+                rawPacketsReceived: 12,
+                acceptedPacketsReceived: 12
+            ),
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            pendingFrameCount: 0,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        let decision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: acceptedFlowSnapshot,
+            pendingRenderFrameCount: 0,
+            pendingRenderFrameAgeMs: 0
+        )
+
+        #expect(decision == .requestKeyframe)
+
+        await controller.stop()
     }
 
     @Test("Awaiting keyframe with no progress retries on bounded local and overlay grace")
@@ -531,6 +750,28 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Post-resize decoded frame threshold does not clear recovery before presentation")
+    func postResizeDecodedFrameThresholdDoesNotClearRecoveryBeforePresentation() async {
+        let controller = StreamController(streamID: 193, maxPayloadSize: 1200)
+
+        await controller.beginPostResizeTransition()
+        for _ in 0 ..< StreamController.postResizeDecodeRecoverySuccessThreshold {
+            await controller.recordDecodedFrame()
+        }
+
+        #expect(await controller.awaitingFirstFrameAfterResize)
+        #expect(await controller.awaitingFirstPresentedFrameAfterResize)
+        #expect(
+            await controller.postResizeDecodeRecoverySuccessCount ==
+                StreamController.postResizeDecodeRecoverySuccessThreshold
+        )
+
+        await controller.markFirstFramePresented()
+        #expect(await !(controller.awaitingFirstFrameAfterResize))
+
+        await controller.stop()
+    }
+
     @Test("New resize re-arms post-resize presentation gating while recovery is still active")
     func newResizeRearmsPostResizePresentationGating() async {
         let controller = StreamController(streamID: 192, maxPayloadSize: 1200)
@@ -658,11 +899,72 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Startup keyframe timeout bypasses generic dispatch suppression")
+    func startupKeyframeTimeoutBypassesGenericDispatchSuppression() async {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let clock = StreamControllerManualTimeProvider(start: 5200)
+        let controller = StreamController(
+            streamID: 5,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - 0.01)
+        await controller.testSeedRecoveryKeyframeDispatchTimes([
+            clock.now - 1.0,
+            clock.now - 2.0,
+            clock.now - 3.0
+        ])
+
+        let requested = await controller.requestKeyframeRecovery(reason: .startupKeyframeTimeout)
+
+        #expect(requested)
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Post-resize awaiting first frame bypasses generic dispatch suppression")
+    func postResizeAwaitingFirstFrameBypassesGenericDispatchSuppression() async {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let clock = StreamControllerManualTimeProvider(start: 5400)
+        let controller = StreamController(
+            streamID: 6,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.beginPostResizeTransition()
+        await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - 0.01)
+        await controller.testSeedRecoveryKeyframeDispatchTimes([
+            clock.now - 1.0,
+            clock.now - 2.0,
+            clock.now - 3.0
+        ])
+
+        let requested = await controller.requestKeyframeRecovery(reason: .manualRecovery)
+
+        #expect(requested)
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
     @Test("AWDL decode queue budget holds a bounded jitter window")
     func awdlDecodeQueueBudgetHoldsBoundedJitterWindow() {
-        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 20) == StreamController.maxQueuedFrames + 1)
-        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 60) == 36)
-        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 120) == 72)
+        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 20) == 8)
+        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 60) == 15)
+        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 120) == 30)
     }
 
 }

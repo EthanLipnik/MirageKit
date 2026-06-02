@@ -26,6 +26,20 @@ func shouldAcceptStopDesktopStreamRequest(
     return requestedDesktopSessionID == activeDesktopSessionID
 }
 
+func shouldRejectAwdlDesktopStartupWithoutGeometryContract(
+    usesHostResolution: Bool,
+    transportPathKind: MirageNetworkPathKind,
+    mediaPathProfile: MirageMediaPathProfile,
+    supportsDesktopGeometryContract: Bool,
+    desktopGeometryContractID: UUID?
+) -> Bool {
+    let hasAwdlEvidence = transportPathKind == .awdl || mediaPathProfile.usesAwdlRadioPolicy
+    return !usesHostResolution &&
+        hasAwdlEvidence &&
+        supportsDesktopGeometryContract &&
+        desktopGeometryContractID == nil
+}
+
 extension MirageHostService {
     /// Handles a client request to start desktop streaming.
     func handleStartDesktopStream(
@@ -56,7 +70,10 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
             let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
-            let mediaPathPolicy = effectiveMediaPathPolicy(for: request, clientContext: clientContext)
+            let mediaPathPolicy = await effectiveMediaPathPolicyUsingLiveSession(
+                for: request,
+                clientContext: clientContext
+            )
             let adaptiveFloorFPS = targetFrameRate >= 90 ? 60 : targetFrameRate
             MirageLogger.host(
                 "event=cadence_contract phase=host_accept requested=\(request.targetFrameRate) " +
@@ -72,16 +89,28 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Desktop stream host buffering policy: \(hostBufferingPolicy.rawValue)")
             let audioConfiguration = request.audioConfiguration ?? .default
+            let usesHostResolution = request.useHostResolution == true
 
-            let displayResolution: CGSize = if request.useHostResolution == true {
+            let displayResolution: CGSize = if usesHostResolution {
                 Self.hostMainDisplayLogicalResolution()
                     ?? CGSize(width: request.displayWidth, height: request.displayHeight)
             } else {
                 CGSize(width: request.displayWidth, height: request.displayHeight)
             }
-            if request.useHostResolution == true {
+            if usesHostResolution {
                 MirageLogger.host(
                     "Using host display resolution: \(Int(displayResolution.width))x\(Int(displayResolution.height)) pts"
+                )
+            }
+            if shouldRejectAwdlDesktopStartupWithoutGeometryContract(
+                usesHostResolution: usesHostResolution,
+                transportPathKind: mediaPathPolicy.transportPathKind,
+                mediaPathProfile: mediaPathPolicy.mediaPathProfile,
+                supportsDesktopGeometryContract: clientContext.supportsDesktopGeometryContract,
+                desktopGeometryContractID: request.desktopGeometryContractID
+            ) {
+                throw MirageError.protocolError(
+                    "Desktop geometry contract required for AWDL desktop startup"
                 )
             }
 
@@ -99,7 +128,7 @@ extension MirageHostService {
                 )
             }
             desktopStreamMode = request.mode ?? .unified
-            desktopUsesHostResolution = request.useHostResolution == true
+            desktopUsesHostResolution = usesHostResolution
             desktopCursorPresentation = request.cursorPresentation ?? .simulatedCursor
             pendingLightsOutSetup = true
             await beginPendingDesktopStreamLightsOutSetup()
@@ -130,7 +159,10 @@ extension MirageHostService {
                 mediaPathPolicy: mediaPathPolicy,
                 upscalingMode: request.upscalingMode,
                 codec: request.codec,
-                startupRequestID: request.startupRequestID
+                startupRequestID: request.startupRequestID,
+                desktopGeometryContractID: usesHostResolution ? nil : request.desktopGeometryContractID,
+                desktopGeometrySceneIdentity: usesHostResolution ? nil : request.desktopGeometrySceneIdentity,
+                desktopGeometryRefreshTargetHz: usesHostResolution ? nil : request.desktopGeometryRefreshTargetHz
             )
             if pendingLightsOutSetup {
                 pendingLightsOutSetup = false
@@ -228,6 +260,7 @@ extension MirageHostService {
             }
             return message.contains("Virtual display acquisition failed for desktop stream:") ||
                 message.contains("client disconnected during startup") ||
+                message.contains("Desktop geometry contract required for AWDL desktop startup") ||
                 message.contains("cancelled by client")
         }
         return false

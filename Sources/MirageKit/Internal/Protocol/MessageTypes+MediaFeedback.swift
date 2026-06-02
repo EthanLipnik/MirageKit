@@ -93,6 +93,12 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let rendererPresentedFPS: Double
     package let recoveryState: MirageMediaFeedbackRecoveryState
     package let recoveryCause: MirageMediaFeedbackRecoveryCause
+    package let frameCompletionLatencyP50Ms: Double?
+    package let frameCompletionLatencyP95Ms: Double?
+    package let frameCompletionLatencyMaxMs: Double?
+    package let keyframeCompletionLatencyP50Ms: Double?
+    package let keyframeCompletionLatencyP95Ms: Double?
+    package let keyframeCompletionLatencyMaxMs: Double?
     package let pFrameCompletionLatencyP50Ms: Double?
     package let pFrameCompletionLatencyP95Ms: Double?
     package let pFrameCompletionLatencyMaxMs: Double?
@@ -100,6 +106,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let receivedWorstGapMs: Double?
     package let presentationStallCount: UInt64?
     package let displayTickNoFrameCount: UInt64?
+    package let pendingFrameNotReadyDisplayTickCount: UInt64?
     package let worstPresentationGapMs: Double?
     package let playoutDelayFrames: Int?
     package let playoutDelayTargetMs: Double?
@@ -112,8 +119,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let latestPresentedFrameNumber: UInt32?
     package let latestPresentedFrameAgeMs: Double?
     package let decodeQueueDepth: Int?
+    package let decodeSubmissionLimit: Int?
+    package let inFlightDecodeSubmissions: Int?
     package let presentationQueueDepth: Int?
     package let presentationTargetFrames: Int?
+    package let presentationFillDeficitFrames: Int?
     package let presentationUnderfillFrames: Int?
     package let receiverJitterP95Ms: Double?
     package let receiverJitterP99Ms: Double?
@@ -143,6 +153,12 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         rendererPresentedFPS: Double,
         recoveryState: MirageMediaFeedbackRecoveryState,
         recoveryCause: MirageMediaFeedbackRecoveryCause = .none,
+        frameCompletionLatencyP50Ms: Double? = nil,
+        frameCompletionLatencyP95Ms: Double? = nil,
+        frameCompletionLatencyMaxMs: Double? = nil,
+        keyframeCompletionLatencyP50Ms: Double? = nil,
+        keyframeCompletionLatencyP95Ms: Double? = nil,
+        keyframeCompletionLatencyMaxMs: Double? = nil,
         pFrameCompletionLatencyP50Ms: Double? = nil,
         pFrameCompletionLatencyP95Ms: Double? = nil,
         pFrameCompletionLatencyMaxMs: Double? = nil,
@@ -150,6 +166,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         receivedWorstGapMs: Double? = nil,
         presentationStallCount: UInt64? = nil,
         displayTickNoFrameCount: UInt64? = nil,
+        pendingFrameNotReadyDisplayTickCount: UInt64? = nil,
         worstPresentationGapMs: Double? = nil,
         playoutDelayFrames: Int? = nil,
         playoutDelayTargetMs: Double? = nil,
@@ -162,8 +179,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         latestPresentedFrameNumber: UInt32? = nil,
         latestPresentedFrameAgeMs: Double? = nil,
         decodeQueueDepth: Int? = nil,
+        decodeSubmissionLimit: Int? = nil,
+        inFlightDecodeSubmissions: Int? = nil,
         presentationQueueDepth: Int? = nil,
         presentationTargetFrames: Int? = nil,
+        presentationFillDeficitFrames: Int? = nil,
         presentationUnderfillFrames: Int? = nil,
         receiverJitterP95Ms: Double? = nil,
         receiverJitterP99Ms: Double? = nil,
@@ -192,6 +212,12 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.rendererPresentedFPS = max(0, rendererPresentedFPS)
         self.recoveryState = recoveryState
         self.recoveryCause = recoveryState == .idle ? .none : recoveryCause
+        self.frameCompletionLatencyP50Ms = frameCompletionLatencyP50Ms.map { max(0, $0) }
+        self.frameCompletionLatencyP95Ms = frameCompletionLatencyP95Ms.map { max(0, $0) }
+        self.frameCompletionLatencyMaxMs = frameCompletionLatencyMaxMs.map { max(0, $0) }
+        self.keyframeCompletionLatencyP50Ms = keyframeCompletionLatencyP50Ms.map { max(0, $0) }
+        self.keyframeCompletionLatencyP95Ms = keyframeCompletionLatencyP95Ms.map { max(0, $0) }
+        self.keyframeCompletionLatencyMaxMs = keyframeCompletionLatencyMaxMs.map { max(0, $0) }
         self.pFrameCompletionLatencyP50Ms = pFrameCompletionLatencyP50Ms.map { max(0, $0) }
         self.pFrameCompletionLatencyP95Ms = pFrameCompletionLatencyP95Ms.map { max(0, $0) }
         self.pFrameCompletionLatencyMaxMs = pFrameCompletionLatencyMaxMs.map { max(0, $0) }
@@ -199,6 +225,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.receivedWorstGapMs = receivedWorstGapMs.map { max(0, $0) }
         self.presentationStallCount = presentationStallCount
         self.displayTickNoFrameCount = displayTickNoFrameCount
+        self.pendingFrameNotReadyDisplayTickCount = pendingFrameNotReadyDisplayTickCount
         self.worstPresentationGapMs = worstPresentationGapMs.map { max(0, $0) }
         self.playoutDelayFrames = playoutDelayFrames.map { max(0, $0) }
         self.playoutDelayTargetMs = playoutDelayTargetMs.map { max(0, $0) }
@@ -211,8 +238,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.latestPresentedFrameNumber = latestPresentedFrameNumber
         self.latestPresentedFrameAgeMs = latestPresentedFrameAgeMs.map { max(0, $0) }
         self.decodeQueueDepth = decodeQueueDepth.map { max(0, $0) }
+        self.decodeSubmissionLimit = decodeSubmissionLimit.map { max(0, $0) }
+        self.inFlightDecodeSubmissions = inFlightDecodeSubmissions.map { max(0, $0) }
         self.presentationQueueDepth = presentationQueueDepth.map { max(0, $0) }
         self.presentationTargetFrames = presentationTargetFrames.map { max(0, $0) }
+        self.presentationFillDeficitFrames = presentationFillDeficitFrames.map { max(0, $0) }
         self.presentationUnderfillFrames = presentationUnderfillFrames.map { max(0, $0) }
         self.receiverJitterP95Ms = receiverJitterP95Ms.map { max(0, $0) }
         self.receiverJitterP99Ms = receiverJitterP99Ms.map { max(0, $0) }
@@ -267,6 +297,12 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             rendererPresentedFPS: rendererPresentedFPS,
             recoveryState: recoveryState,
             recoveryCause: recoveryCause,
+            frameCompletionLatencyP50Ms: nil,
+            frameCompletionLatencyP95Ms: nil,
+            frameCompletionLatencyMaxMs: nil,
+            keyframeCompletionLatencyP50Ms: nil,
+            keyframeCompletionLatencyP95Ms: nil,
+            keyframeCompletionLatencyMaxMs: nil,
             pFrameCompletionLatencyP50Ms: nil,
             pFrameCompletionLatencyP95Ms: nil,
             pFrameCompletionLatencyMaxMs: nil,
@@ -274,6 +310,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             receivedWorstGapMs: nil,
             presentationStallCount: nil,
             displayTickNoFrameCount: nil,
+            pendingFrameNotReadyDisplayTickCount: nil,
             worstPresentationGapMs: nil,
             playoutDelayFrames: nil,
             playoutDelayTargetMs: nil,
@@ -286,8 +323,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             latestPresentedFrameNumber: nil,
             latestPresentedFrameAgeMs: nil,
             decodeQueueDepth: nil,
+            decodeSubmissionLimit: nil,
+            inFlightDecodeSubmissions: nil,
             presentationQueueDepth: nil,
             presentationTargetFrames: nil,
+            presentationFillDeficitFrames: nil,
             presentationUnderfillFrames: nil,
             receiverJitterP95Ms: nil,
             receiverJitterP99Ms: nil,
@@ -321,6 +361,12 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case rendererPresentedFPS
         case recoveryState
         case recoveryCause
+        case frameCompletionLatencyP50Ms
+        case frameCompletionLatencyP95Ms
+        case frameCompletionLatencyMaxMs
+        case keyframeCompletionLatencyP50Ms
+        case keyframeCompletionLatencyP95Ms
+        case keyframeCompletionLatencyMaxMs
         case pFrameCompletionLatencyP50Ms
         case pFrameCompletionLatencyP95Ms
         case pFrameCompletionLatencyMaxMs
@@ -328,6 +374,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case receivedWorstGapMs
         case presentationStallCount
         case displayTickNoFrameCount
+        case pendingFrameNotReadyDisplayTickCount
         case worstPresentationGapMs
         case playoutDelayFrames
         case playoutDelayTargetMs
@@ -340,8 +387,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case latestPresentedFrameNumber
         case latestPresentedFrameAgeMs
         case decodeQueueDepth
+        case decodeSubmissionLimit
+        case inFlightDecodeSubmissions
         case presentationQueueDepth
         case presentationTargetFrames
+        case presentationFillDeficitFrames
         case presentationUnderfillFrames
         case receiverJitterP95Ms
         case receiverJitterP99Ms
@@ -357,10 +407,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             sentAtUptime: try container.decode(Double.self, forKey: .sentAtUptime),
             targetFPS: try container.decode(Int.self, forKey: .targetFPS),
             ackRanges: try container.decodeIfPresent([MediaFeedbackFrameRange].self, forKey: .ackRanges) ?? [],
-            pFrameTimingSamples: try container.decode(
+            pFrameTimingSamples: try container.decodeIfPresent(
                 [ReceiverPFrameTimingSample].self,
                 forKey: .pFrameTimingSamples
-            ),
+            ) ?? [],
             lostFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .lostFrameCount) ?? 0,
             discardedPacketCount: try container.decodeIfPresent(UInt64.self, forKey: .discardedPacketCount) ?? 0,
             jitterP95Ms: try container.decodeIfPresent(Double.self, forKey: .jitterP95Ms) ?? 0,
@@ -389,6 +439,30 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
                 MirageMediaFeedbackRecoveryCause.self,
                 forKey: .recoveryCause
             ) ?? .none,
+            frameCompletionLatencyP50Ms: try container.decodeIfPresent(
+                Double.self,
+                forKey: .frameCompletionLatencyP50Ms
+            ),
+            frameCompletionLatencyP95Ms: try container.decodeIfPresent(
+                Double.self,
+                forKey: .frameCompletionLatencyP95Ms
+            ),
+            frameCompletionLatencyMaxMs: try container.decodeIfPresent(
+                Double.self,
+                forKey: .frameCompletionLatencyMaxMs
+            ),
+            keyframeCompletionLatencyP50Ms: try container.decodeIfPresent(
+                Double.self,
+                forKey: .keyframeCompletionLatencyP50Ms
+            ),
+            keyframeCompletionLatencyP95Ms: try container.decodeIfPresent(
+                Double.self,
+                forKey: .keyframeCompletionLatencyP95Ms
+            ),
+            keyframeCompletionLatencyMaxMs: try container.decodeIfPresent(
+                Double.self,
+                forKey: .keyframeCompletionLatencyMaxMs
+            ),
             pFrameCompletionLatencyP50Ms: try container.decodeIfPresent(
                 Double.self,
                 forKey: .pFrameCompletionLatencyP50Ms
@@ -405,6 +479,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             receivedWorstGapMs: try container.decodeIfPresent(Double.self, forKey: .receivedWorstGapMs),
             presentationStallCount: try container.decodeIfPresent(UInt64.self, forKey: .presentationStallCount),
             displayTickNoFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .displayTickNoFrameCount),
+            pendingFrameNotReadyDisplayTickCount: try container.decodeIfPresent(
+                UInt64.self,
+                forKey: .pendingFrameNotReadyDisplayTickCount
+            ),
             worstPresentationGapMs: try container.decodeIfPresent(Double.self, forKey: .worstPresentationGapMs),
             playoutDelayFrames: try container.decodeIfPresent(Int.self, forKey: .playoutDelayFrames),
             playoutDelayTargetMs: try container.decodeIfPresent(Double.self, forKey: .playoutDelayTargetMs),
@@ -441,8 +519,17 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
                 forKey: .latestPresentedFrameAgeMs
             ),
             decodeQueueDepth: try container.decodeIfPresent(Int.self, forKey: .decodeQueueDepth),
+            decodeSubmissionLimit: try container.decodeIfPresent(Int.self, forKey: .decodeSubmissionLimit),
+            inFlightDecodeSubmissions: try container.decodeIfPresent(
+                Int.self,
+                forKey: .inFlightDecodeSubmissions
+            ),
             presentationQueueDepth: try container.decodeIfPresent(Int.self, forKey: .presentationQueueDepth),
             presentationTargetFrames: try container.decodeIfPresent(Int.self, forKey: .presentationTargetFrames),
+            presentationFillDeficitFrames: try container.decodeIfPresent(
+                Int.self,
+                forKey: .presentationFillDeficitFrames
+            ),
             presentationUnderfillFrames: try container.decodeIfPresent(Int.self, forKey: .presentationUnderfillFrames),
             receiverJitterP95Ms: try container.decodeIfPresent(Double.self, forKey: .receiverJitterP95Ms),
             receiverJitterP99Ms: try container.decodeIfPresent(Double.self, forKey: .receiverJitterP99Ms),
@@ -477,6 +564,12 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         if recoveryCause != .none {
             try container.encode(recoveryCause, forKey: .recoveryCause)
         }
+        try container.encodeIfPresent(frameCompletionLatencyP50Ms, forKey: .frameCompletionLatencyP50Ms)
+        try container.encodeIfPresent(frameCompletionLatencyP95Ms, forKey: .frameCompletionLatencyP95Ms)
+        try container.encodeIfPresent(frameCompletionLatencyMaxMs, forKey: .frameCompletionLatencyMaxMs)
+        try container.encodeIfPresent(keyframeCompletionLatencyP50Ms, forKey: .keyframeCompletionLatencyP50Ms)
+        try container.encodeIfPresent(keyframeCompletionLatencyP95Ms, forKey: .keyframeCompletionLatencyP95Ms)
+        try container.encodeIfPresent(keyframeCompletionLatencyMaxMs, forKey: .keyframeCompletionLatencyMaxMs)
         try container.encodeIfPresent(pFrameCompletionLatencyP50Ms, forKey: .pFrameCompletionLatencyP50Ms)
         try container.encodeIfPresent(pFrameCompletionLatencyP95Ms, forKey: .pFrameCompletionLatencyP95Ms)
         try container.encodeIfPresent(pFrameCompletionLatencyMaxMs, forKey: .pFrameCompletionLatencyMaxMs)
@@ -484,6 +577,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encodeIfPresent(receivedWorstGapMs, forKey: .receivedWorstGapMs)
         try container.encodeIfPresent(presentationStallCount, forKey: .presentationStallCount)
         try container.encodeIfPresent(displayTickNoFrameCount, forKey: .displayTickNoFrameCount)
+        try container.encodeIfPresent(
+            pendingFrameNotReadyDisplayTickCount,
+            forKey: .pendingFrameNotReadyDisplayTickCount
+        )
         try container.encodeIfPresent(worstPresentationGapMs, forKey: .worstPresentationGapMs)
         try container.encodeIfPresent(playoutDelayFrames, forKey: .playoutDelayFrames)
         try container.encodeIfPresent(playoutDelayTargetMs, forKey: .playoutDelayTargetMs)
@@ -501,8 +598,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encodeIfPresent(latestPresentedFrameNumber, forKey: .latestPresentedFrameNumber)
         try container.encodeIfPresent(latestPresentedFrameAgeMs, forKey: .latestPresentedFrameAgeMs)
         try container.encodeIfPresent(decodeQueueDepth, forKey: .decodeQueueDepth)
+        try container.encodeIfPresent(decodeSubmissionLimit, forKey: .decodeSubmissionLimit)
+        try container.encodeIfPresent(inFlightDecodeSubmissions, forKey: .inFlightDecodeSubmissions)
         try container.encodeIfPresent(presentationQueueDepth, forKey: .presentationQueueDepth)
         try container.encodeIfPresent(presentationTargetFrames, forKey: .presentationTargetFrames)
+        try container.encodeIfPresent(presentationFillDeficitFrames, forKey: .presentationFillDeficitFrames)
         try container.encodeIfPresent(presentationUnderfillFrames, forKey: .presentationUnderfillFrames)
         try container.encodeIfPresent(receiverJitterP95Ms, forKey: .receiverJitterP95Ms)
         try container.encodeIfPresent(receiverJitterP99Ms, forKey: .receiverJitterP99Ms)

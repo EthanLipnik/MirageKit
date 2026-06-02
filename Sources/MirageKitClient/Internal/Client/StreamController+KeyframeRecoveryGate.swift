@@ -47,10 +47,7 @@ extension StreamController {
 
         guard lastRecoveryRequestDispatchTime > 0 else { return .requestKeyframe }
 
-        let packetProgressThreshold = packetProgressFreshThreshold(for: snapshot)
-        if !snapshot.isAwaitingKeyframe,
-           snapshot.latestPacketReceivedTime > 0,
-           now - snapshot.latestPacketReceivedTime < packetProgressThreshold {
+        if acceptedPacketFlowCanDeferRecovery(snapshot: snapshot, now: now) {
             return .deferPacketsFlowing
         }
 
@@ -82,10 +79,7 @@ extension StreamController {
             return .deferKeyframeProgress
         }
 
-        let packetProgressThreshold = packetProgressFreshThreshold(for: snapshot)
-        if !snapshot.isAwaitingKeyframe,
-           snapshot.latestPacketReceivedTime > 0,
-           now - snapshot.latestPacketReceivedTime < packetProgressThreshold {
+        if acceptedPacketFlowCanDeferRecovery(snapshot: snapshot, now: now) {
             return .deferPacketsFlowing
         }
 
@@ -118,6 +112,9 @@ extension StreamController {
         let packetAgeMs = snapshot.latestPacketReceivedTime > 0
             ? Int(max(0, now - snapshot.latestPacketReceivedTime) * 1000)
             : -1
+        let acceptedPacketAgeMs = snapshot.latestAcceptedPacketReceivedTime > 0
+            ? Int(max(0, now - snapshot.latestAcceptedPacketReceivedTime) * 1000)
+            : -1
         let awaitingMs = Int(snapshot.awaitingDuration(now: now) * 1000)
         let progressText: String
         if let progress = snapshot.latestPendingKeyframeProgress {
@@ -137,9 +134,39 @@ extension StreamController {
             "Recovery decision \(decision.rawValue) for stream \(streamID) reason=\(reason) " +
                 "path=\(snapshot.transportPathKind.rawValue) media=\(snapshot.mediaPathProfile.rawValue) " +
                 "awaiting=\(snapshot.isAwaitingKeyframe) " +
-                "awaitingMs=\(awaitingMs) packetAgeMs=\(packetAgeMs) keyframeProgress=\(progressText)" +
+                "awaitingMs=\(awaitingMs) packetAgeMs=\(packetAgeMs) " +
+                "acceptedPacketAgeMs=\(acceptedPacketAgeMs) " +
+                "rawPackets=\(snapshot.packetAcceptanceSnapshot.rawPacketsReceived) " +
+                "acceptedPackets=\(snapshot.packetAcceptanceSnapshot.acceptedPacketsReceived) " +
+                "keyframeProgress=\(progressText)" +
                 renderText
         )
+    }
+
+    func acceptedPacketFlowCanDeferRecovery(
+        snapshot: FrameReassembler.KeyframeWaitSnapshot,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        let threshold = packetProgressFreshThreshold(for: snapshot)
+        guard !snapshot.isAwaitingKeyframe,
+              snapshot.latestAcceptedPacketReceivedTime > 0,
+              now - snapshot.latestAcceptedPacketReceivedTime < threshold else {
+            return false
+        }
+        guard usesAwdlRecoveryProgressGate(snapshot: snapshot),
+              presentationTier == .activeLive else {
+            return true
+        }
+
+        let latestUsefulProgressTime = max(lastDecodedProgressTime, lastPresentedProgressTime)
+        return latestUsefulProgressTime > lastRecoveryRequestDispatchTime &&
+            now - latestUsefulProgressTime < threshold
+    }
+
+    private func usesAwdlRecoveryProgressGate(
+        snapshot: FrameReassembler.KeyframeWaitSnapshot
+    ) -> Bool {
+        snapshot.transportPathKind == .awdl || snapshot.mediaPathProfile.usesAwdlRadioPolicy
     }
 
     func duplicateKeyframeRequestGrace(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {

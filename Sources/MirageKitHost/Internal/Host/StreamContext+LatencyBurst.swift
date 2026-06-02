@@ -13,11 +13,13 @@ import MirageKit
 #if os(macOS)
 extension StreamContext {
     var resolvedQualityCeiling: Float {
-        min(
+        let ceiling = min(
             configuredQualityCeiling,
             compressionQualityCeiling,
             realtimeRuntimeQualityCeiling ?? configuredQualityCeiling
         )
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return ceiling }
+        return resolvedRuntimeQualityCeiling(for: ceiling)
     }
 
     func enterLatencyBurst(reason: String) async {

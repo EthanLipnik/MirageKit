@@ -117,6 +117,9 @@ extension MirageHostService {
         let allowsClientResize: Bool
         let presentationResolution: CGSize
         let acceptedDisplayScaleFactor: CGFloat?
+        let desktopGeometryContractID: UUID?
+        let desktopGeometrySceneIdentity: String?
+        let desktopGeometryRefreshTargetHz: Int?
     }
 
     struct DesktopStreamActivation {

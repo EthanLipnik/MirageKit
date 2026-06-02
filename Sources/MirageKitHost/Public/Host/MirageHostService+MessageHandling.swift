@@ -191,7 +191,8 @@ extension MirageHostService {
             await acknowledgePendingStartupAttempt(
                 streamID: ready.streamID,
                 startupAttemptID: ready.startupAttemptID,
-                kind: ready.kind
+                kind: ready.kind,
+                desktopGeometryContract: ready.desktopGeometryContract
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle streamReady: ")

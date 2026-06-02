@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Loom
 @testable import MirageKit
 import Testing
 
@@ -37,19 +38,30 @@ struct MirageKitTests {
         #expect(capability.highestSustainedPixelCount == nil)
     }
 
-    @Test("AWDL media packet sizing uses wireless MTU budget")
-    func awdlMediaPacketSizingUsesWirelessMTUBudget() {
-        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == 1200)
+    @Test("AWDL media packet sizing reserves Loom transport overhead")
+    func awdlMediaPacketSizingReservesLoomTransportOverhead() {
+        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == mirageDirectProximityMaxPacketSize)
+        #expect(mirageDirectProximityMaxPacketSize < mirageDefaultMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(
             for: MirageMediaPathProfile.awdlRadio,
             pathKind: .awdl
-        ) == 1200)
+        ) == mirageDirectProximityMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(
             for: MirageMediaPathProfile.proximityWiredLike,
             pathKind: .awdl
         ) == mirageDirectLocalMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(for: .wifi) == mirageDirectWiFiMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(for: .wired) == mirageDirectLocalMaxPacketSize)
+    }
+
+    @Test("Mirage session features include desktop geometry contract")
+    func mirageSessionFeaturesIncludeDesktopGeometryContract() {
+        let features = Set(MiragePeerAdvertisementMetadata.sessionSupportedFeatures)
+
+        #expect(features.contains(MiragePeerAdvertisementMetadata.desktopGeometryContractFeature))
+        for feature in LoomSessionHelloRequest.defaultFeatures {
+            #expect(features.contains(feature))
+        }
     }
 
     @Test("Default stream cadence uses lowest latency")

@@ -40,6 +40,8 @@ extension MirageClientService {
                     receivedWorstGapMs: metrics.receivedWorstGapMs,
                     receivedFrameIntervalP95Ms: metrics.receivedFrameIntervalP95Ms,
                     receivedFrameIntervalP99Ms: metrics.receivedFrameIntervalP99Ms,
+                    receiverIngressJitterP95Ms: metrics.receiverIngressJitterP95Ms,
+                    receiverIngressJitterP99Ms: metrics.receiverIngressJitterP99Ms,
                     droppedFrames: metrics.droppedFrames,
                     decodeBacklogFrames: metrics.decodeBacklogFrames,
                     reassemblerPendingFrameCount: metrics.reassemblerPendingFrameCount,
@@ -52,10 +54,17 @@ extension MirageClientService {
                     reassemblerIncompleteFrameLifetimeTimeouts: metrics.reassemblerIncompleteFrameLifetimeTimeouts,
                     reassemblerMissingFragmentTimeouts: metrics.reassemblerMissingFragmentTimeouts,
                     reassemblerForwardGapTimeouts: metrics.reassemblerForwardGapTimeouts,
+                    frameCompletionLatencyP50Ms: metrics.reassemblerFrameCompletionLatencyP50Ms,
+                    frameCompletionLatencyP95Ms: metrics.reassemblerFrameCompletionLatencyP95Ms,
+                    frameCompletionLatencyMaxMs: metrics.reassemblerFrameCompletionLatencyMaxMs,
+                    keyframeCompletionLatencyP50Ms: metrics.reassemblerKeyframeCompletionLatencyP50Ms,
+                    keyframeCompletionLatencyP95Ms: metrics.reassemblerKeyframeCompletionLatencyP95Ms,
+                    keyframeCompletionLatencyMaxMs: metrics.reassemblerKeyframeCompletionLatencyMaxMs,
                     pFrameCompletionLatencyP50Ms: metrics.reassemblerPFrameCompletionLatencyP50Ms,
                     pFrameCompletionLatencyP95Ms: metrics.reassemblerPFrameCompletionLatencyP95Ms,
                     pFrameCompletionLatencyMaxMs: metrics.reassemblerPFrameCompletionLatencyMaxMs,
                     latePFrameCompletionCount: metrics.reassemblerLatePFrameCompletionCount,
+                    reassemblerFECRecoveredFragmentCount: metrics.reassemblerFECRecoveredFragmentCount,
                     displayTickFPS: metrics.displayTickFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
                     layerAcceptedFPS: metrics.layerAcceptedFPS,
@@ -77,6 +86,7 @@ extension MirageClientService {
                     smoothestDroppedFrameAgeMaxMs: metrics.smoothestDroppedFrameAgeMaxMs,
                     lateFrameDrops: metrics.lateFrameDrops,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
+                    pendingFrameNotReadyDisplayTickCount: metrics.pendingFrameNotReadyDisplayTickCount,
                     repeatedFrameCount: metrics.repeatedFrameCount,
                     displayTickNoFrameCount: metrics.displayTickNoFrameCount,
                     missedVSyncCount: metrics.missedVSyncCount,
@@ -94,9 +104,6 @@ extension MirageClientService {
                     outputPixelFormat: metrics.decoderOutputPixelFormat,
                     usingHardwareDecoder: metrics.usingHardwareDecoder
                 )
-                if activeJitterHoldMs != metrics.activeJitterHoldMs {
-                    activeJitterHoldMs = metrics.activeJitterHoldMs
-                }
                 sendReceiverMediaFeedback(streamID: streamID, controller: controller, metrics: metrics)
                 logAwdlRadioTelemetryIfNeeded(streamID: streamID, metrics: metrics)
             },
@@ -170,10 +177,12 @@ extension MirageClientService {
         let recoveryState = MirageMediaFeedbackRecoveryState(recoveryStatus)
         let audioDroppedFrameCount = audioFeedbackDroppedFrameCountByStreamID[streamID] ?? 0
         let audioGateActive = audioVideoGateActiveStreamIDs.contains(streamID)
+        let mediaPathProfile = effectiveMediaPathProfileForCurrentPath ?? .unknown
         let feedbackInterval = resolvedReceiverMediaFeedbackInterval(
             targetFPS: targetFPS,
             recoveryState: recoveryState,
             metrics: metrics,
+            mediaPathProfile: mediaPathProfile,
             hasAudioPressure: audioDroppedFrameCount > 0 || audioGateActive
         )
         if let lastSendTime = receiverMediaFeedbackLastSendTime[streamID],
@@ -187,13 +196,14 @@ extension MirageClientService {
         let pFrameTimingSamples = controller.reassembler.consumePFrameTimingSamples()
         let latestAcceptedTimeline = MirageRenderStreamStore.shared.latestAcceptedFrameTimeline(for: streamID)
         let latestRenderedTelemetry = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
-        let latestAcceptedFrameAgeMs = latestAcceptedTimeline?.displayPresentationAcceptedTime.map {
-            max(0, (now - $0) * 1000)
-        }
+        let latestPresentedFrameAgeMs: Double? = latestRenderedTelemetry.renderedFrameSubmittedTime > 0
+            ? max(0, (now - latestRenderedTelemetry.renderedFrameSubmittedTime) * 1000)
+            : latestAcceptedTimeline?.displayPresentationAcceptedTime.map {
+                max(0, (now - $0) * 1000)
+            }
         let transportLoss = receiverTransportLossFeedback(
             for: streamID,
-            metrics: metrics,
-            recoveryState: recoveryState
+            metrics: metrics
         )
         let feedback = Self.makeReceiverMediaFeedback(
             streamID: streamID,
@@ -208,11 +218,14 @@ extension MirageClientService {
             transportDiscardedPacketCount: transportLoss.discardedPacketCount,
             latestAcceptedFrameNumber: latestAcceptedTimeline?.frameNumber,
             latestPresentedFrameNumber: latestRenderedTelemetry.renderedFrameNumber,
-            latestPresentedFrameAgeMs: latestAcceptedFrameAgeMs,
+            latestPresentedFrameAgeMs: latestPresentedFrameAgeMs,
             decodeQueueDepth: metrics.decodeBacklogFrames,
+            decodeSubmissionLimit: metrics.decodeSubmissionLimit,
+            inFlightDecodeSubmissions: metrics.inFlightDecodeSubmissions,
             presentationQueueDepth: metrics.pendingFrameCount,
             audioDroppedFrameCount: audioDroppedFrameCount > 0 ? audioDroppedFrameCount : nil,
             audioGateActive: audioGateActive ? true : nil,
+            mediaPathProfile: mediaPathProfile,
             metrics: metrics
         )
         audioFeedbackDroppedFrameCountByStreamID.removeValue(forKey: streamID)
@@ -223,18 +236,23 @@ extension MirageClientService {
         targetFPS: Int,
         recoveryState: MirageMediaFeedbackRecoveryState,
         metrics: StreamController.ClientFrameMetrics,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
         hasAudioPressure: Bool = false
     ) -> CFAbsoluteTime {
         let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
         let receiverCadencePressure = metrics.receivedFPS > 0 &&
             metrics.receivedFPS < Double(max(1, targetFPS)) * 0.85
-        let receiverJitterP95Ms = Self.receiverJitterMs(
+        let receiverJitterP95Ms = Self.reportedReceiverJitterMs(
             receivedFrameIntervalMs: metrics.receivedFrameIntervalP95Ms,
-            frameBudgetMs: frameBudgetMs
+            ingressJitterMs: metrics.receiverIngressJitterP95Ms,
+            frameBudgetMs: frameBudgetMs,
+            mediaPathProfile: mediaPathProfile
         )
-        let receiverJitterP99Ms = Self.receiverJitterMs(
+        let receiverJitterP99Ms = Self.reportedReceiverJitterMs(
             receivedFrameIntervalMs: metrics.receivedFrameIntervalP99Ms,
-            frameBudgetMs: frameBudgetMs
+            ingressJitterMs: metrics.receiverIngressJitterP99Ms,
+            frameBudgetMs: frameBudgetMs,
+            mediaPathProfile: mediaPathProfile
         )
         let receiveGapPressure = metrics.receivedWorstGapMs > frameBudgetMs * 3.0 ||
             receiverJitterP95Ms > frameBudgetMs ||
@@ -273,12 +291,16 @@ extension MirageClientService {
         latestPresentedFrameNumber: UInt32? = nil,
         latestPresentedFrameAgeMs: Double? = nil,
         decodeQueueDepth: Int? = nil,
+        decodeSubmissionLimit: Int? = nil,
+        inFlightDecodeSubmissions: Int? = nil,
         presentationQueueDepth: Int? = nil,
         audioDroppedFrameCount: UInt64? = nil,
         audioGateActive: Bool? = nil,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
         metrics: StreamController.ClientFrameMetrics
     ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+        let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
+        return ReceiverMediaFeedbackMessage(
             streamID: streamID,
             sequence: sequence,
             sentAtUptime: sentAtUptime,
@@ -301,6 +323,12 @@ extension MirageClientService {
             rendererPresentedFPS: metrics.visibleFrameFPS,
             recoveryState: recoveryState,
             recoveryCause: recoveryCause,
+            frameCompletionLatencyP50Ms: metrics.reassemblerFrameCompletionLatencyP50Ms,
+            frameCompletionLatencyP95Ms: metrics.reassemblerFrameCompletionLatencyP95Ms,
+            frameCompletionLatencyMaxMs: metrics.reassemblerFrameCompletionLatencyMaxMs,
+            keyframeCompletionLatencyP50Ms: metrics.reassemblerKeyframeCompletionLatencyP50Ms,
+            keyframeCompletionLatencyP95Ms: metrics.reassemblerKeyframeCompletionLatencyP95Ms,
+            keyframeCompletionLatencyMaxMs: metrics.reassemblerKeyframeCompletionLatencyMaxMs,
             pFrameCompletionLatencyP50Ms: metrics.reassemblerPFrameCompletionLatencyP50Ms,
             pFrameCompletionLatencyP95Ms: metrics.reassemblerPFrameCompletionLatencyP95Ms,
             pFrameCompletionLatencyMaxMs: metrics.reassemblerPFrameCompletionLatencyMaxMs,
@@ -308,6 +336,7 @@ extension MirageClientService {
             receivedWorstGapMs: metrics.receivedWorstGapMs,
             presentationStallCount: metrics.presentationStallCount,
             displayTickNoFrameCount: metrics.displayTickNoFrameCount,
+            pendingFrameNotReadyDisplayTickCount: metrics.pendingFrameNotReadyDisplayTickCount,
             worstPresentationGapMs: metrics.worstPresentationGapMs,
             playoutDelayFrames: metrics.playoutDelayFrames,
             playoutDelayTargetMs: metrics.smoothestTargetDelayMs,
@@ -323,16 +352,23 @@ extension MirageClientService {
             latestPresentedFrameNumber: latestPresentedFrameNumber,
             latestPresentedFrameAgeMs: latestPresentedFrameAgeMs,
             decodeQueueDepth: decodeQueueDepth,
+            decodeSubmissionLimit: decodeSubmissionLimit,
+            inFlightDecodeSubmissions: inFlightDecodeSubmissions,
             presentationQueueDepth: presentationQueueDepth,
             presentationTargetFrames: presentationTargetFrames(targetFPS: targetFPS, metrics: metrics),
+            presentationFillDeficitFrames: presentationFillDeficitFrames(targetFPS: targetFPS, metrics: metrics),
             presentationUnderfillFrames: presentationUnderfillFrames(targetFPS: targetFPS, metrics: metrics),
-            receiverJitterP95Ms: receiverJitterMs(
+            receiverJitterP95Ms: reportedReceiverJitterMs(
                 receivedFrameIntervalMs: metrics.receivedFrameIntervalP95Ms,
-                frameBudgetMs: 1_000.0 / Double(max(1, targetFPS))
+                ingressJitterMs: metrics.receiverIngressJitterP95Ms,
+                frameBudgetMs: frameBudgetMs,
+                mediaPathProfile: mediaPathProfile
             ),
-            receiverJitterP99Ms: receiverJitterMs(
+            receiverJitterP99Ms: reportedReceiverJitterMs(
                 receivedFrameIntervalMs: metrics.receivedFrameIntervalP99Ms,
-                frameBudgetMs: 1_000.0 / Double(max(1, targetFPS))
+                ingressJitterMs: metrics.receiverIngressJitterP99Ms,
+                frameBudgetMs: frameBudgetMs,
+                mediaPathProfile: mediaPathProfile
             ),
             audioDroppedFrameCount: audioDroppedFrameCount,
             audioGateActive: audioGateActive
@@ -355,11 +391,23 @@ extension MirageClientService {
         max(0, metrics.pendingFrameCount - presentationTargetFrames(targetFPS: targetFPS, metrics: metrics))
     }
 
-    nonisolated private static func presentationUnderfillFrames(
+    nonisolated private static func presentationFillDeficitFrames(
         targetFPS: Int,
         metrics: StreamController.ClientFrameMetrics
     ) -> Int {
         max(0, presentationTargetFrames(targetFPS: targetFPS, metrics: metrics) - metrics.pendingFrameCount)
+    }
+
+    nonisolated private static func presentationUnderfillFrames(
+        targetFPS: Int,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> Int {
+        guard metrics.presentationStallCount > 0 ||
+            metrics.displayTickNoFrameCount > 0 ||
+            metrics.pendingFrameNotReadyDisplayTickCount > 0 else {
+            return 0
+        }
+        return max(0, presentationTargetFrames(targetFPS: targetFPS, metrics: metrics) - metrics.pendingFrameCount)
     }
 
     nonisolated private static func receiverJitterMs(
@@ -367,6 +415,24 @@ extension MirageClientService {
         frameBudgetMs: Double
     ) -> Double {
         max(0, receivedFrameIntervalMs - frameBudgetMs)
+    }
+
+    nonisolated private static func reportedReceiverJitterMs(
+        receivedFrameIntervalMs: Double,
+        ingressJitterMs: Double,
+        frameBudgetMs: Double,
+        mediaPathProfile: MirageMediaPathProfile
+    ) -> Double {
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return max(0, ingressJitterMs)
+        }
+        return max(
+            receiverJitterMs(
+                receivedFrameIntervalMs: receivedFrameIntervalMs,
+                frameBudgetMs: frameBudgetMs
+            ),
+            max(0, ingressJitterMs)
+        )
     }
 
     nonisolated static func receiverReliabilityCauses(
@@ -412,36 +478,45 @@ extension MirageClientService {
 
     private func receiverTransportLossFeedback(
         for streamID: StreamID,
-        metrics: StreamController.ClientFrameMetrics,
-        recoveryState: MirageMediaFeedbackRecoveryState
+        metrics: StreamController.ClientFrameMetrics
     ) -> ReceiverTransportLossFeedback {
         let currentIncompleteTimeouts = metrics.reassemblerIncompleteFrameTimeouts
         let currentForwardGapTimeouts = metrics.reassemblerForwardGapTimeouts
         let currentMissingFragments = metrics.reassemblerMissingFragmentTimeouts
-        let previousIncompleteTimeouts = receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] ??
-            currentIncompleteTimeouts
-        let previousForwardGapTimeouts = receiverMediaFeedbackLastForwardGapTimeouts[streamID] ??
-            currentForwardGapTimeouts
-        let previousMissingFragments = receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] ??
-            currentMissingFragments
+        let previousIncompleteTimeouts = receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] ?? 0
+        let previousForwardGapTimeouts = receiverMediaFeedbackLastForwardGapTimeouts[streamID] ?? 0
+        let previousMissingFragments = receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] ?? 0
 
         receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] = currentIncompleteTimeouts
         receiverMediaFeedbackLastForwardGapTimeouts[streamID] = currentForwardGapTimeouts
         receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] = currentMissingFragments
 
-        let contaminatedByRecovery = recoveryState != .idle || metrics.reassemblerPendingKeyframeCount > 0
-        guard !contaminatedByRecovery else {
-            return ReceiverTransportLossFeedback(lostFrameCount: 0, discardedPacketCount: 0)
-        }
+        return Self.receiverTransportLossFeedback(
+            currentIncompleteFrameTimeouts: currentIncompleteTimeouts,
+            previousIncompleteFrameTimeouts: previousIncompleteTimeouts,
+            currentForwardGapTimeouts: currentForwardGapTimeouts,
+            previousForwardGapTimeouts: previousForwardGapTimeouts,
+            currentMissingFragmentTimeouts: currentMissingFragments,
+            previousMissingFragmentTimeouts: previousMissingFragments
+        )
+    }
 
-        let incompleteDelta = currentIncompleteTimeouts >= previousIncompleteTimeouts
-            ? currentIncompleteTimeouts - previousIncompleteTimeouts
+    nonisolated static func receiverTransportLossFeedback(
+        currentIncompleteFrameTimeouts: UInt64,
+        previousIncompleteFrameTimeouts: UInt64,
+        currentForwardGapTimeouts: UInt64,
+        previousForwardGapTimeouts: UInt64,
+        currentMissingFragmentTimeouts: UInt64,
+        previousMissingFragmentTimeouts: UInt64
+    ) -> ReceiverTransportLossFeedback {
+        let incompleteDelta = currentIncompleteFrameTimeouts >= previousIncompleteFrameTimeouts
+            ? currentIncompleteFrameTimeouts - previousIncompleteFrameTimeouts
             : 0
         let forwardGapDelta = currentForwardGapTimeouts >= previousForwardGapTimeouts
             ? currentForwardGapTimeouts - previousForwardGapTimeouts
             : 0
-        let missingFragmentDelta = currentMissingFragments >= previousMissingFragments
-            ? currentMissingFragments - previousMissingFragments
+        let missingFragmentDelta = currentMissingFragmentTimeouts >= previousMissingFragmentTimeouts
+            ? currentMissingFragmentTimeouts - previousMissingFragmentTimeouts
             : 0
         return ReceiverTransportLossFeedback(
             lostFrameCount: incompleteDelta + forwardGapDelta,
@@ -450,7 +525,7 @@ extension MirageClientService {
     }
 }
 
-private struct ReceiverTransportLossFeedback {
+struct ReceiverTransportLossFeedback: Equatable {
     let lostFrameCount: UInt64
     let discardedPacketCount: UInt64
 }

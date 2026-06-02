@@ -13,6 +13,7 @@ import Loom
 public struct MirageDebugRouteOverride: Sendable, Codable, Equatable {
     public enum InterfaceKind: String, Sendable, Codable, CaseIterable {
         case awdl
+        case llw
         case wifi
         case wired
     }

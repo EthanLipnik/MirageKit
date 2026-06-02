@@ -70,17 +70,21 @@ package enum MirageNetworkPathClassifier {
     ) -> MirageNetworkPathKind {
         let interfaces = InterfaceSummary(interfaceNames)
 
+        if interfaces.hasApplePrivateNCM || interfaces.hasBridge {
+            return .wired
+        }
+        if (interfaces.hasAWDL || interfaces.hasLowLatencyWireless) &&
+            !usesWired &&
+            !usesCellular &&
+            !usesLoopback &&
+            !interfaces.hasNonProximityRouteInterface {
+            return .awdl
+        }
         if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             return .wifi
         }
         if usesWired {
             return .wired
-        }
-        if interfaces.hasApplePrivateNCM || interfaces.hasLowLatencyWireless || interfaces.hasBridge {
-            return .wired
-        }
-        if interfaces.hasAWDL {
-            return .awdl
         }
         if usesCellular {
             return .cellular
@@ -112,19 +116,36 @@ package enum MirageNetworkPathClassifier {
         localEndpointDescription: String? = nil,
         remoteEndpointDescription: String? = nil
     ) -> MirageNetworkPathSnapshot {
-        let interfaces = InterfaceSummary(interfaceNames)
-        let selectedWiFi = usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity)
+        let endpointRouteInterfaces = InterfaceSummary(
+            selectedInterfaceNames(
+                localEndpointDescription: localEndpointDescription,
+                remoteEndpointDescription: remoteEndpointDescription
+            )
+        )
+        let interfaces = InterfaceSummary(interfaceNames + endpointRouteInterfaces.names)
         let kind: MirageNetworkPathKind
-        if selectedWiFi {
+        if endpointRouteInterfaces.hasOverlay {
+            kind = .vpn
+        } else if endpointRouteInterfaces.hasBridge {
+            kind = .wired
+        } else if endpointRouteInterfaces.hasProximity {
+            kind = .awdl
+        } else if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             kind = .wifi
         } else if usesWired {
             kind = .wired
-        } else if interfaces.hasProximity {
+        } else if (interfaces.hasAWDL || interfaces.hasLowLatencyWireless) &&
+                    !usesCellular &&
+                    !usesLoopback &&
+                    !interfaces.hasApplePrivateNCM &&
+                    !interfaces.hasBridge {
             kind = .awdl
         } else if usesCellular {
             kind = .cellular
         } else if usesLoopback {
             kind = .loopback
+        } else if interfaces.hasProximity {
+            kind = .awdl
         } else if interfaces.hasBridge {
             kind = .wired
         } else if interfaces.hasOverlay {
@@ -174,6 +195,31 @@ package enum MirageNetworkPathClassifier {
             localEndpointDescription: localEndpointDescription,
             remoteEndpointDescription: remoteEndpointDescription
         )
+    }
+
+    private static func selectedInterfaceNames(
+        localEndpointDescription: String?,
+        remoteEndpointDescription: String?
+    ) -> [String] {
+        [localEndpointDescription, remoteEndpointDescription]
+            .compactMap { $0 }
+            .flatMap(selectedInterfaceNames(in:))
+    }
+
+    private static func selectedInterfaceNames(in endpointDescription: String) -> [String] {
+        let normalized = endpointDescription
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let routePrefixes = ["%25", "%"]
+        let proximityPrefixes = ["anpi", "apni", "awdl", "llw", "bridge"]
+        return routePrefixes.flatMap { marker in
+            proximityPrefixes.compactMap { prefix in
+                guard let range = normalized.range(of: marker + prefix) else { return nil }
+                let suffix = normalized[range.upperBound...]
+                let digits = suffix.prefix { $0.isNumber }
+                return prefix + digits
+            }
+        }
     }
 
     /// Normalizes Network.framework interface names before path-specific classification.

@@ -8,26 +8,83 @@
 import CoreGraphics
 import CoreMedia
 import Foundation
+import Loom
 import MirageKit
 
 #if os(macOS)
 
+struct QueuedUnreliableDropCounts: Sendable, Equatable {
+    var deadlineExpired: UInt64 = 0
+    var queueLimit: UInt64 = 0
+    var superseded: UInt64 = 0
+    var unsupportedTransport: UInt64 = 0
+    var closed: UInt64 = 0
+
+    var total: UInt64 {
+        deadlineExpired + queueLimit + superseded + unsupportedTransport + closed
+    }
+
+    var isEmpty: Bool {
+        total == 0
+    }
+
+    mutating func record(_ reason: LoomQueuedUnreliableSendDrop.Reason) {
+        switch reason {
+        case .deadlineExpired:
+            deadlineExpired &+= 1
+        case .queueLimit:
+            queueLimit &+= 1
+        case .superseded:
+            superseded &+= 1
+        case .unsupportedTransport:
+            unsupportedTransport &+= 1
+        case .closed:
+            closed &+= 1
+        }
+    }
+
+    mutating func merge(_ other: QueuedUnreliableDropCounts) {
+        deadlineExpired &+= other.deadlineExpired
+        queueLimit &+= other.queueLimit
+        superseded &+= other.superseded
+        unsupportedTransport &+= other.unsupportedTransport
+        closed &+= other.closed
+    }
+}
+
 /// Tracks completion across all packet submissions for one encoded frame.
 final class TransportCompletionTracker: @unchecked Sendable {
+    private typealias FinalState = (
+        didDrop: Bool,
+        firstFailure: (any Error)?,
+        queuedUnreliableDropCounts: QueuedUnreliableDropCounts
+    )
+
     /// Mutable completion state protected by `Locked`.
     private struct State {
         var remainingSubmissions = 0
         var didDrop = false
         var firstFailure: (any Error)?
+        var queuedUnreliableDropCounts = QueuedUnreliableDropCounts()
         var isClosed = false
         var didFinish = false
     }
 
     private let state: Locked<State>
-    private let onFinish: @Sendable (_ didDrop: Bool, _ error: (any Error)?, _ completedAt: CFAbsoluteTime) -> Void
+    private let onFinish: @Sendable (
+        _ didDrop: Bool,
+        _ error: (any Error)?,
+        _ queuedUnreliableDropCounts: QueuedUnreliableDropCounts,
+        _ completedAt: CFAbsoluteTime
+    ) -> Void
 
     init(
-        onFinish: @escaping @Sendable (_ didDrop: Bool, _ error: (any Error)?, _ completedAt: CFAbsoluteTime) -> Void
+        onFinish: @escaping @Sendable (
+            _ didDrop: Bool,
+            _ error: (any Error)?,
+            _ queuedUnreliableDropCounts: QueuedUnreliableDropCounts,
+            _ completedAt: CFAbsoluteTime
+        ) -> Void
     ) {
         state = Locked(State())
         self.onFinish = onFinish
@@ -40,45 +97,86 @@ final class TransportCompletionTracker: @unchecked Sendable {
 
     /// Records a local drop and finishes once no submissions remain.
     func recordDrop() {
-        let finalState = state.withLock { state -> (Bool, (any Error)?)? in
+        let finalState = state.withLock { state -> FinalState? in
             state.didDrop = true
             return finalizeIfNeeded(state: &state)
         }
         guard let finalState else { return }
-        onFinish(finalState.0, finalState.1, CFAbsoluteTimeGetCurrent())
+        onFinish(
+            finalState.didDrop,
+            finalState.firstFailure,
+            finalState.queuedUnreliableDropCounts,
+            CFAbsoluteTimeGetCurrent()
+        )
     }
 
     /// Records transport completion for one packet submission.
     func finishSubmission(error: (any Error)?) {
-        let finalState = state.withLock { state -> (Bool, (any Error)?)? in
+        let finalState = state.withLock { state -> FinalState? in
             if let error, state.firstFailure == nil { state.firstFailure = error }
             guard state.remainingSubmissions > 0 else { return nil }
             state.remainingSubmissions -= 1
             return finalizeIfNeeded(state: &state)
         }
         guard let finalState else { return }
-        onFinish(finalState.0, finalState.1, CFAbsoluteTimeGetCurrent())
+        onFinish(
+            finalState.didDrop,
+            finalState.firstFailure,
+            finalState.queuedUnreliableDropCounts,
+            CFAbsoluteTimeGetCurrent()
+        )
+    }
+
+    /// Records an intentional nonfatal transport drop for one registered packet submission.
+    func finishDroppedSubmission(
+        _ drop: LoomQueuedUnreliableSendDrop,
+        countsAsFrameDrop: Bool = true
+    ) {
+        let finalState = state.withLock { state -> FinalState? in
+            guard state.remainingSubmissions > 0 else { return nil }
+            state.queuedUnreliableDropCounts.record(drop.reason)
+            if countsAsFrameDrop {
+                state.didDrop = true
+            }
+            state.remainingSubmissions -= 1
+            return finalizeIfNeeded(state: &state)
+        }
+        guard let finalState else { return }
+        onFinish(
+            finalState.didDrop,
+            finalState.firstFailure,
+            finalState.queuedUnreliableDropCounts,
+            CFAbsoluteTimeGetCurrent()
+        )
     }
 
     /// Closes registration and runs the finish callback after all submissions complete.
     func close() {
-        let finalState = state.withLock { state -> (Bool, (any Error)?)? in
+        let finalState = state.withLock { state -> FinalState? in
             state.isClosed = true
             return finalizeIfNeeded(state: &state)
         }
         guard let finalState else { return }
-        onFinish(finalState.0, finalState.1, CFAbsoluteTimeGetCurrent())
+        onFinish(
+            finalState.didDrop,
+            finalState.firstFailure,
+            finalState.queuedUnreliableDropCounts,
+            CFAbsoluteTimeGetCurrent()
+        )
     }
 
     /// Returns final completion state once the tracker is closed and all submissions are done.
-    private func finalizeIfNeeded(state: inout State) -> (Bool, (any Error)?)? {
+    private func finalizeIfNeeded(state: inout State) -> FinalState? {
         guard state.isClosed, !state.didFinish, state.remainingSubmissions == 0 else { return nil }
         state.didFinish = true
-        return (state.didDrop, state.firstFailure)
+        return (state.didDrop, state.firstFailure, state.queuedUnreliableDropCounts)
     }
 }
 
 extension StreamPacketSender {
+    typealias PacketMetadataSendHandler =
+        @Sendable (Data, TransportPacketMetadata, @escaping @Sendable (Error?) -> Void) -> Void
+
     nonisolated static let packetPacerBurstWindowMs: Double = 6.0
     nonisolated static let packetPacerSteadyStateBurstWindowMs: Double = 0.5
     nonisolated static let packetPacerSteadyStateFrameBurstFraction: Double = 0.25
@@ -88,8 +186,9 @@ extension StreamPacketSender {
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
     nonisolated static let maxQueuedWorkItems: Int = 32
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
-    nonisolated static let maxReliableQueuedWorkItems: Int = 240
-    nonisolated static let maxReliableQueuedBytes: Int = 192 * 1024 * 1024
+    nonisolated static let maxAwdlQueuedWorkItems: Int = 4
+    nonisolated static let maxAwdlQueuedNonKeyframes: Int = 2
+    nonisolated static let maxAwdlQueuedBytes: Int = 768 * 1024
 
     nonisolated static func retunedPacketPacerTokens(
         currentTokensBytes: Double,
@@ -115,6 +214,7 @@ extension StreamPacketSender {
         case oversizedFrame = "oversized-frame"
         case queueEviction = "queue-eviction"
         case staleChain = "stale-chain"
+        case transportDrop = "transport-drop"
     }
 
     /// Optional pacing override for one frame.
@@ -142,8 +242,10 @@ extension StreamPacketSender {
         let generation: UInt32
         let encodedAt: CFAbsoluteTime
         let sendDeadline: CFAbsoluteTime
+        let hardSendDeadline: CFAbsoluteTime?
         let targetFrameRate: Int
         let pacingOverride: PacingOverride?
+        let usesAwdlRealtimeQueuePolicy: Bool
 
         init(
             encodedData: Data,
@@ -163,8 +265,10 @@ extension StreamPacketSender {
             generation: UInt32,
             encodedAt: CFAbsoluteTime,
             sendDeadline: CFAbsoluteTime? = nil,
+            hardSendDeadline: CFAbsoluteTime? = nil,
             targetFrameRate: Int = 60,
-            pacingOverride: PacingOverride?
+            pacingOverride: PacingOverride?,
+            usesAwdlRealtimeQueuePolicy: Bool = false
         ) {
             let resolvedTargetFrameRate = max(1, targetFrameRate)
             self.encodedData = encodedData
@@ -185,8 +289,22 @@ extension StreamPacketSender {
             self.encodedAt = encodedAt
             self.targetFrameRate = resolvedTargetFrameRate
             self.sendDeadline = sendDeadline ?? StreamPacketSender.defaultSendDeadline()
+            self.hardSendDeadline = hardSendDeadline?.isFinite == true ? hardSendDeadline : nil
             self.pacingOverride = pacingOverride
+            self.usesAwdlRealtimeQueuePolicy = usesAwdlRealtimeQueuePolicy
         }
+    }
+
+    /// Per-fragment media metadata passed to the transport scheduler.
+    struct TransportPacketMetadata: Sendable, Equatable {
+        let streamID: StreamID
+        let frameNumber: UInt32
+        let fragmentIndex: Int
+        let fragmentCount: Int
+        let isKeyframe: Bool
+        let isParity: Bool
+        let isRecovery: Bool
+        let sendDeadline: CFAbsoluteTime
     }
 
     /// Snapshot of sender delay, pacing, and drop telemetry for one reporting window.
@@ -211,6 +329,31 @@ extension StreamPacketSender {
         let lateNonKeyframeSends: UInt64
         let generationAbortDrops: UInt64
         let nonKeyframeHoldDrops: UInt64
+        let queuedUnreliableDeadlineExpiredDrops: UInt64
+        let queuedUnreliableQueueLimitDrops: UInt64
+        let queuedUnreliableSupersededDrops: UInt64
+        let queuedUnreliableUnsupportedTransportDrops: UInt64
+        let queuedUnreliableClosedDrops: UInt64
+        let queuedUnreliablePendingPackets: Int?
+        let queuedUnreliableOutstandingPackets: Int?
+        let queuedUnreliableQueuedBytes: Int?
+        let queuedUnreliablePendingPacketMax: Int?
+        let queuedUnreliableOutstandingPacketMax: Int?
+        let queuedUnreliableQueuedBytesMax: Int?
+        let queuedUnreliableEnqueuedCount: UInt64?
+        let queuedUnreliableSentCount: UInt64?
+        let queuedUnreliableCompletedCount: UInt64?
+        let queuedUnreliableDroppedCount: UInt64?
+        let queuedUnreliableErrorCount: UInt64?
+        let queuedUnreliableQueueDwellP50Ms: Double?
+        let queuedUnreliableQueueDwellP95Ms: Double?
+        let queuedUnreliableQueueDwellP99Ms: Double?
+        let queuedUnreliableSendGapP50Ms: Double?
+        let queuedUnreliableSendGapP95Ms: Double?
+        let queuedUnreliableSendGapP99Ms: Double?
+        let queuedUnreliableContentProcessedP50Ms: Double?
+        let queuedUnreliableContentProcessedP95Ms: Double?
+        let queuedUnreliableContentProcessedP99Ms: Double?
     }
 
     /// Current sender freshness state read before host-side encode/reservation.
@@ -389,6 +532,7 @@ extension StreamPacketSender {
             targetFrameIntervalMs: targetFrameIntervalMs
         )
         let computedBurstBytes = max(
+            Double(packetBytes),
             bytesPerMillisecond,
             bytesPerMillisecond * burstWindowMs
         )

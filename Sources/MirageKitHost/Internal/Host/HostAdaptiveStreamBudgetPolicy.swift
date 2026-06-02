@@ -26,6 +26,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
 
     struct Decision: Equatable {
         let startupBitrateBps: Int
+        let encoderStartupBitrateBps: Int
         let maximumCeilingBps: Int
         let minimumBitrateFloorBps: Int
         let encoderThroughputMinimumBitrateFloorBps: Int
@@ -39,15 +40,19 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let maximumCapBps: Int
         let minimumFloorBps: Int
         let honorsRequestedStartup: Bool
+        let honorsAutomaticClientStartup: Bool
+        let honorsAutomaticClientCeiling: Bool
+        let minimumAutomaticClientCeilingBps: Int?
         let label: String
     }
 
     private static let fallbackMinimumFloorBps = 4_000_000
     private static let highResolutionManualStartupPixels = 10_500_000.0
     private static let highResolutionManualFloorFraction = 0.60
+    private static let awdlStartupReadabilityFrameQuality: Float = 0.28
+    private static let awdlStartupReadabilityCapBps = 72_000_000
 
     static func resolve(_ request: Request) -> Decision? {
-        guard request.runtimeQualityAdjustmentEnabled else { return nil }
         guard request.codec != .proRes4444 else { return nil }
         guard request.outputSize.width > 0,
               request.outputSize.height > 0,
@@ -56,6 +61,8 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         }
 
         let pathBudget = budget(for: request.mediaPathProfile, pathKind: request.transportPathKind)
+        let usesAwdlInteractiveBudget = pathBudget.label == "awdlInteractiveDisplay"
+        guard request.runtimeQualityAdjustmentEnabled || usesAwdlInteractiveBudget else { return nil }
         let geometryStartup = bitrate(
             outputSize: request.outputSize,
             frameRate: request.frameRate,
@@ -70,9 +77,19 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let hostMaximum = max(hostStartup, min(pathBudget.maximumCapBps, geometryMaximum))
 
         let requestedTarget = normalized(request.requestedBitrateBps)
-        let clientCeiling = clientMaximumCeiling(
+        let automaticRequestedTarget = pathBudget.honorsAutomaticClientStartup
+            ? requestedTarget
+            : nil
+        let requestedCeiling = filteredRequestedCeiling(
+            request.requestedCeilingBps,
             enteredBitrateBps: request.enteredBitrateBps,
-            requestedCeilingBps: request.requestedCeilingBps
+            pathBudget: pathBudget
+        )
+        let clientCeiling = readabilityProtectedClientCeiling(
+            enteredBitrateBps: request.enteredBitrateBps,
+            requestedCeilingBps: requestedCeiling,
+            pathBudget: pathBudget,
+            usesAwdlInteractiveBudget: usesAwdlInteractiveBudget
         )
         let maximumCeiling = max(
             1,
@@ -92,17 +109,25 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 outputSize: request.outputSize,
                 pathBudget: pathBudget
             )
-        } else if let requestedTarget, pathBudget.honorsRequestedStartup {
-            min(hostStartup, requestedTarget)
-        } else if let requestedTarget {
-            min(hostStartup, requestedTarget)
+        } else if let automaticRequestedTarget, pathBudget.honorsRequestedStartup {
+            min(hostStartup, automaticRequestedTarget)
+        } else if let automaticRequestedTarget {
+            min(hostStartup, automaticRequestedTarget)
         } else {
             hostStartup
         }
         var startupBitrate = min(maximumCeiling, max(manualFloor ?? 1, clientStartupLimited))
-        if let requestedTarget, explicitStartup == nil, requestedTarget > hostStartup {
+        if usesAwdlInteractiveBudget {
+            startupBitrate = max(
+                startupBitrate,
+                min(maximumCeiling, pathBudget.minimumFloorBps)
+            )
+        }
+        if let automaticRequestedTarget, explicitStartup == nil, automaticRequestedTarget > hostStartup {
             startupBitrate = min(maximumCeiling, hostStartup)
-        } else if let requestedTarget, !pathBudget.honorsRequestedStartup, requestedTarget > hostStartup {
+        } else if let automaticRequestedTarget,
+                  !pathBudget.honorsRequestedStartup,
+                  automaticRequestedTarget > hostStartup {
             startupBitrate = min(maximumCeiling, hostStartup)
         }
 
@@ -120,9 +145,16 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         }
         let boundedCeiling = max(startupBitrate, maximumCeiling, minimumFloor)
         let reason = pathBudget.label
+        let encoderStartupBitrate = encoderStartupBitrate(
+            startupBitrate: startupBitrate,
+            encoderCeilingBps: boundedCeiling,
+            request: request,
+            usesAwdlInteractiveBudget: usesAwdlInteractiveBudget
+        )
 
         return Decision(
             startupBitrateBps: startupBitrate,
+            encoderStartupBitrateBps: encoderStartupBitrate,
             maximumCeilingBps: boundedCeiling,
             minimumBitrateFloorBps: minimumFloor,
             encoderThroughputMinimumBitrateFloorBps: encoderThroughputMinimumFloor,
@@ -178,6 +210,36 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         return nil
     }
 
+    private static func readabilityProtectedClientCeiling(
+        enteredBitrateBps: Int?,
+        requestedCeilingBps: Int?,
+        pathBudget: PathBudget,
+        usesAwdlInteractiveBudget: Bool
+    ) -> Int? {
+        guard let ceiling = clientMaximumCeiling(
+            enteredBitrateBps: enteredBitrateBps,
+            requestedCeilingBps: requestedCeilingBps
+        ) else {
+            return nil
+        }
+        guard usesAwdlInteractiveBudget else { return ceiling }
+        return max(ceiling, pathBudget.minimumFloorBps)
+    }
+
+    private static func filteredRequestedCeiling(
+        _ requestedCeilingBps: Int?,
+        enteredBitrateBps: Int?,
+        pathBudget: PathBudget
+    ) -> Int? {
+        guard pathBudget.honorsAutomaticClientCeiling else { return nil }
+        guard let requestedCeiling = normalized(requestedCeilingBps) else { return nil }
+        guard enteredBitrateBps == nil,
+              let minimumAutomaticClientCeilingBps = pathBudget.minimumAutomaticClientCeilingBps else {
+            return requestedCeiling
+        }
+        return requestedCeiling >= minimumAutomaticClientCeilingBps ? requestedCeiling : nil
+    }
+
     private static func bitrate(
         outputSize: CGSize,
         frameRate: Int,
@@ -187,6 +249,30 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let height = max(2.0, floor(Double(outputSize.height) / 2.0) * 2.0)
         let bitrate = width * height * Double(max(1, frameRate)) * bitsPerPixelPerFrame
         return max(1, Int(bitrate.rounded(.toNearestOrAwayFromZero)))
+    }
+
+    private static func encoderStartupBitrate(
+        startupBitrate: Int,
+        encoderCeilingBps: Int,
+        request: Request,
+        usesAwdlInteractiveBudget: Bool
+    ) -> Int {
+        guard usesAwdlInteractiveBudget,
+              request.enteredBitrateBps == nil else {
+            return startupBitrate
+        }
+        let width = max(2, Int(request.outputSize.width))
+        let height = max(2, Int(request.outputSize.height))
+        guard let readabilityBitrate = MirageBitrateQualityMapper.targetBitrateBps(
+            forFrameQuality: awdlStartupReadabilityFrameQuality,
+            width: width,
+            height: height,
+            frameRate: request.frameRate,
+            maxBitrateBps: awdlStartupReadabilityCapBps
+        ) else {
+            return startupBitrate
+        }
+        return min(encoderCeilingBps, max(startupBitrate, readabilityBitrate))
     }
 
     private static func budget(
@@ -199,9 +285,12 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 startupBitsPerPixelPerFrame: 0.075,
                 maximumBitsPerPixelPerFrame: 0.280,
                 startupCapBps: 32_000_000,
-                maximumCapBps: 120_000_000,
+                maximumCapBps: 32_000_000,
                 minimumFloorBps: 18_000_000,
                 honorsRequestedStartup: false,
+                honorsAutomaticClientStartup: false,
+                honorsAutomaticClientCeiling: true,
+                minimumAutomaticClientCeilingBps: 32_000_000,
                 label: "awdlInteractiveDisplay"
             )
         case .localWiFi:
@@ -212,6 +301,9 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumCapBps: 180_000_000,
                 minimumFloorBps: 3_000_000,
                 honorsRequestedStartup: true,
+                honorsAutomaticClientStartup: true,
+                honorsAutomaticClientCeiling: true,
+                minimumAutomaticClientCeilingBps: nil,
                 label: "wifi"
             )
         case .wired:
@@ -222,6 +314,9 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumCapBps: 180_000_000,
                 minimumFloorBps: 8_000_000,
                 honorsRequestedStartup: true,
+                honorsAutomaticClientStartup: true,
+                honorsAutomaticClientCeiling: true,
+                minimumAutomaticClientCeilingBps: nil,
                 label: "wired"
             )
         case .proximityWiredLike:
@@ -232,6 +327,9 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumCapBps: 300_000_000,
                 minimumFloorBps: 12_000_000,
                 honorsRequestedStartup: true,
+                honorsAutomaticClientStartup: true,
+                honorsAutomaticClientCeiling: true,
+                minimumAutomaticClientCeilingBps: nil,
                 label: "proximity"
             )
         case .vpnOrOverlay:
@@ -242,6 +340,9 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumCapBps: 180_000_000,
                 minimumFloorBps: 8_000_000,
                 honorsRequestedStartup: true,
+                honorsAutomaticClientStartup: true,
+                honorsAutomaticClientCeiling: true,
+                minimumAutomaticClientCeilingBps: nil,
                 label: "remote"
             )
         case .other,
@@ -263,6 +364,9 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                     maximumCapBps: 48_000_000,
                     minimumFloorBps: fallbackMinimumFloorBps,
                     honorsRequestedStartup: false,
+                    honorsAutomaticClientStartup: true,
+                    honorsAutomaticClientCeiling: true,
+                    minimumAutomaticClientCeilingBps: nil,
                     label: "unknown"
                 )
             }

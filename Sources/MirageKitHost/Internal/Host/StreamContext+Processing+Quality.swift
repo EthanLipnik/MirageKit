@@ -18,6 +18,11 @@ extension StreamContext {
     }
 
     private func encoderCatchUpBacklogThresholdMs() -> Double {
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+            return max(50.0, min(80.0, frameBudgetMs * 3.0))
+        }
+
         let fixedCustomQuality = explicitEnteredTargetBitrate != nil &&
             !clientRequestedBitrateAdaptationCeiling
         if fixedCustomQuality {
@@ -179,7 +184,7 @@ extension StreamContext {
         encodedFPS: Double,
         at now: CFAbsoluteTime
     ) async {
-        guard runtimeQualityAdjustmentEnabled,
+        guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
               encoderConfig.codec != .proRes4444,
               averageEncodeMs > 0,
               currentFrameRate > 0,
@@ -226,11 +231,35 @@ extension StreamContext {
         guard currentBitrate > 0, ceilingBitrate > 0 else { return }
 
         if averageEncodeMs >= frameBudgetMs * pressureThreshold {
-            guard encoderCatchUpQualityAdjustmentEnabled else { return }
+            guard encoderCatchUpQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else { return }
             let encoderBacklogMs = worstEncodeStartCaptureAgeMs
             let backlogThresholdMs = encoderCatchUpBacklogThresholdMs()
             guard backlogThresholdMs <= 0 || encoderBacklogMs >= backlogThresholdMs else { return }
             guard now - realtimeLastEncoderThroughputAdjustmentTime >= 0.45 else { return }
+            if mediaPathProfile.usesAwdlRadioPolicy,
+               (!runtimeQualityAdjustmentEnabled || !currentAwdlFrameBudgetReductionAllowed()) {
+                realtimePressureState = .pressured
+                realtimePressureReason = "awdl-encoder-throughput-gated"
+                realtimeLastEncoderThroughputAdjustmentTime = now
+                let appliedStructuralStep = await applyAwdlHostStructuralAdaptationIfNeeded(
+                    reason: "encoder-throughput",
+                    averageEncodeMs: averageEncodeMs,
+                    frameBudgetMs: frameBudgetMs,
+                    encodeAttemptFPS: encodeAttemptFPS,
+                    encodedFPS: encodedFPS,
+                    at: now
+                )
+                if !appliedStructuralStep {
+                    MirageLogger.metrics(
+                        "AWDL encoder throughput held quality for stream \(streamID): " +
+                            "structural adaptation pending or exhausted " +
+                            "fps=\(currentFrameRate) scale=\(streamScale) " +
+                            "encodeAvg=\(averageEncodeMs.formatted(.number.precision(.fractionLength(1))))ms " +
+                            "budget=\(frameBudgetMs.formatted(.number.precision(.fractionLength(1))))ms"
+                    )
+                }
+                return
+            }
             let budgetRatio = max(0.01, frameBudgetMs / averageEncodeMs)
             let reductionRatio = min(0.92, max(minimumReductionRatio, budgetRatio * 1.05))
             let minimumFloor = max(1, encoderThroughputMinimumBitrateFloorBps)
@@ -265,6 +294,7 @@ extension StreamContext {
             return
         }
 
+        guard runtimeQualityAdjustmentEnabled else { return }
         guard currentBitrate < ceilingBitrate,
               averageEncodeMs <= frameBudgetMs * healthyThreshold,
               receiverFrameBudgetCanRaiseQuality(now: now),
@@ -304,6 +334,125 @@ extension StreamContext {
         )
     }
 
+    @discardableResult
+    func applyAwdlHostStructuralAdaptationIfNeeded(
+        reason: String,
+        averageEncodeMs: Double? = nil,
+        frameBudgetMs: Double? = nil,
+        encodeAttemptFPS: Double? = nil,
+        encodedFPS: Double? = nil,
+        at now: CFAbsoluteTime
+    ) async -> Bool {
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return false }
+        let targetFPS: Int
+        if currentFrameRate > 45 {
+            targetFPS = 45
+        } else if currentFrameRate > 30 {
+            targetFPS = 30
+        } else {
+            return await applyAwdlHostStructuralScaleStepIfNeeded(
+                reason: reason,
+                averageEncodeMs: averageEncodeMs,
+                frameBudgetMs: frameBudgetMs,
+                encodeAttemptFPS: encodeAttemptFPS,
+                encodedFPS: encodedFPS,
+                at: now
+            )
+        }
+        guard lastAwdlInteractiveFrameRateAdjustmentTime == 0 ||
+            now - lastAwdlInteractiveFrameRateAdjustmentTime >= 1.0 else {
+            pendingAwdlInteractiveFrameRate = targetFPS
+            pendingAwdlInteractiveFrameRateReason = reason
+            return false
+        }
+        let applied = await applyAwdlInteractiveFrameRate(targetFPS, now: now, reason: reason)
+        MirageLogger.metrics(
+            "AWDL host structural cadence step for stream \(streamID): " +
+                "targetFPS=\(targetFPS) reason=\(reason) applied=\(applied) " +
+                awdlHostStructuralPressureMetrics(
+                    averageEncodeMs: averageEncodeMs,
+                    frameBudgetMs: frameBudgetMs,
+                    encodeAttemptFPS: encodeAttemptFPS,
+                    encodedFPS: encodedFPS
+                )
+        )
+        return applied
+    }
+
+    private func applyAwdlHostStructuralScaleStepIfNeeded(
+        reason: String,
+        averageEncodeMs: Double?,
+        frameBudgetMs: Double?,
+        encodeAttemptFPS: Double?,
+        encodedFPS: Double?,
+        at now: CFAbsoluteTime
+    ) async -> Bool {
+        let baseScale = awdlInteractiveBaseStreamScale ?? requestedStreamScale
+        let currentMultiplier = baseScale > 0 ? Double(streamScale / baseScale) : 1.0
+        let targetMultiplier: Double
+        if currentMultiplier > 0.876 {
+            targetMultiplier = 0.875
+        } else if currentMultiplier > 0.751 {
+            targetMultiplier = 0.75
+        } else {
+            if currentFrameRate <= 30 {
+                grantAwdlHostStructuralQualityReduction(now: now, reason: reason)
+            } else {
+                clearAwdlHostStructuralQualityReduction()
+            }
+            return false
+        }
+
+        let applied = await applyAwdlInteractiveScale(
+            targetMultiplier,
+            now: now,
+            reason: reason
+        )
+        if applied {
+            let effectiveMultiplier = baseScale > 0 ? Double(streamScale / baseScale) : targetMultiplier
+            if currentFrameRate <= 30 && effectiveMultiplier <= 0.751 {
+                grantAwdlHostStructuralQualityReduction(now: now, reason: reason)
+            } else {
+                clearAwdlHostStructuralQualityReduction()
+            }
+        }
+        MirageLogger.metrics(
+            "AWDL host structural scale step for stream \(streamID): " +
+                "targetMultiplier=\(targetMultiplier.formatted(.number.precision(.fractionLength(3)))) " +
+                "currentMultiplier=\(currentMultiplier.formatted(.number.precision(.fractionLength(3)))) " +
+                "reason=\(reason) applied=\(applied) " +
+                awdlHostStructuralPressureMetrics(
+                    averageEncodeMs: averageEncodeMs,
+                    frameBudgetMs: frameBudgetMs,
+                    encodeAttemptFPS: encodeAttemptFPS,
+                    encodedFPS: encodedFPS
+                )
+        )
+        return applied
+    }
+
+    private func awdlHostStructuralPressureMetrics(
+        averageEncodeMs: Double?,
+        frameBudgetMs: Double?,
+        encodeAttemptFPS: Double?,
+        encodedFPS: Double?
+    ) -> String {
+        var components: [String] = []
+        if let averageEncodeMs {
+            components.append("encodeAvg=\(averageEncodeMs.formatted(.number.precision(.fractionLength(1))))ms")
+        }
+        if let frameBudgetMs {
+            components.append("budget=\(frameBudgetMs.formatted(.number.precision(.fractionLength(1))))ms")
+        }
+        if let encodeAttemptFPS {
+            components.append("attemptFPS=\(Self.formattedFPS(encodeAttemptFPS))")
+        }
+        if let encodedFPS {
+            components.append("encodedFPS=\(Self.formattedFPS(encodedFPS))")
+        }
+        return components.joined(separator: " ")
+    }
+
     func evaluateEncodedFrameBudget(
         byteCount: Int,
         wireBytes: Int,
@@ -311,7 +460,8 @@ extension StreamContext {
         isKeyframe: Bool,
         encodedAt now: CFAbsoluteTime
     ) async -> HostEncodedFrameAdmissionDecision {
-        guard runtimeQualityAdjustmentEnabled, byteCount > 0 else {
+        guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
+              byteCount > 0 else {
             return HostEncodedFrameAdmissionDecision(
                 admission: .send,
                 budgetDecision: nil,
@@ -343,8 +493,18 @@ extension StreamContext {
             qualityFloor: qualityFloor,
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(),
             now: now
         )
+        if !isKeyframe,
+           awdlEncodedPFrameNeedsStructuralAdaptation(decision) {
+            await applyAwdlHostStructuralAdaptationIfNeeded(
+                reason: "encoded-frame-oversize",
+                at: now
+            )
+        }
         if !isKeyframe, let budgetDecision = decision.budgetDecision {
             await applyFrameBudgetDecision(budgetDecision, now: now)
         }
@@ -359,6 +519,10 @@ extension StreamContext {
         encodedAt now: CFAbsoluteTime
     ) async {
         droppedFrameCount += 1
+        await applyAwdlHostStructuralAdaptationIfNeeded(
+            reason: "encoded-frame-catastrophic-oversize",
+            at: now
+        )
         startFrameChainRepair(
             reason: "transport-p-frame-catastrophic-oversize",
             now: now
@@ -380,6 +544,17 @@ extension StreamContext {
         )
     }
 
+    private func awdlEncodedPFrameNeedsStructuralAdaptation(
+        _ decision: HostEncodedFrameAdmissionDecision
+    ) -> Bool {
+        guard mediaPathProfile.usesAwdlRadioPolicy,
+              !currentAwdlFrameBudgetReductionAllowed() else {
+            return false
+        }
+        let oversizeRatio = max(decision.byteRatio, max(decision.wireRatio, decision.packetRatio))
+        return oversizeRatio >= 1.20
+    }
+
     private func encodedFrameBudgetBytes() -> Double? {
         let targetBitrate = realtimeRuntimeBitrateCeilingBps ??
             currentTargetBitrateBps ??
@@ -391,7 +566,29 @@ extension StreamContext {
     }
 
     var activeFrameFreshnessPolicy: HostFrameFreshnessPolicy {
-        HostFrameFreshnessPolicy.policy(for: latencyMode, frameRate: currentFrameRate)
+        HostFrameFreshnessPolicy.policy(
+            for: latencyMode,
+            frameRate: currentFrameRate,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+    }
+
+    private func receiverAckLagBudgetMs(
+        frameBudgetMs: Double,
+        standardFrameCount: Double,
+        awdlExtraFrameCount: Double
+    ) -> Double {
+        let standardBudgetMs = frameBudgetMs * standardFrameCount
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return standardBudgetMs }
+        let playoutBudgetMs = min(
+            MirageAwdlMediaController.maximumPlayoutDelayMs,
+            max(
+                MirageAwdlMediaController.minimumPlayoutDelayMs,
+                receiverPlayoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs
+            )
+        )
+        return max(standardBudgetMs, playoutBudgetMs + frameBudgetMs * awdlExtraFrameCount)
     }
 
     func inputIsActive(
@@ -450,11 +647,16 @@ extension StreamContext {
         guard activeQuality + 0.005 < configuredQualityCeiling else { return false }
         guard now - lastStillQualityProbeEncodeTime >= policy.stillQualityProbeInterval else { return false }
         guard (packetSender?.queuedByteCount ?? 0) <= queuePressureBytes else { return false }
+        guard !mediaPathProfile.usesAwdlRadioPolicy || receiverFeedbackIsFresh(now: now) else {
+            return false
+        }
         return sourceStill || receiverFrameBudgetCanRaiseQuality(now: now)
     }
 
     func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
-        guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
+        guard receiverFeedbackIsFresh(now: now) else {
+            return !mediaPathProfile.usesAwdlRadioPolicy
+        }
         if frameChainState != .normal { return false }
         if realtimePressureState == .recovery { return false }
         if receiverReassemblyBacklogFrames > 2 { return false }
@@ -463,10 +665,15 @@ extension StreamContext {
         if receiverPresentationBacklogFrames > 3 { return false }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
         let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let ackLagBudgetMs = receiverAckLagBudgetMs(
+            frameBudgetMs: frameBudgetMs,
+            standardFrameCount: 2.0,
+            awdlExtraFrameCount: 1.0
+        )
         if let receiverAckLagMs,
            lastReceiverAckTime > 0,
            now - lastReceiverAckTime <= 1.0,
-           receiverAckLagMs > frameBudgetMs * 2.0 {
+           receiverAckLagMs > ackLagBudgetMs {
             return false
         }
         return true
@@ -480,7 +687,9 @@ extension StreamContext {
     }
 
     func receiverFrameBudgetCanRaiseQuality(now: CFAbsoluteTime) -> Bool {
-        guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
+        guard receiverFeedbackIsFresh(now: now) else {
+            return !mediaPathProfile.usesAwdlRadioPolicy
+        }
         if frameChainState != .normal { return false }
         if realtimePressureState == .recovery { return false }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
@@ -504,16 +713,24 @@ extension StreamContext {
             return false
         }
         let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let ackLagBudgetMs = receiverAckLagBudgetMs(
+            frameBudgetMs: frameBudgetMs,
+            standardFrameCount: 3.0,
+            awdlExtraFrameCount: 2.0
+        )
         if let receiverAckLagMs,
            lastReceiverAckTime > 0,
            now - lastReceiverAckTime <= 1.0,
-           receiverAckLagMs > frameBudgetMs * 3.0 {
+           receiverAckLagMs > ackLagBudgetMs {
             return false
         }
         return true
     }
 
     func receiverFrameBudgetCapacityLearningQuarantineReason(now: CFAbsoluteTime) -> String? {
+        if mediaPathProfile.usesAwdlRadioPolicy, !receiverFeedbackIsFresh(now: now) {
+            return "receiver-feedback-stale"
+        }
         if startupTransportProtectionDeadline > now { return "startup" }
         if receiverCapacityLearningQuarantineUntil > now {
             return receiverCapacityLearningQuarantineReason ?? "receiver-quarantine"
@@ -525,13 +742,25 @@ extension StreamContext {
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return "receiver-loss" }
         if receiverReassemblyBacklogFrames > 2 || receiverReassemblyBacklogBytes > 650_000 { return "reassembly-backlog" }
         let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let ackLagBudgetMs = receiverAckLagBudgetMs(
+            frameBudgetMs: frameBudgetMs,
+            standardFrameCount: 2.0,
+            awdlExtraFrameCount: 1.0
+        )
         if let receiverAckLagMs,
            lastReceiverAckTime > 0,
            now - lastReceiverAckTime <= 1.0,
-           receiverAckLagMs > frameBudgetMs * 2.0 {
+           receiverAckLagMs > ackLagBudgetMs {
             return "receiver-ack-lag"
         }
         return nil
+    }
+
+    private func receiverFeedbackIsFresh(
+        now: CFAbsoluteTime,
+        maxAge: CFAbsoluteTime = 2.5
+    ) -> Bool {
+        lastReceiverFeedbackTime > 0 && now - lastReceiverFeedbackTime <= maxAge
     }
 
     func updateReceiverCapacityLearningQuarantine(
@@ -539,13 +768,15 @@ extension StreamContext {
         now: CFAbsoluteTime
     ) {
         let decodeDepth = feedback.decodeQueueDepth ?? feedback.decodeBacklogFrames
-        let presentationDepth = feedback.presentationQueueDepth ?? feedback.presentationBacklogFrames
+        let presentationDepth = resolvedReceiverPresentationBacklogFrames(feedback)
         let reason: String? = if feedback.recoveryState != .idle {
             "recovery-\(feedback.recoveryState.rawValue)"
         } else if feedback.recoveryCause == .memoryBudget || decodeDepth > 2 {
             "decode-backlog"
-        } else if presentationDepth > 3 || (feedback.presentationStallCount ?? 0) > 0 {
+        } else if presentationDepth > 3 {
             "presentation-backlog"
+        } else if (feedback.presentationStallCount ?? 0) > 0 {
+            "presentation-underflow"
         } else {
             nil
         }
@@ -575,7 +806,8 @@ extension StreamContext {
         _ completion: StreamPacketSender.FrameTransportCompletion,
         now: CFAbsoluteTime
     ) async {
-        guard runtimeQualityAdjustmentEnabled, completion.didSend else { return }
+        guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
+              completion.didSend else { return }
         let decision = adaptivePFrameController.recordFrameTransportCompletion(
             frameNumber: UInt64(completion.frameNumber),
             wireBytes: completion.wireBytes,
@@ -595,6 +827,9 @@ extension StreamContext {
             qualityFloor: qualityFloor,
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(),
             now: now
         )
         guard let decision else { return }

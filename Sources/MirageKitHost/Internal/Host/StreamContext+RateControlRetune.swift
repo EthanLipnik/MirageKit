@@ -95,7 +95,10 @@ extension StreamContext {
             )
             do {
                 await packetSender?.bumpGeneration(reason: "rate-control retune session recreation")
-                resetPipelineStateForReconfiguration(reason: "rate-control retune session recreation")
+                resetPipelineStateForReconfiguration(
+                    reason: "rate-control retune session recreation",
+                    preservePendingGeometryRecoveryKeyframe: true
+                )
                 try await encoder.recreateSessionForRateControlRetune()
                 await encoder.forceKeyframe()
             } catch {
@@ -110,6 +113,33 @@ extension StreamContext {
             )
 
         case .sessionRecreation:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                let applied = await applyAwdlHostStructuralAdaptationIfNeeded(
+                    reason: "rate-control-overshoot",
+                    at: CFAbsoluteTimeGetCurrent()
+                )
+                let qualityReductionUnlocked = currentAwdlQualityReductionAllowed()
+                if applied || !qualityReductionUnlocked {
+                    scheduleRateControlRetuneValidationContinuation(
+                        validationID: validationID,
+                        stage: .sessionRecreation,
+                        targetBitrate: targetBitrate
+                    )
+                }
+                rateControlRetuneValidationResult = if applied {
+                    "session-recreation-overshoot-structural-adaptation-applied"
+                } else if qualityReductionUnlocked {
+                    "session-recreation-overshoot-structural-adaptation-exhausted"
+                } else {
+                    "session-recreation-overshoot-structural-adaptation-pending"
+                }
+                MirageLogger.stream(
+                    "Encoder rate-control validation still overshot after session recreation; " +
+                        "AWDL structural adaptation \(rateControlRetuneValidationResult ?? "unknown"): " +
+                        "target=\(targetBitrate), actual=\(actual)"
+                )
+                return
+            }
             rateControlRetuneValidationResult = "session-recreation-overshoot-structural-adaptation-needed"
             MirageLogger.stream(
                 "Encoder rate-control validation still overshot after session recreation: target=\(targetBitrate), actual=\(actual)"

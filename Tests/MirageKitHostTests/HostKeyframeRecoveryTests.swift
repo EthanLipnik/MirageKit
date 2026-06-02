@@ -77,6 +77,97 @@ struct HostKeyframeRecoveryTests {
         #expect(context.frameInbox.pendingCount == 0)
     }
 
+    @Test("Startup-timeout keyframe requests bypass adaptive cooldown")
+    func startupTimeoutKeyframeRequestsBypassAdaptiveCooldown() async {
+        let context = makeContext()
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+
+        let ack = await context.requestKeyframe(recoveryCause: .startupTimeout)
+
+        #expect(ack.accepted)
+        #expect(await context.pendingKeyframeReason == "Keyframe request")
+        #expect(await context.pendingKeyframeRequiresReset == false)
+        #expect(await context.pendingKeyframeRequiresFlush == false)
+    }
+
+    @Test("AWDL geometry recovery bypasses cooldown and in-flight keyframe window")
+    func awdlGeometryRecoveryBypassesCooldownAndInFlightKeyframeWindow() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.markKeyframeInFlight(frameNumber: 41)
+
+        let accepted = await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize reset",
+            noteLoss: true,
+            requiresFlush: true,
+            requiresReset: true,
+            supersedesInFlightGeometry: true,
+            bypassesRecoveryCooldown: true
+        )
+
+        #expect(accepted)
+        #expect(await context.pendingKeyframeReason == "Desktop resize reset")
+        #expect(await context.keyframeInFlightFrameNumber == nil)
+        #expect(await context.keyframeSendDeadline == 0)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, frameByteCount: 64 * 1024, now: CFAbsoluteTimeGetCurrent()) == 4)
+    }
+
+    @Test("AWDL geometry recovery supersedes pending non-geometry keyframe")
+    func awdlGeometryRecoverySupersedesPendingNonGeometryKeyframe() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+
+        await context.queueKeyframeIfPossible(
+            reason: "Stale recovery",
+            checkInFlight: false,
+            urgent: true
+        )
+        #expect(await context.pendingKeyframeReason == "Stale recovery")
+
+        let accepted = await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize reset",
+            noteLoss: true,
+            requiresFlush: true,
+            requiresReset: true,
+            supersedesInFlightGeometry: true,
+            bypassesRecoveryCooldown: true
+        )
+
+        #expect(accepted)
+        #expect(await context.pendingKeyframeReason == "Desktop resize reset")
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
+    }
+
+    @Test("AWDL sender dependency drop bypasses adaptive keyframe cooldown")
+    func awdlSenderDependencyDropBypassesAdaptiveKeyframeCooldown() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        await context.configureRunningForRepairRetryTest()
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+
+        await context.handlePacketSenderDependencyFrameDrop(
+            streamID: 1,
+            frameNumber: 12,
+            reason: .queueEviction
+        )
+
+        #expect(await context.pendingKeyframeReason == "Packet sender dependency drop")
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.dependencyRecoveryRetryNecessary == false)
+        #expect(context.currentFrameRate == 45)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
     @Test("Running decode-error recovery drains synthetic keyframe frame")
     func runningDecodeErrorRecoveryDrainsSyntheticKeyframeFrame() async throws {
         let context = makeContext()
@@ -123,8 +214,8 @@ struct HostKeyframeRecoveryTests {
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
-    @Test("Receiver no-progress freeze feedback does not schedule keyframe")
-    func receiverNoProgressFreezeFeedbackDoesNotScheduleKeyframe() async {
+    @Test("Receiver no-progress freeze feedback with transport evidence schedules keyframe")
+    func receiverNoProgressFreezeFeedbackWithTransportEvidenceSchedulesKeyframe() async {
         let context = makeContext()
 
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -137,8 +228,8 @@ struct HostKeyframeRecoveryTests {
             )
         )
 
-        #expect(await context.pendingKeyframeReason == nil)
-        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
     @Test("Duplicate explicit keyframe requests are suppressed")
@@ -151,6 +242,106 @@ struct HostKeyframeRecoveryTests {
         #expect(firstAck.accepted)
         #expect(!secondAck.accepted)
         #expect(await context.softRecoveryCount == 1)
+    }
+
+    @Test("Receiver keyframe-starvation alone is not transport evidence")
+    func receiverKeyframeStarvationAloneIsNotTransportEvidence() async {
+        let context = makeContext()
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .keyframeRecovery,
+                recoveryCause: .freezeTimeout,
+                reliabilityCauses: [.keyframeStarvation]
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == nil)
+        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
+    @Test("Receiver startup-timeout feedback bypasses adaptive cooldown")
+    func receiverStartupTimeoutFeedbackBypassesAdaptiveCooldown() async {
+        let context = makeContext()
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .startup,
+                recoveryCause: .startupTimeout
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
+    @Test("Receiver post-resize feedback bypasses adaptive cooldown")
+    func receiverPostResizeFeedbackBypassesAdaptiveCooldown() async {
+        let context = makeContext()
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .postResizeAwaitingFirstFrame,
+                recoveryCause: .manual
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
+    @Test("AWDL receiver post-resize feedback bypasses in-flight geometry keyframe window")
+    func awdlReceiverPostResizeFeedbackBypassesInFlightGeometryKeyframeWindow() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.markKeyframeInFlight(frameNumber: 88)
+        #expect(await context.keyframeSendDeadline > CFAbsoluteTimeGetCurrent())
+
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .postResizeAwaitingFirstFrame,
+                recoveryCause: .manual
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(await context.keyframeInFlightFrameNumber == nil)
+        #expect(await context.keyframeSendDeadline == 0)
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
+    @Test("AWDL receiver post-resize feedback supersedes pending non-geometry keyframe")
+    func awdlReceiverPostResizeFeedbackSupersedesPendingNonGeometryKeyframe() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+
+        await context.queueKeyframeIfPossible(
+            reason: "Stale recovery",
+            checkInFlight: false,
+            urgent: true
+        )
+        #expect(await context.pendingKeyframeReason == "Stale recovery")
+
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .postResizeAwaitingFirstFrame,
+                recoveryCause: .manual
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
     @Test("Recovery keyframe waits for receiver acknowledgement before resuming P-frames")
@@ -223,6 +414,25 @@ struct HostKeyframeRecoveryTests {
         }
         let expectedCoolingFrames = await context.postEmergencyKeyframeCleanPFrameCount
         #expect(remaining == expectedCoolingFrames)
+    }
+
+    @Test("Dropped transport P-frame starts dependency chain repair")
+    func droppedTransportPFrameStartsDependencyChainRepair() async {
+        let context = makeContext(transportPathKind: .awdl, mediaPathProfile: .awdlRadio)
+        await context.configureRunningForRepairRetryTest()
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.handleFrameTransportCompleted(
+            frameTransportCompletion(frameNumber: 45, isKeyframe: false, didSend: false, now: now)
+        )
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingKeyframeReason == "Packet sender dependency drop")
+        let state = await context.frameChainState
+        guard case .emergencyKeyframePending = state else {
+            Issue.record("Expected dropped transport P-frame to queue emergency keyframe repair")
+            return
+        }
     }
 
     @Test("Emergency repair keyframe carries discontinuity reset")
@@ -385,6 +595,80 @@ struct HostKeyframeRecoveryTests {
         #expect(qualityCeilingAfterCut < startupConfiguredCeiling)
     }
 
+    @Test("AWDL runtime recovery keeps readable quality floor")
+    func awdlRuntimeRecoveryKeepsReadableQualityFloor() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 24_000_000,
+            runtimeQualityAdjustmentEnabled: true,
+            latencyMode: .balanced,
+            lowLatencyHighResolutionCompressionBoostEnabled: true,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        let now = CFAbsoluteTimeGetCurrent()
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 8_000_000,
+                maxFrameBytes: 64 * 1024,
+                maxWireBytes: 64 * 1024,
+                maxPacketCount: 64,
+                quality: 0.04,
+                qualityCeiling: 0.04,
+                keyframeQuality: 0.04,
+                sendDeadline: now + 1,
+                state: .severe,
+                reason: .clientRecovery
+            ),
+            now: now
+        )
+
+        #expect(await context.qualityCeiling >= 0.16)
+        #expect(await context.qualityFloor >= 0.16)
+        #expect(await context.keyframeQualityFloor >= 0.14)
+        #expect(await context.activeQuality >= 0.16)
+    }
+
+    @Test("AWDL derived quality keeps startup and retune above readability floor")
+    func awdlDerivedQualityKeepsStartupAndRetuneAboveReadabilityFloor() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 18_000_000,
+            runtimeQualityAdjustmentEnabled: true,
+            latencyMode: .balanced,
+            lowLatencyHighResolutionCompressionBoostEnabled: true,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        #expect(await context.encoderConfig.frameQuality >= 0.16)
+        #expect(await context.encoderConfig.keyframeQuality >= 0.14)
+        #expect(await context.configuredQualityCeiling >= 0.16)
+        #expect(await context.qualityCeiling >= 0.16)
+        #expect(await context.qualityFloor >= 0.16)
+        #expect(await context.keyframeQualityFloor >= 0.14)
+        #expect(await context.activeQuality >= 0.16)
+
+        await context.refreshRuntimeQualityTargets(
+            for: 4_800_000,
+            reason: HostAdaptivePFrameController.Reason.clientRecovery.rawValue
+        )
+
+        #expect(await context.encoderConfig.frameQuality >= 0.16)
+        #expect(await context.encoderConfig.keyframeQuality >= 0.14)
+        #expect(await context.qualityCeiling >= 0.16)
+        #expect(await context.qualityFloor >= 0.16)
+        #expect(await context.keyframeQualityFloor >= 0.14)
+        #expect(await context.activeQuality >= 0.16)
+    }
+
     @Test("Adaptive-off streams ignore receiver-feedback budget cuts")
     func adaptiveOffStreamsIgnoreReceiverFeedbackBudgetCuts() async {
         let context = makeContext(
@@ -420,6 +704,48 @@ struct HostKeyframeRecoveryTests {
         )
 
         #expect(await context.qualityCeiling == startupCeiling)
+    }
+
+    @Test("AWDL manual-quality streams keep quality but apply pacing safety")
+    func awdlManualQualityStreamsKeepQualityButApplyPacingSafety() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 300_000_000,
+            runtimeQualityAdjustmentEnabled: false,
+            latencyMode: .balanced,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        let startupQuality = await context.activeQuality
+        let startupCeiling = await context.qualityCeiling
+        let startupBitrate = await context.encoderSettings.bitrate
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 8_000_000,
+                maxFrameBytes: 64 * 1024,
+                maxWireBytes: 64 * 1024,
+                maxPacketCount: 64,
+                quality: 0.04,
+                qualityCeiling: 0.04,
+                keyframeQuality: 0.04,
+                sendDeadline: now + 1,
+                state: .severe,
+                reason: .receiverLoss
+            ),
+            now: now
+        )
+
+        #expect(await context.activeQuality == startupQuality)
+        #expect(await context.qualityCeiling == startupCeiling)
+        #expect(await context.encoderSettings.bitrate == startupBitrate)
+        #expect(await context.realtimeRuntimeQualityCeiling == nil)
+        #expect(await context.realtimeSenderPacingBitrateBps == 6_000_000)
     }
 
     @Test("Bitrate-capped 6K streams allow a lower runtime quality floor")
@@ -512,6 +838,43 @@ struct HostKeyframeRecoveryTests {
 
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 4)
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: 10.0) == 0)
+    }
+
+    @Test("AWDL recovery loss mode protects P-frames with bounded FEC")
+    func awdlRecoveryLossModeProtectsPFramesWithBoundedFEC() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let beforeLoss = CFAbsoluteTimeGetCurrent()
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, frameByteCount: 64 * 1024, now: beforeLoss) == 0)
+
+        await context.noteLossEvent(reason: "unit-test", enablePFrameFEC: true)
+        let lossTime = CFAbsoluteTimeGetCurrent()
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: lossTime) == 4)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, frameByteCount: 64 * 1024, now: lossTime) == 4)
+    }
+
+    @Test("AWDL receiver recovery policy protects P-frames before legacy loss mode")
+    func awdlReceiverRecoveryPolicyProtectsPFramesBeforeLegacyLossMode() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let feedback = receiverRecoveryFeedback(
+            recoveryState: .keyframeRecovery,
+            recoveryCause: .frameLoss
+        )
+
+        await context.applyReceiverMediaFeedback(feedback)
+
+        #expect(context.lossModeDeadline == 0)
+        #expect(context.lossModePFrameFECDeadline == 0)
+        #expect(context.resolvedFECBlockSize(
+            isKeyframe: false,
+            frameByteCount: 64 * 1024,
+            now: CFAbsoluteTimeGetCurrent()
+        ) == 4)
     }
 
     @Test("Startup keyframe stays separate from recovery loss mode")
@@ -609,8 +972,8 @@ struct HostKeyframeRecoveryTests {
             (startupParameters?.bytesPerSecond ?? 0) / 1_000.0 * StreamPacketSender.packetPacerBurstWindowMs)
     }
 
-    @Test("AWDL media pacing keeps bitrate target but narrows burst budget")
-    func awdlMediaPacingKeepsBitrateTargetButNarrowsBurstBudget() {
+    @Test("AWDL media pacing gives keyframes a bounded recovery budget and narrows P-frame bursts")
+    func awdlMediaPacingGivesKeyframesBoundedRecoveryBudgetAndNarrowsPFrameBursts() {
         let keyframeOverride = StreamContext.keyframePacingOverride(
             transportPathKind: .awdl,
             mediaPathProfile: .awdlRadio,
@@ -625,10 +988,38 @@ struct HostKeyframeRecoveryTests {
             maxPayloadSize: 1_200
         )
 
-        #expect(keyframeOverride.rateBps == 24_000_000)
+        #expect(keyframeOverride.rateBps == 32_000_000)
         #expect(keyframeOverride.burstBytes == 4_800)
         #expect(pFrameOverride?.rateBps == 24_000_000)
         #expect(pFrameOverride?.burstBytes == 2_400)
+
+        var controller = MirageAwdlMediaController()
+        let decision = controller.update(
+            with: MirageAwdlMediaController.Signal(
+                mediaPathProfile: .awdlRadio,
+                currentFrameRate: 60,
+                targetFrameRate: 60,
+                targetBitrateBps: 18_000_000
+            )
+        )
+        let decisionKeyframeOverride = StreamContext.keyframePacingOverride(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            targetBitrateBps: nil,
+            maxPayloadSize: 1_200,
+            awdlDecision: decision
+        )
+        let decisionPFrameOverride = StreamContext.mediaPacingOverride(
+            isKeyframe: false,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            targetBitrateBps: nil,
+            maxPayloadSize: 1_200,
+            awdlDecision: decision
+        )
+
+        #expect(decisionKeyframeOverride.rateBps == decision.keyframePacingBudgetBps)
+        #expect(decisionPFrameOverride?.rateBps == decision.hostPacingBudgetBps)
     }
 
     private func makeContext(

@@ -225,6 +225,7 @@ public final class MirageHostService {
     var clientsBySessionID: [UUID: ClientContext] = [:]
     var clientsByID: [UUID: ClientContext] = [:]
     var disconnectingClientIDs: Set<UUID> = []
+    var mediaPathObserverTasksBySessionID: [UUID: Task<Void, Never>] = [:]
     var peerIdentityByClientID: [UUID: LoomPeerIdentity] = [:]
     var singleClientReservationStartedAt: CFAbsoluteTime?
     var singleClientSessionID: UUID? {
@@ -257,6 +258,8 @@ public final class MirageHostService {
 
     /// Loom multiplexed video streams by stream ID.
     var loomVideoStreamsByStreamID: [StreamID: LoomMultiplexedStream] = [:]
+    /// Client-side route evidence captured at media stream startup.
+    var mediaPathClientEvidenceByStreamID: [StreamID: HostStreamMediaPathClientEvidence] = [:]
     /// Per-client media registration authentication context.
     var mediaSecurityByClientID: [UUID: MirageMediaSecurityContext] = [:]
     /// Per-client media payload encryption policy.
@@ -397,6 +400,22 @@ public final class MirageHostService {
     var desktopSharedDisplayTransitionDepth: Int = 0
     /// Host-authoritative generation for desktop presentation updates.
     var desktopPresentationGeneration: UInt64 = 0
+    /// Contract ID for the current host-accepted desktop geometry, when supplied by the client.
+    var desktopCurrentGeometryContractID: UUID?
+    /// Scene identity for the current host-accepted desktop geometry, when supplied by the client.
+    var desktopCurrentGeometrySceneIdentity: String?
+    /// Logical presentation size for the current host-accepted desktop geometry.
+    var desktopCurrentGeometryPresentationResolution: CGSize?
+    /// Display pixel size for the current host-accepted desktop geometry.
+    var desktopCurrentGeometryDisplayPixelResolution: CGSize?
+    /// Encoded pixel size for the current host-accepted desktop geometry.
+    var desktopCurrentGeometryEncodedPixelResolution: CGSize?
+    /// Display scale accepted for the current host-accepted desktop geometry.
+    var desktopCurrentGeometryDisplayScaleFactor: CGFloat?
+    /// Refresh target for the current host-accepted desktop geometry, when supplied by the client.
+    var desktopCurrentGeometryRefreshTargetHz: Int?
+    /// Active desktop media-pipeline restart caused by a media route policy-class change.
+    var desktopMediaPathPipelineRestartStreamID: StreamID?
     /// Debounced task refreshing desktop display topology.
     @ObservationIgnored nonisolated(unsafe) var desktopDisplayTopologyRefreshTask: Task<Void, Never>?
     /// Deferred cleanup task for virtual displays created during desktop startup.

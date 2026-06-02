@@ -31,10 +31,41 @@ struct HostFrameFreshnessPolicy: Sendable, Equatable {
 
     static func policy(
         for latencyMode: MirageStreamLatencyMode,
-        frameRate: Int
+        frameRate: Int,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        receiverPlayoutDelayTargetMs: Double? = nil
     ) -> HostFrameFreshnessPolicy {
         let safeFrameRate = max(1, frameRate)
         let frameMs = 1_000.0 / Double(safeFrameRate)
+
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            let playoutMs = min(
+                MirageAwdlMediaController.maximumPlayoutDelayMs,
+                max(
+                    MirageAwdlMediaController.minimumPlayoutDelayMs,
+                    receiverPlayoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs
+                )
+            )
+            return HostFrameFreshnessPolicy(
+                latencyMode: latencyMode,
+                frameRate: safeFrameRate,
+                inputActiveWindow: 0.50,
+                stillContentWindow: max(0.22, Double(4) / Double(safeFrameRate)),
+                inputMaxPresentationDepth: 2,
+                passiveMotionMaxPresentationDepth: 4,
+                stillMaxPresentationDepth: 6,
+                inputPresentationAgeCapMs: max(170.0, playoutMs + frameMs * 2.0),
+                passiveMotionPresentationAgeCapMs: max(280.0, playoutMs + frameMs * 6.0),
+                inputMaxUnstartedPFrames: 2,
+                passiveMotionMaxUnstartedPFrames: 3,
+                stillMaxUnstartedPFrames: 4,
+                inputQueuedPFrameAgeCapMs: max(120.0, playoutMs + frameMs),
+                passiveMotionQueuedPFrameAgeCapMs: max(220.0, playoutMs + frameMs * 3.0),
+                stillQueuedPFrameAgeCapMs: max(420.0, playoutMs + frameMs * 12.0),
+                stillQualityProbeInterval: Double(2) / Double(safeFrameRate),
+                stillQualityKeyframeInterval: 2.00
+            )
+        }
 
         switch latencyMode {
         case .lowestLatency:

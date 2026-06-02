@@ -59,7 +59,7 @@ extension StreamController {
         firstPresentedFrameRendererRecoveryAttemptCount = 0
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(true)
         if reason != "post-resize", mode == .startup {
-            await setClientRecoveryStatus(.startup, cause: .startupTimeout)
+            await setClientRecoveryStatus(.startup)
         }
 
         MirageLogger
@@ -254,12 +254,14 @@ extension StreamController {
             }
         }
 
-        let hasPackets = reassembler.hasReceivedPackets
+        let packetAcceptance = reassembler.packetAcceptanceSnapshot
         let awaitingKeyframe = reassembler.isAwaitingKeyframe
         let startupStallKind = if awaitingKeyframe {
             "reassembler awaiting keyframe"
-        } else if !hasPackets {
+        } else if !packetAcceptance.hasRawPackets {
             "no startup packets received"
+        } else if !packetAcceptance.hasAcceptedPackets {
+            "startup packets rejected"
         } else if latestSequence <= firstPresentedFrameBaselineSequence {
             "no presented frame progress"
         } else {
@@ -270,14 +272,14 @@ extension StreamController {
         firstPresentedFrameRecoveryAttemptCount &+= 1
 
         let recoveryAction = Self.bootstrapFirstFrameRecoveryAction(
-            hasPackets: hasPackets,
+            hasAcceptedPackets: packetAcceptance.hasAcceptedPackets,
             latestSequence: latestSequence,
             baselineSequence: firstPresentedFrameBaselineSequence
         )
 
-        let shouldEscalateToHardRecovery = elapsed >= hardRecoveryGrace &&
-            (firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold ||
-                recoveryAction == .hardRecovery)
+        let shouldEscalateToHardRecovery = recoveryAction == .hardRecovery ||
+            (elapsed >= hardRecoveryGrace &&
+                firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold)
         if shouldEscalateToHardRecovery {
             MirageLogger.client(
                 "Bootstrap first frame recovery escalating to hard reset for stream \(streamID) "
@@ -292,9 +294,18 @@ extension StreamController {
             return
         }
 
+        let transportProgress = if packetAcceptance.hasAcceptedPackets {
+            "accepted-packet-flow"
+        } else if packetAcceptance.hasRawPackets {
+            "rejected-packet-flow"
+        } else {
+            "no-packet-flow"
+        }
         MirageLogger.client(
             "Bootstrap first frame recovery: requesting keyframe for stream \(streamID) "
-                + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind), transport=healthy-packet-flow)"
+                + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind), transport=\(transportProgress), "
+                + "rawPackets=\(packetAcceptance.rawPacketsReceived), "
+                + "acceptedPackets=\(packetAcceptance.acceptedPacketsReceived))"
         )
         await requestKeyframeRecoveryIfPossible(reason: .startupKeyframeTimeout)
     }

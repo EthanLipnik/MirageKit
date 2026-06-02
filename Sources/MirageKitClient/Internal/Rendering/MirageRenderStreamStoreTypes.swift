@@ -117,6 +117,7 @@ struct RenderTelemetrySnapshot {
     let repeatedFrameCount: UInt64
 
     let displayTickNoFrameCount: UInt64
+    let pendingFrameNotReadyDisplayTickCount: UInt64
     let frameArrivedAfterNoFrameTickCount: UInt64
     let frameArrivalFallbackCount: UInt64
     let frameArrivalFallbackScheduledCount: UInt64
@@ -193,6 +194,7 @@ final class MirageRenderStreamState {
     var playoutDelayFrames: Int = MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .lowestLatency)
     var transportPathKind: MirageNetworkPathKind = .unknown
     var mediaPathProfile: MirageMediaPathProfile = .unknown
+    var awdlReceiverPlayoutDelayTargetMs: Double?
     var lastInteractionTime: CFAbsoluteTime = 0
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
     var presentationRecoveryHandlers: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
@@ -231,6 +233,7 @@ final class MirageRenderStreamState {
     var displayLayerNotReadyCountSinceLastSnapshot: UInt64 = 0
     var repeatedFrameCountSinceLastSnapshot: UInt64 = 0
     var displayTickNoFrameCountSinceLastSnapshot: UInt64 = 0
+    var pendingFrameNotReadyDisplayTickCountSinceLastSnapshot: UInt64 = 0
     var frameArrivedAfterNoFrameTickCountSinceLastSnapshot: UInt64 = 0
     var frameArrivalFallbackCountSinceLastSnapshot: UInt64 = 0
     var frameArrivalFallbackScheduledCountSinceLastSnapshot: UInt64 = 0
@@ -259,6 +262,7 @@ final class MirageRenderStreamState {
         lastDisplayTickTime = 0
         transportPathKind = .unknown
         mediaPathProfile = .unknown
+        awdlReceiverPlayoutDelayTargetMs = nil
         lastInteractionTime = 0
         decodeSamples.removeAll(keepingCapacity: false)
         decodeSampleStartIndex = 0
@@ -293,6 +297,7 @@ final class MirageRenderStreamState {
         displayLayerNotReadyCountSinceLastSnapshot = 0
         repeatedFrameCountSinceLastSnapshot = 0
         displayTickNoFrameCountSinceLastSnapshot = 0
+        pendingFrameNotReadyDisplayTickCountSinceLastSnapshot = 0
         frameArrivedAfterNoFrameTickCountSinceLastSnapshot = 0
         frameArrivalFallbackCountSinceLastSnapshot = 0
         frameArrivalFallbackScheduledCountSinceLastSnapshot = 0

@@ -21,8 +21,7 @@ extension StreamContext {
         mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
         sizePreset: MirageDisplaySizePreset,
         clientLogicalSize: CGSize,
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
+        sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
@@ -32,8 +31,7 @@ extension StreamContext {
             mirroredDisplaySnapshot: mirroredDisplaySnapshot,
             sizePreset: sizePreset,
             clientLogicalSize: clientLogicalSize,
-            sendPacket: sendPacket,
-            sendPacketReliably: sendPacketReliably,
+            sendPacketWithMetadata: sendPacketWithMetadata,
             onSendError: onSendError
         )
     }
@@ -42,8 +40,7 @@ extension StreamContext {
         displayWrapper: SCDisplayWrapper,
         resolution: CGSize? = nil,
         excludedWindows: [SCWindowWrapper] = [],
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
+        sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
@@ -60,8 +57,7 @@ extension StreamContext {
         lastTrafficLightMaskLogTime = 0
 
         await setupPacketSender(
-            sendPacket: sendPacket,
-            sendPacketReliably: sendPacketReliably,
+            sendPacketWithMetadata: sendPacketWithMetadata,
             onSendError: onSendError
         )
 

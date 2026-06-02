@@ -130,6 +130,11 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         }
         if presentationTier == .activeLive {
             guard hasPendingFrame() else { return }
+            if usesFixedRealtimeDisplayPolicy {
+                displayClockFramePending = true
+                displayClockNoFrameTickPending = false
+                return
+            }
             guard displayClockActive, lastDisplayTickWallTime > 0 else {
                 performPass(
                     referenceTime: referenceTime,
@@ -151,7 +156,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard !renderingSuspended else { return }
         if presentationTier == .activeLive {
             if !displayClockActive {
-                guard allowsFrameArrivalCatchUpFallback else { return }
+                guard allowsFrameArrivalCatchUpFallback() else { return }
                 schedulePass(referenceTime: referenceTime)
                 return
             }
@@ -165,7 +170,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     func requestRendererReadySubmission(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
         guard hasPendingFrame() else { return }
-        guard allowsFrameArrivalCatchUpFallback else { return }
+        guard allowsFrameArrivalCatchUpFallback() else { return }
         if presentationTier == .activeLive, displayClockActive {
             guard lastDisplayTickWallTime == 0 ||
                 referenceTimeProvider() - lastDisplayTickWallTime >= activeLiveFallbackThreshold else {
@@ -195,7 +200,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             if arrivedAfterNoFrameTick {
                 noteFrameArrivedAfterNoFrameTick(delayMs: max(0, referenceTimeProvider() - lastDisplayTickWallTime) * 1000)
             }
-            guard allowsFrameArrivalCatchUpFallback else { return }
+            guard allowsFrameArrivalCatchUpFallback(arrivedAfterNoFrameTick: arrivedAfterNoFrameTick) else { return }
             scheduleActiveLiveFallbackIfNeeded(
                 referenceTime: referenceTime,
                 bypassFreshTickGuard: arrivedAfterNoFrameTick
@@ -213,11 +218,16 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         return timing.latencyMode == .lowestLatency
     }
 
-    private var allowsFrameArrivalCatchUpFallback: Bool {
+    private var usesFixedRealtimeDisplayPolicy: Bool {
+        guard let streamID else { return false }
+        return MirageRenderStreamStore.shared.presentationTiming(for: streamID).usesFixedRealtimeDisplayPolicy
+    }
+
+    private func allowsFrameArrivalCatchUpFallback(arrivedAfterNoFrameTick: Bool = false) -> Bool {
         guard let streamID else { return false }
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         if timing.usesFixedRealtimeDisplayPolicy {
-            return !displayClockActive || lastDisplayTickWallTime == 0
+            return false
         }
         switch timing.latencyMode {
         case .lowestLatency, .balanced:
@@ -309,6 +319,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             displayClockFramePending = false
             displayClockNoFrameTickPending = false
         } else if isDisplayTick, submissionResult == .pendingFrameNotReady {
+            MirageRenderStreamStore.shared.notePendingFrameNotReadyDisplayTick(for: streamID)
             displayClockFramePending = true
             displayClockNoFrameTickPending = false
         } else if isDisplayTick, submissionResult == .noPendingFrame {

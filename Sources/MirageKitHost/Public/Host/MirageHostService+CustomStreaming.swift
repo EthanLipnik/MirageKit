@@ -123,6 +123,12 @@ extension MirageHostService {
 
         let streamID = nextStreamID
         nextStreamID += 1
+        var retainMediaPathClientEvidence = false
+        defer {
+            if !retainMediaPathClientEvidence {
+                mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
+            }
+        }
 
         var config = resolveEncoderConfiguration(
             keyFrameInterval: request.keyFrameInterval,
@@ -136,6 +142,7 @@ extension MirageHostService {
         config = config.withInternalOverrides(pixelFormat: .bgra8)
 
         let mediaPathPolicy = effectiveMediaPathPolicy(for: request, clientContext: clientContext)
+        mediaPathClientEvidenceByStreamID[streamID] = HostStreamMediaPathClientEvidence(policy: mediaPathPolicy)
         let context = StreamContext(
             streamID: streamID,
             windowID: 0,
@@ -161,7 +168,7 @@ extension MirageHostService {
         )
         MirageLogger.host(
             "event=media_path_policy phase=custom_start stream=\(streamID) " +
-                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=unreliableQueued " +
                 "maxPacket=\(context.mediaMaxPacketSize)"
         )
         streamsByID[streamID] = context
@@ -177,15 +184,30 @@ extension MirageHostService {
             throw error
         }
 
-        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
-        await context.setMediaSendProfile(mediaSendProfile)
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile(
+            resolvedMediaPathProfile: mediaPathPolicy.mediaPathProfile,
+            streamID: streamID,
+            phase: "custom_transport"
+        )
+        let mediaSendProfileReference = await context.setMediaSendProfile(
+            mediaSendProfile,
+            diagnosticsProvider: { profile in
+                await videoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+            }
+        )
         MirageLogger.host(
             "event=media_path_policy phase=custom_transport stream=\(streamID) " +
-                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=unreliableQueued " +
                 "sendProfile=\(mediaSendProfile.rawValue) maxPacket=\(context.mediaMaxPacketSize)"
         )
-        let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
-            videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
+        let sendPacketWithMetadata: StreamPacketSender.PacketMetadataSendHandler = { packetData, metadata, onComplete in
+            let activeMediaSendProfile = mediaSendProfileReference.read { $0 }
+            videoStream.sendUnreliableQueued(
+                packetData,
+                profile: activeMediaSendProfile,
+                options: metadata.loomQueuedUnreliableSendOptions,
+                onComplete: onComplete
+            )
         }
         let onSendError: @Sendable (Error) -> Void = { [weak self] error in
             guard let self else { return }
@@ -204,7 +226,7 @@ extension MirageHostService {
             }
             frameSink = try await context.startCustomFrameStream(
                 pixelSize: CGSize(width: request.displayWidth, height: request.displayHeight),
-                sendPacket: sendPacket,
+                sendPacketWithMetadata: sendPacketWithMetadata,
                 onSendError: onSendError
             )
         } catch {
@@ -263,6 +285,7 @@ extension MirageHostService {
             )
             try await clientContext.send(.customStreamStarted, content: started)
             MirageLogger.host("Custom stream started kind=\(kind) stream=\(streamID)")
+            retainMediaPathClientEvidence = true
         } catch {
             cancelPendingStartupAttempt(streamID: streamID)
             await stopCustomStream(streamID: streamID, reason: .error, notifyClient: false)
@@ -285,6 +308,7 @@ extension MirageHostService {
         if let context = streamsByID.removeValue(forKey: streamID) {
             await context.stop()
         }
+        mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
 
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
             closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
@@ -317,6 +341,7 @@ extension MirageHostService {
     ) async {
         await context.stop()
         streamsByID.removeValue(forKey: streamID)
+        mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
             closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
         }

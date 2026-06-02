@@ -6,12 +6,20 @@
 //
 
 import CoreFoundation
+import Loom
 
 #if os(macOS)
 
 extension StreamPacketSender {
     /// Current telemetry counters without resetting the reporting window.
     var telemetrySnapshot: TelemetrySnapshot {
+        telemetrySnapshot(queuedUnreliableDiagnostics: nil)
+    }
+
+    /// Current telemetry counters with optional Loom queued-unreliable diagnostics.
+    func telemetrySnapshot(
+        queuedUnreliableDiagnostics: LoomQueuedUnreliableSendDiagnostics?
+    ) -> TelemetrySnapshot {
         let queueSnapshot = queueLock.withLock {
             let freshness = freshnessSnapshotLocked(now: CFAbsoluteTimeGetCurrent())
             return (
@@ -45,13 +53,53 @@ extension StreamPacketSender {
             senderLocalDeadlineDrops: queueSnapshot.senderLocalDeadlineDrops,
             lateNonKeyframeSends: lateNonKeyframeSendCount,
             generationAbortDrops: generationAbortDropCount + queueSnapshot.generationDrops,
-            nonKeyframeHoldDrops: nonKeyframeHoldDropCount + queueSnapshot.nonKeyframeHoldDrops
+            nonKeyframeHoldDrops: nonKeyframeHoldDropCount + queueSnapshot.nonKeyframeHoldDrops,
+            queuedUnreliableDeadlineExpiredDrops: queuedUnreliableDropCounts.deadlineExpired,
+            queuedUnreliableQueueLimitDrops: queuedUnreliableDropCounts.queueLimit,
+            queuedUnreliableSupersededDrops: queuedUnreliableDropCounts.superseded,
+            queuedUnreliableUnsupportedTransportDrops: queuedUnreliableDropCounts.unsupportedTransport,
+            queuedUnreliableClosedDrops: queuedUnreliableDropCounts.closed,
+            queuedUnreliablePendingPackets: queuedUnreliableDiagnostics?.pendingPackets,
+            queuedUnreliableOutstandingPackets: queuedUnreliableDiagnostics?.outstandingPackets,
+            queuedUnreliableQueuedBytes: queuedUnreliableDiagnostics?.queuedBytes,
+            queuedUnreliablePendingPacketMax: queuedUnreliableDiagnostics?.pendingPacketMax,
+            queuedUnreliableOutstandingPacketMax: queuedUnreliableDiagnostics?.outstandingPacketMax,
+            queuedUnreliableQueuedBytesMax: queuedUnreliableDiagnostics?.queuedBytesMax,
+            queuedUnreliableEnqueuedCount: queuedUnreliableDiagnostics?.enqueuedCount,
+            queuedUnreliableSentCount: queuedUnreliableDiagnostics?.sentCount,
+            queuedUnreliableCompletedCount: queuedUnreliableDiagnostics?.completedCount,
+            queuedUnreliableDroppedCount: queuedUnreliableDiagnostics?.droppedCount,
+            queuedUnreliableErrorCount: queuedUnreliableDiagnostics?.errorCount,
+            queuedUnreliableQueueDwellP50Ms: queuedUnreliableDiagnostics?.queueDwellP50Ms,
+            queuedUnreliableQueueDwellP95Ms: queuedUnreliableDiagnostics?.queueDwellP95Ms,
+            queuedUnreliableQueueDwellP99Ms: queuedUnreliableDiagnostics?.queueDwellP99Ms,
+            queuedUnreliableSendGapP50Ms: queuedUnreliableDiagnostics?.sendGapP50Ms,
+            queuedUnreliableSendGapP95Ms: queuedUnreliableDiagnostics?.sendGapP95Ms,
+            queuedUnreliableSendGapP99Ms: queuedUnreliableDiagnostics?.sendGapP99Ms,
+            queuedUnreliableContentProcessedP50Ms: queuedUnreliableDiagnostics?.contentProcessedP50Ms,
+            queuedUnreliableContentProcessedP95Ms: queuedUnreliableDiagnostics?.contentProcessedP95Ms,
+            queuedUnreliableContentProcessedP99Ms: queuedUnreliableDiagnostics?.contentProcessedP99Ms
         )
     }
 
     /// Returns current telemetry and resets per-window counters.
     func consumeTelemetrySnapshot() -> TelemetrySnapshot {
         let snapshot = telemetrySnapshot
+        resetTelemetryWindow()
+        return snapshot
+    }
+
+    /// Returns current telemetry with transport-owned queued-unreliable diagnostics and resets per-window counters.
+    func consumeTelemetrySnapshot(
+        queuedUnreliableProfile: LoomQueuedUnreliableSendProfile?
+    ) async -> TelemetrySnapshot {
+        let queuedDiagnostics: LoomQueuedUnreliableSendDiagnostics? = if let queuedUnreliableProfile,
+                                                                        let queuedUnreliableDiagnosticsProvider {
+            await queuedUnreliableDiagnosticsProvider(queuedUnreliableProfile)
+        } else {
+            nil
+        }
+        let snapshot = telemetrySnapshot(queuedUnreliableDiagnostics: queuedDiagnostics)
         resetTelemetryWindow()
         return snapshot
     }
@@ -71,6 +119,7 @@ extension StreamPacketSender {
         lateNonKeyframeSendCount = 0
         generationAbortDropCount = 0
         nonKeyframeHoldDropCount = 0
+        queuedUnreliableDropCounts = QueuedUnreliableDropCounts()
         queueLock.withLock {
             queuedStalePacketDropCount = 0
             queuedSenderLocalDeadlineDropCount = 0
@@ -127,6 +176,12 @@ extension StreamPacketSender {
         if !item.isKeyframe {
             nonKeyframeSendCompletionMaxMs = max(nonKeyframeSendCompletionMaxMs, completionMs)
         }
+    }
+
+    /// Records Loom queued-unreliable drop reasons reported during frame transport.
+    func recordQueuedUnreliableDrops(_ counts: QueuedUnreliableDropCounts) {
+        guard !counts.isEmpty else { return }
+        queuedUnreliableDropCounts.merge(counts)
     }
 }
 

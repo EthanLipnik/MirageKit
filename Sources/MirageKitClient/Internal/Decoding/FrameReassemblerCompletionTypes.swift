@@ -30,6 +30,8 @@ extension FrameReassembler {
         let isAwaitingKeyframe: Bool
         let awaitingSince: CFAbsoluteTime
         let latestPacketReceivedTime: CFAbsoluteTime
+        let latestAcceptedPacketReceivedTime: CFAbsoluteTime
+        let packetAcceptanceSnapshot: PacketAcceptanceSnapshot
         let latestPendingKeyframeProgress: PendingKeyframeProgress?
         let transportPathKind: MirageNetworkPathKind
         let mediaPathProfile: MirageMediaPathProfile
@@ -39,6 +41,42 @@ extension FrameReassembler {
         let incompleteFrameNoProgressTimeouts: UInt64
         let incompleteFrameLifetimeTimeouts: UInt64
         let forwardGapTimeouts: UInt64
+
+        init(
+            isAwaitingKeyframe: Bool,
+            awaitingSince: CFAbsoluteTime,
+            latestPacketReceivedTime: CFAbsoluteTime,
+            latestAcceptedPacketReceivedTime: CFAbsoluteTime? = nil,
+            packetAcceptanceSnapshot: PacketAcceptanceSnapshot? = nil,
+            latestPendingKeyframeProgress: PendingKeyframeProgress?,
+            transportPathKind: MirageNetworkPathKind,
+            mediaPathProfile: MirageMediaPathProfile,
+            pendingFrameCount: Int,
+            pendingKeyframeCount: Int,
+            incompleteFrameTimeouts: UInt64,
+            incompleteFrameNoProgressTimeouts: UInt64,
+            incompleteFrameLifetimeTimeouts: UInt64,
+            forwardGapTimeouts: UInt64
+        ) {
+            let inferredPacketCount: UInt64 = latestPacketReceivedTime > 0 ? 1 : 0
+            self.isAwaitingKeyframe = isAwaitingKeyframe
+            self.awaitingSince = awaitingSince
+            self.latestPacketReceivedTime = latestPacketReceivedTime
+            self.latestAcceptedPacketReceivedTime = latestAcceptedPacketReceivedTime ?? latestPacketReceivedTime
+            self.packetAcceptanceSnapshot = packetAcceptanceSnapshot ?? PacketAcceptanceSnapshot(
+                rawPacketsReceived: inferredPacketCount,
+                acceptedPacketsReceived: inferredPacketCount
+            )
+            self.latestPendingKeyframeProgress = latestPendingKeyframeProgress
+            self.transportPathKind = transportPathKind
+            self.mediaPathProfile = mediaPathProfile
+            self.pendingFrameCount = pendingFrameCount
+            self.pendingKeyframeCount = pendingKeyframeCount
+            self.incompleteFrameTimeouts = incompleteFrameTimeouts
+            self.incompleteFrameNoProgressTimeouts = incompleteFrameNoProgressTimeouts
+            self.incompleteFrameLifetimeTimeouts = incompleteFrameLifetimeTimeouts
+            self.forwardGapTimeouts = forwardGapTimeouts
+        }
 
         var awaitingDuration: CFAbsoluteTime {
             awaitingDuration(now: CFAbsoluteTimeGetCurrent())

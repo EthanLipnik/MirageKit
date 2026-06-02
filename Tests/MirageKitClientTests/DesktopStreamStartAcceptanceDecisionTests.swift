@@ -15,6 +15,34 @@ import Testing
 
 @Suite("Desktop Stream Start Acceptance Decision")
 struct DesktopStreamStartAcceptanceDecisionTests {
+    @Test("Same-stream route replacement token advance is accepted as in-place reset")
+    func sameStreamRouteReplacementTokenAdvanceIsAcceptedAsInPlaceReset() {
+        let decision = desktopStreamStartAcceptanceDecision(
+            streamID: 42,
+            previousStreamID: 42,
+            hasController: true,
+            requestStartPending: false,
+            previousDimensionToken: 7,
+            receivedDimensionToken: 8
+        )
+
+        #expect(decision == .acceptResizeAdvance)
+    }
+
+    @Test("Same-stream route replacement duplicate token is rejected")
+    func sameStreamRouteReplacementDuplicateTokenIsRejected() {
+        let decision = desktopStreamStartAcceptanceDecision(
+            streamID: 42,
+            previousStreamID: 42,
+            hasController: true,
+            requestStartPending: false,
+            previousDimensionToken: 7,
+            receivedDimensionToken: 7
+        )
+
+        #expect(decision == .ignoreDuplicateToken)
+    }
+
     @MainActor
     @Test("Desktop stop clears tracked token for stream")
     func desktopStopClearsTrackedToken() throws {
@@ -86,6 +114,145 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         #expect(service.desktopStreamResolution == initialResolution)
         #expect(service.desktopDimensionTokenByStream[streamID] == 4)
         #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
+        #expect(callbackCount == 0)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
+    @Test("Stale desktop resize geometry contract does not mutate active transition state")
+    func staleDesktopResizeGeometryContractDoesNotMutateActiveTransitionState() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 18
+        let initialResolution = CGSize(width: 1984, height: 2192)
+        let activeTransitionID = UUID()
+        let activeContractID = UUID()
+        service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
+        service.desktopStreamResolution = initialResolution
+        service.desktopDimensionTokenByStream[streamID] = 4
+        service.controllersByStream[streamID] = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: activeTransitionID,
+            target: DesktopResizeCoordinator.RequestGeometry(
+                contractID: activeContractID,
+                logicalResolution: CGSize(width: 992, height: 1096),
+                displayScaleFactor: 2.0,
+                requestedStreamScale: 1.0,
+                encoderMaxWidth: 2048,
+                encoderMaxHeight: 1536
+            )
+        )
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let staleStarted = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: service.desktopSessionID!,
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 5,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: activeTransitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopGeometryContractID: UUID()
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: staleStarted))
+
+        #expect(service.desktopStreamResolution == initialResolution)
+        #expect(service.desktopDimensionTokenByStream[streamID] == 4)
+        #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
+        #expect(service.desktopResizeCoordinator.activeTransition?.target.contractID == activeContractID)
+        #expect(callbackCount == 0)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
+    @Test("Desktop resize commit with reused contract ID but wrong pixels is ignored")
+    func desktopResizeCommitWithReusedContractIDButWrongPixelsIsIgnored() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 19
+        let initialResolution = CGSize(width: 1984, height: 2192)
+        let activeTransitionID = UUID()
+        let activeContractID = UUID()
+        let target = DesktopResizeCoordinator.RequestGeometry(
+            contractID: activeContractID,
+            sceneIdentity: "scene-a",
+            refreshTargetHz: 45,
+            logicalResolution: CGSize(width: 1512, height: 982),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2360,
+            encoderMaxHeight: 1640
+        )
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: target.logicalResolution,
+            displayScaleFactor: target.displayScaleFactor,
+            requestedStreamScale: target.requestedStreamScale,
+            encoderMaxWidth: target.encoderMaxWidth,
+            encoderMaxHeight: target.encoderMaxHeight
+        )
+        service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
+        service.desktopStreamResolution = initialResolution
+        service.desktopDimensionTokenByStream[streamID] = 4
+        service.controllersByStream[streamID] = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: activeTransitionID,
+            target: target
+        )
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let staleStarted = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: service.desktopSessionID!,
+            width: Int(geometry.displayPixelSize.width),
+            height: Int(geometry.displayPixelSize.height),
+            frameRate: 45,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 5,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: activeTransitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: Int(target.logicalResolution.width),
+            presentationHeight: Int(target.logicalResolution.height),
+            desktopGeometryContractID: activeContractID,
+            desktopGeometrySceneIdentity: "scene-a",
+            desktopGeometryDisplayPixelWidth: 2048,
+            desktopGeometryDisplayPixelHeight: 1536,
+            desktopGeometryEncodedPixelWidth: Int(geometry.encodedPixelSize.width),
+            desktopGeometryEncodedPixelHeight: Int(geometry.encodedPixelSize.height),
+            desktopGeometryRefreshTargetHz: 45
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: staleStarted))
+
+        #expect(service.desktopStreamResolution == initialResolution)
+        #expect(service.desktopDimensionTokenByStream[streamID] == 4)
+        #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
+        #expect(service.desktopResizeCoordinator.activeTransition?.target.contractID == activeContractID)
         #expect(callbackCount == 0)
 
         if let controller = service.controllersByStream[streamID] {
@@ -189,6 +356,52 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
+    @Test("Newer generation without contract is ignored during different active transition")
+    func newerGenerationWithoutContractIgnoredDuringDifferentActiveTransition() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 24
+        let desktopSessionID = UUID()
+        let activeTransitionID = UUID()
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.desktopPresentationGenerationBySessionID[desktopSessionID] = 4
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: activeTransitionID,
+            target: DesktopResizeCoordinator.RequestGeometry(
+                logicalResolution: CGSize(width: 1512, height: 982),
+                displayScaleFactor: 2.0,
+                requestedStreamScale: 1.0,
+                encoderMaxWidth: 2360,
+                encoderMaxHeight: 1640
+            )
+        )
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: UUID(),
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopPresentationGeneration: 5
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 1984, height: 2192))
+        #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 4)
+        #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
+    }
+
+    @MainActor
     @Test("Newer generation is accepted after local resize UI timeout clears transition")
     func newerGenerationAcceptedAfterLocalTimeoutClearsTransition() async throws {
         let service = MirageClientService()
@@ -224,6 +437,125 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
         #expect(service.desktopDimensionTokenByStream[streamID] == 8)
         #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 2)
+
+        await controller.stop()
+    }
+
+    @MainActor
+    @Test("Generation resize commit with matching geometry contract is accepted without active transition")
+    func generationResizeCommitWithMatchingGeometryContractAcceptedWithoutActiveTransition() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 31
+        let desktopSessionID = UUID()
+        let contractID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        let target = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            refreshTargetHz: 45,
+            logicalResolution: CGSize(width: 1512, height: 982),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2360,
+            encoderMaxHeight: 1640
+        )
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: target.logicalResolution,
+            displayScaleFactor: target.displayScaleFactor,
+            requestedStreamScale: target.requestedStreamScale,
+            encoderMaxWidth: target.encoderMaxWidth,
+            encoderMaxHeight: target.encoderMaxHeight
+        )
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.desktopPresentationGenerationBySessionID[desktopSessionID] = 1
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.lastSentTarget = target
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: Int(geometry.displayPixelSize.width),
+            height: Int(geometry.displayPixelSize.height),
+            frameRate: 45,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: UUID(),
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopPresentationGeneration: 2,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: Int(target.logicalResolution.width),
+            presentationHeight: Int(target.logicalResolution.height),
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "scene-a",
+            desktopGeometryDisplayPixelWidth: Int(geometry.displayPixelSize.width),
+            desktopGeometryDisplayPixelHeight: Int(geometry.displayPixelSize.height),
+            desktopGeometryEncodedPixelWidth: Int(geometry.encodedPixelSize.width),
+            desktopGeometryEncodedPixelHeight: Int(geometry.encodedPixelSize.height),
+            desktopGeometryRefreshTargetHz: 45
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == geometry.displayPixelSize)
+        #expect(service.desktopDimensionTokenByStream[streamID] == 8)
+        #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 2)
+
+        await controller.stop()
+    }
+
+    @MainActor
+    @Test("Generation resize commit with stale geometry contract is ignored without active transition")
+    func generationResizeCommitWithStaleGeometryContractIgnoredWithoutActiveTransition() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 32
+        let desktopSessionID = UUID()
+        let contractID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.desktopPresentationGenerationBySessionID[desktopSessionID] = 1
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.lastSentTarget = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            refreshTargetHz: 45,
+            logicalResolution: CGSize(width: 1512, height: 982),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2360,
+            encoderMaxHeight: 1640
+        )
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 45,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: UUID(),
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopPresentationGeneration: 2,
+            desktopGeometryContractID: UUID(),
+            desktopGeometrySceneIdentity: "scene-a",
+            desktopGeometryRefreshTargetHz: 45
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 1984, height: 2192))
+        #expect(service.desktopDimensionTokenByStream[streamID] == nil)
+        #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 1)
 
         await controller.stop()
     }
@@ -313,6 +645,360 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
         #expect(!service.desktopResizeCoordinator.isResizing)
         #expect(!service.desktopResizeCoordinator.maskActive)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
+    @Test("Stale desktop startup geometry contract is ignored")
+    func staleDesktopStartupGeometryContractIsIgnored() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 32
+        let expectedContractID = UUID()
+        service.desktopResizeCoordinator.lastSentTarget = DesktopResizeCoordinator.RequestGeometry(
+            contractID: expectedContractID,
+            logicalResolution: CGSize(width: 1366, height: 1024),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2732,
+            encoderMaxHeight: 2048
+        )
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: UUID(),
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            presentationWidth: 1366,
+            presentationHeight: 1024,
+            desktopGeometryContractID: UUID()
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
+        #expect(service.desktopStreamRequestStartTime > 0)
+        #expect(service.desktopResizeCoordinator.lastSentTarget?.contractID == expectedContractID)
+        #expect(service.controllersByStream[streamID] == nil)
+        #expect(callbackCount == 0)
+    }
+
+    @MainActor
+    @Test("AWDL desktop startup without contract rejects size mismatch")
+    func awdlDesktopStartupWithoutContractRejectsSizeMismatch() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 36
+        let expectedContractID = UUID()
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            contractID: expectedContractID,
+            logicalResolution: CGSize(width: 1366, height: 1024),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2732,
+            encoderMaxHeight: 2048
+        )
+        service.handleControlPathUpdate(Self.awdlRadioSnapshot())
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: UUID(),
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            presentationWidth: 1024,
+            presentationHeight: 768
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
+        #expect(service.desktopStreamRequestStartTime > 0)
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+        #expect(callbackCount == 0)
+    }
+
+    @MainActor
+    @Test("AWDL desktop startup without contract accepts matching legacy geometry")
+    func awdlDesktopStartupWithoutContractAcceptsMatchingLegacyGeometry() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 37
+        let desktopSessionID = UUID()
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1024, height: 768),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        service.handleControlPathUpdate(Self.awdlRadioSnapshot())
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: 1024,
+            presentationHeight: 768
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == streamID)
+        #expect(service.desktopSessionID == desktopSessionID)
+        #expect(service.desktopStreamResolution == CGSize(width: 2048, height: 1536))
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+        #expect(service.desktopStreamRequestStartTime == 0)
+        #expect(callbackCount == 1)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
+    @Test("Negotiated AWDL desktop startup without contract rejects matching legacy geometry")
+    func negotiatedAwdlDesktopStartupWithoutContractRejectsMatchingLegacyGeometry() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 38
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1024, height: 768),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        service.negotiatedSessionFeatures = [MiragePeerAdvertisementMetadata.desktopGeometryContractFeature]
+        service.handleControlPathUpdate(Self.awdlRadioSnapshot())
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: UUID(),
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: 1024,
+            presentationHeight: 768
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
+        #expect(service.desktopStreamResolution == nil)
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+        #expect(service.desktopStreamRequestStartTime > 0)
+        #expect(callbackCount == 0)
+    }
+
+    @MainActor
+    @Test("Contract-bearing desktop startup without expected target is ignored")
+    func contractBearingDesktopStartupWithoutExpectedTargetIsIgnored() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 33
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: UUID(),
+            width: 2732,
+            height: 2048,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: 1024,
+            presentationHeight: 768,
+            desktopGeometryContractID: UUID(),
+            desktopGeometryDisplayPixelWidth: 2048,
+            desktopGeometryDisplayPixelHeight: 1536,
+            desktopGeometryEncodedPixelWidth: 2048,
+            desktopGeometryEncodedPixelHeight: 1536,
+            desktopGeometryRefreshTargetHz: 60
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
+        #expect(service.desktopStreamRequestStartTime > 0)
+        #expect(callbackCount == 0)
+    }
+
+    @MainActor
+    @Test("Desktop startup geometry contract rejects accepted size mismatch")
+    func desktopStartupGeometryContractRejectsAcceptedSizeMismatch() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 34
+        let contractID = UUID()
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            refreshTargetHz: 60,
+            logicalResolution: CGSize(width: 1024, height: 768),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: UUID(),
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: 1024,
+            presentationHeight: 768,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "scene-a",
+            desktopGeometryDisplayPixelWidth: 2048,
+            desktopGeometryDisplayPixelHeight: 1536,
+            desktopGeometryEncodedPixelWidth: 1536,
+            desktopGeometryEncodedPixelHeight: 1152,
+            desktopGeometryRefreshTargetHz: 60
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
+        #expect(service.desktopStreamRequestStartTime > 0)
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+        #expect(callbackCount == 0)
+    }
+
+    @MainActor
+    @Test("Matching desktop startup geometry contract is accepted")
+    func matchingDesktopStartupGeometryContractIsAccepted() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 35
+        let contractID = UUID()
+        let desktopSessionID = UUID()
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            refreshTargetHz: 60,
+            logicalResolution: CGSize(width: 1024, height: 768),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2048,
+            height: 1536,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: 1024,
+            presentationHeight: 768,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "scene-a",
+            desktopGeometryDisplayPixelWidth: 2048,
+            desktopGeometryDisplayPixelHeight: 1536,
+            desktopGeometryEncodedPixelWidth: 2048,
+            desktopGeometryEncodedPixelHeight: 1536,
+            desktopGeometryRefreshTargetHz: 60
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamID == streamID)
+        #expect(service.desktopSessionID == desktopSessionID)
+        #expect(service.desktopStreamResolution == CGSize(width: 2048, height: 1536))
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+        #expect(service.desktopStreamRequestStartTime == 0)
+        #expect(callbackCount == 1)
 
         if let controller = service.controllersByStream[streamID] {
             await controller.stop()
@@ -523,6 +1209,22 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         if let controller = service.controllersByStream[streamID] {
             await controller.stop()
         }
+    }
+
+    private static func awdlRadioSnapshot() -> MirageNetworkPathSnapshot {
+        MirageNetworkPathClassifier.classify(
+            interfaceNames: ["awdl0"],
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
     }
 }
 #endif

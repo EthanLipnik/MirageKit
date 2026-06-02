@@ -37,11 +37,12 @@ public extension MirageClientService {
             reason: "interactive app stream startup",
             notifyHost: true
         )
+        _ = await refreshCurrentControlPathKind()
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
         var request = StartStreamMessage(
             windowID: window.id,
-            targetFrameRate: screenMaxRefreshRate
+            targetFrameRate: effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
         )
         request.mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
         let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(displayResolution ?? mainDisplayResolution)
@@ -63,6 +64,21 @@ public extension MirageClientService {
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
         applyEncoderOverrides(overrides, to: &request)
+        if currentMediaPathUsesAwdlRadioPolicy {
+            let requestedLatency = request.latencyMode
+            request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
+            request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)
+            request.lowLatencyHighResolutionCompressionBoost =
+                effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                    request.lowLatencyHighResolutionCompressionBoost
+                )
+            if requestedLatency != request.latencyMode {
+                MirageLogger.client(
+                    "AWDL media policy overriding requested window latency " +
+                        "\(requestedLatency?.rawValue ?? "default") -> \(request.latencyMode?.rawValue ?? "default")"
+                )
+            }
+        }
         if let colorDepth = request.colorDepth {
             pendingRequestedColorDepthByWindowID[window.id] = colorDepth
         } else {

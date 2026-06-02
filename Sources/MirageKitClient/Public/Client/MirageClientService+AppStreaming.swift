@@ -150,6 +150,7 @@ public extension MirageClientService {
     )
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        _ = await refreshCurrentControlPathKind()
 
         guard let displayResolution else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
@@ -158,7 +159,7 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
         }
-        let targetFrameRate = screenMaxRefreshRate
+        let targetFrameRate = effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
         let startupRequestID = UUID()
         let appSessionID = UUID()
         pendingStreamSetupRequestID = startupRequestID
@@ -225,7 +226,10 @@ public extension MirageClientService {
             latencyMode: encoderRequest.latencyMode,
             hostBufferingPolicy: encoderRequest.hostBufferingPolicy,
             allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: encoderRequest.lowLatencyHighResolutionCompressionBoost,
+            lowLatencyHighResolutionCompressionBoost:
+                effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                    encoderRequest.lowLatencyHighResolutionCompressionBoost
+                ),
             disableResolutionCap: encoderRequest.disableResolutionCap,
             audioConfiguration: encoderRequest.audioConfiguration,
             maxConcurrentVisibleWindows: encoderRequest.maxConcurrentVisibleWindows,
@@ -233,7 +237,7 @@ public extension MirageClientService {
             sizePreset: encoderRequest.sizePreset,
             mediaMaxPacketSize: encoderRequest.mediaMaxPacketSize
         )
-        if controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true {
+        if currentMediaPathUsesAwdlRadioPolicy {
             let requestedLatency = request.latencyMode
             request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
             request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)

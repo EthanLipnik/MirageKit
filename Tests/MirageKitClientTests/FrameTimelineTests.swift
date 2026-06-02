@@ -62,11 +62,14 @@ struct FrameTimelineTests {
         )
 
         let accepted = MirageRenderStreamStore.shared.latestAcceptedFrameTimeline(for: streamID)
+        let rendered = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
         #expect(accepted?.streamID == streamID)
         #expect(accepted?.frameNumber == 42)
         #expect(accepted?.dependencyEpoch == DependencyEpoch(3))
         #expect(accepted?.renderEnqueueTime != nil)
         #expect(accepted?.displayPresentationAcceptedTime != nil)
+        #expect(rendered.renderedFrameNumber == 42)
+        #expect(rendered.renderedFrameSubmittedTime > 0)
 
         MirageRenderStreamStore.shared.clear(for: streamID)
     }

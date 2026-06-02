@@ -6,6 +6,7 @@
 //
 
 #if os(macOS)
+import CoreFoundation
 import CoreGraphics
 @testable import MirageKit
 @testable import MirageKitHost
@@ -260,6 +261,143 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.realtimeEncoderRateHintBps == nil)
     }
 
+    @Test("AWDL encoder throughput uses short backlog threshold")
+    func awdlEncoderThroughputUsesShortBacklogThreshold() async {
+        let context = makeContext(
+            bitrate: 32_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setEncodeBacklogForCatchUpTest(70)
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 60,
+            encodeAttemptFPS: 60,
+            encodedFPS: 30,
+            at: 10
+        )
+
+        #expect(context.currentFrameRate == 45)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+    }
+
+    @Test("AWDL encoder throughput demotes FPS and resolution before quality")
+    func awdlEncoderThroughputDemotesFPSAndResolutionBeforeQuality() async {
+        let context = makeContext(
+            bitrate: 32_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setEncodeBacklogForCatchUpTest(1_200)
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 60,
+            encodeAttemptFPS: 60,
+            encodedFPS: 30,
+            at: 10
+        )
+        #expect(context.currentFrameRate == 45)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 60,
+            encodeAttemptFPS: 45,
+            encodedFPS: 24,
+            at: 11.2
+        )
+        #expect(context.currentFrameRate == 30)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 70,
+            encodeAttemptFPS: 30,
+            encodedFPS: 18,
+            at: 12.4
+        )
+        #expect(context.currentFrameRate == 30)
+        #expect(abs((await context.streamScale) - 0.875) < 0.001)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 70,
+            encodeAttemptFPS: 30,
+            encodedFPS: 15,
+            at: 16.6
+        )
+        #expect(context.currentFrameRate == 30)
+        #expect(abs((await context.streamScale) - 0.75) < 0.001)
+        #expect(await context.currentAwdlQualityReductionAllowed())
+    }
+
+    @Test("AWDL encoded P-frame oversize steps structural ladder before quality")
+    func awdlEncodedPFrameOversizeStepsStructuralLadderBeforeQuality() async {
+        let context = makeContext(
+            bitrate: 60_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let wireBytes = 360 * 1024
+
+        await context.configureRunningForRealtimeBudgetTest()
+        let decision = await context.evaluateEncodedFrameBudget(
+            byteCount: wireBytes,
+            wireBytes: wireBytes,
+            packetCount: max(1, (wireBytes + 1_199) / 1_200),
+            isKeyframe: false,
+            encodedAt: 10
+        )
+
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
+        #expect(context.currentFrameRate == 45)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+    }
+
+    @Test("AWDL receiver P-frame timing sample steps structural ladder before quality")
+    func awdlReceiverPFrameTimingSampleStepsStructuralLadderBeforeQuality() async {
+        let context = makeContext(
+            bitrate: 32_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let wireBytes = 160 * 1024
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.markClientInputActiveForTimingTest()
+        await context.recordReceiverPFrameCompletionForTimingTest(
+            frameNumber: 42,
+            wireBytes: wireBytes,
+            at: 10
+        )
+        await context.applyReceiverMediaFeedback(
+            receiverTimingFeedback(
+                sequence: 1,
+                frameNumber: 42,
+                packetSpanMs: 12,
+                completionGapMs: 120
+            )
+        )
+
+        #expect(context.currentFrameRate == 45)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
+        #expect(await !context.currentAwdlQualityReductionAllowed())
+        let pressureReason = await context.realtimePressureReason
+        #expect(pressureReason == "receiver-p-frame-timing")
+    }
+
     @Test("Missing client ceiling keeps host-owned recovery ceiling")
     func missingClientCeilingKeepsHostOwnedRecoveryCeiling() {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
@@ -293,6 +431,82 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.realtimeRuntimeBitrateCeilingBps == 32_376_730)
     }
 
+    @Test("Stream context keeps oversized AWDL encoder startup inside sender pacing ceiling")
+    func streamContextKeepsOversizedAwdlEncoderStartupInsideSenderPacingCeiling() async {
+        let context = makeContext(
+            bitrate: 220_000_000,
+            bitrateAdaptationCeiling: 240_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let outputSize = CGSize(width: 5088, height: 2864)
+
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+
+        let settings = await context.encoderSettings
+        #expect(settings.bitrate == 32_000_000)
+        #expect(context.currentTargetBitrateBps == 32_000_000)
+        #expect(await context.startupBitrate == 32_000_000)
+        #expect(await context.bitrateAdaptationCeiling == 32_000_000)
+        #expect(await context.realtimeRuntimeBitrateCeilingBps == 32_000_000)
+        #expect(await context.realtimeSenderPacingBitrateBps == 32_000_000)
+    }
+
+    @Test("AWDL realtime sender pacing can drop below readability floor")
+    func awdlRealtimeSenderPacingCanDropBelowReadabilityFloor() async {
+        let context = makeContext(
+            bitrate: 220_000_000,
+            bitrateAdaptationCeiling: 240_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let outputSize = CGSize(width: 5088, height: 2864)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.applyRealtimeBudgetBitrate(
+            18_000_000,
+            ceilingBitrateBps: 32_000_000,
+            encoderRateHintBps: 18_000_000,
+            senderPacingBitrateBps: 10_000_000,
+            minimumBitrateFloorBps: 18_000_000,
+            reason: "unit-test-awdl-pacing"
+        )
+
+        #expect(context.currentTargetBitrateBps == 18_000_000)
+        #expect(await context.realtimeEncoderRateHintBps == 18_000_000)
+        #expect(await context.realtimeSenderPacingBitrateBps == 10_000_000)
+    }
+
+    @Test("AWDL scale recovery keyframe keeps readable anchor quality")
+    func awdlScaleRecoveryKeyframeKeepsReadableAnchorQuality() async {
+        let context = makeContext(
+            bitrate: 76_700_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+
+        let applied = await context.applyAwdlInteractiveScale(
+            0.875,
+            now: 100,
+            reason: "unit-test"
+        )
+
+        #expect(applied)
+        let pendingQuality = await context.pendingEmergencyKeyframeQuality
+        let activeQuality = await context.activeQuality
+        let qualityFloor = await context.qualityFloor
+        #expect((pendingQuality ?? 0) > activeQuality * 0.65)
+        #expect((pendingQuality ?? 0) >= qualityFloor)
+    }
+
     @Test("Disabled runtime adjustment keeps fixed quality budget untouched")
     func disabledRuntimeAdjustmentKeepsFixedQualityBudgetUntouched() {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
@@ -305,6 +519,27 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         )
 
         #expect(decision == nil)
+    }
+
+    @Test("AWDL interactive display keeps safety budget when runtime adjustment is disabled")
+    func awdlInteractiveDisplayKeepsSafetyBudgetWhenRuntimeAdjustmentIsDisabled() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 300_000_000,
+                requestedCeilingBps: 300_000_000,
+                runtimeQualityAdjustmentEnabled: false,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .awdlRadio,
+                transportPathKind: .awdl
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 25_560_576)
+        #expect(decision?.encoderStartupBitrateBps == 25_560_576)
+        #expect(decision?.maximumCeilingBps == 32_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 18_000_000)
+        #expect(decision?.reason == "awdlInteractiveDisplay")
     }
 
     @Test("AWDL interactive display starts readable and protects a bitrate floor")
@@ -320,9 +555,117 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         )
 
         #expect(decision?.startupBitrateBps == 25_560_576)
-        #expect(decision?.maximumCeilingBps == 95_426_150)
+        #expect(decision?.encoderStartupBitrateBps == 25_560_576)
+        #expect(decision?.maximumCeilingBps == 32_000_000)
         #expect(decision?.minimumBitrateFloorBps == 18_000_000)
         #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 18_000_000)
+    }
+
+    @Test("Oversized AWDL startup keeps encoder readability budget inside transport ceiling")
+    func oversizedAwdlStartupKeepsEncoderReadabilityBudgetInsideTransportCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 220_000_000,
+                requestedCeilingBps: 240_000_000,
+                outputWidth: 5088,
+                outputHeight: 2864,
+                mediaPathProfile: .awdlRadio,
+                transportPathKind: .awdl
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 32_000_000)
+        #expect(decision?.encoderStartupBitrateBps == 32_000_000)
+        #expect(decision?.maximumCeilingBps == 32_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 18_000_000)
+    }
+
+    @Test("AWDL interactive display ignores legacy automatic client ceiling")
+    func awdlInteractiveDisplayIgnoresLegacyAutomaticClientCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 16_000_000,
+                requestedCeilingBps: 24_000_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .awdlRadio,
+                transportPathKind: .awdl
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 25_560_576)
+        #expect(decision?.encoderStartupBitrateBps == 25_560_576)
+        #expect(decision?.maximumCeilingBps == 32_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 18_000_000)
+    }
+
+    @Test("AWDL interactive display honors current automatic client ceiling")
+    func awdlInteractiveDisplayHonorsCurrentAutomaticClientCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 24_000_000,
+                requestedCeilingBps: 32_000_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .awdlRadio,
+                transportPathKind: .awdl
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 25_560_576)
+        #expect(decision?.encoderStartupBitrateBps == 25_560_576)
+        #expect(decision?.maximumCeilingBps == 32_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 18_000_000)
+    }
+
+    @Test("AWDL interactive display protects floor from manual low caps")
+    func awdlInteractiveDisplayProtectsFloorFromManualLowCaps() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 8_000_000,
+                requestedCeilingBps: nil,
+                enteredBitrateBps: 8_000_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .unknown,
+                transportPathKind: .awdl
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 18_000_000)
+        #expect(decision?.encoderStartupBitrateBps == 18_000_000)
+        #expect(decision?.maximumCeilingBps == 18_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 18_000_000)
+    }
+
+    @Test("Stream context resolves AWDL path with unknown profile to radio policy")
+    func streamContextResolvesAwdlPathWithUnknownProfileToRadioPolicy() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 120,
+            transportPathKind: .awdl,
+            mediaPathProfile: .unknown
+        )
+
+        #expect(await context.mediaPathProfile == .awdlRadio)
+        #expect(await context.latencyMode == .balanced)
+        #expect(await context.hostBufferingPolicy == .stability)
+        #expect(context.currentFrameRate == 60)
+    }
+
+    @Test("Stream context trusts resolved AWDL proximity wired profile")
+    func streamContextTrustsResolvedAwdlProximityWiredProfile() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 120,
+            transportPathKind: .awdl,
+            mediaPathProfile: .proximityWiredLike
+        )
+
+        #expect(await context.mediaPathProfile == .proximityWiredLike)
+        #expect(await context.latencyMode == .lowestLatency)
+        #expect(await context.hostBufferingPolicy == .freshestFrame)
+        #expect(context.currentFrameRate == 120)
     }
 
     private func request(
@@ -353,6 +696,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
     private func makeContext(
         bitrate: Int,
+        frameRate: Int = 60,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderCatchUpQualityAdjustmentEnabled: Bool = true,
@@ -360,7 +704,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         mediaPathProfile: MirageMediaPathProfile
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
-            targetFrameRate: 60,
+            targetFrameRate: frameRate,
             keyFrameInterval: 1800,
             colorDepth: .pro,
             bitrate: bitrate
@@ -379,6 +723,46 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
         )
     }
+
+    private func receiverTimingFeedback(
+        sequence: UInt64,
+        frameNumber: UInt32,
+        packetSpanMs: Double,
+        completionGapMs: Double
+    ) -> ReceiverMediaFeedbackMessage {
+        ReceiverMediaFeedbackMessage(
+            streamID: 3,
+            sequence: sequence,
+            sentAtUptime: 0,
+            targetFPS: 60,
+            ackRanges: [],
+            pFrameTimingSamples: [
+                ReceiverPFrameTimingSample(
+                    frameNumber: frameNumber,
+                    packetSpanMs: packetSpanMs,
+                    completionGapMs: completionGapMs,
+                    completionAgeAtFeedbackMs: 0,
+                    firstPacketGapMs: completionGapMs
+                )
+            ],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: 0,
+            jitterP99Ms: 0,
+            queueEstimateFrames: 0,
+            reassemblyBacklogFrames: 0,
+            reassemblyBacklogKeyframes: 0,
+            reassemblyBacklogBytes: 0,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: 0,
+            decodedFPS: 60,
+            receivedFPS: 60,
+            rendererAcceptedFPS: 60,
+            rendererPresentedFPS: 60,
+            recoveryState: .idle,
+            playoutDelayTargetMs: 80
+        )
+    }
 }
 
 private extension StreamContext {
@@ -390,6 +774,31 @@ private extension StreamContext {
     func setEncodeBacklogForCatchUpTest(_ milliseconds: Double) {
         latestEncodeStartCaptureAgeMs = milliseconds
         worstEncodeStartCaptureAgeMs = milliseconds
+    }
+
+    func markClientInputActiveForTimingTest() {
+        lastClientInputTime = CFAbsoluteTimeGetCurrent()
+        lastNonIdleCapturedFrameTime = lastClientInputTime
+    }
+
+    func recordReceiverPFrameCompletionForTimingTest(
+        frameNumber: UInt32,
+        wireBytes: Int,
+        at now: CFAbsoluteTime
+    ) {
+        recentFrameTransportCompletions.append(StreamPacketSender.FrameTransportCompletion(
+            streamID: streamID,
+            frameNumber: frameNumber,
+            isKeyframe: false,
+            didSend: true,
+            frameByteCount: wireBytes,
+            wireBytes: wireBytes,
+            packetCount: max(1, (wireBytes + 1_199) / 1_200),
+            dimensionToken: 0,
+            encodedAt: now - 0.010,
+            startedAt: now - 0.008,
+            completedAt: now
+        ))
     }
 }
 #endif

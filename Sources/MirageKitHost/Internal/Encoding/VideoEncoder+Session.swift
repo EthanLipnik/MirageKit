@@ -230,11 +230,13 @@ extension VideoEncoder {
 
     func applyBitrateSettingsToActiveSession() {
         guard let session = compressionSession else { return }
-        if !isProRes, Self.standardLowLatencyUsesSunshineRateControl(
+        if !isProRes, Self.standardLowLatencyVTTuningEnabled(
+            latencyMode: latencyMode,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
-            pixelFormat: activePixelFormat
-        ), (latencyMode == .lowestLatency || latencyMode == .balanced) {
+            pixelFormat: activePixelFormat,
+            mediaPathProfile: mediaPathProfile
+        ) {
             var status = SessionPolicyStatus()
             _ = applyLowLatencyBitrateSettings(
                 session,
@@ -284,13 +286,15 @@ extension VideoEncoder {
             latencyMode: resolvedLatencyMode,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
-            pixelFormat: activePixelFormat
+            pixelFormat: activePixelFormat,
+            mediaPathProfile: mediaPathProfile
         )
         let suppressedThroughputTuningEnabled = Self.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             latencyMode: resolvedLatencyMode,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
-            pixelFormat: activePixelFormat
+            pixelFormat: activePixelFormat,
+            mediaPathProfile: mediaPathProfile
         )
         var standardLowLatencyStatus = SessionPolicyStatus()
 
@@ -342,13 +346,16 @@ extension VideoEncoder {
         // Profile selection. ARGB2101010 prefers Main42210 and falls back to Main10.
         applyProfileLevel(session)
 
-        // Prioritize encoding speed over quality for lower latency.
+        // Prioritize readability over encoder speed on AWDL display paths.
+        let prioritizeSpeedOverQuality = Self.prioritizeEncodingSpeedOverQuality(
+            mediaPathProfile: mediaPathProfile
+        )
         _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
-            value: kCFBooleanTrue
+            value: prioritizeSpeedOverQuality ? kCFBooleanTrue : kCFBooleanFalse
         )
-        MirageLogger.encoder("Prioritizing encoding speed over quality")
+        MirageLogger.encoder("Encoder speed-over-quality preference: \(prioritizeSpeedOverQuality)")
 
         // Apply base quality setting - lower values reduce size for all frames
         let requestedQuality = configuration.frameQuality

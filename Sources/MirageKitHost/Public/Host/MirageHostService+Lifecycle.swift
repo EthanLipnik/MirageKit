@@ -160,6 +160,7 @@ public extension MirageHostService {
             remoteControlPort = directQUICPort
             remoteControlListenerReady = directQUICPort != nil
             MirageLogger.host("Loom authenticated listeners ready udp=\(controlPort) quic=\(directQUICPort ?? 0)")
+            MirageLogger.host("Host network diagnostics: \(networkDiagnosticsSummaryLines.joined(separator: " | "))")
 
             state = .advertising(controlPort: controlPort)
             MirageLogger.host("Now advertising on control:\(controlPort)")

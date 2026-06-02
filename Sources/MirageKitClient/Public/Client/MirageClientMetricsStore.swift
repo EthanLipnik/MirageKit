@@ -27,6 +27,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         receivedWorstGapMs: Double = 0,
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
+        receiverIngressJitterP95Ms: Double = 0,
+        receiverIngressJitterP99Ms: Double = 0,
         droppedFrames: UInt64,
         decodeBacklogFrames: Int = 0,
         reassemblerPendingFrameCount: Int = 0,
@@ -39,10 +41,17 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         reassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         reassemblerMissingFragmentTimeouts: UInt64 = 0,
         reassemblerForwardGapTimeouts: UInt64 = 0,
+        frameCompletionLatencyP50Ms: Double = 0,
+        frameCompletionLatencyP95Ms: Double = 0,
+        frameCompletionLatencyMaxMs: Double = 0,
+        keyframeCompletionLatencyP50Ms: Double = 0,
+        keyframeCompletionLatencyP95Ms: Double = 0,
+        keyframeCompletionLatencyMaxMs: Double = 0,
         pFrameCompletionLatencyP50Ms: Double = 0,
         pFrameCompletionLatencyP95Ms: Double = 0,
         pFrameCompletionLatencyMaxMs: Double = 0,
         latePFrameCompletionCount: UInt64 = 0,
+        reassemblerFECRecoveredFragmentCount: UInt64 = 0,
         displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
@@ -64,6 +73,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         smoothestDroppedFrameAgeMaxMs: Double = 0,
         lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
+        pendingFrameNotReadyDisplayTickCount: UInt64 = 0,
         repeatedFrameCount: UInt64 = 0,
         displayTickNoFrameCount: UInt64 = 0,
         missedVSyncCount: UInt64 = 0,
@@ -82,6 +92,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientReceivedWorstGapMs = max(0, receivedWorstGapMs)
             snapshot.clientReceivedFrameIntervalP95Ms = max(0, receivedFrameIntervalP95Ms)
             snapshot.clientReceivedFrameIntervalP99Ms = max(0, receivedFrameIntervalP99Ms)
+            snapshot.clientReceiverIngressJitterP95Ms = max(0, receiverIngressJitterP95Ms)
+            snapshot.clientReceiverIngressJitterP99Ms = max(0, receiverIngressJitterP99Ms)
             snapshot.clientDisplayTickFPS = max(0, displayTickFPS)
             snapshot.clientSubmitAttemptFPS = max(0, submitAttemptFPS)
             snapshot.clientLayerAcceptedFPS = max(0, layerAcceptedFPS)
@@ -104,6 +116,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientSmoothestDroppedFrameAgeMaxMs = max(0, smoothestDroppedFrameAgeMaxMs)
             snapshot.clientLateFrameDrops = lateFrameDrops
             snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
+            snapshot.clientPendingFrameNotReadyDisplayTickCount = pendingFrameNotReadyDisplayTickCount
             snapshot.clientRepeatedFrameCount = repeatedFrameCount
             snapshot.clientMissedVSyncCount = missedVSyncCount
             snapshot.clientDisplayTickIntervalP95Ms = max(0, displayTickIntervalP95Ms)
@@ -126,10 +139,17 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientReassemblerIncompleteFrameLifetimeTimeouts = reassemblerIncompleteFrameLifetimeTimeouts
             snapshot.clientReassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
             snapshot.clientReassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
+            snapshot.clientFrameCompletionLatencyP50Ms = max(0, frameCompletionLatencyP50Ms)
+            snapshot.clientFrameCompletionLatencyP95Ms = max(0, frameCompletionLatencyP95Ms)
+            snapshot.clientFrameCompletionLatencyMaxMs = max(0, frameCompletionLatencyMaxMs)
+            snapshot.clientKeyframeCompletionLatencyP50Ms = max(0, keyframeCompletionLatencyP50Ms)
+            snapshot.clientKeyframeCompletionLatencyP95Ms = max(0, keyframeCompletionLatencyP95Ms)
+            snapshot.clientKeyframeCompletionLatencyMaxMs = max(0, keyframeCompletionLatencyMaxMs)
             snapshot.clientPFrameCompletionLatencyP50Ms = max(0, pFrameCompletionLatencyP50Ms)
             snapshot.clientPFrameCompletionLatencyP95Ms = max(0, pFrameCompletionLatencyP95Ms)
             snapshot.clientPFrameCompletionLatencyMaxMs = max(0, pFrameCompletionLatencyMaxMs)
             snapshot.clientLatePFrameCompletionCount = latePFrameCompletionCount
+            snapshot.clientReassemblerFECRecoveredFragmentCount = reassemblerFECRecoveredFragmentCount
         }
     }
 

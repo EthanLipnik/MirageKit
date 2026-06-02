@@ -13,8 +13,8 @@ import Testing
 
 @Suite("Client Network Path Status")
 struct ClientNetworkPathStatusTests {
-    @Test("Selected Wi-Fi path wins over sidecar AWDL interface names")
-    func selectedWiFiPathWinsOverSidecarAwdlInterfaceNames() {
+    @Test("Wi-Fi path flags win over available AWDL interface names")
+    func wifiPathFlagsWinOverAvailableAwdlInterfaceNames() {
         let snapshot = MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0", "awdl0"],
             usesWiFi: true,
@@ -35,6 +35,32 @@ struct ClientNetworkPathStatusTests {
         #expect(status.displayName == "Wi-Fi")
         #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(!status.usesProximityWiredLikePolicy)
+    }
+
+    @Test("Scoped AWDL endpoint wins over Wi-Fi path flags")
+    func scopedAwdlEndpointWinsOverWiFiPathFlags() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en0", "awdl0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true,
+            localEndpointDescription: "[fe80::1%awdl0]:49152",
+            remoteEndpointDescription: "[fe80::2%25awdl0]:49153"
+        )
+
+        #expect(snapshot.kind == .awdl)
+        #expect(snapshot.mediaProfile == .awdlRadio)
+        #expect(snapshot.signature.localizedStandardContains("kind=awdl"))
+        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
+        #expect(status.usesFixedRealtimeDisplayPolicy)
+        #expect(status.usesAwdlRadioInterface)
     }
 
     @Test("Selected Wi-Fi path wins over passive tunnel interface names")
@@ -158,8 +184,8 @@ struct ClientNetworkPathStatusTests {
         #expect(status.displayName == "Thunderbolt Bridge")
     }
 
-    @Test("Low-latency wireless interfaces use proximity-class path presentation")
-    func lowLatencyWirelessClassifierUsesProximityPresentation() {
+    @Test("Low-latency wireless interfaces use AWDL realtime display policy")
+    func lowLatencyWirelessClassifierUsesAwdlRealtimeDisplayPolicy() {
         let snapshot = MirageNetworkPathClassifier.classify(
             interfaceNames: ["llw0"],
             usesWiFi: true,
@@ -176,9 +202,10 @@ struct ClientNetworkPathStatusTests {
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
         #expect(snapshot.kind == .awdl)
-        #expect(snapshot.mediaProfile == .proximityWiredLike)
-        #expect(!status.usesFixedRealtimeDisplayPolicy)
-        #expect(status.usesProximityWiredLikePolicy)
+        #expect(snapshot.mediaProfile == .awdlRadio)
+        #expect(status.usesFixedRealtimeDisplayPolicy)
+        #expect(!status.usesProximityWiredLikePolicy)
+        #expect(status.usesAwdlRadioInterface)
         #expect(status.displayName == "Low-Latency Wireless")
     }
 
@@ -241,8 +268,26 @@ struct ClientNetworkPathStatusTests {
         #expect(profile == .awdlRadio)
     }
 
-    @Test("Wi-Fi media profile ignores sidecar AWDL interface names")
-    func wifiMediaProfileIgnoresSidecarAwdlInterfaceNames() {
+    @Test("Scoped AWDL path kind wins over passive wired flags")
+    func scopedAwdlPathKindWinsOverPassiveWiredFlags() {
+        let profile = MirageMediaPathProfile.classify(
+            pathKind: .awdl,
+            interfaceNames: ["awdl0", "en3"],
+            usesWired: true,
+            usesLoopback: true
+        )
+        let resolved = MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: .awdl,
+            mediaPathProfile: .wired,
+            interfaceNames: ["awdl0", "en3"]
+        )
+
+        #expect(profile == .awdlRadio)
+        #expect(resolved == .awdlRadio)
+    }
+
+    @Test("Wi-Fi media profile wins over available AWDL interface name")
+    func wifiMediaProfileWinsOverAvailableAwdlInterfaceName() {
         let profile = MirageMediaPathProfile.classify(
             pathKind: .wifi,
             interfaceNames: ["en0", "awdl0"],
@@ -289,6 +334,20 @@ struct ClientNetworkPathStatusTests {
             usesCellular: false,
             usesLoopback: false,
             usesOther: true
+        )
+
+        #expect(kind == .awdl)
+    }
+
+    @Test("Local default route recognizes low-latency wireless as peer path")
+    func localDefaultRouteRecognizesLowLatencyWirelessAsPeerPath() {
+        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+            interfaceNames: ["llw0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false
         )
 
         #expect(kind == .awdl)

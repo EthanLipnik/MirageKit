@@ -33,6 +33,12 @@ package struct DisplayResolutionChangeMessage: Codable {
     package var encoderMaxWidth: Int?
     /// Desktop-only maximum encoded height in pixels for host-side geometry resolution.
     package var encoderMaxHeight: Int?
+    /// Desktop-only geometry contract identity for stale resize suppression.
+    package var desktopGeometryContractID: UUID?
+    /// Desktop-only diagnostic scene identity for the drawable that produced this resize geometry.
+    package var desktopGeometrySceneIdentity: String?
+    /// Desktop-only refresh target associated with this resize geometry.
+    package var desktopGeometryRefreshTargetHz: Int?
 
     package init(
         streamID: StreamID,
@@ -42,7 +48,10 @@ package struct DisplayResolutionChangeMessage: Codable {
         requestedDisplayScaleFactor: CGFloat? = nil,
         requestedStreamScale: CGFloat? = nil,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        desktopGeometryContractID: UUID? = nil,
+        desktopGeometrySceneIdentity: String? = nil,
+        desktopGeometryRefreshTargetHz: Int? = nil
     ) {
         self.streamID = streamID
         self.displayWidth = displayWidth
@@ -52,6 +61,9 @@ package struct DisplayResolutionChangeMessage: Codable {
         self.requestedStreamScale = requestedStreamScale
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
+        self.desktopGeometryContractID = desktopGeometryContractID
+        self.desktopGeometrySceneIdentity = desktopGeometrySceneIdentity
+        self.desktopGeometryRefreshTargetHz = desktopGeometryRefreshTargetHz
     }
 }
 

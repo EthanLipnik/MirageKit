@@ -10,6 +10,30 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+
+/// Client-side route evidence captured when a stream is accepted.
+struct HostStreamMediaPathClientEvidence: Sendable, Equatable {
+    let pathKind: MirageNetworkPathKind
+    let mediaPathProfile: MirageMediaPathProfile
+    let pathSignature: String?
+
+    init(
+        pathKind: MirageNetworkPathKind?,
+        mediaPathProfile: MirageMediaPathProfile?,
+        pathSignature: String?
+    ) {
+        self.pathKind = pathKind ?? .unknown
+        self.mediaPathProfile = mediaPathProfile ?? .unknown
+        self.pathSignature = pathSignature
+    }
+
+    init(policy: MirageEffectiveMediaPathPolicy) {
+        self.pathKind = policy.clientPathKind
+        self.mediaPathProfile = policy.clientMediaPathProfile
+        self.pathSignature = policy.clientPathSignature
+    }
+}
+
 @MainActor
 extension MirageHostService {
     /// Advertising and startup state for the host service.
@@ -58,6 +82,9 @@ extension MirageHostService {
         let requestedStreamScale: CGFloat?
         let encoderMaxWidth: Int?
         let encoderMaxHeight: Int?
+        let desktopGeometryContractID: UUID?
+        let desktopGeometrySceneIdentity: String?
+        let desktopGeometryRefreshTargetHz: Int?
     }
 
     /// Lifecycle state for the active desktop resize transaction.

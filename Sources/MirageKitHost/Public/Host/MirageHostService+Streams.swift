@@ -148,6 +148,12 @@ public extension MirageHostService {
 
         let streamID = nextStreamID
         nextStreamID += 1
+        var retainMediaPathClientEvidence = false
+        defer {
+            if !retainMediaPathClientEvidence {
+                mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
+            }
+        }
 
         let resolvedWindowApplication = MirageApplication(
             id: scApplication.processID,
@@ -197,6 +203,9 @@ public extension MirageHostService {
             clientMediaPathProfile: nil,
             clientPathSignature: nil
         )
+        mediaPathClientEvidenceByStreamID[streamID] = HostStreamMediaPathClientEvidence(
+            policy: resolvedMediaPathPolicy
+        )
         let transportPathKind = resolvedMediaPathPolicy.transportPathKind
         let context = StreamContext(
             streamID: streamID,
@@ -223,7 +232,7 @@ public extension MirageHostService {
         MirageLogger.host(
             "event=media_path_policy phase=window_start stream=\(streamID) " +
                 "\(resolvedMediaPathPolicy.diagnosticSummary) " +
-                "videoTransport=\(context.videoTransportMode) maxPacket=\(mediaMaxPacketSize)"
+                "videoTransport=unreliableQueued maxPacket=\(mediaMaxPacketSize)"
         )
         logWindowStreamOptions(
             streamID: streamID,
@@ -307,16 +316,31 @@ public extension MirageHostService {
 
         let applicationWrapper = SCApplicationWrapper(application: scApplication)
         let displayWrapper = SCDisplayWrapper(display: captureSource.display)
-        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
-        await context.setMediaSendProfile(mediaSendProfile)
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile(
+            resolvedMediaPathProfile: resolvedMediaPathPolicy.mediaPathProfile,
+            streamID: streamID,
+            phase: "window_transport"
+        )
+        let mediaSendProfileReference = await context.setMediaSendProfile(
+            mediaSendProfile,
+            diagnosticsProvider: { profile in
+                await videoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+            }
+        )
         MirageLogger.host(
             "event=media_path_policy phase=window_transport stream=\(streamID) " +
                 "\(resolvedMediaPathPolicy.diagnosticSummary) " +
-                "videoTransport=\(context.videoTransportMode) sendProfile=\(mediaSendProfile.rawValue) " +
+                "videoTransport=unreliableQueued sendProfile=\(mediaSendProfile.rawValue) " +
                 "maxPacket=\(context.mediaMaxPacketSize)"
         )
-        let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
-            videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
+        let sendPacketWithMetadata: StreamPacketSender.PacketMetadataSendHandler = { packetData, metadata, onComplete in
+            let activeMediaSendProfile = mediaSendProfileReference.read { $0 }
+            videoStream.sendUnreliableQueued(
+                packetData,
+                profile: activeMediaSendProfile,
+                options: metadata.loomQueuedUnreliableSendOptions,
+                onComplete: onComplete
+            )
         }
         let onSendError: @Sendable (Error) -> Void = { [weak self] error in
             guard let self else { return }
@@ -337,7 +361,7 @@ public extension MirageHostService {
                 mirroredDisplaySnapshot: mirroredDisplaySnapshot,
                 sizePreset: sizePreset,
                 clientLogicalSize: clientDisplayResolution,
-                sendPacket: sendPacket,
+                sendPacketWithMetadata: sendPacketWithMetadata,
                 onSendError: onSendError
             )
             await refreshWindowVirtualDisplayState(
@@ -364,6 +388,7 @@ public extension MirageHostService {
                 clientContext: clientContext
             )
         )
+        retainMediaPathClientEvidence = true
     }
 
     private func finalizeStartedWindowStream(

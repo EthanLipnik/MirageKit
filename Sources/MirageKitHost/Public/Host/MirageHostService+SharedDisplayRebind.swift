@@ -22,6 +22,8 @@ extension MirageHostService {
     async {
         guard previousGeneration != newContext.generation else { return }
 
+        clearCurrentDesktopGeometryContract()
+
         let displayBounds = CGVirtualDisplayBridge.displayBounds(
             newContext.displayID,
             knownResolution: SharedVirtualDisplayManager.logicalResolution(
@@ -90,10 +92,14 @@ extension MirageHostService {
             }
 
             let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6)
-            try await desktopContext.updateCaptureDisplay(
-                captureDisplay,
+            try await desktopContext.hardResetDesktopDisplayCapture(
+                displayWrapper: captureDisplay,
                 resolution: newContext.resolution
             )
+            MirageLogger.host(
+                "Desktop shared display rebind advanced stream epoch and requested recovery keyframe"
+            )
+            await refreshLightsOutCaptureExclusions()
 
             let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
             let inputGeometry = updateDesktopInputGeometry(

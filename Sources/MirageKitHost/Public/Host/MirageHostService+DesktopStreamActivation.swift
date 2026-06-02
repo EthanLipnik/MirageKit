@@ -60,7 +60,11 @@ extension MirageHostService {
             mode: activation.mode,
             startupRequestID: activation.startupRequestID
         )
-        let mediaSendProfile = await activeClientContext.controlChannel.session.mirageMediaSendProfile()
+        let mediaSendProfile = await activeClientContext.controlChannel.session.mirageMediaSendProfile(
+            resolvedMediaPathProfile: streamContext.mediaPathProfile,
+            streamID: streamID,
+            phase: "desktop_activation"
+        )
 
         do {
             try await startDesktopDisplayCapture(
@@ -207,14 +211,24 @@ extension MirageHostService {
         audioConfiguration: inout MirageAudioConfiguration
     ) async throws {
         let firstSuccessfulVideoPacketSent = Locked(false)
-        await activation.streamContext.setMediaSendProfile(mediaSendProfile)
+        let mediaSendProfileReference = await activation.streamContext.setMediaSendProfile(
+            mediaSendProfile,
+            diagnosticsProvider: { profile in
+                await activeVideoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+            }
+        )
         let startDesktopDisplay: () async throws -> Void = {
             try await activation.streamContext.startDesktopDisplay(
                 displayWrapper: activation.captureDisplay,
                 resolution: activation.captureResolution,
                 excludedWindows: excludedWindows,
-                sendPacket: { packetData, onComplete in
-                    activeVideoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile) { error in
+                sendPacketWithMetadata: { packetData, metadata, onComplete in
+                    let activeMediaSendProfile = mediaSendProfileReference.read { $0 }
+                    activeVideoStream.sendUnreliableQueued(
+                        packetData,
+                        profile: activeMediaSendProfile,
+                        options: metadata.loomQueuedUnreliableSendOptions
+                    ) { error in
                         if error == nil {
                             self.markDesktopFirstVideoPacketIfNeeded(
                                 streamID: activation.streamID,
@@ -235,7 +249,7 @@ extension MirageHostService {
                 "event=media_path_policy phase=desktop_activation stream=\(activation.streamID) " +
                     "resolved=\(activation.streamContext.transportPathKind.rawValue)/" +
                     "\(activation.streamContext.mediaPathProfile.rawValue) " +
-                    "videoTransport=\(activation.streamContext.videoTransportMode) " +
+                    "videoTransport=unreliableQueued " +
                     "sendProfile=\(mediaSendProfile.rawValue) maxPacket=\(activation.streamContext.mediaMaxPacketSize)"
             )
         }
@@ -368,6 +382,41 @@ extension MirageHostService {
                 "Desktop start: capture readiness satisfied (\(readiness.rawValue))"
             )
         }
+    }
+}
+
+extension StreamPacketSender.TransportPacketMetadata {
+    var loomQueuedUnreliableSendOptions: LoomQueuedUnreliableSendOptions {
+        let importance: LoomQueuedUnreliableSendOptions.Importance = if isKeyframe {
+            .realtimeKeyframe
+        } else if isParity {
+            .realtimeParity
+        } else if isRecovery {
+            .realtimeRecovery
+        } else {
+            .realtimeInterFrame
+        }
+        let dropsWhenExpired = !isKeyframe
+        let dropsWhenQueueFull = !isKeyframe && !isRecovery
+        return LoomQueuedUnreliableSendOptions(
+            deadlineUptime: loomDeadlineUptime,
+            importance: importance,
+            frameID: loomFrameID,
+            fragmentIndex: fragmentIndex,
+            fragmentCount: fragmentCount,
+            dropsWhenExpired: dropsWhenExpired,
+            dropsWhenQueueFull: dropsWhenQueueFull
+        )
+    }
+
+    private var loomFrameID: UInt64 {
+        (UInt64(streamID) << 32) | UInt64(frameNumber)
+    }
+
+    private var loomDeadlineUptime: TimeInterval? {
+        guard sendDeadline.isFinite else { return nil }
+        let remainingSeconds = sendDeadline - CFAbsoluteTimeGetCurrent()
+        return ProcessInfo.processInfo.systemUptime + remainingSeconds
     }
 }
 

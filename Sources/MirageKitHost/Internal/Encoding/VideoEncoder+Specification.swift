@@ -18,7 +18,8 @@ extension VideoEncoder {
         streamKind: StreamKind,
         codec: MirageVideoCodec = .hevc,
         colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
+        pixelFormat: MiragePixelFormat? = nil,
+        mediaPathProfile: MirageMediaPathProfile = .unknown
     ) -> [CFString: Any] {
         if codec == .proRes4444 {
             return [
@@ -34,7 +35,8 @@ extension VideoEncoder {
             latencyMode: latencyMode,
             streamKind: streamKind,
             colorDepth: colorDepth,
-            pixelFormat: pixelFormat
+            pixelFormat: pixelFormat,
+            mediaPathProfile: mediaPathProfile
         ) {
             spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true
         }
@@ -45,8 +47,10 @@ extension VideoEncoder {
         latencyMode: MirageStreamLatencyMode,
         streamKind: StreamKind,
         colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
+        pixelFormat: MiragePixelFormat? = nil,
+        mediaPathProfile: MirageMediaPathProfile = .unknown
     ) -> Bool {
+        guard !mediaPathProfile.usesAwdlRadioPolicy else { return false }
         guard latencyMode == .lowestLatency || latencyMode == .balanced else { return false }
         return standardLowLatencyUsesSunshineRateControl(
             streamKind: streamKind,
@@ -71,9 +75,11 @@ extension VideoEncoder {
         latencyMode: MirageStreamLatencyMode,
         streamKind: StreamKind,
         colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
+        pixelFormat: MiragePixelFormat? = nil,
+        mediaPathProfile: MirageMediaPathProfile = .unknown
     ) -> Bool {
-        (latencyMode == .lowestLatency || latencyMode == .balanced) &&
+        guard !mediaPathProfile.usesAwdlRadioPolicy else { return false }
+        return (latencyMode == .lowestLatency || latencyMode == .balanced) &&
             shouldSuppressStandardLowLatencyRateControl(
                 streamKind: streamKind,
                 colorDepth: colorDepth,

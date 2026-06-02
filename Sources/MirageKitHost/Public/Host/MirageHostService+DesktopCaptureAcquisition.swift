@@ -12,6 +12,31 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+func acceptedDesktopContractDisplayScaleFactor(
+    displayPixelResolution: CGSize,
+    presentationResolution: CGSize,
+    fallbackScaleFactor: CGFloat
+) -> CGFloat {
+    let normalizedPresentationResolution = MirageStreamGeometry.normalizedLogicalSize(presentationResolution)
+    guard normalizedPresentationResolution.width > 0,
+          normalizedPresentationResolution.height > 0,
+          displayPixelResolution.width > 0,
+          displayPixelResolution.height > 0 else {
+        return max(1.0, fallbackScaleFactor)
+    }
+
+    let widthScale = displayPixelResolution.width / normalizedPresentationResolution.width
+    let heightScale = displayPixelResolution.height / normalizedPresentationResolution.height
+    guard widthScale.isFinite,
+          heightScale.isFinite,
+          widthScale > 0,
+          heightScale > 0 else {
+        return max(1.0, fallbackScaleFactor)
+    }
+
+    return max(1.0, (widthScale + heightScale) * 0.5)
+}
+
 extension MirageHostService {
     /// Resolves the desktop capture context, preferring a virtual display and falling back to main-display capture.
     func acquireDesktopCaptureContext(
@@ -325,7 +350,11 @@ extension MirageHostService {
             presentationResolution: request.displayResolution,
             virtualDisplaySnapshot: context,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence,
-            acceptedDisplayScaleFactor: context.scaleFactor
+            acceptedDisplayScaleFactor: acceptedDesktopContractDisplayScaleFactor(
+                displayPixelResolution: context.resolution,
+                presentationResolution: request.displayResolution,
+                fallbackScaleFactor: context.scaleFactor
+            )
         )
     }
 

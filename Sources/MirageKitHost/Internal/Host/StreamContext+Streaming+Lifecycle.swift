@@ -78,7 +78,8 @@ extension StreamContext {
             resetFrameNumber: true,
             noteLoss: true,
             ignoreExistingInFlight: true,
-            supersedesInFlightGeometry: true
+            supersedesInFlightGeometry: true,
+            bypassesRecoveryCooldown: true
         )
         MirageLogger.stream("Desktop resize completion: encoding resumed")
     }

@@ -170,7 +170,8 @@ extension MirageClientService {
         }
         updateObservedFrameRate(metrics.targetFrameRate, for: metrics.streamID)
         if let controller = controllersByStream[metrics.streamID] {
-            let latencyMode = renderLatencyModeByStream[metrics.streamID]
+            let requestedLatencyMode = renderLatencyModeByStream[metrics.streamID]
+            let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
             Task {
                 await controller.updateHostMetrics(metrics)
                 await controller.updateCadenceTarget(

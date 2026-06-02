@@ -89,7 +89,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
-        let transportDropCount = snapshot.hostStalePacketDrops ?? 0
+        let transportDropCount = snapshot.hostTransportPressureDropCount
         let transportAssessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
                 queueBytes: queueBytes,

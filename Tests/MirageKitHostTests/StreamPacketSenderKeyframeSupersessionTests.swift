@@ -20,7 +20,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -62,7 +62,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         let firstPacketGate = StreamPacketSenderSendGate()
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -132,7 +132,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         let firstPacketGate = StreamPacketSenderSendGate()
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)

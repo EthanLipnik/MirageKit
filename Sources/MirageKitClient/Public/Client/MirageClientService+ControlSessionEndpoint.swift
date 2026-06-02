@@ -96,8 +96,13 @@ extension MirageClientService {
             debugRouteOverride.matches(attempt)
         }
         if forcedAttempts.isEmpty {
+            let availableAttempts = attempts
+                .map(Self.debugRouteAttemptDescription(_:))
+                .joined(separator: ";")
             MirageLogger.client(
-                "Debug route override \(debugRouteOverride.displayName) found no matching attempts for \(host.name)"
+                "Debug route override \(debugRouteOverride.displayName) found no matching attempts for \(host.name) " +
+                    "availableAttempts=\(availableAttempts.isEmpty ? "none" : availableAttempts) " +
+                    "systemProximityInterfaces=\(MirageLocalNetworkMonitor.proximityInterfaceDiagnostics())"
             )
         } else {
             MirageLogger.client(
@@ -105,6 +110,13 @@ extension MirageClientService {
             )
         }
         return forcedAttempts
+    }
+
+    private static func debugRouteAttemptDescription(_ attempt: ControlSessionAttempt) -> String {
+        let endpoint = String(describing: attempt.endpoint)
+        let source = attempt.endpointSource.isEmpty ? "unknown" : attempt.endpointSource
+        return "\(attempt.transportKind.rawValue):\(attempt.routeTier.rawValue):" +
+            "\(attempt.interfaceDescription):\(endpoint):source=\(source)"
     }
 
     func orderedControlSessionAttempts(_ attempts: [ControlSessionAttempt]) -> [ControlSessionAttempt] {
@@ -139,19 +151,19 @@ extension MirageClientService {
             0
         case .bridge:
             1
-        case .lowLatencyWireless:
-            2
         case .sameWiredEthernet:
-            3
+            2
         case .mixedEthernetSameLAN:
-            4
+            3
         case .wifiLAN:
+            4
+        case .lowLatencyWireless:
             5
-        case .awdl:
-            6
         case .vpn:
-            7
+            6
         case .other:
+            7
+        case .awdl:
             8
         }
     }
@@ -281,7 +293,7 @@ extension MirageClientService {
                 $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == interfaceName
             }
             let routeTier = Self.proximityRouteTier(forInterfaceName: interfaceName) ?? .other
-            if routeTier == .awdl,
+            if Self.isAwdlRadioRouteTier(routeTier),
                awdlProximityRouteIsSuppressed(for: host, interfaceName: interfaceName) {
                 continue
             }
@@ -339,10 +351,7 @@ extension MirageClientService {
     ) -> Bool {
         guard hasPendingAwdlScopedAddressResolution(for: host) else { return false }
         let awdlRank = controlSessionRouteRank(for: .awdl)
-        return !attempts.contains {
-            $0.isPeerToPeerPreferred &&
-                controlSessionRouteRank(for: $0.routeTier) < awdlRank
-        }
+        return !attempts.contains { controlSessionRouteRank(for: $0.routeTier) < awdlRank }
     }
 
     func scopedProximityResolvedHost(for host: LoomPeer) -> NWEndpoint.Host? {
@@ -378,15 +387,15 @@ extension MirageClientService {
     ) -> [(interface: LoomDiscoveredInterface, routeTier: ControlSessionRouteTier)] {
         host.discoveredInterfaces
             .compactMap { discoveredInterface -> (interface: LoomDiscoveredInterface, routeTier: ControlSessionRouteTier)? in
-                if discoveredInterface.kind == .awdl,
-                   awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) {
-                    return nil
-                }
                 guard let routeTier = controlSessionRouteTier(
                     for: discoveredInterface,
                     host: host,
                     localNetwork: localNetwork
                 ) else {
+                    return nil
+                }
+                if Self.isAwdlRadioRouteTier(routeTier),
+                   awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) {
                     return nil
                 }
                 return (interface: discoveredInterface, routeTier: routeTier)
@@ -423,8 +432,11 @@ extension MirageClientService {
         let source = discoveredInterface.map {
             "bonjour-proximity-\(proximityLogName(for: $0.kind))"
         } ?? endpointSource
+        let proximityTransportOrder = routeTier == .awdl
+            ? transportOrder.filter { $0 != .tcp }
+            : transportOrder
 
-        return transportOrder.compactMap { transportKind in
+        return proximityTransportOrder.compactMap { transportKind in
             guard let endpoint = peerToPeerPreferredControlSessionEndpoint(
                 for: host,
                 transportKind: transportKind,
@@ -490,12 +502,16 @@ extension MirageClientService {
     ) -> NWEndpoint? {
         if let transport = host.advertisement.directTransports.first(where: { $0.transportKind == transportKind }),
            let port = NWEndpoint.Port(rawValue: transport.port) {
+            guard transportKind != .tcp || Self.scopedAwdlTransportRestrictedInterfaceName(selectedHost) == nil else {
+                return nil
+            }
             return .hostPort(host: selectedHost, port: port)
         }
         guard transportKind == .tcp,
               case let .hostPort(_, port) = host.endpoint else {
             return nil
         }
+        guard Self.scopedAwdlTransportRestrictedInterfaceName(selectedHost) == nil else { return nil }
         return .hostPort(host: selectedHost, port: port)
     }
 
@@ -526,6 +542,7 @@ extension MirageClientService {
                        endpointHost: endpointHost(for: host.endpoint),
                        localNetwork: localNetwork
                    ).host {
+                    guard Self.scopedAwdlTransportRestrictedInterfaceName(selectedHost) == nil else { return nil }
                     logControlSessionEndpointSelection(
                         transportKind: transportKind,
                         hostName: host.name,
@@ -536,6 +553,7 @@ extension MirageClientService {
                     return .hostPort(host: selectedHost, port: port)
                 }
                 if case let .hostPort(endpointHost, port) = host.endpoint {
+                    guard Self.scopedAwdlTransportRestrictedInterfaceName(endpointHost) == nil else { return nil }
                     logControlSessionEndpointSelection(
                         transportKind: transportKind,
                         hostName: host.name,
@@ -557,6 +575,9 @@ extension MirageClientService {
         )
 
         guard let selectedHost = selection.host else { return nil }
+        guard transportKind != .tcp || Self.scopedAwdlTransportRestrictedInterfaceName(selectedHost) == nil else {
+            return nil
+        }
         logControlSessionEndpointSelection(
             transportKind: transportKind,
             hostName: host.name,
@@ -1026,7 +1047,7 @@ extension MirageClientService {
         interfaceName: String,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Bool {
-        if debugRouteOverride?.interfaceKind == .awdl {
+        if debugRouteOverride?.interfaceKind?.isPeerToPeerRadio == true {
             return false
         }
         pruneExpiredAwdlProximityRouteSuppressions(now: now)
@@ -1051,7 +1072,7 @@ extension MirageClientService {
         _ endpointHost: NWEndpoint.Host,
         for host: LoomPeer
     ) -> Bool {
-        guard let interfaceName = Self.scopedAwdlInterfaceName(endpointHost) else { return false }
+        guard let interfaceName = Self.scopedAwdlRadioInterfaceName(endpointHost) else { return false }
         return awdlProximityRouteIsSuppressed(for: host, interfaceName: interfaceName)
     }
 
@@ -1078,9 +1099,14 @@ extension MirageClientService {
         interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private static func scopedAwdlInterfaceName(_ host: NWEndpoint.Host) -> String? {
+    private static func scopedAwdlTransportRestrictedInterfaceName(_ host: NWEndpoint.Host) -> String? {
+        guard let interfaceName = scopedAwdlRadioInterfaceName(host) else { return nil }
+        return interfaceName.hasPrefix("awdl") ? interfaceName : nil
+    }
+
+    private static func scopedAwdlRadioInterfaceName(_ host: NWEndpoint.Host) -> String? {
         if let interfaceName = scopedLinkLocalIPv6InterfaceName(host),
-           interfaceName.hasPrefix("awdl") {
+           isAwdlRadioInterfaceName(interfaceName) {
             return interfaceName
         }
 
@@ -1089,7 +1115,15 @@ extension MirageClientService {
             return nil
         }
         let interfaceName = interface.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return interfaceName.hasPrefix("awdl") ? interfaceName : nil
+        return isAwdlRadioInterfaceName(interfaceName) ? interfaceName : nil
+    }
+
+    private static func isAwdlRadioInterfaceName(_ interfaceName: String) -> Bool {
+        interfaceName.hasPrefix("awdl") || interfaceName.hasPrefix("llw")
+    }
+
+    private static func isAwdlRadioRouteTier(_ routeTier: ControlSessionRouteTier) -> Bool {
+        routeTier == .awdl || routeTier == .lowLatencyWireless
     }
 }
 
@@ -1109,7 +1143,12 @@ private extension MirageDebugRouteOverride {
             return attempt.routeTier == .awdl ||
                 attempt.proximityInterfaceKind == .awdl ||
                 attempt.proximityInterfaceNames.contains { $0.lowercased().hasPrefix("awdl") } ||
-                attempt.requiredInterface?.name.lowercased().hasPrefix("awdl") == true
+                attempt.requiredInterface.map { $0.name.lowercased().hasPrefix("awdl") } == true
+        case .llw:
+            return attempt.routeTier == .lowLatencyWireless ||
+                attempt.proximityInterfaceKind == .lowLatencyWireless ||
+                attempt.proximityInterfaceNames.contains { $0.lowercased().hasPrefix("llw") } ||
+                attempt.requiredInterface.map { $0.name.lowercased().hasPrefix("llw") } == true
         case .wifi:
             return attempt.routeTier == .wifiLAN ||
                 attempt.requiredInterfaceType == .wifi
@@ -1119,6 +1158,21 @@ private extension MirageDebugRouteOverride {
                 attempt.routeTier == .applePrivateNCM ||
                 attempt.routeTier == .bridge ||
                 attempt.requiredInterfaceType == .wiredEthernet
+        }
+    }
+
+    private static func isAwdlRadioInterfaceName(_ interfaceName: String) -> Bool {
+        interfaceName.hasPrefix("awdl") || interfaceName.hasPrefix("llw")
+    }
+}
+
+private extension MirageDebugRouteOverride.InterfaceKind {
+    var isPeerToPeerRadio: Bool {
+        switch self {
+        case .awdl, .llw:
+            true
+        case .wifi, .wired:
+            false
         }
     }
 }

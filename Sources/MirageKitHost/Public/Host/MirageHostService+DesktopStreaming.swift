@@ -50,7 +50,10 @@ func startDesktopStream(
     mediaPathPolicy: MirageEffectiveMediaPathPolicy,
     upscalingMode: MirageUpscalingMode? = nil,
     codec: MirageVideoCodec? = nil,
-    startupRequestID: UUID
+    startupRequestID: UUID,
+    desktopGeometryContractID: UUID? = nil,
+    desktopGeometrySceneIdentity: String? = nil,
+    desktopGeometryRefreshTargetHz: Int? = nil
 )
 async throws {
     var virtualDisplaySetupGuardToken: UUID?
@@ -90,8 +93,19 @@ async throws {
     }
     let clampedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
     let defaultDesktopBackingScale = resolvedClientScaleFactor ?? max(1.0, sharedVirtualDisplayScaleFactor)
+    let requestedDesktopTargetFrameRate = max(1, targetFrameRate ?? encoderConfig.targetFrameRate)
+    let effectiveDesktopTargetFrameRate = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+        requestedFrameRate: requestedDesktopTargetFrameRate,
+        mediaPathProfile: mediaPathPolicy.mediaPathProfile
+    )
+    if effectiveDesktopTargetFrameRate != requestedDesktopTargetFrameRate {
+        MirageLogger.host(
+            "AWDL media policy overriding requested desktop refresh " +
+                "\(requestedDesktopTargetFrameRate) -> \(effectiveDesktopTargetFrameRate)"
+        )
+    }
     let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
-        for: targetFrameRate ?? 60
+        for: effectiveDesktopTargetFrameRate
     )
     let resolvedCodec = effectiveVideoCodec(for: codec)
     let resolvedColorDepth = effectiveColorDepth(for: colorDepth, codec: resolvedCodec)
@@ -110,7 +124,8 @@ async throws {
             colorDepth: resolvedColorDepth,
             captureQueueDepth: captureQueueDepth,
             bitrate: bitrate
-        ).withTargetFrameRate(targetFrameRate ?? encoderConfig.targetFrameRate).colorSpace
+        ).withTargetFrameRate(effectiveDesktopTargetFrameRate).colorSpace,
+        requestedStreamScale: clampedStreamScale
     )
     let virtualDisplayStartupAttempts = virtualDisplayStartupPlan.attempts
     var virtualDisplayStartupSession = DesktopVirtualDisplayStartupSession(plan: virtualDisplayStartupPlan)
@@ -129,6 +144,13 @@ async throws {
     let desktopSessionID = UUID()
     let streamID = nextStreamID
     nextStreamID += 1
+    var retainMediaPathClientEvidence = false
+    mediaPathClientEvidenceByStreamID[streamID] = HostStreamMediaPathClientEvidence(policy: mediaPathPolicy)
+    defer {
+        if !retainMediaPathClientEvidence {
+            mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
+        }
+    }
     await beginDesktopStreamStartupState(
         streamID: streamID,
         desktopSessionID: desktopSessionID,
@@ -150,7 +172,7 @@ async throws {
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
             allowEncoderCatchUpQualityAdjustment: allowEncoderCatchUpQualityAdjustment,
             upscalingMode: upscalingMode,
-            targetFrameRate: targetFrameRate,
+            targetFrameRate: effectiveDesktopTargetFrameRate,
             disableResolutionCap: disableResolutionCap
         )
     )
@@ -243,7 +265,7 @@ async throws {
     )
     MirageLogger.host(
         "event=media_path_policy phase=desktop_start stream=\(streamID) " +
-            "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(streamContext.videoTransportMode) " +
+            "\(mediaPathPolicy.diagnosticSummary) videoTransport=unreliableQueued " +
             "maxPacket=\(mediaMaxPacketSize)"
     )
     logDesktopStartStep("stream context created (\(streamID))")
@@ -276,37 +298,10 @@ async throws {
         virtualDisplaySetupGuardToken: &virtualDisplaySetupGuardToken
     )
     logDesktopStartStep("display capture started")
-    try await ensureDesktopStreamStartupCanContinue(
-        streamID: streamID,
-        clientSessionID: clientContext.sessionID,
-        startupRequestID: startupRequestID,
-        mode: mode,
-        stage: "before desktopStreamStarted"
-    )
 
-    let startedDisplayResolution = try await sendDesktopStreamStartedNotification(
-        DesktopStreamStartedNotification(
-            streamID: streamID,
-            desktopSessionID: desktopSessionID,
-            activeClientContext: activationResult.activeClientContext,
-            streamContext: streamContext,
-            captureResolution: captureResolution,
-            captureSource: captureSource,
-            allowsClientResize: allowsClientResize,
-            presentationResolution: presentationResolution,
-            acceptedDisplayScaleFactor: acceptedDisplayScaleFactor
-        ),
-        logDesktopStartStep: logDesktopStartStep
-    )
-
-    await finishDesktopStreamStartup(
-        streamID: streamID,
-        startedDisplayResolution: startedDisplayResolution,
-        captureResolution: captureResolution
-    )
-
+    let startupAudioConfiguration: MirageAudioConfiguration
     do {
-        _ = try await waitForDesktopCaptureStartupReadiness(
+        startupAudioConfiguration = try await waitForDesktopCaptureStartupReadiness(
             streamContext: streamContext,
             mode: mode,
             clientID: activationResult.activeClientContext.client.id,
@@ -322,6 +317,50 @@ async throws {
         await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
         throw error
     }
+
+    try await ensureDesktopStreamStartupCanContinue(
+        streamID: streamID,
+        clientSessionID: clientContext.sessionID,
+        startupRequestID: startupRequestID,
+        mode: mode,
+        stage: "before desktopStreamStarted"
+    )
+    let acceptedDesktopGeometryRefreshTargetHz = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+        requestedFrameRate: desktopGeometryRefreshTargetHz ?? effectiveDesktopTargetFrameRate,
+        mediaPathProfile: mediaPathPolicy.mediaPathProfile
+    )
+
+    let startedDisplayResolution = try await sendDesktopStreamStartedNotification(
+        DesktopStreamStartedNotification(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            activeClientContext: activationResult.activeClientContext,
+            streamContext: streamContext,
+            captureResolution: captureResolution,
+            captureSource: captureSource,
+            allowsClientResize: allowsClientResize,
+            presentationResolution: presentationResolution,
+            acceptedDisplayScaleFactor: acceptedDisplayScaleFactor,
+            desktopGeometryContractID: desktopGeometryContractID,
+            desktopGeometrySceneIdentity: desktopGeometrySceneIdentity,
+            desktopGeometryRefreshTargetHz: acceptedDesktopGeometryRefreshTargetHz
+        ),
+        logDesktopStartStep: logDesktopStartStep
+    )
+
+    if startupAudioConfiguration.enabled != activationResult.audioConfiguration.enabled {
+        MirageLogger.host(
+            "Desktop start: startup audio configuration changed during capture readiness " +
+                "(enabled=\(startupAudioConfiguration.enabled))"
+        )
+    }
+
+    await finishDesktopStreamStartup(
+        streamID: streamID,
+        startedDisplayResolution: startedDisplayResolution,
+        captureResolution: captureResolution
+    )
+    retainMediaPathClientEvidence = true
     clearDesktopStartupMarkerOnExit = false
 }
 }

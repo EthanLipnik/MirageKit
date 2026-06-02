@@ -37,8 +37,12 @@ public extension MirageClientService {
             reason: "interactive desktop stream startup",
             notifyHost: true
         )
+        _ = await refreshCurrentControlPathKind()
 
-        let baseResolution = displayResolution ?? mainDisplayResolution
+        let baseResolution = try resolvedDesktopStartupBaseResolution(
+            displayResolution: displayResolution,
+            useHostResolution: useHostResolution
+        )
         guard baseResolution.width > 0, baseResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable")
         }
@@ -46,7 +50,7 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Invalid display resolution")
         }
-        let targetFrameRate = screenMaxRefreshRate
+        let targetFrameRate = effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
 
@@ -86,6 +90,7 @@ public extension MirageClientService {
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
         applyEncoderOverrides(overrides, to: &encoderRequest)
+        let usesHostResolution = encoderRequest.useHostResolution == true
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
@@ -96,13 +101,23 @@ public extension MirageClientService {
         )
         resolutionScale = geometry.resolvedStreamScale
         desktopStreamDisplayScaleFactor = geometry.displayScaleFactor
-        desktopResizeCoordinator.lastSentTarget = DesktopResizeCoordinator.RequestGeometry(
-            logicalResolution: effectiveDisplayResolution,
-            displayScaleFactor: geometry.displayScaleFactor,
-            requestedStreamScale: geometry.resolvedStreamScale,
-            encoderMaxWidth: encoderRequest.encoderMaxWidth,
-            encoderMaxHeight: encoderRequest.encoderMaxHeight
-        )
+        let startupGeometryTarget: DesktopResizeCoordinator.RequestGeometry?
+        if usesHostResolution {
+            startupGeometryTarget = nil
+            desktopResizeCoordinator.lastSentTarget = nil
+        } else {
+            let target = DesktopResizeCoordinator.RequestGeometry(
+                refreshTargetHz: targetFrameRate,
+                logicalResolution: effectiveDisplayResolution,
+                displayScaleFactor: geometry.displayScaleFactor,
+                requestedStreamScale: geometry.resolvedStreamScale,
+                encoderMaxWidth: encoderRequest.encoderMaxWidth,
+                encoderMaxHeight: encoderRequest.encoderMaxHeight,
+                disableResolutionCap: encoderRequest.disableResolutionCap == true
+            )
+            startupGeometryTarget = target
+            desktopResizeCoordinator.lastSentTarget = target
+        }
         let bitrateSemantics = MirageDesktopBitrateRequestSemantics.resolve(
             enteredBitrateBps: encoderRequest.enteredBitrate,
             requestedTargetBitrateBps: encoderRequest.bitrate,
@@ -130,7 +145,7 @@ public extension MirageClientService {
         request.bitrate = bitrateSemantics.requestedTargetBitrateBps
         request.latencyMode = encoderRequest.latencyMode
         request.hostBufferingPolicy = encoderRequest.hostBufferingPolicy
-        if controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true {
+        if currentMediaPathUsesAwdlRadioPolicy {
             let requestedLatency = request.latencyMode
             request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
             request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)
@@ -143,11 +158,23 @@ public extension MirageClientService {
         }
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
         request.allowEncoderCatchUpQualityAdjustment = encoderRequest.allowEncoderCatchUpQualityAdjustment
-        request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
+        request.lowLatencyHighResolutionCompressionBoost =
+            effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                encoderRequest.lowLatencyHighResolutionCompressionBoost
+            )
         request.disableResolutionCap = encoderRequest.disableResolutionCap
         request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight
+        if let startupGeometryTarget {
+            request.desktopGeometryContractID = startupGeometryTarget.contractID
+            request.desktopGeometrySceneIdentity = startupGeometryTarget.sceneIdentity
+            request.desktopGeometryDisplayPixelWidth = Int(geometry.displayPixelSize.width.rounded())
+            request.desktopGeometryDisplayPixelHeight = Int(geometry.displayPixelSize.height.rounded())
+            request.desktopGeometryEncodedPixelWidth = Int(geometry.encodedPixelSize.width.rounded())
+            request.desktopGeometryEncodedPixelHeight = Int(geometry.encodedPixelSize.height.rounded())
+            request.desktopGeometryRefreshTargetHz = startupGeometryTarget.refreshTargetHz ?? targetFrameRate
+        }
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
         applyCurrentClientPathFields(to: &request)
@@ -292,12 +319,19 @@ extension MirageClientService {
         }
 
         let failedDesktopSessionID = desktopSessionID
-        let restartRequest = StartDesktopStreamMessage(copying: previousRequest, startupRequestID: UUID())
+        guard var restartRequest = rebuiltDesktopRestartRequest(from: previousRequest) else {
+            MirageLogger.client(
+                "Desktop restart suppressed after terminal startup failure: current drawable geometry unavailable"
+            )
+            return false
+        }
+        applyCurrentClientPathFields(to: &restartRequest)
         desktopStreamRestartAttempts += 1
         MirageLogger.client(
             "Restarting desktop stream in-session after terminal startup failure: " +
                 "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
                 "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
+                "contract=\(restartRequest.desktopGeometryContractID?.uuidString ?? "nil"), " +
                 "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)"
         )
 
@@ -341,6 +375,246 @@ extension MirageClientService {
             clearPendingDesktopStreamStartState()
             return false
         }
+    }
+
+    @discardableResult
+    func resendPendingDesktopStartAfterGeometryContractRejection(reason: String) async -> Bool {
+        guard case .connected = connectionState,
+              controlChannel != nil,
+              desktopStreamID == nil,
+              desktopStreamRequestStartTime > 0,
+              let previousRequest = lastDesktopStreamStartRequest,
+              previousRequest.desktopGeometryContractID != nil,
+              desktopStreamRestartAttempts < desktopStreamRestartLimit else {
+            return false
+        }
+
+        guard var retryRequest = rebuiltDesktopRestartRequest(
+            from: previousRequest,
+            requiresFreshAwdlGeometry: true
+        ) else {
+            MirageLogger.client(
+                "Unable to retry AWDL desktop start after geometry-contract rejection: " +
+                    "reason=\(reason), startupRequest=\(previousRequest.startupRequestID.uuidString)"
+            )
+            return false
+        }
+        applyCurrentClientPathFields(to: &retryRequest)
+        desktopStreamRestartAttempts += 1
+        lastDesktopStreamStartRequest = retryRequest
+        pendingStreamSetupRequestID = retryRequest.startupRequestID
+        pendingStreamSetupKind = .desktop
+        pendingStreamSetupAppSessionID = nil
+        pendingStreamSetupLatencyMode = retryRequest.latencyMode ?? .lowestLatency
+        pendingDesktopRequestedColorDepth = retryRequest.colorDepth
+        pendingDesktopRequestedLatencyMode = retryRequest.latencyMode ?? .lowestLatency
+        desktopStreamMode = retryRequest.mode ?? desktopStreamMode ?? .unified
+        desktopCursorPresentation = retryRequest.cursorPresentation ?? desktopCursorPresentation
+        desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        do {
+            try await sendControlMessage(.startDesktopStream, content: retryRequest)
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
+            scheduleDesktopStreamStartTimeout()
+            MirageLogger.client(
+                "Retried AWDL desktop start after geometry-contract rejection: " +
+                    "reason=\(reason), startupRequest=\(retryRequest.startupRequestID.uuidString), " +
+                    "contract=\(retryRequest.desktopGeometryContractID?.uuidString ?? "nil")"
+            )
+            return true
+        } catch {
+            MirageLogger.error(.client, error: error, message: "AWDL desktop start geometry retry failed: ")
+            return false
+        }
+    }
+
+    package func rebuiltDesktopRestartRequest(
+        from previousRequest: StartDesktopStreamMessage,
+        requiresFreshAwdlGeometry: Bool = false
+    ) -> StartDesktopStreamMessage? {
+        let usesHostResolution = previousRequest.useHostResolution == true
+        let usesAwdlRadioPolicy = currentMediaPathUsesAwdlRadioPolicy
+        let previousRequestResolution = CGSize(
+            width: previousRequest.displayWidth,
+            height: previousRequest.displayHeight
+        )
+        let liveAwdlGeometryTarget = usesHostResolution ? nil : currentAwdlDesktopRestartGeometryTarget()
+        if usesAwdlRadioPolicy,
+           !usesHostResolution,
+           requiresFreshAwdlGeometry,
+           liveAwdlGeometryTarget == nil {
+            MirageLogger.client(
+                "AWDL desktop restart suppressed because fresh scene-local geometry is unavailable"
+            )
+            return nil
+        }
+        let reusesPreviousAwdlGeometryContract = usesAwdlRadioPolicy &&
+            !usesHostResolution &&
+            liveAwdlGeometryTarget == nil &&
+            previousRequest.desktopGeometryContractID != nil
+        let baseResolution = if usesHostResolution {
+            previousRequestResolution
+        } else if let liveAwdlGeometryTarget {
+            liveAwdlGeometryTarget.logicalResolution
+        } else if usesAwdlRadioPolicy {
+            previousRequestResolution
+        } else {
+            mainDisplayResolution
+        }
+        guard baseResolution.width > 0, baseResolution.height > 0 else { return nil }
+        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(baseResolution)
+        guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else { return nil }
+
+        let pathTargetFrameRate = effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
+        let targetFrameRate = liveAwdlGeometryTarget?.refreshTargetHz ??
+            (reusesPreviousAwdlGeometryContract ? previousRequest.desktopGeometryRefreshTargetHz : nil) ??
+            pathTargetFrameRate
+        let requestedDisplayScaleFactor = liveAwdlGeometryTarget?.displayScaleFactor ?? previousRequest.scaleFactor
+        let requestedStreamScale = liveAwdlGeometryTarget?.requestedStreamScale ??
+            MirageStreamGeometry.clampStreamScale(previousRequest.streamScale ?? resolutionScale)
+        let encoderMaxWidth = liveAwdlGeometryTarget?.encoderMaxWidth ?? previousRequest.encoderMaxWidth
+        let encoderMaxHeight = liveAwdlGeometryTarget?.encoderMaxHeight ?? previousRequest.encoderMaxHeight
+        let disableResolutionCap = liveAwdlGeometryTarget?.disableResolutionCap ??
+            (previousRequest.disableResolutionCap == true)
+        let disableResolutionCapRequestValue = liveAwdlGeometryTarget == nil
+            ? previousRequest.disableResolutionCap
+            : (disableResolutionCap ? true : nil)
+        let geometry = resolvedStreamGeometry(
+            for: effectiveDisplayResolution,
+            explicitScaleFactor: requestedDisplayScaleFactor,
+            requestedStreamScale: requestedStreamScale,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            disableResolutionCap: disableResolutionCap
+        )
+        resolutionScale = geometry.resolvedStreamScale
+        desktopStreamDisplayScaleFactor = geometry.displayScaleFactor
+        let geometryTarget: DesktopResizeCoordinator.RequestGeometry?
+        if usesHostResolution {
+            geometryTarget = nil
+            desktopResizeCoordinator.lastSentTarget = nil
+        } else if usesAwdlRadioPolicy,
+                  liveAwdlGeometryTarget == nil,
+                  previousRequest.desktopGeometryContractID == nil {
+            geometryTarget = nil
+            desktopResizeCoordinator.lastSentTarget = nil
+        } else {
+            let target = DesktopResizeCoordinator.RequestGeometry(
+                contractID: liveAwdlGeometryTarget?.contractID ??
+                    (reusesPreviousAwdlGeometryContract ? previousRequest.desktopGeometryContractID : nil) ??
+                    UUID(),
+                sceneIdentity: liveAwdlGeometryTarget?.sceneIdentity ?? previousRequest.desktopGeometrySceneIdentity,
+                refreshTargetHz: targetFrameRate,
+                logicalResolution: effectiveDisplayResolution,
+                displayScaleFactor: geometry.displayScaleFactor,
+                requestedStreamScale: geometry.resolvedStreamScale,
+                encoderMaxWidth: encoderMaxWidth,
+                encoderMaxHeight: encoderMaxHeight,
+                disableResolutionCap: disableResolutionCap
+            )
+            geometryTarget = target
+            desktopResizeCoordinator.lastSentTarget = target
+        }
+        if let liveAwdlGeometryTarget {
+            MirageLogger.client(
+                "AWDL desktop restart using current drawable geometry: " +
+                    "previous=\(Int(previousRequestResolution.width))x\(Int(previousRequestResolution.height)) " +
+                    "current=\(Int(liveAwdlGeometryTarget.logicalResolution.width))x\(Int(liveAwdlGeometryTarget.logicalResolution.height)) " +
+                    "contract=\(liveAwdlGeometryTarget.contractID.uuidString)"
+            )
+        } else if reusesPreviousAwdlGeometryContract {
+            MirageLogger.client(
+                "AWDL desktop restart reusing previous geometry contract: " +
+                    "display=\(Int(previousRequestResolution.width))x\(Int(previousRequestResolution.height)) " +
+                    "contract=\(previousRequest.desktopGeometryContractID?.uuidString ?? "nil")"
+            )
+        }
+
+        let bitrateSemantics = MirageDesktopBitrateRequestSemantics.resolve(
+            enteredBitrateBps: previousRequest.enteredBitrate,
+            requestedTargetBitrateBps: previousRequest.bitrate,
+            bitrateAdaptationCeilingBps: previousRequest.bitrateAdaptationCeiling,
+            displayResolution: effectiveDisplayResolution
+        )
+        var latencyMode = previousRequest.latencyMode
+        var hostBufferingPolicy = previousRequest.hostBufferingPolicy
+        if usesAwdlRadioPolicy {
+            latencyMode = effectiveLatencyModeForCurrentMediaPath(latencyMode)
+            hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(hostBufferingPolicy)
+        }
+        let lowLatencyHighResolutionCompressionBoost =
+            effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                previousRequest.lowLatencyHighResolutionCompressionBoost
+            )
+
+        var request = StartDesktopStreamMessage(
+            startupRequestID: UUID(),
+            scaleFactor: geometry.displayScaleFactor,
+            displayWidth: Int(effectiveDisplayResolution.width),
+            displayHeight: Int(effectiveDisplayResolution.height),
+            targetFrameRate: targetFrameRate,
+            keyFrameInterval: previousRequest.keyFrameInterval,
+            captureQueueDepth: previousRequest.captureQueueDepth,
+            colorDepth: previousRequest.colorDepth,
+            mode: previousRequest.mode,
+            cursorPresentation: previousRequest.cursorPresentation,
+            enteredBitrate: bitrateSemantics.enteredBitrateBps,
+            bitrate: bitrateSemantics.requestedTargetBitrateBps,
+            latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
+            allowRuntimeQualityAdjustment: previousRequest.allowRuntimeQualityAdjustment,
+            allowEncoderCatchUpQualityAdjustment: previousRequest.allowEncoderCatchUpQualityAdjustment,
+            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
+            disableResolutionCap: disableResolutionCapRequestValue,
+            streamScale: geometry.resolvedStreamScale,
+            audioConfiguration: previousRequest.audioConfiguration,
+            dataPort: previousRequest.dataPort,
+            useHostResolution: previousRequest.useHostResolution,
+            mediaMaxPacketSize: previousRequest.mediaMaxPacketSize,
+            desktopGeometryContractID: geometryTarget?.contractID,
+            desktopGeometrySceneIdentity: geometryTarget?.sceneIdentity,
+            desktopGeometryDisplayPixelWidth: geometryTarget.map { _ in Int(geometry.displayPixelSize.width.rounded()) },
+            desktopGeometryDisplayPixelHeight: geometryTarget.map { _ in Int(geometry.displayPixelSize.height.rounded()) },
+            desktopGeometryEncodedPixelWidth: geometryTarget.map { _ in Int(geometry.encodedPixelSize.width.rounded()) },
+            desktopGeometryEncodedPixelHeight: geometryTarget.map { _ in Int(geometry.encodedPixelSize.height.rounded()) },
+            desktopGeometryRefreshTargetHz: geometryTarget.map { $0.refreshTargetHz ?? targetFrameRate }
+        )
+        request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
+        request.encoderMaxWidth = encoderMaxWidth
+        request.encoderMaxHeight = encoderMaxHeight
+        request.upscalingMode = previousRequest.upscalingMode
+        request.codec = previousRequest.codec
+        return request
+    }
+
+    private func currentAwdlDesktopRestartGeometryTarget() -> DesktopResizeCoordinator.RequestGeometry? {
+        guard currentMediaPathUsesAwdlRadioPolicy else { return nil }
+        for target in [
+            desktopResizeCoordinator.queuedTarget,
+            desktopResizeCoordinator.latestRequestedTarget
+        ].compactMap({ $0 }) {
+            let normalized = MirageStreamGeometry.normalizedLogicalSize(target.logicalResolution)
+            if normalized.width > 0, normalized.height > 0 {
+                return target
+            }
+        }
+        return nil
+    }
+
+    package func resolvedDesktopStartupBaseResolution(
+        displayResolution: CGSize?,
+        useHostResolution: Bool
+    ) throws -> CGSize {
+        if let displayResolution {
+            return displayResolution
+        }
+        if currentMediaPathUsesAwdlRadioPolicy, !useHostResolution {
+            MirageLogger.client(
+                "Desktop startup suppressed on proximity media path because no scene-local display size was supplied"
+            )
+            throw MirageError.protocolError("Current display size unavailable for desktop startup")
+        }
+        return mainDisplayResolution
     }
 
     /// Cancel any in-progress stream setup on the host.

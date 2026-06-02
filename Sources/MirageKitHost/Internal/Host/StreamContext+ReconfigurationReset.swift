@@ -11,16 +11,28 @@ import MirageKit
 #if os(macOS)
 extension StreamContext {
     /// Clears transient encode, keyframe, pressure, and latency-burst state before reconfiguring capture.
-    func resetPipelineStateForReconfiguration(reason: String) {
+    func resetPipelineStateForReconfiguration(
+        reason: String,
+        preservePendingGeometryRecoveryKeyframe: Bool = false
+    ) {
         if inFlightCount > 0 || isKeyframeEncoding || lastEncodeActivityTime > 0 {
             MirageLogger.stream("Resetting pipeline state for \(reason) (inFlight=\(inFlightCount))")
         }
+        let preservedGeometryKeyframe = preservePendingGeometryRecoveryKeyframe
+            ? pendingGeometryRecoveryKeyframeStateForReconfiguration()
+            : nil
         resetInFlightEncodingStateForReconfiguration()
         clearPendingKeyframeStateForReconfiguration()
         clearCaptureAndPressureStateForReconfiguration()
         resetLatencyBurstStateForReconfiguration()
         resetQualityStateForReconfiguration()
         frameInbox.discardAll()
+        if let preservedGeometryKeyframe {
+            restorePendingGeometryRecoveryKeyframeAfterReconfiguration(
+                preservedGeometryKeyframe,
+                reason: reason
+            )
+        }
     }
 
     /// Clears in-flight encoder bookkeeping for a stream reconfiguration.
@@ -33,6 +45,55 @@ extension StreamContext {
         needsEncoderReset = false
         encoderResetRetryTask?.cancel()
         encoderResetRetryTask = nil
+    }
+
+    private struct PendingGeometryRecoveryKeyframeState {
+        let reason: String
+        let deadline: CFAbsoluteTime
+        let requiresFlush: Bool
+        let urgent: Bool
+        let requiresReset: Bool
+        let emergencyQuality: Float?
+        let keyframeSendDeadline: CFAbsoluteTime
+        let lastKeyframeRequestTime: CFAbsoluteTime
+    }
+
+    private func pendingGeometryRecoveryKeyframeStateForReconfiguration()
+        -> PendingGeometryRecoveryKeyframeState? {
+        guard let pendingKeyframeReason,
+              pendingKeyframeReason.hasPrefix("Desktop resize") ||
+                pendingKeyframeReason.hasPrefix("Shared display resize") else {
+            return nil
+        }
+        return PendingGeometryRecoveryKeyframeState(
+            reason: pendingKeyframeReason,
+            deadline: pendingKeyframeDeadline,
+            requiresFlush: pendingKeyframeRequiresFlush,
+            urgent: pendingKeyframeUrgent,
+            requiresReset: pendingKeyframeRequiresReset,
+            emergencyQuality: pendingEmergencyKeyframeQuality,
+            keyframeSendDeadline: keyframeSendDeadline,
+            lastKeyframeRequestTime: lastKeyframeRequestTime
+        )
+    }
+
+    private func restorePendingGeometryRecoveryKeyframeAfterReconfiguration(
+        _ state: PendingGeometryRecoveryKeyframeState,
+        reason: String
+    ) {
+        pendingKeyframeReason = state.reason
+        pendingKeyframeDeadline = min(state.deadline, CFAbsoluteTimeGetCurrent())
+        pendingKeyframeRequiresFlush = state.requiresFlush
+        pendingKeyframeUrgent = true
+        pendingKeyframeRequiresReset = state.requiresReset
+        pendingEmergencyKeyframeQuality = state.emergencyQuality
+        suppressEncodedNonKeyframesUntilKeyframe = true
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = state.lastKeyframeRequestTime
+        MirageLogger.stream(
+            "Preserved geometry recovery keyframe across \(reason): \(state.reason)"
+        )
+        scheduleProcessingForPendingKeyframe(reason: state.reason)
     }
 
     /// Clears deferred keyframe requests and send deadlines for a stream reconfiguration.
@@ -83,6 +144,7 @@ extension StreamContext {
         maxInFlightFrames = min(minInFlightFrames, maxInFlightFramesCap)
         qualityCeiling = resolvedQualityCeiling
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
+        clearAwdlHostStructuralQualityReduction()
     }
 }
 #endif

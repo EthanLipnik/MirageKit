@@ -187,7 +187,8 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
     /// Whether the active path uses Apple's AWDL radio interface.
     public var usesAwdlRadioInterface: Bool {
-        interfaceNames.containsInterfaceName(withPrefix: "awdl")
+        interfaceNames.containsInterfaceName(withPrefix: "awdl") ||
+            interfaceNames.containsInterfaceName(withPrefix: "llw")
     }
 
     /// Whether the active path uses a Thunderbolt Bridge-style wired interface.
@@ -226,7 +227,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
            normalizedNames.contains(where: { $0.hasPrefix("anpi") || $0.hasPrefix("apni") }) {
             return .applePrivateNCM
         }
-        if mediaProfile == .proximityWiredLike,
+        if (mediaProfile == .proximityWiredLike || mediaProfile.usesAwdlRadioPolicy),
            normalizedNames.contains(where: { $0.hasPrefix("llw") }) {
             return .lowLatencyWireless
         }

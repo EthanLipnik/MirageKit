@@ -123,6 +123,32 @@ struct HEVCEncoderRateLimitTests {
         #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] as? Bool == true)
     }
 
+    @Test("AWDL balanced desktop specification suppresses low-latency rate control")
+    func awdlBalancedDesktopEncoderSpecificationSuppressesLowLatencyRateControl() {
+        let spec = VideoEncoder.encoderSpecification(
+            latencyMode: .balanced,
+            streamKind: .desktop,
+            mediaPathProfile: .awdlRadio
+        )
+
+        #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] == nil)
+        #expect(!VideoEncoder.standardLowLatencyVTTuningEnabled(
+            latencyMode: .balanced,
+            streamKind: .desktop,
+            mediaPathProfile: .awdlRadio
+        ))
+    }
+
+    @Test("AWDL encoder policy favors readability over lowest latency")
+    func awdlEncoderPolicyFavorsReadabilityOverLowestLatency() {
+        #expect(VideoEncoder.frameDelayCount(for: .balanced, mediaPathProfile: .awdlRadio) == 1)
+        #expect(VideoEncoder.frameDelayCount(for: .balanced, mediaPathProfile: .localWiFi) == 0)
+        #expect(!VideoEncoder.prioritizeEncodingSpeedOverQuality(mediaPathProfile: .awdlRadio))
+        #expect(VideoEncoder.prioritizeEncodingSpeedOverQuality(mediaPathProfile: .localWiFi))
+    }
+
     @Test("Standard lowest-latency desktop specification keeps low-latency rate control at high resolution")
     func standardLowestLatencyHighResDesktopEnablesRateControl() {
         let spec = VideoEncoder.encoderSpecification(

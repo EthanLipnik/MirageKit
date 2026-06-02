@@ -183,19 +183,19 @@ extension MirageClientService {
                 0
             case .bridge:
                 1
-            case .lowLatencyWireless:
-                2
             case .sameWiredEthernet:
+                2
+            case .lowLatencyWireless:
                 3
-            case .awdl:
-                4
             case .mixedEthernetSameLAN:
-                5
+                4
             case .wifiLAN:
-                6
+                5
             case .vpn:
-                7
+                6
             case .other:
+                7
+            case .awdl:
                 8
             }
         }

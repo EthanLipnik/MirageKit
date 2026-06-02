@@ -57,6 +57,8 @@ struct RecoveryReasonMappingTests {
         await context.scheduleCoalescedRecoveryKeyframe(
             reason: "Desktop resize reset",
             noteLoss: true,
+            requiresFlush: true,
+            requiresReset: true,
             ignoreExistingInFlight: true
         )
         let armedDeadline = await context.keyframeSendDeadline
@@ -77,6 +79,8 @@ struct RecoveryReasonMappingTests {
         await context.scheduleCoalescedRecoveryKeyframe(
             reason: "Desktop resize reset",
             noteLoss: true,
+            requiresFlush: true,
+            requiresReset: true,
             ignoreExistingInFlight: true
         )
         await context.requestKeyframeRecoveryIfPossible()
@@ -85,11 +89,36 @@ struct RecoveryReasonMappingTests {
         #expect(await context.softRecoveryCount == 0)
     }
 
+    @Test("Generic reconfiguration can preserve an armed desktop resize keyframe")
+    func genericReconfigurationCanPreserveArmedDesktopResizeKeyframe() async {
+        let context = makeContext(transportPathKind: .awdl)
+
+        await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize reset",
+            noteLoss: true,
+            requiresFlush: true,
+            requiresReset: true,
+            ignoreExistingInFlight: true
+        )
+
+        await context.resetPipelineStateForReconfiguration(
+            reason: "unit-test-retune",
+            preservePendingGeometryRecoveryKeyframe: true
+        )
+
+        #expect(await context.pendingKeyframeReason == "Desktop resize reset")
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeUrgent)
+        #expect(await context.keyframeSendDeadline == 0)
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
     @Test("Repeated client background pause clears sender queue while already paused")
     func repeatedClientBackgroundPauseClearsSenderQueueWhileAlreadyPaused() async throws {
         let context = makeContext()
         let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
-        await context.setupPacketSender(sendPacket: { _, onComplete in
+        await context.setupPacketSender(sendPacketWithMetadata: { _, _, onComplete in
             pendingCompletions.withLock {
                 $0.append(StreamPacketSenderPendingSendCompletion(onComplete: onComplete))
             }

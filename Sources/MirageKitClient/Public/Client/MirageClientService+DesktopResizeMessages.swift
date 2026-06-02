@@ -19,6 +19,76 @@ extension MirageClientService {
             )
             return false
         }
+        if let acceptedContractID = started.desktopGeometryContractID {
+            let acceptedDisplayPixelSize: CGSize? = if let width = started.desktopGeometryDisplayPixelWidth,
+                                                       let height = started.desktopGeometryDisplayPixelHeight {
+                CGSize(width: width, height: height)
+            } else {
+                nil
+            }
+            let acceptedEncodedPixelSize: CGSize? = if let width = started.desktopGeometryEncodedPixelWidth,
+                                                       let height = started.desktopGeometryEncodedPixelHeight {
+                CGSize(width: width, height: height)
+            } else {
+                nil
+            }
+            let activeTransitionRejectionReason: String? = if let activeTransition = desktopResizeCoordinator.activeTransition,
+                                                              activeTransition.streamID == streamID {
+                activeTransition.target.acceptedGeometryRejectionReason(
+                    acceptedContractID: acceptedContractID,
+                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity,
+                    acceptedLogicalResolution: started.presentationSize,
+                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
+                    acceptedEncodedPixelSize: acceptedEncodedPixelSize,
+                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
+                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                )
+            } else {
+                "activeTransition=\(desktopResizeCoordinator.activeTransition?.transitionID.uuidString ?? "nil")"
+            }
+            let generationContractRejectionReason: String? = if started.desktopPresentationGeneration != nil,
+                                                                let lastSentTarget = desktopResizeCoordinator.lastSentTarget {
+                lastSentTarget.acceptedGeometryRejectionReason(
+                    acceptedContractID: acceptedContractID,
+                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity,
+                    acceptedLogicalResolution: started.presentationSize,
+                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
+                    acceptedEncodedPixelSize: acceptedEncodedPixelSize,
+                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
+                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                )
+            } else {
+                "generationContract=unavailable"
+            }
+            let hasMatchingActiveTransition = activeTransitionRejectionReason == nil
+            let hasMatchingGenerationContract = generationContractRejectionReason == nil
+            guard hasMatchingActiveTransition || hasMatchingGenerationContract else {
+                MirageLogger.client(
+                    "Ignoring stale desktop resize commit for stream \(streamID): " +
+                        "geometryContract=\(acceptedContractID.uuidString) " +
+                        "active=\(activeTransitionRejectionReason ?? "ok") " +
+                        "generation=\(generationContractRejectionReason ?? "ok")"
+                )
+                return false
+            }
+        } else if let activeTransition = desktopResizeCoordinator.activeTransition,
+                  activeTransition.streamID == streamID {
+            let matchesActiveTransition = desktopResizeCoordinator.acceptTransition(
+                streamID: streamID,
+                transitionID: started.transitionID
+            )
+            let isHostAuthoritativeRollback = started.captureSource == .mainDisplayFallback &&
+                started.allowsClientResize == false &&
+                started.transitionOutcome == .rolledBack
+            guard matchesActiveTransition || isHostAuthoritativeRollback else {
+                MirageLogger.client(
+                    "Ignoring stale desktop resize commit for stream \(streamID): " +
+                        "missing geometry contract while active transition=\(activeTransition.transitionID.uuidString) " +
+                        "startedTransition=\(started.transitionID?.uuidString ?? "nil")"
+                )
+                return false
+            }
+        }
         if let generation = started.desktopPresentationGeneration {
             let previousGeneration = desktopPresentationGenerationBySessionID[started.desktopSessionID] ?? 0
             guard generation > previousGeneration else {

@@ -52,6 +52,7 @@ extension MirageHostService {
         cancelPendingStartupAttempt(streamID: mediaStreamID)
         await coordinator.stop()
         streamsByID.removeValue(forKey: mediaStreamID)
+        mediaPathClientEvidenceByStreamID.removeValue(forKey: mediaStreamID)
         await deactivateAudioSourceIfNeeded(streamID: mediaStreamID)
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: mediaStreamID) {
             closeRemovedMediaStream(videoStream, streamID: mediaStreamID, kind: "video")
@@ -127,6 +128,12 @@ extension MirageHostService {
 
         let mediaStreamID = nextStreamID
         nextStreamID += 1
+        var retainMediaPathClientEvidence = false
+        defer {
+            if !retainMediaPathClientEvidence {
+                mediaPathClientEvidenceByStreamID.removeValue(forKey: mediaStreamID)
+            }
+        }
 
         var atlasEncoderConfig = resolveEncoderConfiguration(
             keyFrameInterval: selectRequest.keyFrameInterval,
@@ -144,6 +151,9 @@ extension MirageHostService {
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
         let mediaPathPolicy = effectiveMediaPathPolicy(for: selectRequest, clientContext: clientContext)
+        mediaPathClientEvidenceByStreamID[mediaStreamID] = HostStreamMediaPathClientEvidence(
+            policy: mediaPathPolicy
+        )
         let context = StreamContext(
             streamID: mediaStreamID,
             windowID: 0,
@@ -168,7 +178,7 @@ extension MirageHostService {
         )
         MirageLogger.host(
             "event=media_path_policy phase=app_atlas_start stream=\(mediaStreamID) " +
-                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=unreliableQueued " +
                 "maxPacket=\(mediaMaxPacketSize)"
         )
         streamsByID[mediaStreamID] = context
@@ -219,11 +229,20 @@ extension MirageHostService {
             throw error
         }
 
-        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
-        await context.setMediaSendProfile(mediaSendProfile)
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile(
+            resolvedMediaPathProfile: mediaPathPolicy.mediaPathProfile,
+            streamID: mediaStreamID,
+            phase: "app_atlas_transport"
+        )
+        let mediaSendProfileReference = await context.setMediaSendProfile(
+            mediaSendProfile,
+            diagnosticsProvider: { profile in
+                await videoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+            }
+        )
         MirageLogger.host(
             "event=media_path_policy phase=app_atlas_transport stream=\(mediaStreamID) " +
-                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=unreliableQueued " +
                 "sendProfile=\(mediaSendProfile.rawValue) maxPacket=\(context.mediaMaxPacketSize)"
         )
         let coordinator = AppAtlasMediaCoordinator(
@@ -234,8 +253,14 @@ extension MirageHostService {
             hostBufferingPolicy: hostBufferingPolicy,
             capturePressureProfile: capturePressureProfile,
             targetFrameRate: targetFrameRate,
-            sendPacket: { packetData, onComplete in
-                videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
+            sendPacketWithMetadata: { packetData, metadata, onComplete in
+                let activeMediaSendProfile = mediaSendProfileReference.read { $0 }
+                videoStream.sendUnreliableQueued(
+                    packetData,
+                    profile: activeMediaSendProfile,
+                    options: metadata.loomQueuedUnreliableSendOptions,
+                    onComplete: onComplete
+                )
             },
             onSendError: { [weak self] error in
                 guard let self else { return }
@@ -262,6 +287,7 @@ extension MirageHostService {
             }
         )
         appAtlasCoordinatorsByClientID[clientContext.client.id] = coordinator
+        retainMediaPathClientEvidence = true
         return coordinator
     }
 }

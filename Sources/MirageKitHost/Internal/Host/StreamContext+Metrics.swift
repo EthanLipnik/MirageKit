@@ -50,7 +50,9 @@ extension StreamContext {
             let encoderValidation = await encoder?.runtimeValidationSnapshot
             let captureTelemetry = await captureEngine?.consumeCaptureTelemetrySnapshot()
             let capturePolicy = await captureEngine?.capturePolicySnapshot
-            let packetTelemetry = await packetSender?.consumeTelemetrySnapshot()
+            let packetTelemetry = await packetSender?.consumeTelemetrySnapshot(
+                queuedUnreliableProfile: mediaSendProfile
+            )
             let displayP3CoverageStatus = resolvedDisplayP3CoverageStatus(
                 capture: captureValidation,
                 encoder: encoderValidation
@@ -64,6 +66,7 @@ extension StreamContext {
                 telemetry: captureTelemetry,
                 policy: capturePolicy
             )
+            let awdlPolicy = transportController.latestAwdlMediaDecision
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -96,6 +99,13 @@ extension StreamContext {
                 realtimeBitrateCeiling: realtimeRuntimeBitrateCeilingBps,
                 realtimePressureState: realtimePressureState.rawValue,
                 realtimePressureReason: realtimePressureReason,
+                awdlPolicyState: awdlPolicy?.state.rawValue,
+                awdlPolicyTrigger: awdlPolicy?.trigger.rawValue,
+                awdlSelectedLever: awdlPolicy?.selectedLever.rawValue,
+                awdlPlayoutDelayMs: awdlPolicy?.playoutDelayMs,
+                awdlResolutionScale: awdlPolicy?.resolutionScale,
+                awdlQualityReductionAllowed: awdlPolicy?.qualityReductionAllowed,
+                awdlHostPacingBudgetBps: awdlPolicy?.hostPacingBudgetBps,
                 captureAdmissionDrops: captureDroppedIntervalCount,
                 frameBudgetMs: frameBudgetMs,
                 averageEncodeMs: resolvedAverageEncodeMs,
@@ -120,6 +130,31 @@ extension StreamContext {
                 senderLocalDeadlineDrops: packetTelemetry?.senderLocalDeadlineDrops,
                 generationAbortDrops: packetTelemetry?.generationAbortDrops,
                 nonKeyframeHoldDrops: packetTelemetry?.nonKeyframeHoldDrops,
+                queuedUnreliableDeadlineExpiredDrops: packetTelemetry?.queuedUnreliableDeadlineExpiredDrops,
+                queuedUnreliableQueueLimitDrops: packetTelemetry?.queuedUnreliableQueueLimitDrops,
+                queuedUnreliableSupersededDrops: packetTelemetry?.queuedUnreliableSupersededDrops,
+                queuedUnreliableUnsupportedTransportDrops: packetTelemetry?.queuedUnreliableUnsupportedTransportDrops,
+                queuedUnreliableClosedDrops: packetTelemetry?.queuedUnreliableClosedDrops,
+                queuedUnreliablePendingPackets: packetTelemetry?.queuedUnreliablePendingPackets,
+                queuedUnreliableOutstandingPackets: packetTelemetry?.queuedUnreliableOutstandingPackets,
+                queuedUnreliableQueuedBytes: packetTelemetry?.queuedUnreliableQueuedBytes,
+                queuedUnreliablePendingPacketMax: packetTelemetry?.queuedUnreliablePendingPacketMax,
+                queuedUnreliableOutstandingPacketMax: packetTelemetry?.queuedUnreliableOutstandingPacketMax,
+                queuedUnreliableQueuedBytesMax: packetTelemetry?.queuedUnreliableQueuedBytesMax,
+                queuedUnreliableEnqueuedCount: packetTelemetry?.queuedUnreliableEnqueuedCount,
+                queuedUnreliableSentCount: packetTelemetry?.queuedUnreliableSentCount,
+                queuedUnreliableCompletedCount: packetTelemetry?.queuedUnreliableCompletedCount,
+                queuedUnreliableDroppedCount: packetTelemetry?.queuedUnreliableDroppedCount,
+                queuedUnreliableErrorCount: packetTelemetry?.queuedUnreliableErrorCount,
+                queuedUnreliableQueueDwellP50Ms: packetTelemetry?.queuedUnreliableQueueDwellP50Ms,
+                queuedUnreliableQueueDwellP95Ms: packetTelemetry?.queuedUnreliableQueueDwellP95Ms,
+                queuedUnreliableQueueDwellP99Ms: packetTelemetry?.queuedUnreliableQueueDwellP99Ms,
+                queuedUnreliableSendGapP50Ms: packetTelemetry?.queuedUnreliableSendGapP50Ms,
+                queuedUnreliableSendGapP95Ms: packetTelemetry?.queuedUnreliableSendGapP95Ms,
+                queuedUnreliableSendGapP99Ms: packetTelemetry?.queuedUnreliableSendGapP99Ms,
+                queuedUnreliableContentProcessedP50Ms: packetTelemetry?.queuedUnreliableContentProcessedP50Ms,
+                queuedUnreliableContentProcessedP95Ms: packetTelemetry?.queuedUnreliableContentProcessedP95Ms,
+                queuedUnreliableContentProcessedP99Ms: packetTelemetry?.queuedUnreliableContentProcessedP99Ms,
                 usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
                 encoderGPURegistryID: encoderValidation?.encoderGPURegistryID,
                 encodedWidth: encodedWidth > 0 ? encodedWidth : nil,

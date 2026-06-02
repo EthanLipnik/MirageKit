@@ -31,13 +31,14 @@ extension StreamController {
     /// Arms the recovery window used after a host-side resize or stream dimension reset.
     func armPostResizeRecoveryWindow(reason: String) async {
         postResizeRecoveryEpisodeID &+= 1
+        let shouldAwaitPresentation = presentationTier == .activeLive
         awaitingFirstFrameAfterResize = true
-        awaitingFirstPresentedFrameAfterResize = true
+        awaitingFirstPresentedFrameAfterResize = shouldAwaitPresentation
         postResizeDecodeRecoverySuccessCount = 0
         postResizeDecodeErrorGraceDeadline = currentTime + Self.postResizeDecodeErrorGraceInterval
         await decoder.beginRecoveryTracking()
         await setClientRecoveryStatus(.postResizeAwaitingFirstFrame, cause: .manual)
-        if presentationTier == .activeLive {
+        if shouldAwaitPresentation {
             await armFirstPresentedFrameAwaiter(reason: reason, mode: .recovery)
         }
     }
@@ -111,10 +112,7 @@ extension StreamController {
             if shouldNotify {
                 MirageLogger.client("Post-resize decoded frame arrived for stream \(streamID)")
             }
-            if postResizeDecodeRecoverySuccessCount >= Self.postResizeDecodeRecoverySuccessThreshold {
-                awaitingFirstPresentedFrameAfterResize = false
-                await maybeCompletePostResizeRecovery()
-            }
+            await maybeCompletePostResizeRecovery()
         }
         if presentationTier == .activeLive,
            !hasPresentedFirstFrame,

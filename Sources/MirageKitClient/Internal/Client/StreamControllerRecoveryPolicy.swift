@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 5/9/26.
 //
-//  Pure stream recovery timing and jitter policy helpers.
+//  Pure stream recovery timing helpers.
 //
 
 import Foundation
@@ -16,12 +16,6 @@ import AppKit
 #endif
 
 extension StreamController {
-    struct AdaptiveJitterState: Equatable {
-        var holdMs: Int
-        var stressStreak: Int
-        var stableStreak: Int
-    }
-
     nonisolated static func frameIntervalSeconds(targetFPS: Int) -> CFAbsoluteTime {
         1.0 / Double(max(1, targetFPS))
     }
@@ -68,36 +62,6 @@ extension StreamController {
 
     nonisolated static func duration(seconds: CFAbsoluteTime) -> Duration {
         .milliseconds(Int64(max(1, Int((seconds * 1000).rounded(.up)))))
-    }
-
-    nonisolated static func nextAdaptiveJitterState(
-        current: AdaptiveJitterState,
-        receivedFPS: Double,
-        targetFPS: Int
-    ) -> AdaptiveJitterState {
-        var next = current
-        let target = Double(max(1, targetFPS))
-        let stress = receivedFPS < target * Self.adaptiveJitterStressThreshold
-        if stress {
-            next.stressStreak += 1
-            next.stableStreak = 0
-            if next.stressStreak >= Self.adaptiveJitterStressWindows {
-                next.stressStreak = 0
-                next.holdMs = min(
-                    Self.adaptiveJitterHoldMaxMs,
-                    next.holdMs + Self.adaptiveJitterStepUpMs
-                )
-            }
-            return next
-        }
-
-        next.stressStreak = 0
-        next.stableStreak += 1
-        if next.stableStreak >= Self.adaptiveJitterStableWindows {
-            next.stableStreak = 0
-            next.holdMs = max(0, next.holdMs - Self.adaptiveJitterStepDownMs)
-        }
-        return next
     }
 
     nonisolated static func frameLossDiagnosticMessage(

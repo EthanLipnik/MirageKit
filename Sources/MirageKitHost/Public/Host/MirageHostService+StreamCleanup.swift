@@ -44,6 +44,7 @@ extension MirageHostService {
         clearAppStreamGovernorState(streamID: streamID)
         stopWindowVisibleFrameMonitor(streamID: streamID)
         streamsByID.removeValue(forKey: streamID)
+        mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
         transportSendErrorReported.remove(streamID)
         removeActiveStreamSession(streamID: streamID)
         await syncAppListRequestDeferralForInteractiveWorkload()

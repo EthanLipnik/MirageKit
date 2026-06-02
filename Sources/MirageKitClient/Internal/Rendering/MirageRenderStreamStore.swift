@@ -309,7 +309,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             targetFPS: state.sourceTargetFPS,
             playoutDelayFrames: latencyPolicy.targetPlayoutDelayFrames,
             latencyMode: latencyPolicy.latencyMode,
-            usesFixedRealtimeDisplayPolicy: state.mediaPathProfile.usesAwdlRadioPolicy
+            usesFixedRealtimeDisplayPolicy: latencyPolicy.usesAwdlRealtimePolicy
         )
         state.lock.unlock()
         return timing
@@ -320,13 +320,14 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         state.sourceTargetFPS = target.sourceFPS
         state.displayTargetFPS = target.displayFPS
+        let resolvedProfile = resolvedMediaPathProfileLocked(state: state)
         let effectiveLatencyMode = effectiveLatencyMode(
             target.latencyMode,
-            mediaPathProfile: state.mediaPathProfile
+            mediaPathProfile: resolvedProfile
         )
         let latencyModeChanged = state.latencyMode != effectiveLatencyMode
         state.latencyMode = effectiveLatencyMode
-        state.playoutDelayFrames = state.mediaPathProfile.usesAwdlRadioPolicy
+        state.playoutDelayFrames = resolvedProfile.usesAwdlRadioPolicy
             ? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
             : target.playoutDelayFrames
         if latencyModeChanged {
@@ -340,6 +341,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.displayTargetFPS = MirageRenderModePolicy.normalizedTargetFPS(displayFPS)
+        if resolvedMediaPathProfileLocked(state: state).usesAwdlRadioPolicy {
+            state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+        }
         state.lock.unlock()
     }
 
@@ -350,13 +354,47 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
+    func updateAwdlReceiverPlayoutTarget(
+        for streamID: StreamID,
+        targetFPS: Int,
+        receiverJitterP99Ms: Double? = nil,
+        presentationStallCount: UInt64,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        let resolvedProfile = resolvedMediaPathProfileLocked(state: state)
+        guard resolvedProfile.usesAwdlRadioPolicy else {
+            state.awdlReceiverPlayoutDelayTargetMs = nil
+            state.lock.unlock()
+            return
+        }
+
+        let receiverJitterP99Ms = receiverJitterP99Ms ?? 0
+        state.awdlReceiverPlayoutDelayTargetMs = MirageAwdlMediaController.playoutDelayMs(
+            jitterP99Ms: receiverJitterP99Ms,
+            presentationStallCount: presentationStallCount,
+            hasRecentInteraction: hasRecentInteractionLocked(state: state, now: now)
+        )
+        state.playoutDelayFrames = presentationLatencyPolicyLocked(
+            state: state,
+            now: now
+        ).targetPlayoutDelayFrames
+        trimPendingFramesToCurrentCapacityLocked(state: state)
+        state.lock.unlock()
+    }
+
     func setTransportPathKind(for streamID: StreamID, pathKind: MirageNetworkPathKind) {
         let state = streamState(for: streamID)
         state.lock.lock()
         if state.transportPathKind != pathKind {
             state.transportPathKind = pathKind
-            state.latencyMode = effectiveLatencyMode(state.latencyMode, mediaPathProfile: state.mediaPathProfile)
-            if state.mediaPathProfile.usesAwdlRadioPolicy {
+            let resolvedProfile = resolvedMediaPathProfileLocked(state: state)
+            state.latencyMode = effectiveLatencyMode(state.latencyMode, mediaPathProfile: resolvedProfile)
+            if !resolvedProfile.usesAwdlRadioPolicy {
+                state.awdlReceiverPlayoutDelayTargetMs = nil
+            }
+            if resolvedProfile.usesAwdlRadioPolicy {
                 state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
             }
             state.presentationController.reset()
@@ -369,8 +407,12 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         if state.mediaPathProfile != profile {
             state.mediaPathProfile = profile
-            state.latencyMode = effectiveLatencyMode(state.latencyMode, mediaPathProfile: profile)
-            if profile.usesAwdlRadioPolicy {
+            let resolvedProfile = resolvedMediaPathProfileLocked(state: state)
+            state.latencyMode = effectiveLatencyMode(state.latencyMode, mediaPathProfile: resolvedProfile)
+            if !resolvedProfile.usesAwdlRadioPolicy {
+                state.awdlReceiverPlayoutDelayTargetMs = nil
+            }
+            if resolvedProfile.usesAwdlRadioPolicy {
                 state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
             }
             state.presentationController.reset()
@@ -385,11 +427,12 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     ) {
         let state = streamState(for: streamID)
         state.lock.lock()
-        let effectiveLatencyMode = effectiveLatencyMode(latencyMode, mediaPathProfile: state.mediaPathProfile)
+        let resolvedProfile = resolvedMediaPathProfileLocked(state: state)
+        let effectiveLatencyMode = effectiveLatencyMode(latencyMode, mediaPathProfile: resolvedProfile)
         let latencyModeChanged = state.latencyMode != effectiveLatencyMode
         state.latencyMode = effectiveLatencyMode
         state.playoutDelayFrames = MirageStreamCadenceTarget.clampedPlayoutDelayFrames(
-            state.mediaPathProfile.usesAwdlRadioPolicy
+            resolvedProfile.usesAwdlRadioPolicy
                 ? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
                 : playoutDelayFrames ?? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
         )
@@ -407,6 +450,13 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         MirageAwdlMediaController.fixedLatencyMode(
             requestedLatencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile
+        )
+    }
+
+    private func resolvedMediaPathProfileLocked(state: MirageRenderStreamState) -> MirageMediaPathProfile {
+        MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: state.transportPathKind,
+            mediaPathProfile: state.mediaPathProfile == .unknown ? nil : state.mediaPathProfile
         )
     }
 
@@ -600,9 +650,10 @@ extension MirageRenderStreamStore {
             sourceFPS: state.sourceTargetFPS,
             displayFPS: state.displayTargetFPS,
             transportPathKind: state.transportPathKind,
-            mediaPathProfile: state.mediaPathProfile,
+            mediaPathProfile: resolvedMediaPathProfileLocked(state: state),
             hasRecentInteraction: hasRecentInteractionLocked(state: state, now: now),
-            lastInteractionAgeSeconds: lastInteractionAgeSecondsLocked(state: state, now: now)
+            lastInteractionAgeSeconds: lastInteractionAgeSecondsLocked(state: state, now: now),
+            awdlReceiverPlayoutDelayTargetMs: state.awdlReceiverPlayoutDelayTargetMs
         )
     }
 

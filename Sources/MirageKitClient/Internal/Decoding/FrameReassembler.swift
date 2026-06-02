@@ -67,11 +67,31 @@ final class FrameReassembler: @unchecked Sendable {
         let incompleteFrameLifetimeTimeouts: UInt64
         let missingFragmentTimeouts: UInt64
         let forwardGapTimeouts: UInt64
+        let frameCompletionLatencyP50Ms: Double
+        let frameCompletionLatencyP95Ms: Double
+        let frameCompletionLatencyMaxMs: Double
+        let keyframeCompletionLatencyP50Ms: Double
+        let keyframeCompletionLatencyP95Ms: Double
+        let keyframeCompletionLatencyMaxMs: Double
         let pFrameCompletionLatencyP50Ms: Double
         let pFrameCompletionLatencyP95Ms: Double
         let pFrameCompletionLatencyMaxMs: Double
         let latePFrameCompletionCount: UInt64
         let fecRecoveredFragmentCount: UInt64
+    }
+
+    struct PacketAcceptanceSnapshot: Sendable, Equatable {
+        let rawPacketsReceived: UInt64
+        let acceptedPacketsReceived: UInt64
+
+        var hasRawPackets: Bool { rawPacketsReceived > 0 }
+        var hasAcceptedPackets: Bool { acceptedPacketsReceived > 0 }
+    }
+
+    struct FrameCompletionLatencySample: Sendable {
+        let completedAt: Date
+        let latencyMs: Double
+        let isKeyframe: Bool
     }
 
     struct PFrameCompletionLatencySample: Sendable {
@@ -131,6 +151,7 @@ final class FrameReassembler: @unchecked Sendable {
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
     var lastPacketReceivedTime: CFAbsoluteTime = 0
+    var lastAcceptedPacketReceivedTime: CFAbsoluteTime = 0
     var currentEpoch: UInt16 = 0
     let keyframeTimeout: TimeInterval = 5.0
     let startupKeyframeTimeout: TimeInterval = 5.0
@@ -141,14 +162,15 @@ final class FrameReassembler: @unchecked Sendable {
     let pendingKeyframePromotionProgressThreshold: Double = 0.25
     let pendingKeyframeProgressPreservationThreshold: Double = 0.75
     let pFrameNoProgressTimeout: TimeInterval = 0.30
+    let pFrameNoProgressTimeoutAwdl: TimeInterval = 0.30
     let pFrameNoProgressTimeoutRemote: TimeInterval = 1.25
     let pFrameAbsoluteLifetimeCapDefault: TimeInterval = 0.60
     let pFrameAbsoluteLifetimeCapRemoteSmoothest: TimeInterval = 0.90
     let pFrameAbsoluteLifetimeCapRemoteLowestLatency: TimeInterval = 2.50
-    let pFrameAbsoluteLifetimeCapAwdl: TimeInterval = 0.80
+    let pFrameAbsoluteLifetimeCapAwdl: TimeInterval = 0.45
     let remoteBufferedForwardGapTimeout: TimeInterval = 2.50
     let pFrameCompletionLatencySampleWindow: TimeInterval = 5.0
-    let pFrameLateCompletionThresholdMs: Double = 250
+    let pFrameLateCompletionThresholdMs: Double = 180
     var targetFrameRate: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var transportPathKind: MirageNetworkPathKind = .unknown
@@ -181,6 +203,7 @@ final class FrameReassembler: @unchecked Sendable {
     // MARK: - Diagnostic counters
 
     var totalPacketsReceived: UInt64 = 0
+    var acceptedPacketsReceived: UInt64 = 0
     var packetsDiscardedCRC: UInt64 = 0
 
     /// Callback for loss events such as frame timeouts or pathological forward gaps.
@@ -188,6 +211,7 @@ final class FrameReassembler: @unchecked Sendable {
 
     /// Prevents repeated frame-loss signals for the same forward gap.
     var hasSignaledGapFrameLoss: Bool = false
+    var frameCompletionLatencySamples: [FrameCompletionLatencySample] = []
     var pFrameCompletionLatencySamples: [PFrameCompletionLatencySample] = []
     var pendingPFrameTimingSamples: [PendingPFrameTimingSample] = []
     let pendingPFrameTimingSampleLimit = 128

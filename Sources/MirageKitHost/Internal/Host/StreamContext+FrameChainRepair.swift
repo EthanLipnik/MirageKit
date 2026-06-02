@@ -49,6 +49,7 @@ extension StreamContext {
     func scheduleEmergencyChainRepairKeyframe(
         reason: String,
         bypassesRecoveryCooldown: Bool,
+        supersedesInFlightGeometry: Bool = false,
         now: CFAbsoluteTime
     ) async -> Bool {
         if case .emergencyKeyframePending = frameChainState {
@@ -75,6 +76,7 @@ extension StreamContext {
             requiresReset: true,
             advanceEpochOnReset: true,
             ignoreExistingInFlight: false,
+            supersedesInFlightGeometry: supersedesInFlightGeometry,
             bypassesRecoveryCooldown: bypassesRecoveryCooldown
         )
         guard queued else {
@@ -96,22 +98,46 @@ extension StreamContext {
 
     func emergencyKeyframeQuality() -> Float {
         let base = min(pendingEmergencyKeyframeQuality ?? activeQuality, keyframeQuality)
-        return max(0.02, min(base, activeQuality * 0.35, resolvedQualityCeiling * 0.35))
+        let floor = emergencyKeyframeQualityFloor()
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            guard currentAwdlQualityReductionAllowed() else {
+                return min(
+                    resolvedQualityCeiling,
+                    max(floor, min(base, activeQuality, keyframeQuality, resolvedQualityCeiling))
+                )
+            }
+            let recoveryScale: Float = 0.50
+            return min(
+                resolvedQualityCeiling,
+                max(floor, min(base, activeQuality * recoveryScale, resolvedQualityCeiling * recoveryScale))
+            )
+        }
+        return min(
+            resolvedQualityCeiling,
+            max(floor, min(base, activeQuality * 0.35, resolvedQualityCeiling * 0.35))
+        )
     }
 
     func noteEmergencyKeyframePrepared(using decision: HostFrameBudgetDecision?) async {
         let decisionQuality = decision?.keyframeQuality ?? emergencyKeyframeQuality()
+        let floor = emergencyKeyframeQualityFloor()
+        let emergencyCeiling = max(floor, min(keyframeQuality, resolvedQualityCeiling))
         if decision?.reason == .adaptiveRepair {
             pendingEmergencyKeyframeQuality = max(
-                0.02,
-                min(decisionQuality, keyframeQuality, resolvedQualityCeiling)
+                floor,
+                min(decisionQuality, emergencyCeiling, resolvedQualityCeiling)
             )
         } else {
-            pendingEmergencyKeyframeQuality = min(decisionQuality, emergencyKeyframeQuality())
+            pendingEmergencyKeyframeQuality = max(floor, min(decisionQuality, emergencyKeyframeQuality()))
         }
         if let pendingEmergencyKeyframeQuality {
             await encoder?.prepareForKeyframe(quality: pendingEmergencyKeyframeQuality)
         }
+    }
+
+    private func emergencyKeyframeQualityFloor() -> Float {
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return 0.02 }
+        return resolvedRuntimeKeyframeQualityFloor(for: resolvedQualityCeiling)
     }
 
     @discardableResult
@@ -178,7 +204,14 @@ extension StreamContext {
             return
         }
 
-        guard didSend else { return }
+        guard didSend else {
+            await handlePacketSenderDependencyFrameDrop(
+                streamID: completion.streamID,
+                frameNumber: frameNumber,
+                reason: .transportDrop
+            )
+            return
+        }
         await handleCleanPFrameTransport(frameNumber: frameNumber, now: now)
         scheduleProcessingIfNeeded()
     }
@@ -435,8 +468,32 @@ extension StreamContext {
                 now: CFAbsoluteTimeGetCurrent()
             )
         case let .emergencyKeyframePending(pendingReason, openedAt):
-            guard pendingReceiverAcceptedKeyframeFrameNumber == nil,
-                  keyframeInFlightFrameNumber == nil else {
+            let now = CFAbsoluteTimeGetCurrent()
+            if pendingReceiverAcceptedKeyframeFrameNumber != nil ||
+                keyframeInFlightFrameNumber != nil {
+                guard now - openedAt >= emergencyKeyframeReceiverAcceptanceTimeout else {
+                    scheduleFrameChainRepairKeyframeProgressCheck(
+                        reason: reason,
+                        bypassesRecoveryCooldown: bypassesRecoveryCooldown
+                    )
+                    return
+                }
+                MirageLogger.stream(
+                    "Emergency recovery keyframe receiver acceptance timed out; " +
+                        "requeueing (\(pendingReason))"
+                )
+                pendingReceiverAcceptedKeyframeFrameNumber = nil
+                keyframeInFlightFrameNumber = nil
+                frameChainState = .chainBroken(
+                    reason: pendingReason,
+                    firstBrokenFrame: nil,
+                    openedAt: now
+                )
+                await scheduleEmergencyChainRepairKeyframe(
+                    reason: pendingReason,
+                    bypassesRecoveryCooldown: bypassesRecoveryCooldown,
+                    now: now
+                )
                 return
             }
             if isKeyframeEncoding {
@@ -465,7 +522,7 @@ extension StreamContext {
             await scheduleEmergencyChainRepairKeyframe(
                 reason: pendingReason,
                 bypassesRecoveryCooldown: bypassesRecoveryCooldown,
-                now: CFAbsoluteTimeGetCurrent()
+                now: now
             )
         case .normal,
              .postKeyframeCooling:
@@ -476,5 +533,11 @@ extension StreamContext {
 
 private extension StreamContext {
     static let emergencyRecoveryScaleFactors: [CGFloat] = [1.0, 0.75, 0.5]
+
+    var emergencyKeyframeReceiverAcceptanceTimeout: CFAbsoluteTime {
+        let playoutSeconds = max(0, receiverPlayoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs) / 1_000
+        let constrainedTimeout = max(activeKeyframeInFlightCap, playoutSeconds + 1.0)
+        return mediaPathProfile.usesAwdlRadioPolicy ? constrainedTimeout : activeKeyframeInFlightCap
+    }
 }
 #endif

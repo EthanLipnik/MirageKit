@@ -45,11 +45,15 @@ extension MirageClientService {
                 )
         }
         if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
-            MirageLogger
-                .client(
-                    "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
-                )
+            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                lowLatencyHighResolutionCompressionBoost
+            )
+            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
+            logLowLatencyHighResolutionCompressionBoostRequest(
+                requested: lowLatencyHighResolutionCompressionBoost,
+                effective: effectiveBoost,
+                streamKind: "window"
+            )
         }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
@@ -105,11 +109,15 @@ extension MirageClientService {
                 )
         }
         if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
-            MirageLogger
-                .client(
-                    "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
-                )
+            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                lowLatencyHighResolutionCompressionBoost
+            )
+            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
+            logLowLatencyHighResolutionCompressionBoostRequest(
+                requested: lowLatencyHighResolutionCompressionBoost,
+                effective: effectiveBoost,
+                streamKind: "app"
+            )
         }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
@@ -174,11 +182,15 @@ extension MirageClientService {
             )
         }
         if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
-            MirageLogger
-                .client(
-                    "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
-                )
+            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                lowLatencyHighResolutionCompressionBoost
+            )
+            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
+            logLowLatencyHighResolutionCompressionBoostRequest(
+                requested: lowLatencyHighResolutionCompressionBoost,
+                effective: effectiveBoost,
+                streamKind: "desktop"
+            )
         }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
@@ -218,7 +230,15 @@ extension MirageClientService {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         }
         if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                lowLatencyHighResolutionCompressionBoost
+            )
+            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
+            logLowLatencyHighResolutionCompressionBoostRequest(
+                requested: lowLatencyHighResolutionCompressionBoost,
+                effective: effectiveBoost,
+                streamKind: "custom"
+            )
         }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
@@ -238,5 +258,21 @@ extension MirageClientService {
         if let codec = overrides.codec {
             request.codec = codec
         }
+    }
+
+    private func logLowLatencyHighResolutionCompressionBoostRequest(
+        requested: Bool,
+        effective: Bool?,
+        streamKind: String
+    ) {
+        if requested == true, effective == false {
+            MirageLogger.client(
+                "AWDL media policy disabling \(streamKind) low-latency high-res compression boost"
+            )
+            return
+        }
+        MirageLogger.client(
+            "Requesting low-latency high-res compression boost: \((effective ?? requested) ? "enabled" : "disabled")"
+        )
     }
 }

@@ -22,6 +22,7 @@ public extension MirageClientService {
     ) async throws -> ClientStreamSession {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         await cancelActiveQualityTest(reason: "custom stream startup", notifyHost: true)
+        _ = await refreshCurrentControlPathKind()
 
         let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else {
@@ -45,7 +46,7 @@ public extension MirageClientService {
             metadata: metadata,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
-            targetFrameRate: screenMaxRefreshRate,
+            targetFrameRate: effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate),
             streamScale: nil,
             mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize
         )
@@ -53,6 +54,21 @@ public extension MirageClientService {
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
         applyEncoderOverrides(overrides, to: &request)
+        if currentMediaPathUsesAwdlRadioPolicy {
+            let requestedLatency = request.latencyMode
+            request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
+            request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)
+            request.lowLatencyHighResolutionCompressionBoost =
+                effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+                    request.lowLatencyHighResolutionCompressionBoost
+                )
+            if requestedLatency != request.latencyMode {
+                MirageLogger.client(
+                    "AWDL media policy overriding requested custom latency " +
+                        "\(requestedLatency?.rawValue ?? "default") -> \(request.latencyMode?.rawValue ?? "default")"
+                )
+            }
+        }
         pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
 
         let geometry = resolvedStreamGeometry(
@@ -252,8 +268,6 @@ extension MirageClientService {
         fastPathState.clearStartupPacketPending(streamID)
         cancelStartupRegistrationRetry(streamID: streamID)
         cancelForegroundRecoveryMonitor(for: streamID)
-        activeJitterHoldMs = 0
-
         if let controller = controllersByStream.removeValue(forKey: streamID) {
             await controller.stop()
         }

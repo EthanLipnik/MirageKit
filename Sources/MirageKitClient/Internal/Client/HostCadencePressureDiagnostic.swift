@@ -67,7 +67,7 @@ struct HostCadencePressureDiagnosticSample: Sendable, Equatable {
             sendStartDelayAverageMs: metrics.sendStartDelayAverageMs ?? 0,
             sendCompletionAverageMs: metrics.sendCompletionAverageMs ?? 0,
             packetPacerAverageSleepMs: metrics.packetPacerAverageSleepMs ?? 0,
-            transportDropCount: metrics.stalePacketDrops ?? 0
+            transportDropCount: metrics.transportPressureDropCount
         )
     }
 }

@@ -90,6 +90,19 @@ extension StreamController {
                 false
             }
         }
+
+        var bypassesBootstrapRetryGates: Bool {
+            switch self {
+            case .startupKeyframeTimeout:
+                true
+            case .decodeErrorThreshold,
+                 .frameLoss,
+                 .freezeTimeout,
+                 .manualRecovery,
+                 .memoryBudget:
+                false
+            }
+        }
     }
 
     enum StreamRecoveryDecision: String, Equatable {
@@ -163,8 +176,12 @@ extension StreamController {
         let receivedWorstGapMs: Double
         let receivedFrameIntervalP95Ms: Double
         let receivedFrameIntervalP99Ms: Double
+        let receiverIngressJitterP95Ms: Double
+        let receiverIngressJitterP99Ms: Double
         let droppedFrames: UInt64
         let decodeBacklogFrames: Int
+        let decodeSubmissionLimit: Int
+        let inFlightDecodeSubmissions: Int
         let displayTickFPS: Double
         let submitAttemptFPS: Double
         let layerAcceptedFPS: Double
@@ -188,6 +205,7 @@ extension StreamController {
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
         let displayTickNoFrameCount: UInt64
+        let pendingFrameNotReadyDisplayTickCount: UInt64
         let missedVSyncCount: UInt64
         let displayTickIntervalP95Ms: Double
         let displayTickIntervalP99Ms: Double
@@ -197,7 +215,6 @@ extension StreamController {
         let frameIntervalP95Ms: Double
         let frameIntervalP99Ms: Double
         let decodeHealthy: Bool
-        let activeJitterHoldMs: Int
         let reassemblerPendingFrameCount: Int
         let reassemblerPendingKeyframeCount: Int
         let reassemblerPendingBytes: Int
@@ -208,6 +225,12 @@ extension StreamController {
         let reassemblerIncompleteFrameLifetimeTimeouts: UInt64
         let reassemblerMissingFragmentTimeouts: UInt64
         let reassemblerForwardGapTimeouts: UInt64
+        let reassemblerFrameCompletionLatencyP50Ms: Double
+        let reassemblerFrameCompletionLatencyP95Ms: Double
+        let reassemblerFrameCompletionLatencyMaxMs: Double
+        let reassemblerKeyframeCompletionLatencyP50Ms: Double
+        let reassemblerKeyframeCompletionLatencyP95Ms: Double
+        let reassemblerKeyframeCompletionLatencyMaxMs: Double
         let reassemblerPFrameCompletionLatencyP50Ms: Double
         let reassemblerPFrameCompletionLatencyP95Ms: Double
         let reassemblerPFrameCompletionLatencyMaxMs: Double
@@ -262,11 +285,11 @@ extension StreamController {
     }
 
     nonisolated static func bootstrapFirstFrameRecoveryAction(
-        hasPackets: Bool,
+        hasAcceptedPackets: Bool,
         latestSequence: UInt64,
         baselineSequence: UInt64
     ) -> BootstrapFirstFrameRecoveryAction {
-        guard hasPackets else { return .hardRecovery }
+        guard hasAcceptedPackets else { return .hardRecovery }
         guard latestSequence <= baselineSequence else { return .hardRecovery }
         return .requestKeyframe
     }

@@ -392,7 +392,7 @@ extension MirageClientService {
                 sendStartDelayStressThresholdMs: 2.0,
                 sendCompletionAverageMs: max(0, snapshot.hostSendCompletionAverageMs ?? 0),
                 sendCompletionStressThresholdMs: 12.0,
-                transportDropCount: snapshot.hostStalePacketDrops ?? 0
+                transportDropCount: snapshot.hostTransportPressureDropCount
             )
         )
         return !assessment.primaryStress && !assessment.isDelayOnlyBurst

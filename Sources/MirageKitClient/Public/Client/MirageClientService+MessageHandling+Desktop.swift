@@ -18,8 +18,10 @@ extension MirageClientService {
             let streamID = started.streamID
             let receivedDesktopSessionID = started.desktopSessionID
             let requestStartPending = desktopStreamRequestStartTime > 0
-            MirageLogger
-                .client("Desktop stream started: stream=\(streamID), \(started.width)x\(started.height)")
+            MirageLogger.client(
+                "Desktop stream started: stream=\(streamID), \(started.width)x\(started.height) " +
+                    "contract=\(started.desktopGeometryContractID?.uuidString ?? "nil")"
+            )
             if pendingLocalDesktopStopStreamID == streamID,
                pendingLocalDesktopStopSessionID == receivedDesktopSessionID {
                 MirageLogger.client(
@@ -42,6 +44,76 @@ extension MirageClientService {
             if started.transitionPhase == .resize || started.transitionID != nil {
                 _ = await handleDesktopResizeCommit(started)
                 return
+            }
+            if requestStartPending,
+               let acceptedContractID = started.desktopGeometryContractID {
+                guard let expectedTarget = desktopResizeCoordinator.lastSentTarget else {
+                    MirageLogger.client(
+                        "Ignoring stale desktopStreamStarted for stream \(streamID): " +
+                            "geometryContract=\(acceptedContractID.uuidString) expected=nil"
+                    )
+                    return
+                }
+                let acceptedDisplayPixelSize: CGSize? = if let width = started.desktopGeometryDisplayPixelWidth,
+                                                            let height = started.desktopGeometryDisplayPixelHeight {
+                    CGSize(width: width, height: height)
+                } else {
+                    nil
+                }
+                let acceptedEncodedPixelSize: CGSize? = if let width = started.desktopGeometryEncodedPixelWidth,
+                                                            let height = started.desktopGeometryEncodedPixelHeight {
+                    CGSize(width: width, height: height)
+                } else {
+                    nil
+                }
+                if let rejectionReason = expectedTarget.startupAcceptanceRejectionReason(
+                    acceptedContractID: acceptedContractID,
+                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity,
+                    acceptedLogicalResolution: started.presentationSize,
+                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
+                    acceptedEncodedPixelSize: acceptedEncodedPixelSize,
+                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
+                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                ) {
+                    MirageLogger.client(
+                        "Ignoring stale desktopStreamStarted for stream \(streamID): \(rejectionReason)"
+                    )
+                    if currentMediaPathUsesAwdlRadioPolicy {
+                        await resendPendingDesktopStartAfterGeometryContractRejection(reason: rejectionReason)
+                    }
+                    return
+                }
+            } else if requestStartPending,
+                      currentMediaPathUsesAwdlRadioPolicy,
+                      let expectedTarget = desktopResizeCoordinator.lastSentTarget {
+                if supportsDesktopGeometryContract {
+                    MirageLogger.client(
+                        "Ignoring non-contract AWDL desktopStreamStarted for stream \(streamID): " +
+                            "negotiated desktop geometry contracts require host acknowledgement"
+                    )
+                    await resendPendingDesktopStartAfterGeometryContractRejection(
+                        reason: "missing negotiated desktop geometry contract"
+                    )
+                    return
+                }
+                let acceptedDisplayPixelSize = CGSize(width: started.width, height: started.height)
+                if let rejectionReason = expectedTarget.legacyStartupAcceptanceRejectionReason(
+                    acceptedLogicalResolution: started.presentationSize,
+                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
+                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
+                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                ) {
+                    MirageLogger.client(
+                        "Ignoring non-contract AWDL desktopStreamStarted for stream \(streamID): " +
+                            "\(rejectionReason)"
+                    )
+                    await resendPendingDesktopStartAfterGeometryContractRejection(reason: rejectionReason)
+                    return
+                }
+                MirageLogger.client(
+                    "Accepted non-contract AWDL desktopStreamStarted for stream \(streamID) " +
+                        "because accepted geometry matched the pending contract"
+                )
             }
             let startupAttemptID = started.startupAttemptID
             guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
@@ -194,7 +266,8 @@ extension MirageClientService {
                 await self.sendStreamReadyAck(
                     streamID: streamID,
                     startupAttemptID: startupAttemptID,
-                    kind: .desktop
+                    kind: .desktop,
+                    desktopGeometryContract: started.streamReadyDesktopGeometryContract
                 )
             }
 
@@ -319,7 +392,6 @@ extension MirageClientService {
             pendingDesktopRequestedColorDepth = nil
             pendingDesktopRequestedLatencyMode = nil
             renderLatencyModeByStream.removeValue(forKey: streamID)
-            activeJitterHoldMs = 0
             mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
             activeStreamCodecs.removeValue(forKey: streamID)
             let controller = controllersByStream.removeValue(forKey: streamID)

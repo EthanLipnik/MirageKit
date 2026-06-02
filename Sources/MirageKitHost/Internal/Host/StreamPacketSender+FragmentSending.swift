@@ -9,6 +9,7 @@
 
 import CoreMedia
 import Foundation
+import Loom
 import MirageKit
 
 #if os(macOS)
@@ -20,7 +21,7 @@ extension StreamPacketSender {
 
         let maxPayload = maxPayloadSize
         let frameByteCount = max(0, item.frameByteCount)
-        let effectiveFECBlockSize = videoTransportMode.usesReliableOrderedDelivery ? 0 : item.fecBlockSize
+        let effectiveFECBlockSize = item.fecBlockSize
         let fragmentPlan = Self.fragmentPlan(
             frameByteCount: frameByteCount,
             maxPayload: maxPayload,
@@ -32,7 +33,7 @@ extension StreamPacketSender {
         let timestamp = UInt64(CMTimeGetSeconds(item.presentationTime) * 1_000_000_000)
         var didRecordSendStart = false
         let transportCompletionTracker = TransportCompletionTracker(
-            onFinish: { [item, fragmentStartTime, totalFragments] didDrop, error, completedAt in
+            onFinish: { [item, fragmentStartTime, totalFragments] didDrop, error, queuedUnreliableDrops, completedAt in
                 Task {
                     await self.completeTransportWorkItem(
                         item: item,
@@ -40,6 +41,7 @@ extension StreamPacketSender {
                         completedAt: completedAt,
                         totalFragments: totalFragments,
                         didDrop: didDrop,
+                        queuedUnreliableDrops: queuedUnreliableDrops,
                         error: error
                     )
                 }
@@ -243,6 +245,7 @@ extension StreamPacketSender {
         ) else {
             return .stopped
         }
+        var combinedPacingSample = pacingResult.sleepSample
 
         let packetBuffer = packetBufferPool.acquire()
         packetBuffer.prepare(length: packetLength)
@@ -285,12 +288,38 @@ extension StreamPacketSender {
             packet,
             packetBuffer: packetBuffer,
             accountedPayloadBytes: fragmentSize,
+            metadata: transportMetadata(
+                item: item,
+                fragmentIndex: fragmentIndex,
+                fragmentCount: context.fragmentPlan.totalFragmentCount,
+                isParity: false
+            ),
             context: context
         )
         if let duplicatePacket {
-            sendUnreliableDuplicatePacket(duplicatePacket, context: context)
+            guard let duplicatePacingResult = await paceFragmentSend(
+                packetBytes: duplicatePacket.count,
+                context: context,
+                progress: progress
+            ) else {
+                return .stopped
+            }
+            combinedPacingSample = PacketPacingSleepSample(
+                totalMs: combinedPacingSample.totalMs + duplicatePacingResult.sleepSample.totalMs,
+                maxMs: max(combinedPacingSample.maxMs, duplicatePacingResult.sleepSample.maxMs)
+            )
+            sendUnreliableDuplicatePacket(
+                duplicatePacket,
+                metadata: transportMetadata(
+                    item: item,
+                    fragmentIndex: fragmentIndex,
+                    fragmentCount: context.fragmentPlan.totalFragmentCount,
+                    isParity: false
+                ),
+                context: context
+            )
         }
-        return .submitted(accountedPayloadBytes: fragmentSize, sleepSample: pacingResult.sleepSample)
+        return .submitted(accountedPayloadBytes: fragmentSize, sleepSample: combinedPacingSample)
     }
 
     /// Builds, optionally encrypts, paces, and submits one FEC parity fragment.
@@ -404,6 +433,12 @@ extension StreamPacketSender {
             packet,
             packetBuffer: packetBuffer,
             accountedPayloadBytes: accountedPayloadBytes,
+            metadata: transportMetadata(
+                item: item,
+                fragmentIndex: fragmentIndex,
+                fragmentCount: context.fragmentPlan.totalFragmentCount,
+                isParity: true
+            ),
             context: context
         )
         return .submitted(accountedPayloadBytes: accountedPayloadBytes, sleepSample: pacingResult.sleepSample)
@@ -414,45 +449,63 @@ extension StreamPacketSender {
         _ packet: Data,
         packetBuffer: PacketBufferPool.Buffer,
         accountedPayloadBytes: Int,
+        metadata: TransportPacketMetadata,
         context: FragmentSendContext
     ) async {
         context.transportCompletionTracker.registerSubmission()
-        if videoTransportMode.usesReliableOrderedDelivery {
-            guard let sendPacketReliably else {
-                packetBuffer.release()
-                reduceQueuedBytes(accountedPayloadBytes)
-                context.transportCompletionTracker.finishSubmission(
-                    error: MirageError.protocolError("Reliable video transport is unavailable.")
-                )
-                return
-            }
-            do {
-                try await sendPacketReliably(packet)
-                packetBuffer.release()
-                reduceQueuedBytes(accountedPayloadBytes)
-                context.transportCompletionTracker.finishSubmission(error: nil)
-            } catch {
-                packetBuffer.release()
-                reduceQueuedBytes(accountedPayloadBytes)
-                context.transportCompletionTracker.finishSubmission(error: error)
-            }
-            return
-        }
-
-        sendPacket(packet) { error in
+        sendPacket(packet, metadata) { error in
             packetBuffer.release()
             self.reduceQueuedBytes(accountedPayloadBytes)
-            context.transportCompletionTracker.finishSubmission(error: error)
+            if let drop = error as? LoomQueuedUnreliableSendDrop {
+                context.transportCompletionTracker.finishDroppedSubmission(
+                    drop,
+                    countsAsFrameDrop: !metadata.isParity
+                )
+            } else {
+                context.transportCompletionTracker.finishSubmission(error: error)
+            }
         }
     }
 
     /// Parameter-set duplication is only valid on the unreliable packet lane.
-    private func sendUnreliableDuplicatePacket(_ packet: Data, context: FragmentSendContext) {
-        guard !videoTransportMode.usesReliableOrderedDelivery else { return }
+    private func sendUnreliableDuplicatePacket(
+        _ packet: Data,
+        metadata: TransportPacketMetadata,
+        context: FragmentSendContext
+    ) {
         context.transportCompletionTracker.registerSubmission()
-        sendPacket(packet) { error in
-            context.transportCompletionTracker.finishSubmission(error: error)
+        sendPacket(packet, metadata) { error in
+            if let drop = error as? LoomQueuedUnreliableSendDrop {
+                context.transportCompletionTracker.finishDroppedSubmission(drop, countsAsFrameDrop: false)
+            } else {
+                context.transportCompletionTracker.finishSubmission(error: error)
+            }
         }
+    }
+
+    private func transportMetadata(
+        item: WorkItem,
+        fragmentIndex: Int,
+        fragmentCount: Int,
+        isParity: Bool
+    ) -> TransportPacketMetadata {
+        TransportPacketMetadata(
+            streamID: item.streamID,
+            frameNumber: item.frameNumber,
+            fragmentIndex: fragmentIndex,
+            fragmentCount: fragmentCount,
+            isKeyframe: item.isKeyframe,
+            isParity: isParity,
+            isRecovery: !item.isKeyframe && !isParity && item.fecBlockSize > 1,
+            sendDeadline: transportSendDeadline(for: item)
+        )
+    }
+
+    private func transportSendDeadline(for item: WorkItem) -> CFAbsoluteTime {
+        guard item.usesAwdlRealtimeQueuePolicy else {
+            return item.sendDeadline
+        }
+        return hardSendDeadline(for: item)
     }
 
     /// Copies packet payload bytes immediately after the fixed Mirage frame header.

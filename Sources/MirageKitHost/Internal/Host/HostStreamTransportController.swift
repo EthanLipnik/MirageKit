@@ -19,6 +19,11 @@ struct HostStreamTransportController: Equatable {
         case clientReassemblyBacklog
         case clientJitter
         case clientPFrameLatency
+        case clientDecodePressure
+        case clientPresentationBacklog
+        case clientPresentationFillDeficit
+        case clientPresentationUnderflow
+        case clientAwdlDemotion
         case clientRecovery
         case clear
     }
@@ -29,8 +34,10 @@ struct HostStreamTransportController: Equatable {
         var awdlPacingTrigger: PressureTrigger
         var awdlPolicyState: MirageAwdlMediaController.State?
         var awdlPolicyTrigger: MirageAwdlMediaController.Trigger?
+        var awdlSelectedLever: MirageAwdlMediaController.SelectedLever?
         var awdlTargetFrameRate: Int?
         var awdlResolutionScale: Double?
+        var awdlPlayoutDelayMs: Double?
     }
 
     private static let awdlPacingHoldSeconds: CFAbsoluteTime = MirageAwdlMediaController.pacingHoldSeconds
@@ -41,12 +48,16 @@ struct HostStreamTransportController: Equatable {
     private(set) var latestAwdlMediaDecision: MirageAwdlMediaController.Decision?
     private var consecutivePressureSamples = 0
     private var awdlMediaController = MirageAwdlMediaController()
+    private var lastAdvertisedAwdlResolutionScale = 1.0
 
     mutating func update(
         with feedback: ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
+        requestedFrameRateCeiling: Int? = nil,
+        targetBitrateBps: Int? = nil,
         transportPathKind: MirageNetworkPathKind = .unknown,
         mediaPathProfile: MirageMediaPathProfile? = nil,
+        senderTelemetry: StreamPacketSender.TelemetrySnapshot? = nil,
         now: CFAbsoluteTime
     ) -> Decision? {
         guard feedback.sequence > latestFeedbackSequence else { return nil }
@@ -58,12 +69,16 @@ struct HostStreamTransportController: Equatable {
         let awdlDecision = updateAwdlMediaPolicy(
             with: feedback,
             currentFrameRate: currentFrameRate,
+            requestedFrameRateCeiling: requestedFrameRateCeiling,
+            targetBitrateBps: targetBitrateBps,
             mediaProfile: mediaProfile
         )
 
         if feedback.recoveryState != .idle ||
             feedback.reassemblyBacklogKeyframes > 0 ||
-            awdlDecision?.state == .recovery {
+            awdlDecision?.state == .recovering ||
+            awdlDecision?.state == .awaitingFirstFrame ||
+            awdlDecision?.state == .failed {
             consecutivePressureSamples = 0
             let awdlDeadline = activateAwdlPacingIfNeeded(
                 mediaProfile: mediaProfile,
@@ -76,12 +91,14 @@ struct HostStreamTransportController: Equatable {
                 awdlPacingTrigger: awdlDeadline > 0 ? .clientRecovery : .clear,
                 awdlPolicyState: awdlDecision?.state,
                 awdlPolicyTrigger: awdlDecision?.trigger,
+                awdlSelectedLever: awdlDecision?.selectedLever,
                 awdlTargetFrameRate: awdlDecision?.targetFrameRate,
-                awdlResolutionScale: awdlDecision?.resolutionScale
+                awdlResolutionScale: awdlResolutionScale(for: awdlDecision),
+                awdlPlayoutDelayMs: awdlDecision?.playoutDelayMs
             )
         }
 
-        let pressureTrigger = if let awdlDecision {
+        let receiverPressureTrigger: PressureTrigger? = if let awdlDecision {
             Self.pressureTrigger(for: awdlDecision.trigger)
         } else {
             Self.pressureTrigger(
@@ -90,6 +107,12 @@ struct HostStreamTransportController: Equatable {
                 mediaPathProfile: mediaProfile
             )
         }
+        let pressureTrigger = Self.senderPressureTrigger(
+            telemetry: senderTelemetry,
+            feedback: feedback,
+            currentFrameRate: currentFrameRate,
+            mediaPathProfile: mediaProfile
+        ) ?? receiverPressureTrigger
 
         if let pressureTrigger {
             consecutivePressureSamples += 1
@@ -106,18 +129,23 @@ struct HostStreamTransportController: Equatable {
                     awdlPacingTrigger: pressureTrigger,
                     awdlPolicyState: awdlDecision?.state,
                     awdlPolicyTrigger: awdlDecision?.trigger,
+                    awdlSelectedLever: awdlDecision?.selectedLever,
                     awdlTargetFrameRate: awdlDecision?.targetFrameRate,
-                    awdlResolutionScale: awdlDecision?.resolutionScale
+                    awdlResolutionScale: awdlResolutionScale(for: awdlDecision),
+                    awdlPlayoutDelayMs: awdlDecision?.playoutDelayMs
                 )
             }
+            lastAdvertisedAwdlResolutionScale = 1.0
             return Decision(
                 pressureTrigger: pressureTrigger,
                 awdlPacingDeadline: 0,
                 awdlPacingTrigger: .clear,
                 awdlPolicyState: nil,
                 awdlPolicyTrigger: nil,
+                awdlSelectedLever: nil,
                 awdlTargetFrameRate: nil,
-                awdlResolutionScale: nil
+                awdlResolutionScale: nil,
+                awdlPlayoutDelayMs: nil
             )
         }
 
@@ -131,28 +159,68 @@ struct HostStreamTransportController: Equatable {
                     awdlPacingTrigger: .clear,
                     awdlPolicyState: awdlDecision?.state,
                     awdlPolicyTrigger: awdlDecision?.trigger,
+                    awdlSelectedLever: awdlDecision?.selectedLever,
                     awdlTargetFrameRate: awdlDecision?.targetFrameRate,
-                    awdlResolutionScale: awdlDecision?.resolutionScale
+                    awdlResolutionScale: awdlResolutionScale(for: awdlDecision),
+                    awdlPlayoutDelayMs: awdlDecision?.playoutDelayMs
                 )
+            }
+            if let policyOnlyDecision = awdlPolicyOnlyDecisionIfNeeded(
+                awdlDecision,
+                currentFrameRate: currentFrameRate,
+                now: now
+            ) {
+                return policyOnlyDecision
             }
             return nil
         }
+        lastAdvertisedAwdlResolutionScale = 1.0
         return nil
     }
 
     private mutating func updateAwdlMediaPolicy(
         with feedback: ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
+        requestedFrameRateCeiling: Int?,
+        targetBitrateBps: Int?,
         mediaProfile: MirageMediaPathProfile
     ) -> MirageAwdlMediaController.Decision? {
         let signal = MirageAwdlMediaController.Signal(
             feedback: feedback,
             currentFrameRate: currentFrameRate,
-            mediaPathProfile: mediaProfile
+            mediaPathProfile: mediaProfile,
+            requestedFrameRateCeiling: requestedFrameRateCeiling,
+            targetBitrateBps: targetBitrateBps
         )
         let decision = awdlMediaController.update(with: signal)
         latestAwdlMediaDecision = mediaProfile.usesAwdlRadioPolicy ? decision : nil
         return latestAwdlMediaDecision
+    }
+
+    private static func senderPressureTrigger(
+        telemetry: StreamPacketSender.TelemetrySnapshot?,
+        feedback: ReceiverMediaFeedbackMessage,
+        currentFrameRate: Int,
+        mediaPathProfile: MirageMediaPathProfile
+    ) -> PressureTrigger? {
+        guard mediaPathProfile.usesAwdlRadioPolicy,
+              let telemetry else {
+            return nil
+        }
+        let targetFrameIntervalMs = 1_000.0 / Double(max(1, max(currentFrameRate, feedback.targetFPS)))
+        let queuedPFrameStress = telemetry.unstartedPFrameCount >= 2 &&
+            telemetry.oldestUnstartedPFrameAgeMs >= targetFrameIntervalMs * 2.0
+        let localDeadlineStress = telemetry.senderLocalDeadlineDrops > 0 ||
+            telemetry.stalePacketDrops > 0 ||
+            telemetry.lateNonKeyframeSends >= 2
+        let queuedUnreliableDropStress = telemetry.queuedUnreliableDeadlineExpiredDrops > 0 ||
+            telemetry.queuedUnreliableQueueLimitDrops > 0
+        if queuedPFrameStress || localDeadlineStress || queuedUnreliableDropStress {
+            return .senderQueue
+        }
+        let pacerDebtStress = telemetry.packetPacerFrameMaxSleepMs >= Int(targetFrameIntervalMs * 2.0) ||
+            telemetry.packetPacerSleepMaxMs >= Int(targetFrameIntervalMs * 2.0)
+        return pacerDebtStress ? .pacerDebt : nil
     }
 
     private mutating func activateAwdlPacingIfNeeded(
@@ -168,6 +236,54 @@ struct HostStreamTransportController: Equatable {
         return awdlPacingDeadline
     }
 
+    private mutating func awdlPolicyOnlyDecisionIfNeeded(
+        _ awdlDecision: MirageAwdlMediaController.Decision?,
+        currentFrameRate: Int,
+        now: CFAbsoluteTime
+    ) -> Decision? {
+        guard let awdlDecision else { return nil }
+        let resolutionScale = awdlResolutionScale(for: awdlDecision)
+        let targetFrameRate = awdlDecision.targetFrameRate
+        let shouldApplyFrameRate = targetFrameRate != currentFrameRate
+        let shouldApplyScale = resolutionScale != nil
+        guard shouldApplyFrameRate || shouldApplyScale else { return nil }
+
+        let activePacingDeadline = awdlPacingDeadline > now ? awdlPacingDeadline : 0
+        return Decision(
+            pressureTrigger: .clear,
+            awdlPacingDeadline: activePacingDeadline,
+            awdlPacingTrigger: .clear,
+            awdlPolicyState: awdlDecision.state,
+            awdlPolicyTrigger: awdlDecision.trigger,
+            awdlSelectedLever: awdlDecision.selectedLever,
+            awdlTargetFrameRate: targetFrameRate,
+            awdlResolutionScale: resolutionScale,
+            awdlPlayoutDelayMs: awdlDecision.playoutDelayMs
+        )
+    }
+
+    private mutating func awdlResolutionScale(
+        for decision: MirageAwdlMediaController.Decision?
+    ) -> Double? {
+        guard let decision else {
+            lastAdvertisedAwdlResolutionScale = 1.0
+            return nil
+        }
+
+        let scale = min(1.0, max(0.75, decision.resolutionScale))
+        if (decision.state == .demoted || decision.state == .failed), scale < 1.0 {
+            lastAdvertisedAwdlResolutionScale = scale
+            return scale
+        }
+        if decision.state == .steady,
+           lastAdvertisedAwdlResolutionScale < 1.0,
+           scale >= 1.0 {
+            lastAdvertisedAwdlResolutionScale = 1.0
+            return 1.0
+        }
+        return nil
+    }
+
     private static func pressureTrigger(
         for awdlTrigger: MirageAwdlMediaController.Trigger
     ) -> PressureTrigger? {
@@ -180,12 +296,18 @@ struct HostStreamTransportController: Equatable {
             .clientReassemblyBacklog
         case .pFrameLatency:
             .clientPFrameLatency
-        case .decodePressure,
-             .presentationUnderflow,
-             .demote:
-            nil
+        case .decodePressure:
+            .clientDecodePressure
+        case .presentationBacklog:
+            .clientPresentationBacklog
+        case .presentationFillDeficit:
+            .clientPresentationFillDeficit
+        case .presentationUnderflow:
+            .clientPresentationUnderflow
+        case .demote:
+            .clientAwdlDemotion
         case .recovery,
-             .warmup,
+             .startup,
              .stable,
              .nonAwdl:
             nil
@@ -203,12 +325,19 @@ struct HostStreamTransportController: Equatable {
             feedback.discardedPacketCount >= 6 ||
             feedback.lostFrameCount + feedback.discardedPacketCount >= 6
         let targetFrameIntervalMs = 1_000.0 / Double(max(1, max(currentFrameRate, feedback.targetFPS)))
-        let receiverJitterP99Ms = feedback.receiverJitterP99Ms ?? feedback.jitterP99Ms
+        let receiverJitterP99Ms = feedback.receiverJitterP99Ms ?? 0
         let awdlJitterStress = mediaPathProfile.usesAwdlRadioPolicy &&
             receiverJitterP99Ms >= max(45.0, targetFrameIntervalMs * 3.0)
         let pFrameLatencyP95 = feedback.pFrameCompletionLatencyP95Ms ?? 0
+        let receiverPlayoutTargetMs = feedback.playoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs
+        let pFrameLatencyThresholdMs = max(
+            50.0,
+            targetFrameIntervalMs * 3.0,
+            min(MirageAwdlMediaController.maximumPlayoutDelayMs, receiverPlayoutTargetMs) +
+                targetFrameIntervalMs
+        )
         let awdlPFrameLatencyStress = mediaPathProfile.usesAwdlRadioPolicy &&
-            (pFrameLatencyP95 >= max(50.0, targetFrameIntervalMs * 3.0) ||
+            (pFrameLatencyP95 >= pFrameLatencyThresholdMs ||
                 (feedback.latePFrameCount ?? 0) >= 4)
 
         if droppedStress {

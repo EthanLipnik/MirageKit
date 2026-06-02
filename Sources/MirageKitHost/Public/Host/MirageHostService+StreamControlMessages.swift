@@ -24,11 +24,14 @@ extension MirageHostService {
             await handleDisplayResolutionChange(
                 streamID: request.streamID,
                 newResolution: baseResolution,
-                transitionID: request.transitionID,
-                requestedDisplayScaleFactor: request.requestedDisplayScaleFactor,
-                requestedStreamScale: request.requestedStreamScale,
-                encoderMaxWidth: request.encoderMaxWidth,
-                encoderMaxHeight: request.encoderMaxHeight
+                    transitionID: request.transitionID,
+                    requestedDisplayScaleFactor: request.requestedDisplayScaleFactor,
+                    requestedStreamScale: request.requestedStreamScale,
+                    encoderMaxWidth: request.encoderMaxWidth,
+                    encoderMaxHeight: request.encoderMaxHeight,
+                    desktopGeometryContractID: request.desktopGeometryContractID,
+                    desktopGeometrySceneIdentity: request.desktopGeometrySceneIdentity,
+                    desktopGeometryRefreshTargetHz: request.desktopGeometryRefreshTargetHz
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle displayResolutionChange: ")

@@ -15,6 +15,7 @@ struct MirageRenderedFrameTelemetry: Equatable, Sendable {
     let selectedFrameNumber: UInt32?
     let renderedCursor: MirageRenderCursor?
     let renderedFrameNumber: UInt32?
+    let renderedFrameSubmittedTime: CFAbsoluteTime
     let repeatedDisplayTicks: UInt64
     let droppedForLatency: UInt64
 }

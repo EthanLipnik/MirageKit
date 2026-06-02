@@ -122,6 +122,9 @@ extension MirageHostService {
             encoderMaxHeight: request.encoderMaxHeight,
             captureShowsCursor: request.cursorPresentation.capturesHostCursor
         )
+        await streamContext.setAwdlInteractiveDesktopGeometryUpdateHandler { [weak self] streamID in
+            await self?.sendStreamScaleUpdate(streamID: streamID)
+        }
         await streamContext.setStartupBaseTime(request.desktopStartTime, label: "desktop stream \(request.streamID)")
         if let captureDisplayP3CoverageStatus = request.captureDisplayP3CoverageStatus {
             await streamContext.setDisplayP3CoverageStatusOverride(captureDisplayP3CoverageStatus)

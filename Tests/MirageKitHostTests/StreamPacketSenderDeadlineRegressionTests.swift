@@ -18,7 +18,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -64,7 +64,7 @@ extension StreamPacketSenderRegressionTests {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -106,7 +106,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 1200,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -153,7 +153,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 1200,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -198,7 +198,7 @@ extension StreamPacketSenderRegressionTests {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -241,7 +241,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -301,7 +301,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -361,7 +361,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -415,7 +415,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -480,7 +480,7 @@ extension StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)

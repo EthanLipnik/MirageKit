@@ -94,6 +94,29 @@ extension StreamController {
         let reassemblerMetrics = reassembler.snapshotMetrics
         let droppedFrames = reassemblerMetrics.droppedFrames + snapshot.queueDroppedFrames
         let decodeBacklogFrames = queuedFrames.count + pendingOrderedFrames.count
+        let targetFrameRate = max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.sourceFPS)
+        let frameBudgetMs = 1_000.0 / Double(targetFrameRate)
+        let ingressMetrics = videoIngressMetricsProvider?(streamID)
+        let ingressJitterP95Ms = Self.receiverIngressJitterMs(
+            packetGapMs: ingressMetrics?.incomingBatchIntervalP95Ms ?? 0,
+            frameBudgetMs: frameBudgetMs
+        )
+        let ingressJitterP99Ms = Self.receiverIngressJitterMs(
+            packetGapMs: ingressMetrics?.incomingBatchIntervalP99Ms ?? 0,
+            frameBudgetMs: frameBudgetMs
+        )
+        let currentRenderTelemetryPreview = MirageRenderStreamStore.shared.renderTelemetrySnapshot(
+            for: streamID,
+            now: now,
+            consumesCounters: false
+        )
+        MirageRenderStreamStore.shared.updateAwdlReceiverPlayoutTarget(
+            for: streamID,
+            targetFPS: targetFrameRate,
+            receiverJitterP99Ms: ingressJitterP99Ms,
+            presentationStallCount: currentRenderTelemetryPreview.presentationStallCount,
+            now: now
+        )
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         latestRenderTelemetrySnapshot = renderTelemetry
         evaluateRenderCadenceMissTelemetry(
@@ -101,19 +124,23 @@ extension StreamController {
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS
         )
-        evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
         await evaluateDecodeSubmissionLimit(
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS
         )
+        let decodeSubmissionSnapshot = await decoder.decodeSubmissionSnapshot
         let metrics = await ClientFrameMetrics(
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS,
             receivedWorstGapMs: snapshot.receivedWorstGapMs,
             receivedFrameIntervalP95Ms: snapshot.receivedFrameIntervalP95Ms,
             receivedFrameIntervalP99Ms: snapshot.receivedFrameIntervalP99Ms,
+            receiverIngressJitterP95Ms: ingressJitterP95Ms,
+            receiverIngressJitterP99Ms: ingressJitterP99Ms,
             droppedFrames: droppedFrames,
             decodeBacklogFrames: decodeBacklogFrames,
+            decodeSubmissionLimit: decodeSubmissionSnapshot.limit,
+            inFlightDecodeSubmissions: decodeSubmissionSnapshot.inFlight,
             displayTickFPS: renderTelemetry.displayTickFPS,
             submitAttemptFPS: renderTelemetry.submitAttemptFPS,
             layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
@@ -137,6 +164,7 @@ extension StreamController {
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,
             displayTickNoFrameCount: renderTelemetry.displayTickNoFrameCount,
+            pendingFrameNotReadyDisplayTickCount: renderTelemetry.pendingFrameNotReadyDisplayTickCount,
             missedVSyncCount: renderTelemetry.missedVSyncCount,
             displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
             displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,
@@ -146,7 +174,6 @@ extension StreamController {
             frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
             frameIntervalP99Ms: renderTelemetry.frameIntervalP99Ms,
             decodeHealthy: renderTelemetry.decodeHealthy,
-            activeJitterHoldMs: adaptiveJitterHoldMs,
             reassemblerPendingFrameCount: reassemblerMetrics.pendingFrameCount,
             reassemblerPendingKeyframeCount: reassemblerMetrics.pendingKeyframeCount,
             reassemblerPendingBytes: reassemblerMetrics.pendingFrameBytes,
@@ -157,6 +184,12 @@ extension StreamController {
             reassemblerIncompleteFrameLifetimeTimeouts: reassemblerMetrics.incompleteFrameLifetimeTimeouts,
             reassemblerMissingFragmentTimeouts: reassemblerMetrics.missingFragmentTimeouts,
             reassemblerForwardGapTimeouts: reassemblerMetrics.forwardGapTimeouts,
+            reassemblerFrameCompletionLatencyP50Ms: reassemblerMetrics.frameCompletionLatencyP50Ms,
+            reassemblerFrameCompletionLatencyP95Ms: reassemblerMetrics.frameCompletionLatencyP95Ms,
+            reassemblerFrameCompletionLatencyMaxMs: reassemblerMetrics.frameCompletionLatencyMaxMs,
+            reassemblerKeyframeCompletionLatencyP50Ms: reassemblerMetrics.keyframeCompletionLatencyP50Ms,
+            reassemblerKeyframeCompletionLatencyP95Ms: reassemblerMetrics.keyframeCompletionLatencyP95Ms,
+            reassemblerKeyframeCompletionLatencyMaxMs: reassemblerMetrics.keyframeCompletionLatencyMaxMs,
             reassemblerPFrameCompletionLatencyP50Ms: reassemblerMetrics.pFrameCompletionLatencyP50Ms,
             reassemblerPFrameCompletionLatencyP95Ms: reassemblerMetrics.pFrameCompletionLatencyP95Ms,
             reassemblerPFrameCompletionLatencyMaxMs: reassemblerMetrics.pFrameCompletionLatencyMaxMs,

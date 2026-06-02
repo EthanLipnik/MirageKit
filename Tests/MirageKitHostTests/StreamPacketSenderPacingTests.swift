@@ -187,7 +187,7 @@ struct StreamPacketSenderPacingTests {
     func fecFragmentPlanningSequenceReservationAndQueueBytesAgree() {
         let sender = StreamPacketSender(
             maxPayloadSize: 4,
-            sendPacket: { _, onComplete in onComplete(nil) }
+            sendPacketWithMetadata: { _, _, onComplete in onComplete(nil) }
         )
         let sequencer = StreamEncodingCallbackSequencer()
         var expectedSequenceNumber: UInt32 = 0

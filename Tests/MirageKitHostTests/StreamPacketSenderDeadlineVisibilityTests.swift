@@ -14,14 +14,13 @@ import Testing
 extension StreamPacketSenderRegressionTests {
     @Test("Local WiFi queued P-frames use infinite sender deadline")
     func localWiFiQueuedPFramesUseInfiniteSenderDeadline() async throws {
-        #expect(MirageVideoTransportMode.defaultMode(for: .localWiFi) == .unreliableQueued)
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let blockedFirstKeyframePacket = Locked(false)
         let firstPacketGate = StreamPacketSenderDeadlineSendGate()
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -38,7 +37,6 @@ extension StreamPacketSenderRegressionTests {
                 if shouldBlock { firstPacketGate.wait() }
                 onComplete(nil)
             },
-            videoTransportMode: .unreliableQueued,
             onDependencyFrameDropped: { _, _, _ in dependencyDropCount.withLock { $0 += 1 } }
         )
         defer { firstPacketGate.open() }
@@ -83,6 +81,39 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("AWDL queued P-frame hard deadline can use receiver playout target")
+    func awdlQueuedPFrameHardDeadlineCanUseReceiverPlayoutTarget() {
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, _, onComplete in onComplete(nil) }
+        )
+        let sendDeadline = CFAbsoluteTimeGetCurrent() + 0.010
+        let playoutAwareHardDeadline = sendDeadline + 0.080
+        let item = makeStreamPacketWorkItem(
+            payload: makeStreamPacketPayload(byteCount: 128),
+            streamID: 45,
+            frameNumber: 710,
+            sequenceNumberStart: 7100,
+            generation: 0,
+            sendDeadline: sendDeadline,
+            hardSendDeadline: playoutAwareHardDeadline
+        )
+
+        #expect(abs(sender.hardSendDeadline(for: item) - playoutAwareHardDeadline) < 0.0001)
+        #expect(sender.nonKeyframeDeadlineLatenessMs(item, now: sendDeadline + 0.050) == nil)
+        #expect((sender.nonKeyframeDeadlineLatenessMs(item, now: sendDeadline + 0.100) ?? 0) >= 19)
+
+        let defaultItem = makeStreamPacketWorkItem(
+            payload: makeStreamPacketPayload(byteCount: 128),
+            streamID: 45,
+            frameNumber: 711,
+            sequenceNumberStart: 7110,
+            generation: 0,
+            sendDeadline: sendDeadline
+        )
+        #expect(abs(sender.hardSendDeadline(for: defaultItem) - (sendDeadline + 2.0 / 60.0)) < 0.0001)
+    }
+
     @Test("Past-deadline queued P-frame sends after queue unblocks")
     func pastDeadlineQueuedPFrameSendsAfterQueueUnblocks() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
@@ -91,7 +122,7 @@ extension StreamPacketSenderRegressionTests {
         let firstPacketGate = StreamPacketSenderDeadlineSendGate()
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -167,7 +198,7 @@ extension StreamPacketSenderRegressionTests {
         let delayedPFrame = Locked(false)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -235,7 +266,7 @@ extension StreamPacketSenderRegressionTests {
         let delayedPFrame = Locked(false)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)

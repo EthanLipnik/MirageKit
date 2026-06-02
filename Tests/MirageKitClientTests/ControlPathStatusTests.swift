@@ -7,6 +7,7 @@
 
 @testable import MirageKit
 @testable import MirageKitClient
+import Loom
 import Testing
 
 @Suite("Control Path Status")
@@ -57,6 +58,174 @@ struct ControlPathStatusTests {
         #expect(status.usesProximityWiredLikePolicy)
     }
 
+    @MainActor
+    @Test("AWDL path kind activates radio policy when profile is unknown")
+    func awdlPathKindActivatesRadioPolicyWhenProfileIsUnknown() {
+        let service = MirageClientService(deviceName: "Control Path AWDL Fallback Test")
+        let snapshot = Self.manualSnapshot(kind: .awdl, mediaProfile: .unknown)
+
+        service.handleControlPathUpdate(snapshot)
+
+        #expect(service.currentMediaPathUsesAwdlRadioPolicy)
+        #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .balanced)
+        #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .stability)
+        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(true) == false)
+        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(false) == false)
+        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(nil) == nil)
+        #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 60)
+    }
+
+    @MainActor
+    @Test("AWDL path kind preserves resolved proximity wired media policy")
+    func awdlPathKindPreservesResolvedProximityWiredMediaPolicy() {
+        let service = MirageClientService(deviceName: "Control Path AWDL Proximity Test")
+        let snapshot = Self.manualSnapshot(kind: .awdl, mediaProfile: .proximityWiredLike)
+
+        service.handleControlPathUpdate(snapshot)
+
+        #expect(!service.currentMediaPathUsesAwdlRadioPolicy)
+        #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .lowestLatency)
+        #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .freshestFrame)
+        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(true) == true)
+        #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 120)
+    }
+
+    @Test("Host metrics preserve unsupported realtime transport drops")
+    func hostMetricsPreserveUnsupportedRealtimeTransportDrops() throws {
+        let store = MirageClientMetricsStore()
+        let streamID: StreamID = 42
+        store.updateHostPipelineMetrics(StreamMetricsMessage(
+            streamID: streamID,
+            encodedFPS: 60,
+            idleEncodedFPS: 0,
+            droppedFrames: 0,
+            activeQuality: 0.5,
+            targetFrameRate: 60,
+            stalePacketDrops: 11,
+            senderLocalDeadlineDrops: 13,
+            queuedUnreliableDeadlineExpiredDrops: 2,
+            queuedUnreliableQueueLimitDrops: 3,
+            queuedUnreliableSupersededDrops: 5,
+            queuedUnreliableUnsupportedTransportDrops: 7,
+            queuedUnreliableClosedDrops: 11,
+            queuedUnreliablePendingPackets: 17,
+            queuedUnreliableOutstandingPackets: 19,
+            queuedUnreliableQueuedBytes: 23_000,
+            queuedUnreliablePendingPacketMax: 29,
+            queuedUnreliableOutstandingPacketMax: 31,
+            queuedUnreliableQueuedBytesMax: 37_000,
+            queuedUnreliableEnqueuedCount: 41,
+            queuedUnreliableSentCount: 43,
+            queuedUnreliableCompletedCount: 47,
+            queuedUnreliableDroppedCount: 53,
+            queuedUnreliableErrorCount: 59,
+            queuedUnreliableQueueDwellP99Ms: 3.25,
+            queuedUnreliableSendGapP99Ms: 1.5,
+            queuedUnreliableContentProcessedP99Ms: 4.75
+        ))
+
+        let snapshot = try #require(store.snapshot(for: streamID))
+        #expect(snapshot.hostQueuedUnreliableDeadlineExpiredDrops == 2)
+        #expect(snapshot.hostQueuedUnreliableQueueLimitDrops == 3)
+        #expect(snapshot.hostQueuedUnreliableSupersededDrops == 5)
+        #expect(snapshot.hostQueuedUnreliableUnsupportedTransportDrops == 7)
+        #expect(snapshot.hostQueuedUnreliableClosedDrops == 11)
+        #expect(snapshot.hostQueuedUnreliableDropCount == 28)
+        #expect(snapshot.hostTransportPressureDropCount == 52)
+    }
+
+    @Test("Host metrics preserve AWDL policy telemetry")
+    func hostMetricsPreserveAwdlPolicyTelemetry() throws {
+        let store = MirageClientMetricsStore()
+        let streamID: StreamID = 43
+        store.updateHostMetrics(StreamMetricsMessage(
+            streamID: streamID,
+            encodedFPS: 45,
+            idleEncodedFPS: 0,
+            droppedFrames: 0,
+            activeQuality: 0.42,
+            targetFrameRate: 45,
+            awdlPolicyState: "demoted",
+            awdlPolicyTrigger: "p-frame-latency",
+            awdlSelectedLever: "resolution",
+            awdlPlayoutDelayMs: 80,
+            awdlResolutionScale: 0.875,
+            awdlQualityReductionAllowed: false,
+            awdlHostPacingBudgetBps: 22_000_000
+        ))
+
+        let snapshot = try #require(store.snapshot(for: streamID))
+        #expect(snapshot.hostAwdlPolicyState == "demoted")
+        #expect(snapshot.hostAwdlPolicyTrigger == "p-frame-latency")
+        #expect(snapshot.hostAwdlSelectedLever == "resolution")
+        #expect(snapshot.hostAwdlPlayoutDelayMs == 80)
+        #expect(snapshot.hostAwdlResolutionScale == 0.875)
+        #expect(snapshot.hostAwdlQualityReductionAllowed == false)
+        #expect(snapshot.hostAwdlPacingBudgetBps == 22_000_000)
+        #expect(snapshot.hasHostMetrics)
+    }
+
+    @MainActor
+    @Test("Diagnostics context includes complete AWDL host transport drop telemetry")
+    func diagnosticsContextIncludesCompleteAwdlHostTransportDropTelemetry() {
+        let service = MirageClientService(deviceName: "Control Path Diagnostics Test")
+        let streamID: StreamID = 44
+        service.desktopStreamID = streamID
+        service.metricsStore.updateHostPipelineMetrics(StreamMetricsMessage(
+            streamID: streamID,
+            encodedFPS: 60,
+            idleEncodedFPS: 0,
+            droppedFrames: 0,
+            activeQuality: 0.5,
+            targetFrameRate: 60,
+            stalePacketDrops: 11,
+            senderLocalDeadlineDrops: 13,
+            queuedUnreliableDeadlineExpiredDrops: 2,
+            queuedUnreliableQueueLimitDrops: 3,
+            queuedUnreliableSupersededDrops: 5,
+            queuedUnreliableUnsupportedTransportDrops: 7,
+            queuedUnreliableClosedDrops: 11,
+            queuedUnreliablePendingPackets: 17,
+            queuedUnreliableOutstandingPackets: 19,
+            queuedUnreliableQueuedBytes: 23_000,
+            queuedUnreliablePendingPacketMax: 29,
+            queuedUnreliableOutstandingPacketMax: 31,
+            queuedUnreliableQueuedBytesMax: 37_000,
+            queuedUnreliableEnqueuedCount: 41,
+            queuedUnreliableSentCount: 43,
+            queuedUnreliableCompletedCount: 47,
+            queuedUnreliableDroppedCount: 53,
+            queuedUnreliableErrorCount: 59,
+            queuedUnreliableQueueDwellP99Ms: 3.25,
+            queuedUnreliableSendGapP99Ms: 1.5,
+            queuedUnreliableContentProcessedP99Ms: 4.75
+        ))
+
+        let diagnostics = service.diagnosticsContextSnapshot
+
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableDeadlineExpiredDrops"] == .int(2))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableQueueLimitDrops"] == .int(3))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableSupersededDrops"] == .int(5))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableUnsupportedTransportDrops"] == .int(7))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableClosedDrops"] == .int(11))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableDropCount"] == .int(28))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliablePendingPackets"] == .int(17))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableOutstandingPackets"] == .int(19))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableQueuedBytes"] == .int(23_000))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliablePendingPacketMax"] == .int(29))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableOutstandingPacketMax"] == .int(31))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableQueuedBytesMax"] == .int(37_000))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableEnqueuedCount"] == .int(41))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableSentCount"] == .int(43))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableCompletedCount"] == .int(47))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableDroppedCount"] == .int(53))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableErrorCount"] == .int(59))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableQueueDwellP99Ms"] == .double(3.25))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableSendGapP99Ms"] == .double(1.5))
+        #expect(diagnostics["client.primaryStream.hostQueuedUnreliableContentProcessedP99Ms"] == .double(4.75))
+        #expect(diagnostics["client.primaryStream.hostTransportPressureDropCount"] == .int(52))
+    }
+
     private static func snapshot(
         interfaceNames: [String],
         usesWiFi: Bool = false,
@@ -77,6 +246,30 @@ struct ControlPathStatusTests {
             isConstrained: false,
             supportsIPv4: true,
             supportsIPv6: true
+        )
+    }
+
+    private static func manualSnapshot(
+        kind: MirageNetworkPathKind,
+        mediaProfile: MirageMediaPathProfile
+    ) -> MirageNetworkPathSnapshot {
+        MirageNetworkPathSnapshot(
+            kind: kind,
+            mediaProfile: mediaProfile,
+            status: "satisfied",
+            signature: "manual|\(kind.rawValue)|\(mediaProfile.rawValue)",
+            interfaceNames: [],
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true,
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            localEndpointDescription: nil,
+            remoteEndpointDescription: nil
         )
     }
 }

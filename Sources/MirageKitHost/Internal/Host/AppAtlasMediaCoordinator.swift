@@ -25,8 +25,7 @@ actor AppAtlasMediaCoordinator {
     let targetFrameRate: Int
 
     /// Packet and control-message hooks supplied by the owning host service.
-    private let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
-    private let sendPacketReliably: (@Sendable (Data) async throws -> Void)?
+    private let sendPacketWithMetadata: StreamPacketSender.PacketMetadataSendHandler
     private let onSendError: @Sendable (Error) -> Void
     private let sendMediaUpdate: @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
     let publishOverlayRegions: @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
@@ -67,8 +66,7 @@ actor AppAtlasMediaCoordinator {
         hostBufferingPolicy: MirageHostBufferingPolicy,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
         targetFrameRate: Int,
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
+        sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: @escaping @Sendable (Error) -> Void,
         sendMediaUpdate: @escaping @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void,
         publishOverlayRegions: @escaping @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
@@ -80,8 +78,7 @@ actor AppAtlasMediaCoordinator {
         self.hostBufferingPolicy = hostBufferingPolicy
         self.capturePressureProfile = capturePressureProfile
         self.targetFrameRate = max(1, targetFrameRate)
-        self.sendPacket = sendPacket
-        self.sendPacketReliably = sendPacketReliably
+        self.sendPacketWithMetadata = sendPacketWithMetadata
         self.onSendError = onSendError
         self.sendMediaUpdate = sendMediaUpdate
         self.publishOverlayRegions = publishOverlayRegions
@@ -381,8 +378,7 @@ actor AppAtlasMediaCoordinator {
         }
         frameSink = try await context.startAppAtlasFrameStream(
             pixelSize: pixelSize,
-            sendPacket: sendPacket,
-            sendPacketReliably: sendPacketReliably,
+            sendPacketWithMetadata: sendPacketWithMetadata,
             onSendError: onSendError
         )
         await context.allowEncodingAfterRegistration()

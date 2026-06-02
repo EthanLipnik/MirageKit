@@ -21,21 +21,20 @@ extension StreamPacketSender {
 
     /// Returns the queue accounting cost for a frame including FEC parity budget.
     nonisolated func accountedWireBytes(for item: WorkItem) -> Int {
-        if videoTransportMode.usesReliableOrderedDelivery {
-            return max(0, item.frameByteCount)
-        }
         return max(0, max(item.wireBytes, fecPayloadBudgetBytes(for: item)))
     }
 
     /// Returns the local lateness threshold for dependency-coded P-frames.
     nonisolated func hardSendDeadline(for item: WorkItem) -> CFAbsoluteTime {
+        if let hardSendDeadline = item.hardSendDeadline {
+            return hardSendDeadline
+        }
         let frameInterval = 1.0 / Double(max(1, item.targetFrameRate))
         return item.sendDeadline + frameInterval * 2.0
     }
 
     /// Returns the P-frame lateness in milliseconds once it passes the local lateness threshold.
     nonisolated func nonKeyframeDeadlineLatenessMs(_ item: WorkItem, now: CFAbsoluteTime) -> Double? {
-        guard !videoTransportMode.usesReliableOrderedDelivery else { return nil }
         guard !item.isKeyframe, item.sendDeadline.isFinite else { return nil }
         let deadline = hardSendDeadline(for: item)
         guard now > deadline else { return nil }
@@ -61,8 +60,7 @@ extension StreamPacketSender {
 
     /// Returns whether an unstarted reserved P-frame is too stale to drain in Most Responsive mode.
     nonisolated func shouldAbandonReservedPFrameForFreshness(_ item: WorkItem, latenessMs: Double?) -> Bool {
-        guard !videoTransportMode.usesReliableOrderedDelivery,
-              !item.isKeyframe,
+        guard !item.isKeyframe,
               latenessMs != nil else {
             return false
         }
@@ -164,11 +162,14 @@ extension StreamPacketSender {
         }
     }
 
-    /// Gives reliable ordered video room to ride out local bursts before declaring dependency loss.
-    nonisolated func enforceReliableQueueBoundsLocked() {
-        while queuedWorkItems.count > Self.maxReliableQueuedWorkItems ||
-            queuedBytes > Self.maxReliableQueuedBytes {
-            guard let evictionIndex = queuedWorkItems.firstIndex(where: { !$0.item.isKeyframe }) else { break }
+    /// Enforces AWDL realtime display bounds before Loom admission can accumulate stale whole frames.
+    nonisolated func enforceAwdlRealtimeQueueBoundsLocked() {
+        while awdlRealtimeQueueIsOverBudgetLocked() {
+            guard let evictionIndex = queuedWorkItems.firstIndex(where: {
+                $0.item.usesAwdlRealtimeQueuePolicy && !$0.item.isKeyframe
+            }) else {
+                break
+            }
             let evictedItem = queuedWorkItems.remove(at: evictionIndex)
             queuedBytes = max(0, queuedBytes - evictedItem.accountedBytes)
             queuedStalePacketDropCount &+= 1
@@ -177,6 +178,14 @@ extension StreamPacketSender {
                 reason: .queueEviction
             )
         }
+    }
+
+    private nonisolated func awdlRealtimeQueueIsOverBudgetLocked() -> Bool {
+        let awdlQueuedItems = queuedWorkItems.filter { $0.item.usesAwdlRealtimeQueuePolicy }
+        let awdlQueuedNonKeyframes = awdlQueuedItems.filter { !$0.item.isKeyframe }.count
+        return awdlQueuedItems.count > Self.maxAwdlQueuedWorkItems ||
+            awdlQueuedNonKeyframes > Self.maxAwdlQueuedNonKeyframes ||
+            queuedBytes > Self.maxAwdlQueuedBytes
     }
 
     /// Updates dependency-drop state after a non-keyframe is dropped.

@@ -8,6 +8,7 @@
 import CoreMedia
 import CoreVideo
 import Foundation
+import Loom
 import MirageKit
 
 #if os(macOS)
@@ -36,10 +37,14 @@ actor StreamContext {
     }
 
     let mediaMaxPacketSize: Int
+    var mediaSendProfile: LoomQueuedUnreliableSendProfile?
     var mediaSendProfileRawValue: String?
     var mediaSendProfileMaxOutstandingPackets: Int?
     var mediaSendProfileMaxOutstandingBytes: Int?
     var mediaSendProfileMaxQueuedPackets: Int?
+    var mediaSendProfileReference: Locked<LoomQueuedUnreliableSendProfile>?
+    var mediaSendDiagnosticsProvider:
+        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)?
 
     var captureMode: CaptureMode = .window
     /// Max payload size per UDP packet (excludes Mirage header).
@@ -65,8 +70,8 @@ actor StreamContext {
     var isRunning = false
 
     /// Dimension token for rejecting old-dimension P-frames after client-visible geometry changes.
-    /// Emergency recovery scale changes keep this token stable because the keyframe SPS carries
-    /// the decoder dimensions while the client presentation surface remains unchanged.
+    /// Legacy emergency recovery scale changes may keep this stable when the presentation surface is unchanged.
+    /// AWDL interactive resolution steps advance it so newer keyframes become the receiver's clean geometry anchor.
     /// Using nonisolated(unsafe) because we need to access from @Sendable encoder callback
     /// and the access pattern is safe (token is incremented on actor, read in callback)
     nonisolated(unsafe) var dimensionToken: UInt16 = 0
@@ -281,6 +286,7 @@ actor StreamContext {
     var receiverCapacityLearningQuarantineReason: String?
     var receiverLostFrameCount: UInt64 = 0
     var receiverDiscardedPacketCount: UInt64 = 0
+    var receiverPlayoutDelayTargetMs: Double?
     var receiverAcknowledgedFrameNumber: UInt32?
     var receiverAckLagMs: Double?
     var lastReceiverAckTime: CFAbsoluteTime = 0
@@ -292,6 +298,14 @@ actor StreamContext {
     var lastAwdlInteractiveFrameRateAdjustmentTime: CFAbsoluteTime = 0
     var lastAwdlInteractiveScaleAdjustmentTime: CFAbsoluteTime = 0
     var awdlInteractiveBaseStreamScale: CGFloat?
+    var awdlHostEncoderStructuralQualityReductionAllowed = false
+    var awdlHostEncoderStructuralQualityReductionDeadline: CFAbsoluteTime = 0
+    let awdlHostEncoderStructuralQualityReductionHold: CFAbsoluteTime = 3.0
+    var pendingAwdlInteractiveFrameRate: Int?
+    var pendingAwdlInteractiveFrameRateReason: String?
+    var pendingAwdlInteractiveResolutionScale: Double?
+    var pendingAwdlInteractiveScaleReason: String?
+    nonisolated(unsafe) var latestAwdlMediaDecisionSnapshot: MirageAwdlMediaController.Decision?
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -329,6 +343,8 @@ actor StreamContext {
 
     /// Frame rate for cadence and queue limits
     nonisolated(unsafe) var currentFrameRate: Int
+    /// AWDL restore ceiling preserved across runtime cadence demotions.
+    nonisolated(unsafe) var awdlInteractiveFrameRateCeiling: Int
     /// Bitrate snapshot read from encoder callbacks for packet pacing policy.
     nonisolated(unsafe) var currentTargetBitrateBps: Int?
     /// Effective capture cadence reported by ScreenCaptureKit.
@@ -342,6 +358,8 @@ actor StreamContext {
 
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?
+    /// Host callback used to announce AWDL-driven desktop dimension changes before the recovery keyframe.
+    var onAwdlInteractiveDesktopGeometryUpdate: (@MainActor @Sendable (StreamID) async -> Void)?
     /// Requested ScreenCaptureKit audio capture channel count for this stream.
     var requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount
 
@@ -360,14 +378,17 @@ actor StreamContext {
 
     /// Latency preference for buffering behavior.
     let latencyMode: MirageStreamLatencyMode
+    /// Client/requested latency preference before media-path policy normalization.
+    let requestedLatencyMode: MirageStreamLatencyMode
     /// Host-side capture-to-encode buffering preference.
     let hostBufferingPolicy: MirageHostBufferingPolicy
+    /// Client/requested host buffering preference before media-path policy normalization.
+    let requestedHostBufferingPolicy: MirageHostBufferingPolicy
     /// Classified transport path used for proximity-specific media policy.
     let transportPathKind: MirageNetworkPathKind
     /// Media behavior profile used for real-time pacing and admission policy.
     let mediaPathProfile: MirageMediaPathProfile
     /// Video transport contract selected for dependency-coded media packets.
-    nonisolated(unsafe) var videoTransportMode: MirageVideoTransportMode = .unreliableQueued
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
@@ -395,6 +416,16 @@ actor StreamContext {
 
     nonisolated static func clampedAudioCaptureChannelCount(_ channelCount: Int) -> Int {
         min(max(channelCount, minAudioCaptureChannelCount), maxAudioCaptureChannelCount)
+    }
+
+    nonisolated static func resolvedMediaPathProfile(
+        transportPathKind: MirageNetworkPathKind,
+        mediaPathProfile: MirageMediaPathProfile?
+    ) -> MirageMediaPathProfile {
+        MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
+        )
     }
 
     init(
@@ -431,9 +462,9 @@ actor StreamContext {
         }
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
 
-        let resolvedMediaPathProfile = mediaPathProfile ?? MirageMediaPathProfile.classify(
-            pathKind: transportPathKind,
-            interfaceNames: []
+        let resolvedMediaPathProfile = Self.resolvedMediaPathProfile(
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
         )
         let effectiveLatencyMode = MirageAwdlMediaController.fixedLatencyMode(
             requestedLatencyMode: latencyMode,
@@ -446,12 +477,15 @@ actor StreamContext {
             requestedFrameRate: resolvedEncoderConfig.targetFrameRate,
             mediaPathProfile: resolvedMediaPathProfile
         )
+        let awdlInteractiveFrameRateCeiling = resolvedEncoderConfig.targetFrameRate
 
         self.streamID = streamID
         self.windowID = windowID
         self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
+        requestedLatencyMode = latencyMode
         self.latencyMode = effectiveLatencyMode
+        requestedHostBufferingPolicy = hostBufferingPolicy
         self.hostBufferingPolicy = effectiveHostBufferingPolicy
         self.transportPathKind = transportPathKind
         self.mediaPathProfile = resolvedMediaPathProfile
@@ -466,6 +500,7 @@ actor StreamContext {
         mediaMaxPacketSize = maxPacketSize
         self.mediaSecurityContext = mediaSecurityContext
         currentFrameRate = resolvedEncoderConfig.targetFrameRate
+        self.awdlInteractiveFrameRateCeiling = awdlInteractiveFrameRateCeiling
         currentTargetBitrateBps = resolvedEncoderConfig.bitrate
         captureFrameRateOverride = nil
         captureFrameRate = resolvedEncoderConfig.targetFrameRate
@@ -489,6 +524,7 @@ actor StreamContext {
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: effectiveLatencyMode,
             hostBufferingPolicy: effectiveHostBufferingPolicy,
+            mediaPathProfile: resolvedMediaPathProfile,
             useLowLatencyPipeline: useLowLatencyPipeline
         )
         maxInFlightFramesCap = bufferPolicy.maxInFlightFramesCap
@@ -522,6 +558,12 @@ actor StreamContext {
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = resolvedEncoderConfig.bitrate
+    }
+
+    func setAwdlInteractiveDesktopGeometryUpdateHandler(
+        _ handler: (@MainActor @Sendable (StreamID) async -> Void)?
+    ) {
+        onAwdlInteractiveDesktopGeometryUpdate = handler
     }
 
 }

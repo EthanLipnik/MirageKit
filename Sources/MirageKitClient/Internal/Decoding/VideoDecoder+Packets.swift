@@ -122,6 +122,11 @@ extension FrameReassembler {
         )
     }
 
+    private static func isDimensionToken(_ candidate: UInt16, newerThan expected: UInt16) -> Bool {
+        let delta = Int(candidate &- expected)
+        return delta > 0 && delta < 32_768
+    }
+
     func processPacket(_ data: Data, header: FrameHeader) {
         var completedFrames: [CompletedFrame] = []
         var completionHandler: (@Sendable (
@@ -181,20 +186,41 @@ extension FrameReassembler {
         }
 
         // Validate dimension tokens to reject packets from old resize generations.
-        // The expected token is controlled by resize/window-selection state; packets
-        // must not advance it because stale keyframes can arrive after a new geometry.
+        // Newer keyframes may advance the token because they are the decoder anchor
+        // for geometry recovery when the media path outruns the control-plane update.
         if dimensionTokenValidationEnabled {
             if header.dimensionToken != expectedDimensionToken {
-                if isKeyframePacket {
+                if isKeyframePacket, Self.isDimensionToken(header.dimensionToken, newerThan: expectedDimensionToken) {
+                    let previousToken = expectedDimensionToken
+                    expectedDimensionToken = header.dimensionToken
+                    let evictedFrames = pendingFrames.count
+                    for frame in pendingFrames.values {
+                        frame.buffer.release()
+                    }
+                    pendingFrames.removeAll(keepingCapacity: false)
+                    if evictedFrames > 0 {
+                        droppedFrameCount += UInt64(evictedFrames)
+                    }
                     MirageLogger.log(
                         .frameAssembly,
-                        "Discarding keyframe \(frameNumber) with dimension token \(header.dimensionToken); " +
-                            "expected \(expectedDimensionToken), epoch=\(header.epoch), currentEpoch=\(currentEpoch)"
+                        "Accepted newer dimension-token keyframe \(frameNumber): " +
+                            "\(previousToken) -> \(header.dimensionToken), evictedFrames=\(evictedFrames)"
                     )
-                    beginAwaitingKeyframe()
+                } else {
+                    if Self.isDimensionToken(header.dimensionToken, newerThan: expectedDimensionToken) {
+                        beginAwaitingKeyframe()
+                    }
+                    if isKeyframePacket {
+                        beginAwaitingKeyframe()
+                        MirageLogger.log(
+                            .frameAssembly,
+                            "Discarding keyframe \(frameNumber) with dimension token \(header.dimensionToken); " +
+                                "expected \(expectedDimensionToken), epoch=\(header.epoch), currentEpoch=\(currentEpoch)"
+                        )
+                    }
+                    lock.unlock()
+                    return
                 }
-                lock.unlock()
-                return
             }
         }
 
@@ -238,6 +264,8 @@ extension FrameReassembler {
             lock.unlock()
             return
         }
+        acceptedPacketsReceived += 1
+        lastAcceptedPacketReceivedTime = packetReceivedAt.timeIntervalSinceReferenceDate
 
         let frameByteCount = assemblyPlan.frameByteCount
         let dataFragmentCount = assemblyPlan.dataFragmentCount

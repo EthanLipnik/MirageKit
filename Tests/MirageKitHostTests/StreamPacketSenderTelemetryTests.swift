@@ -17,7 +17,7 @@ struct StreamPacketSenderTelemetryTests {
     func consumedTelemetryWindowsClearSendDelayAggregates() async throws {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { _, onComplete in
+            sendPacketWithMetadata: { _, _, onComplete in
                 onComplete(nil)
             }
         )
@@ -64,7 +64,7 @@ struct StreamPacketSenderTelemetryTests {
     func consumedTelemetryWindowsClearTransientGenerationAbortDrops() async throws {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { _, onComplete in
+            sendPacketWithMetadata: { _, _, onComplete in
                 onComplete(nil)
             }
         )
@@ -101,7 +101,7 @@ struct StreamPacketSenderTelemetryTests {
     func keyframeTelemetryDoesNotPopulateNonKeyframeDelayBuckets() async throws {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { _, onComplete in
+            sendPacketWithMetadata: { _, _, onComplete in
                 onComplete(nil)
             }
         )

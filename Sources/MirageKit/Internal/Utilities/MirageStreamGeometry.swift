@@ -36,6 +36,9 @@ package struct DesktopGeometryIdentity: Sendable, Equatable {
 }
 
 package struct DesktopGeometryContract: Sendable, Equatable {
+    package let contractID: UUID
+    package let sceneIdentity: String?
+    package let refreshTargetHz: Int?
     package let logicalSize: CGSize
     package let requestedDisplayScaleFactor: CGFloat?
     package let acceptedDisplayScaleFactor: CGFloat
@@ -57,6 +60,9 @@ package struct DesktopGeometryContract: Sendable, Equatable {
     }
 
     package init(
+        contractID: UUID = UUID(),
+        sceneIdentity: String? = nil,
+        refreshTargetHz: Int? = nil,
         logicalSize: CGSize,
         requestedDisplayScaleFactor: CGFloat?,
         requestedStreamScale: CGFloat,
@@ -73,6 +79,9 @@ package struct DesktopGeometryContract: Sendable, Equatable {
             disableResolutionCap: disableResolutionCap
         )
         self.init(
+            contractID: contractID,
+            sceneIdentity: sceneIdentity,
+            refreshTargetHz: refreshTargetHz,
             logicalSize: geometry.logicalSize,
             requestedDisplayScaleFactor: requestedDisplayScaleFactor,
             acceptedDisplayScaleFactor: geometry.displayScaleFactor,
@@ -87,6 +96,9 @@ package struct DesktopGeometryContract: Sendable, Equatable {
     }
 
     package init(
+        contractID: UUID = UUID(),
+        sceneIdentity: String? = nil,
+        refreshTargetHz: Int? = nil,
         logicalSize: CGSize,
         requestedDisplayScaleFactor: CGFloat?,
         acceptedDisplayScaleFactor: CGFloat,
@@ -98,6 +110,9 @@ package struct DesktopGeometryContract: Sendable, Equatable {
         encoderMaxHeight: Int?,
         disableResolutionCap: Bool
     ) {
+        self.contractID = contractID
+        self.sceneIdentity = sceneIdentity?.isEmpty == false ? sceneIdentity : nil
+        self.refreshTargetHz = refreshTargetHz.map { max(1, $0) }
         self.logicalSize = MirageStreamGeometry.normalizedLogicalSize(logicalSize)
         self.requestedDisplayScaleFactor = requestedDisplayScaleFactor.map {
             MirageStreamGeometry.clampedDisplayScaleFactor($0)

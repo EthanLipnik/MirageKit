@@ -8,6 +8,62 @@
 import Foundation
 import MirageKit
 
+/// Host-side Loom queued-unreliable drop counts for one metrics window.
+public struct MirageHostQueuedUnreliableDropCounts: Sendable, Equatable {
+    public var deadlineExpired: UInt64
+    public var queueLimit: UInt64
+    public var superseded: UInt64
+    public var unsupportedTransport: UInt64
+    public var closed: UInt64
+
+    public init(
+        deadlineExpired: UInt64 = 0,
+        queueLimit: UInt64 = 0,
+        superseded: UInt64 = 0,
+        unsupportedTransport: UInt64 = 0,
+        closed: UInt64 = 0
+    ) {
+        self.deadlineExpired = deadlineExpired
+        self.queueLimit = queueLimit
+        self.superseded = superseded
+        self.unsupportedTransport = unsupportedTransport
+        self.closed = closed
+    }
+
+    public var total: UInt64 {
+        deadlineExpired + queueLimit + superseded + unsupportedTransport + closed
+    }
+
+    public var isEmpty: Bool {
+        total == 0
+    }
+}
+
+private enum HostQueuedUnreliableDropField {
+    case deadlineExpired
+    case queueLimit
+    case superseded
+    case unsupportedTransport
+    case closed
+}
+
+private extension MirageHostQueuedUnreliableDropCounts {
+    mutating func set(_ field: HostQueuedUnreliableDropField, value: UInt64) {
+        switch field {
+        case .deadlineExpired:
+            deadlineExpired = value
+        case .queueLimit:
+            queueLimit = value
+        case .superseded:
+            superseded = value
+        case .unsupportedTransport:
+            unsupportedTransport = value
+        case .closed:
+            closed = value
+        }
+    }
+}
+
 /// Point-in-time client and host telemetry for one rendered stream.
 public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     /// Frames decoded per second by the client video decoder.
@@ -20,6 +76,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientReceivedFrameIntervalP95Ms: Double
     /// 99th percentile received-frame interval, in milliseconds.
     public var clientReceivedFrameIntervalP99Ms: Double
+    /// 95th percentile raw ingress jitter above the source frame budget, in milliseconds.
+    public var clientReceiverIngressJitterP95Ms: Double
+    /// 99th percentile raw ingress jitter above the source frame budget, in milliseconds.
+    public var clientReceiverIngressJitterP99Ms: Double
     /// Display-clock ticks per second observed by the client renderer.
     public var clientDisplayTickFPS: Double
     /// Frame submission attempts per second made by the client renderer.
@@ -64,6 +124,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientLateFrameDrops: UInt64
     /// Number of times the display layer rejected submission because it was not ready.
     public var clientDisplayLayerNotReadyCount: UInt64
+    /// Number of display ticks where a pending decoded frame was not ready for playout.
+    public var clientPendingFrameNotReadyDisplayTickCount: UInt64
     /// Number of repeated-frame presentations used to preserve cadence.
     public var clientRepeatedFrameCount: UInt64
     private var clientRepeatedDeliveredSourceFrameCountStorage: UInt64
@@ -97,16 +159,28 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientFrameBufferPoolRetainedBytes: Int
     /// Number of packet reassembler evictions caused by memory budget pressure.
     public var clientReassemblerBudgetEvictions: UInt64
-    /// Number of timed-out non-keyframes that were missing one or more media fragments.
+    /// Number of timed-out frames that were missing one or more media fragments.
     public var clientReassemblerIncompleteFrameTimeouts: UInt64
-    /// Number of incomplete non-keyframes that timed out after no fragment progress.
+    /// Number of incomplete frames that timed out after no fragment progress.
     public var clientReassemblerIncompleteFrameNoProgressTimeouts: UInt64
-    /// Number of incomplete non-keyframes that reached the absolute lifetime cap.
+    /// Number of incomplete frames that reached the absolute lifetime cap.
     public var clientReassemblerIncompleteFrameLifetimeTimeouts: UInt64
-    /// Number of media fragments missing from timed-out incomplete non-keyframes.
+    /// Number of media fragments missing from timed-out incomplete frames.
     public var clientReassemblerMissingFragmentTimeouts: UInt64
     /// Number of buffered forward gaps that reached the reorder timeout.
     public var clientReassemblerForwardGapTimeouts: UInt64
+    /// Recent all-frame assembly latency p50, in milliseconds.
+    public var clientFrameCompletionLatencyP50Ms: Double
+    /// Recent all-frame assembly latency p95, in milliseconds.
+    public var clientFrameCompletionLatencyP95Ms: Double
+    /// Recent maximum all-frame assembly latency, in milliseconds.
+    public var clientFrameCompletionLatencyMaxMs: Double
+    /// Recent keyframe assembly latency p50, in milliseconds.
+    public var clientKeyframeCompletionLatencyP50Ms: Double
+    /// Recent keyframe assembly latency p95, in milliseconds.
+    public var clientKeyframeCompletionLatencyP95Ms: Double
+    /// Recent maximum keyframe assembly latency, in milliseconds.
+    public var clientKeyframeCompletionLatencyMaxMs: Double
     /// Recent P-frame assembly latency p50, in milliseconds.
     public var clientPFrameCompletionLatencyP50Ms: Double
     /// Recent P-frame assembly latency p95, in milliseconds.
@@ -115,6 +189,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientPFrameCompletionLatencyMaxMs: Double
     /// Recent P-frames whose assembly latency exceeded the late threshold.
     public var clientLatePFrameCompletionCount: UInt64
+    /// Media fragments recovered by the client reassembler through FEC.
+    public var clientReassemblerFECRecoveredFragmentCount: UInt64
     private var clientDecodeBacklogFrameCountStorage: Int
     /// Frames encoded per second by the host encoder.
     public var hostEncodedFPS: Double
@@ -176,6 +252,20 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostRealtimePressureState: String?
     /// Host-side realtime pressure reason.
     public var hostRealtimePressureReason: String?
+    /// Host-side AWDL media controller state.
+    public var hostAwdlPolicyState: String?
+    /// Host-side AWDL media controller trigger.
+    public var hostAwdlPolicyTrigger: String?
+    /// Host-side AWDL media controller selected adaptation lever.
+    public var hostAwdlSelectedLever: String?
+    /// Host-side AWDL playout target, in milliseconds.
+    public var hostAwdlPlayoutDelayMs: Double?
+    /// Host-side AWDL encoded resolution scale multiplier.
+    public var hostAwdlResolutionScale: Double?
+    /// Whether host-side AWDL quality reduction is currently permitted.
+    public var hostAwdlQualityReductionAllowed: Bool?
+    /// Host-side AWDL pacing budget, in bits per second.
+    public var hostAwdlPacingBudgetBps: Int?
     /// Number of frames rejected by host capture admission control.
     public var hostCaptureAdmissionDrops: UInt64?
     /// Host frame budget, in milliseconds.
@@ -313,6 +403,48 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostGenerationAbortDrops: UInt64?
     /// Number of non-keyframes dropped while waiting for a keyframe.
     public var hostNonKeyframeHoldDrops: UInt64?
+    /// Loom queued-unreliable drop counts reported by the host sender.
+    public var hostQueuedUnreliableDropCounts: MirageHostQueuedUnreliableDropCounts?
+    /// Pending packets in the selected host Loom queued-unreliable profile.
+    public var hostQueuedUnreliablePendingPackets: Int?
+    /// Packets submitted to Network.framework but not completed by the selected host Loom profile.
+    public var hostQueuedUnreliableOutstandingPackets: Int?
+    /// Bytes retained by the selected host Loom queued-unreliable profile.
+    public var hostQueuedUnreliableQueuedBytes: Int?
+    /// Maximum pending packet count in the selected host Loom profile during the sample.
+    public var hostQueuedUnreliablePendingPacketMax: Int?
+    /// Maximum outstanding packet count in the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableOutstandingPacketMax: Int?
+    /// Maximum retained bytes in the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableQueuedBytesMax: Int?
+    /// Packets enqueued into the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableEnqueuedCount: UInt64?
+    /// Packets started by the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableSentCount: UInt64?
+    /// Packets completed by the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableCompletedCount: UInt64?
+    /// Packets dropped by the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableDroppedCount: UInt64?
+    /// Send errors observed by the selected host Loom profile during the sample.
+    public var hostQueuedUnreliableErrorCount: UInt64?
+    /// 50th percentile host Loom queued-unreliable dwell time, in milliseconds.
+    public var hostQueuedUnreliableQueueDwellP50Ms: Double?
+    /// 95th percentile host Loom queued-unreliable dwell time, in milliseconds.
+    public var hostQueuedUnreliableQueueDwellP95Ms: Double?
+    /// 99th percentile host Loom queued-unreliable dwell time, in milliseconds.
+    public var hostQueuedUnreliableQueueDwellP99Ms: Double?
+    /// 50th percentile gap between host Loom queued-unreliable send starts, in milliseconds.
+    public var hostQueuedUnreliableSendGapP50Ms: Double?
+    /// 95th percentile gap between host Loom queued-unreliable send starts, in milliseconds.
+    public var hostQueuedUnreliableSendGapP95Ms: Double?
+    /// 99th percentile gap between host Loom queued-unreliable send starts, in milliseconds.
+    public var hostQueuedUnreliableSendGapP99Ms: Double?
+    /// 50th percentile host Loom content-processed latency, in milliseconds.
+    public var hostQueuedUnreliableContentProcessedP50Ms: Double?
+    /// 95th percentile host Loom content-processed latency, in milliseconds.
+    public var hostQueuedUnreliableContentProcessedP95Ms: Double?
+    /// 99th percentile host Loom content-processed latency, in milliseconds.
+    public var hostQueuedUnreliableContentProcessedP99Ms: Double?
     /// Whether this snapshot includes host-side metrics.
     public var hasHostMetrics: Bool
 
@@ -323,6 +455,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReceivedWorstGapMs: Double = 0,
         clientReceivedFrameIntervalP95Ms: Double = 0,
         clientReceivedFrameIntervalP99Ms: Double = 0,
+        clientReceiverIngressJitterP95Ms: Double = 0,
+        clientReceiverIngressJitterP99Ms: Double = 0,
         clientDisplayTickFPS: Double = 0,
         clientSubmitAttemptFPS: Double = 0,
         clientLayerAcceptedFPS: Double = 0,
@@ -345,6 +479,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientSmoothestDroppedFrameAgeMaxMs: Double = 0,
         clientLateFrameDrops: UInt64 = 0,
         clientDisplayLayerNotReadyCount: UInt64 = 0,
+        clientPendingFrameNotReadyDisplayTickCount: UInt64 = 0,
         clientRepeatedFrameCount: UInt64 = 0,
         clientMissedVSyncCount: UInt64 = 0,
         clientDisplayTickIntervalP95Ms: Double = 0,
@@ -366,10 +501,17 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         clientReassemblerMissingFragmentTimeouts: UInt64 = 0,
         clientReassemblerForwardGapTimeouts: UInt64 = 0,
+        clientFrameCompletionLatencyP50Ms: Double = 0,
+        clientFrameCompletionLatencyP95Ms: Double = 0,
+        clientFrameCompletionLatencyMaxMs: Double = 0,
+        clientKeyframeCompletionLatencyP50Ms: Double = 0,
+        clientKeyframeCompletionLatencyP95Ms: Double = 0,
+        clientKeyframeCompletionLatencyMaxMs: Double = 0,
         clientPFrameCompletionLatencyP50Ms: Double = 0,
         clientPFrameCompletionLatencyP95Ms: Double = 0,
         clientPFrameCompletionLatencyMaxMs: Double = 0,
         clientLatePFrameCompletionCount: UInt64 = 0,
+        clientReassemblerFECRecoveredFragmentCount: UInt64 = 0,
         hostEncodedFPS: Double = 0,
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
@@ -400,6 +542,13 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostRealtimeBitrateCeiling: Int? = nil,
         hostRealtimePressureState: String? = nil,
         hostRealtimePressureReason: String? = nil,
+        hostAwdlPolicyState: String? = nil,
+        hostAwdlPolicyTrigger: String? = nil,
+        hostAwdlSelectedLever: String? = nil,
+        hostAwdlPlayoutDelayMs: Double? = nil,
+        hostAwdlResolutionScale: Double? = nil,
+        hostAwdlQualityReductionAllowed: Bool? = nil,
+        hostAwdlPacingBudgetBps: Int? = nil,
         hostCaptureAdmissionDrops: UInt64? = nil,
         hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
@@ -430,6 +579,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReceivedWorstGapMs = clientReceivedWorstGapMs
         self.clientReceivedFrameIntervalP95Ms = clientReceivedFrameIntervalP95Ms
         self.clientReceivedFrameIntervalP99Ms = clientReceivedFrameIntervalP99Ms
+        self.clientReceiverIngressJitterP95Ms = max(0, clientReceiverIngressJitterP95Ms)
+        self.clientReceiverIngressJitterP99Ms = max(0, clientReceiverIngressJitterP99Ms)
         self.clientDisplayTickFPS = clientDisplayTickFPS
         self.clientSubmitAttemptFPS = clientSubmitAttemptFPS
         self.clientLayerAcceptedFPS = clientLayerAcceptedFPS
@@ -452,6 +603,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientSmoothestDroppedFrameAgeMaxMs = clientSmoothestDroppedFrameAgeMaxMs
         self.clientLateFrameDrops = clientLateFrameDrops
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
+        self.clientPendingFrameNotReadyDisplayTickCount = clientPendingFrameNotReadyDisplayTickCount
         self.clientRepeatedFrameCount = clientRepeatedFrameCount
         clientRepeatedDeliveredSourceFrameCountStorage = 0
         self.clientMissedVSyncCount = clientMissedVSyncCount
@@ -474,10 +626,17 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReassemblerIncompleteFrameLifetimeTimeouts = clientReassemblerIncompleteFrameLifetimeTimeouts
         self.clientReassemblerMissingFragmentTimeouts = clientReassemblerMissingFragmentTimeouts
         self.clientReassemblerForwardGapTimeouts = clientReassemblerForwardGapTimeouts
+        self.clientFrameCompletionLatencyP50Ms = max(0, clientFrameCompletionLatencyP50Ms)
+        self.clientFrameCompletionLatencyP95Ms = max(0, clientFrameCompletionLatencyP95Ms)
+        self.clientFrameCompletionLatencyMaxMs = max(0, clientFrameCompletionLatencyMaxMs)
+        self.clientKeyframeCompletionLatencyP50Ms = max(0, clientKeyframeCompletionLatencyP50Ms)
+        self.clientKeyframeCompletionLatencyP95Ms = max(0, clientKeyframeCompletionLatencyP95Ms)
+        self.clientKeyframeCompletionLatencyMaxMs = max(0, clientKeyframeCompletionLatencyMaxMs)
         self.clientPFrameCompletionLatencyP50Ms = max(0, clientPFrameCompletionLatencyP50Ms)
         self.clientPFrameCompletionLatencyP95Ms = max(0, clientPFrameCompletionLatencyP95Ms)
         self.clientPFrameCompletionLatencyMaxMs = max(0, clientPFrameCompletionLatencyMaxMs)
         self.clientLatePFrameCompletionCount = clientLatePFrameCompletionCount
+        self.clientReassemblerFECRecoveredFragmentCount = clientReassemblerFECRecoveredFragmentCount
         clientDecodeBacklogFrameCountStorage = 0
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS
@@ -509,6 +668,13 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostRealtimeBitrateCeiling = hostRealtimeBitrateCeiling
         self.hostRealtimePressureState = hostRealtimePressureState
         self.hostRealtimePressureReason = hostRealtimePressureReason
+        self.hostAwdlPolicyState = hostAwdlPolicyState
+        self.hostAwdlPolicyTrigger = hostAwdlPolicyTrigger
+        self.hostAwdlSelectedLever = hostAwdlSelectedLever
+        self.hostAwdlPlayoutDelayMs = hostAwdlPlayoutDelayMs
+        self.hostAwdlResolutionScale = hostAwdlResolutionScale
+        self.hostAwdlQualityReductionAllowed = hostAwdlQualityReductionAllowed
+        self.hostAwdlPacingBudgetBps = hostAwdlPacingBudgetBps
         self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
         self.hostFrameBudgetMs = hostFrameBudgetMs
         self.hostAverageEncodeMs = hostAverageEncodeMs
@@ -545,6 +711,31 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostCadenceAdmittedFrameCount = nil
         hostMediaMaxPacketSize = nil
         hostMediaSendProfile = nil
+        hostStalePacketDrops = nil
+        hostSenderLocalDeadlineDrops = nil
+        hostGenerationAbortDrops = nil
+        hostNonKeyframeHoldDrops = nil
+        hostQueuedUnreliableDropCounts = nil
+        hostQueuedUnreliablePendingPackets = nil
+        hostQueuedUnreliableOutstandingPackets = nil
+        hostQueuedUnreliableQueuedBytes = nil
+        hostQueuedUnreliablePendingPacketMax = nil
+        hostQueuedUnreliableOutstandingPacketMax = nil
+        hostQueuedUnreliableQueuedBytesMax = nil
+        hostQueuedUnreliableEnqueuedCount = nil
+        hostQueuedUnreliableSentCount = nil
+        hostQueuedUnreliableCompletedCount = nil
+        hostQueuedUnreliableDroppedCount = nil
+        hostQueuedUnreliableErrorCount = nil
+        hostQueuedUnreliableQueueDwellP50Ms = nil
+        hostQueuedUnreliableQueueDwellP95Ms = nil
+        hostQueuedUnreliableQueueDwellP99Ms = nil
+        hostQueuedUnreliableSendGapP50Ms = nil
+        hostQueuedUnreliableSendGapP95Ms = nil
+        hostQueuedUnreliableSendGapP99Ms = nil
+        hostQueuedUnreliableContentProcessedP50Ms = nil
+        hostQueuedUnreliableContentProcessedP95Ms = nil
+        hostQueuedUnreliableContentProcessedP99Ms = nil
         self.hasHostMetrics = hasHostMetrics
     }
 
@@ -655,6 +846,75 @@ public extension MirageClientMetricsSnapshot {
     var clientVisibleFrameFPS: Double {
         get { clientPresentedFPS }
         set { clientPresentedFPS = newValue }
+    }
+
+    /// Number of Loom queued-unreliable packets dropped after exceeding their media deadline.
+    var hostQueuedUnreliableDeadlineExpiredDrops: UInt64? {
+        get { hostQueuedUnreliableDropCounts?.deadlineExpired }
+        set {
+            updateHostQueuedUnreliableDropCounts(.deadlineExpired, value: newValue)
+        }
+    }
+
+    /// Number of Loom queued-unreliable packets dropped by bounded queue pressure.
+    var hostQueuedUnreliableQueueLimitDrops: UInt64? {
+        get { hostQueuedUnreliableDropCounts?.queueLimit }
+        set {
+            updateHostQueuedUnreliableDropCounts(.queueLimit, value: newValue)
+        }
+    }
+
+    /// Number of Loom queued-unreliable packets dropped because newer media superseded them.
+    var hostQueuedUnreliableSupersededDrops: UInt64? {
+        get { hostQueuedUnreliableDropCounts?.superseded }
+        set {
+            updateHostQueuedUnreliableDropCounts(.superseded, value: newValue)
+        }
+    }
+
+    /// Number of Loom queued-unreliable packets rejected by a transport without the required media lane.
+    var hostQueuedUnreliableUnsupportedTransportDrops: UInt64? {
+        get { hostQueuedUnreliableDropCounts?.unsupportedTransport }
+        set {
+            updateHostQueuedUnreliableDropCounts(.unsupportedTransport, value: newValue)
+        }
+    }
+
+    /// Number of Loom queued-unreliable packets dropped because the transport closed.
+    var hostQueuedUnreliableClosedDrops: UInt64? {
+        get { hostQueuedUnreliableDropCounts?.closed }
+        set {
+            updateHostQueuedUnreliableDropCounts(.closed, value: newValue)
+        }
+    }
+
+    var hostQueuedUnreliableDropCount: UInt64 {
+        hostQueuedUnreliableDropCounts?.total ?? 0
+    }
+
+    var hostTransportPressureDropCount: UInt64 {
+        (hostStalePacketDrops ?? 0) +
+            (hostSenderLocalDeadlineDrops ?? 0) +
+            hostQueuedUnreliableDropCount
+    }
+
+    var hostSenderDropCount: UInt64 {
+        hostTransportPressureDropCount +
+            (hostGenerationAbortDrops ?? 0) +
+            (hostNonKeyframeHoldDrops ?? 0)
+    }
+
+    private mutating func updateHostQueuedUnreliableDropCounts(_ field: HostQueuedUnreliableDropField, value: UInt64?) {
+        guard let value else {
+            guard var counts = hostQueuedUnreliableDropCounts else { return }
+            counts.set(field, value: 0)
+            hostQueuedUnreliableDropCounts = counts.isEmpty ? nil : counts
+            return
+        }
+
+        var counts = hostQueuedUnreliableDropCounts ?? MirageHostQueuedUnreliableDropCounts()
+        counts.set(field, value: value)
+        hostQueuedUnreliableDropCounts = counts
     }
 
     var clientUniqueDeliveredSourceFrameFPS: Double {

@@ -117,8 +117,8 @@ extension StreamController {
         }
 
         guard reassembler.isAwaitingKeyframe else { return }
-        let lastPacketTime = reassembler.latestPacketReceivedTime
-        let packetStarved = lastPacketTime <= 0 || now - lastPacketTime >= Self.freezeTimeout
+        let lastAcceptedPacketTime = reassembler.latestAcceptedPacketReceivedTime
+        let packetStarved = lastAcceptedPacketTime <= 0 || now - lastAcceptedPacketTime >= Self.freezeTimeout
         MirageLogger.client(
             "Freeze detected for stream \(streamID): presentation stalled " +
                 "\(Int((now - lastPresentedProgressTime) * 1000))ms, reassembler awaiting keyframe"
@@ -304,8 +304,7 @@ extension StreamController {
             ? currentBitrate / 8 / max(1, hostMetrics.targetFrameRate)
             : 0
         let queuePressureBytes = max(128 * 1024, estimatedFrameBytes * 4)
-        let hasTransportDrops = (hostMetrics.senderLocalDeadlineDrops ?? 0) > 0 ||
-            (hostMetrics.stalePacketDrops ?? 0) > 0 ||
+        let hasTransportDrops = hostMetrics.transportPressureDropCount > 0 ||
             (hostMetrics.generationAbortDrops ?? 0) > 0 ||
             (hostMetrics.nonKeyframeHoldDrops ?? 0) > 0
         let hasSevereSendLatency = (hostMetrics.nonKeyframeSendCompletionMaxMs ?? 0) >= max(120.0, frameBudgetMs * 6.0) ||

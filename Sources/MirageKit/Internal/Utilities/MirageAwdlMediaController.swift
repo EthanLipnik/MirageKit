@@ -11,35 +11,52 @@ import Foundation
 
 package struct MirageAwdlMediaController: Sendable, Equatable {
     package enum State: String, Codable, Sendable, Equatable {
-        case warmup
+        case starting
+        case awaitingFirstFrame
         case steady
         case stressed
-        case recovery
-        case demote
+        case recovering
+        case demoted
+        case failed
     }
 
     package enum Trigger: String, Codable, Sendable, Equatable {
-        case warmup
+        case startup
         case stable
         case jitter
         case loss
         case reassemblyBacklog
         case pFrameLatency
         case decodePressure
+        case presentationBacklog
+        case presentationFillDeficit
         case presentationUnderflow
         case recovery
         case demote
         case nonAwdl
     }
 
+    package enum SelectedLever: String, Codable, Sendable, Equatable {
+        case observe
+        case playout
+        case pacing
+        case frameRate
+        case resolution
+        case quality
+        case recovery
+    }
+
     package struct Signal: Sendable, Equatable {
         package var mediaPathProfile: MirageMediaPathProfile
         package var currentFrameRate: Int
         package var targetFrameRate: Int
+        package var requestedFrameRateCeiling: Int?
         package var targetBitrateBps: Int?
         package var jitterP99Ms: Double
-        package var receivedWorstGapMs: Double?
+        package var frameCompletionLatencyP95Ms: Double?
+        package var keyframeCompletionLatencyP95Ms: Double?
         package var pFrameCompletionLatencyP95Ms: Double?
+        package var receiverPlayoutDelayTargetMs: Double?
         package var latePFrameCount: UInt64
         package var missingFragmentTimeouts: UInt64
         package var forwardGapTimeouts: UInt64
@@ -48,9 +65,16 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         package var reassemblyBacklogFrames: Int
         package var reassemblyBacklogBytes: Int
         package var decodeBacklogFrames: Int
+        package var decodeSubmissionLimit: Int?
+        package var inFlightDecodeSubmissions: Int?
+        package var decodedFPS: Double
+        package var receivedFPS: Double
         package var presentationBacklogFrames: Int
+        package var presentationFillDeficitFrames: Int
+        package var presentationUnderfillFrames: Int
         package var presentationStallCount: UInt64
         package var displayTickNoFrameCount: UInt64
+        package var pendingFrameNotReadyDisplayTickCount: UInt64
         package var fecRecoveredFragmentCount: UInt64
         package var recoveryState: MirageMediaFeedbackRecoveryState
 
@@ -58,10 +82,13 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             mediaPathProfile: MirageMediaPathProfile,
             currentFrameRate: Int,
             targetFrameRate: Int,
+            requestedFrameRateCeiling: Int? = nil,
             targetBitrateBps: Int? = nil,
             jitterP99Ms: Double = 0,
-            receivedWorstGapMs: Double? = nil,
+            frameCompletionLatencyP95Ms: Double? = nil,
+            keyframeCompletionLatencyP95Ms: Double? = nil,
             pFrameCompletionLatencyP95Ms: Double? = nil,
+            receiverPlayoutDelayTargetMs: Double? = nil,
             latePFrameCount: UInt64 = 0,
             missingFragmentTimeouts: UInt64 = 0,
             forwardGapTimeouts: UInt64 = 0,
@@ -70,19 +97,29 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             reassemblyBacklogFrames: Int = 0,
             reassemblyBacklogBytes: Int = 0,
             decodeBacklogFrames: Int = 0,
+            decodeSubmissionLimit: Int? = nil,
+            inFlightDecodeSubmissions: Int? = nil,
+            decodedFPS: Double = 0,
+            receivedFPS: Double = 0,
             presentationBacklogFrames: Int = 0,
+            presentationFillDeficitFrames: Int = 0,
+            presentationUnderfillFrames: Int = 0,
             presentationStallCount: UInt64 = 0,
             displayTickNoFrameCount: UInt64 = 0,
+            pendingFrameNotReadyDisplayTickCount: UInt64 = 0,
             fecRecoveredFragmentCount: UInt64 = 0,
             recoveryState: MirageMediaFeedbackRecoveryState = .idle
         ) {
             self.mediaPathProfile = mediaPathProfile
             self.currentFrameRate = max(1, currentFrameRate)
             self.targetFrameRate = max(1, targetFrameRate)
+            self.requestedFrameRateCeiling = requestedFrameRateCeiling.map { max(1, $0) }
             self.targetBitrateBps = targetBitrateBps.map { max(1, $0) }
             self.jitterP99Ms = max(0, jitterP99Ms)
-            self.receivedWorstGapMs = receivedWorstGapMs.map { max(0, $0) }
+            self.frameCompletionLatencyP95Ms = frameCompletionLatencyP95Ms.map { max(0, $0) }
+            self.keyframeCompletionLatencyP95Ms = keyframeCompletionLatencyP95Ms.map { max(0, $0) }
             self.pFrameCompletionLatencyP95Ms = pFrameCompletionLatencyP95Ms.map { max(0, $0) }
+            self.receiverPlayoutDelayTargetMs = receiverPlayoutDelayTargetMs.map { max(0, $0) }
             self.latePFrameCount = latePFrameCount
             self.missingFragmentTimeouts = missingFragmentTimeouts
             self.forwardGapTimeouts = forwardGapTimeouts
@@ -91,9 +128,16 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             self.reassemblyBacklogFrames = max(0, reassemblyBacklogFrames)
             self.reassemblyBacklogBytes = max(0, reassemblyBacklogBytes)
             self.decodeBacklogFrames = max(0, decodeBacklogFrames)
+            self.decodeSubmissionLimit = decodeSubmissionLimit.map { max(0, $0) }
+            self.inFlightDecodeSubmissions = inFlightDecodeSubmissions.map { max(0, $0) }
+            self.decodedFPS = max(0, decodedFPS)
+            self.receivedFPS = max(0, receivedFPS)
             self.presentationBacklogFrames = max(0, presentationBacklogFrames)
+            self.presentationFillDeficitFrames = max(0, presentationFillDeficitFrames)
+            self.presentationUnderfillFrames = max(0, presentationUnderfillFrames)
             self.presentationStallCount = presentationStallCount
             self.displayTickNoFrameCount = displayTickNoFrameCount
+            self.pendingFrameNotReadyDisplayTickCount = pendingFrameNotReadyDisplayTickCount
             self.fecRecoveredFragmentCount = fecRecoveredFragmentCount
             self.recoveryState = recoveryState
         }
@@ -102,16 +146,24 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             feedback: ReceiverMediaFeedbackMessage,
             currentFrameRate: Int,
             mediaPathProfile: MirageMediaPathProfile,
+            requestedFrameRateCeiling: Int? = nil,
             targetBitrateBps: Int? = nil
         ) {
+            let presentationQueueBacklog = feedback.presentationQueueDepth.map { queueDepth in
+                guard let targetFrames = feedback.presentationTargetFrames else { return 0 }
+                return max(0, queueDepth - targetFrames)
+            } ?? 0
             self.init(
                 mediaPathProfile: mediaPathProfile,
                 currentFrameRate: currentFrameRate,
                 targetFrameRate: feedback.targetFPS,
+                requestedFrameRateCeiling: requestedFrameRateCeiling,
                 targetBitrateBps: targetBitrateBps,
-                jitterP99Ms: feedback.receiverJitterP99Ms ?? feedback.jitterP99Ms,
-                receivedWorstGapMs: feedback.receivedWorstGapMs,
+                jitterP99Ms: feedback.receiverJitterP99Ms ?? 0,
+                frameCompletionLatencyP95Ms: feedback.frameCompletionLatencyP95Ms,
+                keyframeCompletionLatencyP95Ms: feedback.keyframeCompletionLatencyP95Ms,
                 pFrameCompletionLatencyP95Ms: feedback.pFrameCompletionLatencyP95Ms,
+                receiverPlayoutDelayTargetMs: feedback.playoutDelayTargetMs,
                 latePFrameCount: feedback.latePFrameCount ?? 0,
                 missingFragmentTimeouts: feedback.reassemblerMissingFragmentTimeouts ?? 0,
                 forwardGapTimeouts: feedback.reassemblerForwardGapTimeouts ?? 0,
@@ -119,10 +171,20 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
                 discardedPacketCount: feedback.discardedPacketCount,
                 reassemblyBacklogFrames: feedback.reassemblyBacklogFrames,
                 reassemblyBacklogBytes: feedback.reassemblyBacklogBytes,
-                decodeBacklogFrames: feedback.decodeBacklogFrames,
-                presentationBacklogFrames: feedback.presentationBacklogFrames,
+                decodeBacklogFrames: max(feedback.decodeBacklogFrames, feedback.decodeQueueDepth ?? 0),
+                decodeSubmissionLimit: feedback.decodeSubmissionLimit,
+                inFlightDecodeSubmissions: feedback.inFlightDecodeSubmissions,
+                decodedFPS: feedback.decodedFPS,
+                receivedFPS: feedback.receivedFPS,
+                presentationBacklogFrames: max(
+                    feedback.presentationBacklogFrames,
+                    presentationQueueBacklog
+                ),
+                presentationFillDeficitFrames: feedback.presentationFillDeficitFrames ?? 0,
+                presentationUnderfillFrames: feedback.presentationUnderfillFrames ?? 0,
                 presentationStallCount: feedback.presentationStallCount ?? 0,
                 displayTickNoFrameCount: feedback.displayTickNoFrameCount ?? 0,
+                pendingFrameNotReadyDisplayTickCount: feedback.pendingFrameNotReadyDisplayTickCount ?? 0,
                 fecRecoveredFragmentCount: feedback.fecRecoveredFragmentCount ?? 0,
                 recoveryState: feedback.recoveryState
             )
@@ -144,6 +206,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         package var playoutDelayMs: Double
         package var pacingHoldSeconds: Double
         package var qualityReductionAllowed: Bool
+        package var selectedLever: SelectedLever
 
         package var usesFixedRealtimeDisplayPolicy: Bool {
             state != .steady || trigger != .nonAwdl
@@ -151,21 +214,26 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     }
 
     package static let defaultPacingBudgetBps = 32_000_000
+    package static let defaultKeyframePacingBudgetBps = 48_000_000
     package static let pFramePacketBurst = 2
     package static let keyframePacketBurst = 4
     package static let startupKeyframeFECBlockSize = 4
-    package static let baseContinuityWindowMs = 180.0
-    package static let maximumContinuityWindowMs = 300.0
-    package static let basePlayoutDelayMs = 24.0
+    package static let baseContinuityWindowMs = 140.0
+    package static let maximumContinuityWindowMs = 220.0
+    package static let basePlayoutDelayMs = 33.0
     package static let minimumPlayoutDelayMs = 24.0
     package static let stableMaximumPlayoutDelayMs = 80.0
     package static let maximumPlayoutDelayMs = 120.0
-    package static let decodeQueueWindowMs = 600.0
+    package static let maximumReceiverQueueAgeMs = 220.0
+    package static let maximumReceiverDisplayDebtMs = 160.0
+    package static let maximumReceiverHardResetDebtMs = 240.0
+    package static let decodeQueueWindowMs = 250.0
     package static let pacingHoldSeconds = 2.0
 
     private static let stressSamplesRequired = 2
     private static let stableSamplesForSteady = 3
     private static let demoteSamplesRequired = 4
+    private static let survivalSamplesRequired = 8
 
     package private(set) var state: State
     private var consecutiveStressSamples: Int
@@ -174,7 +242,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     private var currentPlayoutDelayMs: Double
     private var currentResolutionScale: Double
 
-    package init(state: State = .warmup) {
+    package init(state: State = .starting) {
         self.state = state
         consecutiveStressSamples = 0
         consecutiveStableSamples = 0
@@ -211,18 +279,18 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
 
     package static func playoutDelayMs(
         jitterP99Ms: Double = 0,
-        receivedWorstGapMs: Double? = nil,
         presentationStallCount: UInt64 = 0,
+        recoveryState: MirageMediaFeedbackRecoveryState = .idle,
         hasRecentInteraction: Bool = false
     ) -> Double {
-        let gapPressureMs = max(jitterP99Ms, receivedWorstGapMs ?? 0)
+        let gapPressureMs = jitterP99Ms
         let pressureDelay: Double
-        if presentationStallCount > 0 || gapPressureMs >= 240 {
-            pressureDelay = 120
+        if presentationStallCount > 0 || recoveryState != .idle {
+            pressureDelay = maximumPlayoutDelayMs
         } else if gapPressureMs >= 180 {
-            pressureDelay = 96
+            pressureDelay = stableMaximumPlayoutDelayMs
         } else if gapPressureMs >= 120 {
-            pressureDelay = 80
+            pressureDelay = stableMaximumPlayoutDelayMs
         } else if gapPressureMs >= 80 {
             pressureDelay = 64
         } else if gapPressureMs >= 50 {
@@ -230,7 +298,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         } else {
             pressureDelay = basePlayoutDelayMs
         }
-        let reducedDelay = hasRecentInteraction ? pressureDelay * 0.80 : pressureDelay
+        let reducedDelay = hasRecentInteraction ? pressureDelay * 0.85 : pressureDelay
         return min(maximumPlayoutDelayMs, max(minimumPlayoutDelayMs, reducedDelay))
     }
 
@@ -240,6 +308,28 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
 
     package static func pacingBudgetBps(targetBitrateBps: Int?) -> Int {
         min(max(1, targetBitrateBps ?? defaultPacingBudgetBps), defaultPacingBudgetBps)
+    }
+
+    package static func keyframePacingBudgetBps(
+        targetBitrateBps: Int?,
+        state: State
+    ) -> Int {
+        let pFrameBudget = pacingBudgetBps(targetBitrateBps: targetBitrateBps)
+        let keyframeBudget = min(
+            defaultKeyframePacingBudgetBps,
+            max(defaultPacingBudgetBps, targetBitrateBps ?? defaultKeyframePacingBudgetBps)
+        )
+        switch state {
+        case .failed:
+            return pFrameBudget
+        case .starting,
+             .awaitingFirstFrame,
+             .steady,
+             .stressed,
+             .recovering,
+             .demoted:
+            return keyframeBudget
+        }
     }
 
     package static func pFrameFECBlockSize(
@@ -286,27 +376,42 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             if consecutiveStableSamples >= Self.stableSamplesForSteady {
                 state = .steady
                 currentResolutionScale = 1.0
-            } else if state == .recovery || state == .demote {
+            } else if state == .recovering || state == .failed {
                 state = .stressed
             }
         case .recovery:
             consecutiveStableSamples = 0
             consecutiveStressSamples = 0
             consecutiveDemoteSamples = 0
-            state = .recovery
+            state = signal.recoveryState == .hardRecovery ? .failed : .recovering
         case .demote:
             consecutiveStableSamples = 0
             consecutiveStressSamples += 1
             consecutiveDemoteSamples += 1
-            state = consecutiveDemoteSamples >= Self.demoteSamplesRequired ? .demote : .stressed
-            if state == .demote {
-                currentResolutionScale = consecutiveDemoteSamples >= Self.demoteSamplesRequired * 2 ? 0.75 : 0.875
+            if consecutiveDemoteSamples >= Self.survivalSamplesRequired {
+                state = .demoted
+                currentResolutionScale = Self.demotedResolutionScale(
+                    currentFrameRate: signal.currentFrameRate,
+                    demoteSamples: consecutiveDemoteSamples,
+                    currentResolutionScale: currentResolutionScale
+                )
+            } else if consecutiveDemoteSamples >= Self.demoteSamplesRequired {
+                state = .demoted
+                currentResolutionScale = Self.demotedResolutionScale(
+                    currentFrameRate: signal.currentFrameRate,
+                    demoteSamples: consecutiveDemoteSamples,
+                    currentResolutionScale: currentResolutionScale
+                )
+            } else {
+                state = .stressed
             }
         case .jitter,
              .loss,
              .reassemblyBacklog,
              .pFrameLatency,
              .decodePressure,
+             .presentationBacklog,
+             .presentationFillDeficit,
              .presentationUnderflow:
             consecutiveStableSamples = 0
             consecutiveStressSamples += 1
@@ -315,18 +420,29 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             } else {
                 consecutiveDemoteSamples = 0
             }
-            if consecutiveStressSamples >= Self.stressSamplesRequired || state == .recovery {
+            if consecutiveStressSamples >= Self.stressSamplesRequired || state == .recovering {
                 state = .stressed
             }
-            if consecutiveDemoteSamples >= Self.demoteSamplesRequired {
-                state = .demote
-                currentResolutionScale = consecutiveDemoteSamples >= Self.demoteSamplesRequired * 2 ? 0.75 : 0.875
+            if consecutiveDemoteSamples >= Self.survivalSamplesRequired {
+                state = .demoted
+                currentResolutionScale = Self.demotedResolutionScale(
+                    currentFrameRate: signal.currentFrameRate,
+                    demoteSamples: consecutiveDemoteSamples,
+                    currentResolutionScale: currentResolutionScale
+                )
+            } else if consecutiveDemoteSamples >= Self.demoteSamplesRequired {
+                state = .demoted
+                currentResolutionScale = Self.demotedResolutionScale(
+                    currentFrameRate: signal.currentFrameRate,
+                    demoteSamples: consecutiveDemoteSamples,
+                    currentResolutionScale: currentResolutionScale
+                )
             }
-        case .warmup:
+        case .startup:
             consecutiveStableSamples = 0
             consecutiveStressSamples = 0
             consecutiveDemoteSamples = 0
-            state = .warmup
+            state = .awaitingFirstFrame
         case .nonAwdl:
             state = .steady
         }
@@ -337,8 +453,26 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             signal: signal,
             playoutDelayMs: updatePlayoutDelay(trigger: trigger, signal: signal),
             resolutionScale: currentResolutionScale,
-            qualityReductionAllowed: state == .demote
+            qualityReductionAllowed: state == .demoted &&
+                consecutiveDemoteSamples >= Self.survivalSamplesRequired &&
+                signal.currentFrameRate <= 30 &&
+                currentResolutionScale <= 0.751
         )
+    }
+
+    private static func demotedResolutionScale(
+        currentFrameRate: Int,
+        demoteSamples: Int,
+        currentResolutionScale: Double
+    ) -> Double {
+        guard currentFrameRate <= 30 else { return 1.0 }
+        if demoteSamples >= Self.survivalSamplesRequired {
+            return 0.75
+        }
+        if demoteSamples >= Self.demoteSamplesRequired {
+            return min(currentResolutionScale, 0.875)
+        }
+        return currentResolutionScale
     }
 
     private mutating func updatePlayoutDelay(
@@ -352,15 +486,21 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
 
         let measuredDelayMs = Self.playoutDelayMs(
             jitterP99Ms: signal.jitterP99Ms,
-            receivedWorstGapMs: signal.receivedWorstGapMs,
-            presentationStallCount: signal.presentationStallCount
+            presentationStallCount: signal.presentationStallCount,
+            recoveryState: signal.recoveryState
         )
+        let frameIntervalMs = 1_000.0 / Double(max(1, signal.currentFrameRate))
+        let fillDeficitDelayMs = signal.presentationFillDeficitFrames > 0
+            ? min(
+                Self.stableMaximumPlayoutDelayMs,
+                Self.basePlayoutDelayMs + frameIntervalMs * Double(min(signal.presentationFillDeficitFrames, 4))
+            )
+            : Self.basePlayoutDelayMs
         switch trigger {
-        case .stable, .warmup:
+        case .stable, .startup:
             if currentPlayoutDelayMs <= Self.basePlayoutDelayMs {
                 currentPlayoutDelayMs = Self.basePlayoutDelayMs
             } else if consecutiveStableSamples >= Self.stableSamplesForSteady {
-                let frameIntervalMs = 1_000.0 / Double(max(1, signal.currentFrameRate))
                 currentPlayoutDelayMs = max(
                     Self.basePlayoutDelayMs,
                     currentPlayoutDelayMs - max(8.0, frameIntervalMs)
@@ -373,12 +513,14 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
              .reassemblyBacklog,
              .pFrameLatency,
              .decodePressure,
+             .presentationBacklog,
+             .presentationFillDeficit,
              .presentationUnderflow,
              .recovery,
              .demote:
             currentPlayoutDelayMs = min(
                 Self.maximumPlayoutDelayMs,
-                max(currentPlayoutDelayMs, measuredDelayMs)
+                max(currentPlayoutDelayMs, measuredDelayMs, fillDeficitDelayMs)
             )
         }
 
@@ -394,25 +536,37 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         resolutionScale: Double,
         qualityReductionAllowed: Bool
     ) -> Decision {
-        Decision(
+        let requestedFrameRate = signal.requestedFrameRateCeiling ?? max(
+            signal.currentFrameRate,
+            signal.targetFrameRate
+        )
+        let targetFrameRate = interactiveDisplayTargetFrameRate(
             state: state,
             trigger: trigger,
-            targetFrameRate: interactiveDisplayTargetFrameRate(
-                state: state,
-                trigger: trigger,
-                currentFrameRate: signal.currentFrameRate,
-                requestedFrameRate: max(signal.currentFrameRate, signal.targetFrameRate),
-                mediaPathProfile: signal.mediaPathProfile
-            ),
-            resolutionScale: min(1.0, max(0.75, resolutionScale)),
+            currentFrameRate: signal.currentFrameRate,
+            requestedFrameRate: requestedFrameRate,
+            mediaPathProfile: signal.mediaPathProfile
+        )
+        let clampedResolutionScale = min(1.0, max(0.75, resolutionScale))
+        return Decision(
+            state: state,
+            trigger: trigger,
+            targetFrameRate: targetFrameRate,
+            resolutionScale: clampedResolutionScale,
             hostPacingBudgetBps: pacingBudgetBps(targetBitrateBps: signal.targetBitrateBps),
-            keyframePacingBudgetBps: pacingBudgetBps(targetBitrateBps: signal.targetBitrateBps),
+            keyframePacingBudgetBps: keyframePacingBudgetBps(
+                targetBitrateBps: signal.targetBitrateBps,
+                state: state
+            ),
             pFramePacketBurst: pFramePacketBurst,
             keyframePacketBurst: keyframePacketBurst,
             pFrameFECBlockSize: pFrameFECBlockSize(
                 frameByteCount: signal.reassemblyBacklogBytes,
                 maxPayloadSize: 1_200,
-                isLossModeActive: trigger == .loss || state == .recovery
+                isLossModeActive: trigger == .loss ||
+                    state == .awaitingFirstFrame ||
+                    state == .recovering ||
+                    state == .failed
             ),
             keyframeFECBlockSize: keyframeFECBlockSize(),
             continuityWindowMs: continuityWindowMs(
@@ -421,8 +575,54 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             ),
             playoutDelayMs: playoutDelayMs,
             pacingHoldSeconds: pacingHoldSeconds,
-            qualityReductionAllowed: qualityReductionAllowed
+            qualityReductionAllowed: qualityReductionAllowed,
+            selectedLever: selectedLever(
+                state: state,
+                trigger: trigger,
+                targetFrameRate: targetFrameRate,
+                requestedFrameRate: requestedFrameRate,
+                resolutionScale: clampedResolutionScale,
+                playoutDelayMs: playoutDelayMs,
+                qualityReductionAllowed: qualityReductionAllowed,
+                mediaPathProfile: signal.mediaPathProfile
+            )
         )
+    }
+
+    private static func selectedLever(
+        state: State,
+        trigger: Trigger,
+        targetFrameRate: Int,
+        requestedFrameRate: Int,
+        resolutionScale: Double,
+        playoutDelayMs: Double,
+        qualityReductionAllowed: Bool,
+        mediaPathProfile: MirageMediaPathProfile
+    ) -> SelectedLever {
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return .observe }
+        if state == .recovering ||
+            state == .failed ||
+            state == .awaitingFirstFrame ||
+            trigger == .recovery ||
+            trigger == .startup {
+            return .recovery
+        }
+        if qualityReductionAllowed {
+            return .quality
+        }
+        if resolutionScale < 1.0 {
+            return .resolution
+        }
+        if targetFrameRate < min(max(1, requestedFrameRate), 60) {
+            return .frameRate
+        }
+        if playoutDelayMs > basePlayoutDelayMs {
+            return .playout
+        }
+        if trigger != .stable && trigger != .nonAwdl {
+            return .pacing
+        }
+        return .observe
     }
 
     private static func interactiveDisplayTargetFrameRate(
@@ -435,26 +635,40 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return max(1, requestedFrameRate) }
         let ceiling = min(max(1, requestedFrameRate), 60)
         switch state {
-        case .demote:
+        case .failed:
             return min(30, ceiling)
-        case .recovery:
+        case .demoted:
+            if trigger == .stable {
+                return min(max(1, currentFrameRate), ceiling)
+            }
+            return min(max(30, currentFrameRate > 45 ? 45 : 30), ceiling)
+        case .recovering, .awaitingFirstFrame:
             return min(45, ceiling)
         case .stressed:
             switch trigger {
-            case .decodePressure, .presentationUnderflow, .pFrameLatency, .reassemblyBacklog:
+            case .decodePressure,
+                 .presentationBacklog,
+                 .presentationUnderflow,
+                 .pFrameLatency,
+                 .reassemblyBacklog:
                 return min(max(30, currentFrameRate > 45 ? 45 : 30), ceiling)
-            case .loss, .jitter:
-                return min(max(45, currentFrameRate), ceiling)
-            case .warmup, .stable, .recovery, .demote, .nonAwdl:
+            case .loss,
+                 .jitter:
+                return min(max(30, currentFrameRate > 45 ? 45 : 30), ceiling)
+            case .presentationFillDeficit,
+                 .startup, .stable, .recovery, .demote, .nonAwdl:
                 return ceiling
             }
-        case .warmup, .steady:
+        case .starting, .steady:
             return ceiling
         }
     }
 
     private static func trigger(for signal: Signal) -> Trigger {
         guard signal.mediaPathProfile.usesAwdlRadioPolicy else { return .nonAwdl }
+        if signal.recoveryState == .startup || signal.recoveryState == .postResizeAwaitingFirstFrame {
+            return .startup
+        }
         if signal.recoveryState != .idle || signal.forwardGapTimeouts > 0 {
             return .recovery
         }
@@ -462,26 +676,47 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         let currentFrameRate = max(signal.currentFrameRate, signal.targetFrameRate)
         let frameIntervalMs = 1_000.0 / Double(max(1, currentFrameRate))
         let jitterStress = signal.jitterP99Ms >= max(60.0, frameIntervalMs * 4.0)
-        let receivedGapStress = (signal.receivedWorstGapMs ?? 0) >= max(100.0, frameIntervalMs * 6.0)
         let unrepairedMissingFragments = signal.missingFragmentTimeouts > signal.fecRecoveredFragmentCount
         let lossStress = signal.lostFrameCount >= 6 ||
             signal.discardedPacketCount >= 6 ||
             unrepairedMissingFragments
+        let keyframeLatencyStress = (signal.keyframeCompletionLatencyP95Ms ?? 0) >= max(120.0, frameIntervalMs * 6.0)
         let reassemblyBacklogStress = signal.reassemblyBacklogFrames >= 8 ||
-            signal.reassemblyBacklogBytes >= 2_000_000
-        let pFrameLatencyStress = (signal.pFrameCompletionLatencyP95Ms ?? 0) >= max(50.0, frameIntervalMs * 3.0) ||
+            signal.reassemblyBacklogBytes >= 2_000_000 ||
+            keyframeLatencyStress
+        let receiverPlayoutTargetMs = signal.receiverPlayoutDelayTargetMs ?? Self.basePlayoutDelayMs
+        let pFrameLatencyThresholdMs = max(
+            50.0,
+            frameIntervalMs * 3.0,
+            min(Self.maximumPlayoutDelayMs, receiverPlayoutTargetMs) + frameIntervalMs
+        )
+        let pFrameLatencyStress = (signal.pFrameCompletionLatencyP95Ms ?? 0) >= pFrameLatencyThresholdMs ||
             signal.latePFrameCount >= 4
+        let decodeSubmissionLimit = signal.decodeSubmissionLimit ?? 0
+        let inFlightDecodeSubmissions = signal.inFlightDecodeSubmissions ?? 0
+        let decodeSubmissionSaturated = decodeSubmissionLimit > 0 &&
+            inFlightDecodeSubmissions >= decodeSubmissionLimit
+        let decodeThroughputGap = max(0, signal.receivedFPS - signal.decodedFPS)
+        let decodeThroughputPressure = signal.receivedFPS > 0 &&
+            signal.decodedFPS < Double(currentFrameRate) * 0.85 &&
+            decodeThroughputGap >= 2.5
         let decodePressure = signal.decodeBacklogFrames >= 4 ||
-            signal.presentationBacklogFrames >= 4
+            (decodeSubmissionSaturated && decodeThroughputPressure)
+        let presentationBacklogPressure = signal.presentationBacklogFrames >= 4
+        let presentationFillDeficitPressure = signal.presentationFillDeficitFrames >= 2
+        let displayUnderflowTickThreshold = UInt64(max(3, currentFrameRate / 20))
         let presentationUnderflow = signal.presentationStallCount > 0 ||
-            signal.displayTickNoFrameCount >= UInt64(max(3, currentFrameRate / 20))
+            signal.displayTickNoFrameCount >= displayUnderflowTickThreshold ||
+            signal.pendingFrameNotReadyDisplayTickCount >= displayUnderflowTickThreshold
 
         if lossStress { return .loss }
         if reassemblyBacklogStress { return .reassemblyBacklog }
         if pFrameLatencyStress { return .pFrameLatency }
         if decodePressure { return .decodePressure }
+        if presentationBacklogPressure { return .presentationBacklog }
         if presentationUnderflow { return .presentationUnderflow }
-        if jitterStress || receivedGapStress { return .jitter }
+        if presentationFillDeficitPressure { return .presentationFillDeficit }
+        if jitterStress { return .jitter }
         return .stable
     }
 }
@@ -491,14 +726,16 @@ private extension MirageAwdlMediaController.Trigger {
         switch self {
         case .reassemblyBacklog,
              .pFrameLatency,
+             .jitter,
+             .loss,
              .decodePressure,
+             .presentationBacklog,
              .presentationUnderflow,
              .demote:
             true
-        case .warmup,
+        case .startup,
              .stable,
-             .jitter,
-             .loss,
+             .presentationFillDeficit,
              .recovery,
              .nonAwdl:
             false

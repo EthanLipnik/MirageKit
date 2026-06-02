@@ -579,6 +579,18 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.stop()
     }
 
+    @Test("First-frame awaiter reports startup before timeout cause is reached")
+    func firstFrameAwaiterReportsStartupBeforeTimeoutCauseIsReached() async {
+        let controller = StreamController(streamID: 139, maxPayloadSize: 1200)
+
+        await controller.armFirstPresentedFrameAwaiter(reason: "test-startup")
+
+        #expect(await controller.clientRecoveryStatus == .startup)
+        #expect(await controller.clientRecoveryCause == .none)
+
+        await controller.stop()
+    }
+
     @Test("First-frame watchdog uses hard recovery when startup is packet-starved")
     func firstFrameWatchdogUsesHardRecoveryWhenStartupIsPacketStarved() async throws {
         let clock = StreamControllerManualTimeProvider(start: 1000)
@@ -589,7 +601,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         )
 
         await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-stall")
-        clock.advance(by: StreamController.firstPresentedFrameHardRecoveryGrace(for: .startup) + 0.1)
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
 
         var hardRecoveryTriggered = false
         let timeoutAt = ContinuousClock.now + .seconds(2)
@@ -642,6 +654,69 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
 
         #expect(await controller.lastHardRecoveryStartTime == 0)
         #expect(await controller.awaitingFirstPresentedFrame)
+
+        await controller.stop()
+    }
+
+    @Test("First-frame watchdog treats rejected startup packets as packet-starved")
+    func firstFrameWatchdogTreatsRejectedStartupPacketsAsPacketStarved() async throws {
+        let clock = StreamControllerManualTimeProvider(start: 1250)
+        let keyframeCounter = StreamControllerLockedCounter()
+        let controller = StreamController(
+            streamID: 241,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: 241)
+        defer {
+            MirageRenderStreamStore.shared.clear(for: 241)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-rejected-flow")
+
+        let reassembler = await controller.reassembler
+        reassembler.updateExpectedDimensionToken(7)
+        let payload = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            payload,
+            header: FrameHeader(
+                flags: [.keyframe, .endOfFrame],
+                streamID: 241,
+                sequenceNumber: 1,
+                timestamp: 1,
+                frameNumber: 1,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                payloadLength: UInt32(payload.count),
+                frameByteCount: UInt32(payload.count),
+                checksum: streamControllerCRC32(payload),
+                contentRect: .zero,
+                dimensionToken: 6,
+                epoch: 0
+            )
+        )
+        #expect(reassembler.hasReceivedPackets == true)
+        #expect(reassembler.hasAcceptedPackets == false)
+
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
+
+        var hardRecoveryTriggered = false
+        let timeoutAt = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < timeoutAt {
+            if await controller.lastHardRecoveryStartTime > 0 {
+                hardRecoveryTriggered = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(hardRecoveryTriggered)
 
         await controller.stop()
     }

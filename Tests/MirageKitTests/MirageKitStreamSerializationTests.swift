@@ -33,6 +33,56 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.cursorPresentation.lockClientCursorWhenUsingHostCursor)
     }
 
+    @Test("Stream ready desktop geometry contract serialization")
+    func streamReadyDesktopGeometryContractSerialization() throws {
+        let contractID = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000A0D1"))
+        let contract = StreamReadyDesktopGeometryContract(
+            contractID: contractID,
+            sceneIdentity: "scene-main",
+            logicalWidth: 1376,
+            logicalHeight: 1032,
+            displayPixelWidth: 2752,
+            displayPixelHeight: 2064,
+            encodedPixelWidth: 2752,
+            encodedPixelHeight: 2064,
+            refreshTargetHz: 60
+        )
+        let ready = StreamReadyMessage(
+            streamID: 42,
+            startupAttemptID: UUID(),
+            kind: .desktop,
+            desktopGeometryContract: contract
+        )
+
+        let envelope = try ControlMessage(type: .streamReady, content: ready)
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        let decoded = try decodedEnvelope.decode(StreamReadyMessage.self)
+        #expect(decoded.streamID == 42)
+        #expect(decoded.kind == .desktop)
+        #expect(decoded.desktopGeometryContract == contract)
+
+        let started = DesktopStreamStartedMessage(
+            streamID: 42,
+            desktopSessionID: UUID(),
+            width: 2752,
+            height: 2064,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            presentationWidth: 1376,
+            presentationHeight: 1032,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "scene-main",
+            desktopGeometryDisplayPixelWidth: 2752,
+            desktopGeometryDisplayPixelHeight: 2064,
+            desktopGeometryEncodedPixelWidth: 2752,
+            desktopGeometryEncodedPixelHeight: 2064,
+            desktopGeometryRefreshTargetHz: 60
+        )
+        #expect(started.streamReadyDesktopGeometryContract == contract)
+    }
+
     @Test("Stream metrics validation payload serialization")
     func streamMetricsValidationPayloadSerialization() throws {
         let captureCadence = StreamCaptureCadenceMetrics(
@@ -90,6 +140,13 @@ struct MirageKitStreamSerializationTests {
             realtimeBitrateCeiling: 16_000_000,
             realtimePressureState: "pressured",
             realtimePressureReason: "p-frame-latency",
+            awdlPolicyState: "stressed",
+            awdlPolicyTrigger: "jitter",
+            awdlSelectedLever: "playout",
+            awdlPlayoutDelayMs: 64,
+            awdlResolutionScale: 0.875,
+            awdlQualityReductionAllowed: false,
+            awdlHostPacingBudgetBps: 24_000_000,
             averageEncodeMs: 13.2,
             captureCadence: captureCadence,
             sendQueueBytes: 262_144,
@@ -104,8 +161,14 @@ struct MirageKitStreamSerializationTests {
             packetPacerMaxSleepMs: 6,
             packetPacerFrameMaxSleepMs: 8,
             stalePacketDrops: 1,
+            senderLocalDeadlineDrops: 2,
             generationAbortDrops: 0,
             nonKeyframeHoldDrops: 4,
+            queuedUnreliableDeadlineExpiredDrops: 5,
+            queuedUnreliableQueueLimitDrops: 6,
+            queuedUnreliableSupersededDrops: 7,
+            queuedUnreliableUnsupportedTransportDrops: 8,
+            queuedUnreliableClosedDrops: 9,
             usingHardwareEncoder: true,
             encoderGPURegistryID: 12345,
             capturePixelFormat: "xf20",
@@ -138,12 +201,27 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.realtimeBitrateCeiling == 16_000_000)
         #expect(decoded.realtimePressureState == "pressured")
         #expect(decoded.realtimePressureReason == "p-frame-latency")
+        #expect(decoded.awdlPolicyState == "stressed")
+        #expect(decoded.awdlPolicyTrigger == "jitter")
+        #expect(decoded.awdlSelectedLever == "playout")
+        #expect(decoded.awdlPlayoutDelayMs == 64)
+        #expect(decoded.awdlResolutionScale == 0.875)
+        #expect(decoded.awdlQualityReductionAllowed == false)
+        #expect(decoded.awdlHostPacingBudgetBps == 24_000_000)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
         #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)
         #expect(decoded.packetPacerTotalSleepMs == 24)
         #expect(decoded.packetPacerFrameMaxSleepMs == 8)
+        #expect(decoded.senderLocalDeadlineDrops == 2)
         #expect(decoded.nonKeyframeHoldDrops == 4)
+        #expect(decoded.queuedUnreliableDeadlineExpiredDrops == 5)
+        #expect(decoded.queuedUnreliableQueueLimitDrops == 6)
+        #expect(decoded.queuedUnreliableSupersededDrops == 7)
+        #expect(decoded.queuedUnreliableUnsupportedTransportDrops == 8)
+        #expect(decoded.queuedUnreliableClosedDrops == 9)
+        #expect(decoded.queuedUnreliableDropCount == 35)
+        #expect(decoded.transportPressureDropCount == 38)
         #expect(decoded.captureCadence?.deliveredFrameGapP99Ms == 62)
         #expect(decoded.captureCadence?.displayTimeDriftCount == 3)
         #expect(decoded.captureCadence?.stoppedFrameStatusCount == 3)

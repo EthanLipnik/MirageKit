@@ -14,8 +14,7 @@ import MirageKit
 extension StreamContext {
     func startCustomFrameStream(
         pixelSize: CGSize,
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
+        sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws -> MirageCustomStreamFrameSink {
@@ -34,8 +33,7 @@ extension StreamContext {
         lastTrafficLightMaskLogTime = 0
 
         await setupPacketSender(
-            sendPacket: sendPacket,
-            sendPacketReliably: sendPacketReliably,
+            sendPacketWithMetadata: sendPacketWithMetadata,
             onSendError: onSendError
         )
 

@@ -107,7 +107,8 @@ extension StreamContext {
                 reason: "Desktop resize reset",
                 noteLoss: true,
                 ignoreExistingInFlight: true,
-                supersedesInFlightGeometry: true
+                supersedesInFlightGeometry: true,
+                bypassesRecoveryCooldown: true
             )
         }
         MirageLogger.stream("Desktop display reset complete at \(scaledWidth)x\(scaledHeight)")

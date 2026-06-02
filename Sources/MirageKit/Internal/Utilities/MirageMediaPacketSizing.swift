@@ -9,7 +9,7 @@ import Foundation
 
 package let mirageDirectLocalMaxPacketSize: Int = 1400
 package let mirageDirectWiFiMaxPacketSize: Int = 1320
-package let mirageDirectProximityMaxPacketSize: Int = 1200
+package let mirageDirectProximityMaxPacketSize: Int = 1120
 
 package func miragePreferredMediaMaxPacketSize(
     for pathKind: MirageNetworkPathKind?

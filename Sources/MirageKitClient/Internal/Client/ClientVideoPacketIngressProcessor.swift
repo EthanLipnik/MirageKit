@@ -23,6 +23,7 @@ struct ClientVideoIngressMetricsSnapshot: Sendable, Equatable {
     let queueAgeMaxMs: Double
     let stalePacketDropCount: UInt64
     let overloadPacketDropCount: UInt64
+    let protectedOverloadPacketDropCount: UInt64
     let processedPacketCount: UInt64
     let processorWakeDelayMaxMs: Double
 }
@@ -99,6 +100,7 @@ final class ClientVideoDirectIngressTelemetryRecorder: @unchecked Sendable {
             queueAgeMaxMs: 0,
             stalePacketDropCount: 0,
             overloadPacketDropCount: 0,
+            protectedOverloadPacketDropCount: 0,
             processedPacketCount: processedPacketCount,
             processorWakeDelayMaxMs: 0
         )
@@ -107,13 +109,14 @@ final class ClientVideoDirectIngressTelemetryRecorder: @unchecked Sendable {
 
 final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     typealias Snapshot = ClientVideoIngressMetricsSnapshot
+    static let defaultStaleNonRecoveryPacketAge: CFTimeInterval = 0.520
 
     private struct IngressBatch {
         var payloads: [Data]
         let enqueuedAt: CFAbsoluteTime
 
-        var isDropCandidate: Bool {
-            !payloads.contains(where: ClientVideoPacketIngressProcessor.isRecoveryPacket)
+        var containsNonRecoveryPacket: Bool {
+            payloads.contains { !ClientVideoPacketIngressProcessor.isRecoveryPacket($0) }
         }
     }
 
@@ -136,6 +139,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     private var queueAgeMaxMs: Double = 0
     private var stalePacketDropCount: UInt64 = 0
     private var overloadPacketDropCount: UInt64 = 0
+    private var protectedOverloadPacketDropCount: UInt64 = 0
     private var processedPacketCount: UInt64 = 0
     private var processorWakeDelaySampler = IngressMaximumSampler()
 
@@ -147,7 +151,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         streamID: StreamID,
         maxQueuedBatches: Int = 4096,
         maxQueuedPackets: Int = 4096,
-        staleNonRecoveryPacketAge: CFTimeInterval = 0.025,
+        staleNonRecoveryPacketAge: CFTimeInterval = defaultStaleNonRecoveryPacketAge,
         processPacket: @escaping @Sendable (Data, StreamID) -> Void
     ) {
         self.streamID = streamID
@@ -227,6 +231,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             : 0
         let stalePacketDropCount = stalePacketDropCount
         let overloadPacketDropCount = overloadPacketDropCount
+        let protectedOverloadPacketDropCount = protectedOverloadPacketDropCount
         let processedPacketCount = processedPacketCount
         let processorWakeDelayMaxMs = processorWakeDelaySampler.snapshot(now: now)
         condition.unlock()
@@ -245,6 +250,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             queueAgeMaxMs: queueAgeMaxMs,
             stalePacketDropCount: stalePacketDropCount,
             overloadPacketDropCount: overloadPacketDropCount,
+            protectedOverloadPacketDropCount: protectedOverloadPacketDropCount,
             processedPacketCount: processedPacketCount,
             processorWakeDelayMaxMs: processorWakeDelayMaxMs
         )
@@ -301,8 +307,8 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     private func trimQueueIfNeededLocked(now: CFAbsoluteTime) {
         while queuedBatches.count - queuedBatchStartIndex > maxQueuedBatches ||
             queuedPacketCount > maxQueuedPackets {
-            if dropOldestDroppableBatchLocked() { continue }
-            _ = dropBatchLocked(at: queuedBatchStartIndex)
+            if dropOldestNonRecoveryPacketsLocked() { continue }
+            guard dropOldestProtectedBatchLocked() else { break }
         }
         updateQueueAgeLocked(now: now)
     }
@@ -340,18 +346,35 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         updateQueueAgeLocked(now: now)
     }
 
-    private func dropOldestDroppableBatchLocked() -> Bool {
+    private func dropOldestNonRecoveryPacketsLocked() -> Bool {
         guard queuedBatchStartIndex < queuedBatches.count else { return false }
-        if queuedBatches[queuedBatchStartIndex].isDropCandidate {
-            _ = dropBatchLocked(at: queuedBatchStartIndex)
-            return true
-        }
-        let searchRange = (queuedBatchStartIndex + 1) ..< queuedBatches.count
-        if let index = searchRange.first(where: { queuedBatches[$0].isDropCandidate }) {
-            _ = dropBatchLocked(at: index)
-            return true
+        var index = queuedBatchStartIndex
+        while index < queuedBatches.count {
+            guard queuedBatches[index].containsNonRecoveryPacket else {
+                index += 1
+                continue
+            }
+
+            let originalCount = queuedBatches[index].payloads.count
+            queuedBatches[index].payloads.removeAll { !Self.isRecoveryPacket($0) }
+            let removedCount = originalCount - queuedBatches[index].payloads.count
+            if queuedBatches[index].payloads.isEmpty {
+                queuedBatches.remove(at: index)
+            }
+            queuedPacketCount = max(0, queuedPacketCount - removedCount)
+            overloadPacketDropCount &+= UInt64(removedCount)
+            return removedCount > 0
         }
         return false
+    }
+
+    @discardableResult
+    private func dropOldestProtectedBatchLocked() -> Bool {
+        guard queuedBatchStartIndex < queuedBatches.count else { return false }
+        let dropped = dropBatchLocked(at: queuedBatchStartIndex)
+        guard dropped > 0 else { return false }
+        protectedOverloadPacketDropCount &+= UInt64(dropped)
+        return true
     }
 
     @discardableResult
@@ -379,7 +402,9 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         return header.flags.contains(.keyframe) ||
             header.flags.contains(.parameterSet) ||
             header.flags.contains(.discontinuity) ||
-            header.flags.contains(.priority)
+            header.flags.contains(.priority) ||
+            header.flags.contains(.fecParity) ||
+            header.fecBlockSize > 1
     }
 }
 
@@ -446,10 +471,12 @@ private struct IngressIntervalSampler {
 
     mutating func snapshot(now: CFAbsoluteTime) -> Snapshot {
         trim(now: now)
-        guard startIndex < samples.count else {
-            return Snapshot(p95Ms: 0, p99Ms: 0, maxMs: 0)
+        var active = startIndex < samples.count
+            ? samples[startIndex ..< samples.count].map(\.intervalMs)
+            : []
+        if lastSampleTime > 0 {
+            active.append(max(0, (now - lastSampleTime) * 1000))
         }
-        let active = samples[startIndex ..< samples.count].map(\.intervalMs)
         guard !active.isEmpty else {
             return Snapshot(p95Ms: 0, p99Ms: 0, maxMs: 0)
         }

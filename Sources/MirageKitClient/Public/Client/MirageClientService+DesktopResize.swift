@@ -35,6 +35,7 @@ extension MirageClientService {
         }
 
         return DesktopResizeCoordinator.RequestGeometry(
+            refreshTargetHz: effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate),
             logicalResolution: logicalResolution,
             displayScaleFactor: displayScaleFactor,
             requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
@@ -125,6 +126,17 @@ extension MirageClientService {
             return
         }
 
+        guard hasPresentedFrame else {
+            coordinator.queueLatestTarget(
+                target,
+                dispatchPolicy: .settledWindowMetrics,
+                activatePresentationMask: false
+            )
+            coordinator.cancelPendingResizeDispatch()
+            coordinator.clearLocalPresentationState()
+            return
+        }
+
         if let session = sessionStore.sessionByStreamID(streamID),
            session.clientRecoveryStatus != .idle {
             coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
@@ -145,17 +157,6 @@ extension MirageClientService {
             MirageLogger.client(
                 "Desktop resize queued behind active transition for stream \(streamID)"
             )
-            return
-        }
-
-        guard hasPresentedFrame else {
-            coordinator.queueLatestTarget(
-                target,
-                dispatchPolicy: .startup,
-                activatePresentationMask: false
-            )
-            coordinator.cancelPendingResizeDispatch()
-            coordinator.clearLocalPresentationState()
             return
         }
 
@@ -251,7 +252,10 @@ extension MirageClientService {
                 requestedDisplayScaleFactor: target.displayScaleFactor,
                 requestedStreamScale: target.requestedStreamScale,
                 encoderMaxWidth: target.encoderMaxWidth,
-                encoderMaxHeight: target.encoderMaxHeight
+                encoderMaxHeight: target.encoderMaxHeight,
+                desktopGeometryContractID: target.contractID,
+                desktopGeometrySceneIdentity: target.sceneIdentity,
+                desktopGeometryRefreshTargetHz: target.refreshTargetHz
             )
         } catch {
             if coordinator.activeTransition?.transitionID == transitionID {

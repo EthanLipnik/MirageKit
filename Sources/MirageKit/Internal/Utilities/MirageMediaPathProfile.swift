@@ -46,6 +46,27 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         usesOther: Bool = false
     ) -> MirageMediaPathProfile {
         let interfaces = InterfaceSummary(interfaceNames)
+        if pathKind == .vpn || usesCellular || pathKind == .cellular {
+            return .vpnOrOverlay
+        }
+        if pathKind == .awdl {
+            if interfaces.hasApplePrivateNCM {
+                return .proximityWiredLike
+            }
+            if interfaces.hasBridge {
+                return .wired
+            }
+            return .awdlRadio
+        }
+        if interfaces.hasApplePrivateNCM {
+            return .proximityWiredLike
+        }
+        if usesWired || usesLoopback || pathKind == .wired || pathKind == .loopback {
+            return .wired
+        }
+        if interfaces.hasBridge {
+            return .wired
+        }
         let selectedWiFi = pathKind == .wifi ||
             (
                 pathKind != .vpn &&
@@ -55,31 +76,39 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         if selectedWiFi {
             return .localWiFi
         }
-        if interfaces.hasOverlay || pathKind == .vpn || usesCellular || pathKind == .cellular {
-            return .vpnOrOverlay
-        }
-        if interfaces.hasApplePrivateNCM || interfaces.hasLowLatencyWireless {
-            return .proximityWiredLike
-        }
-        if usesWired || usesLoopback || pathKind == .wired || pathKind == .loopback {
-            return .wired
-        }
-        if interfaces.hasBridge {
-            return .wired
-        }
-        if interfaces.hasAWDL {
-            return .awdlRadio
-        }
-        if pathKind == .awdl {
-            return .awdlRadio
-        }
         if usesWiFi || pathKind == .wifi {
             return .localWiFi
+        }
+        if interfaces.hasOverlay {
+            return .vpnOrOverlay
         }
         if usesOther || pathKind == .other {
             return .other
         }
         return .unknown
+    }
+
+    package static func resolveRealtimeProfile(
+        pathKind: MirageNetworkPathKind,
+        mediaPathProfile: MirageMediaPathProfile?,
+        interfaceNames: [String] = []
+    ) -> MirageMediaPathProfile {
+        let resolved = mediaPathProfile ?? classify(
+            pathKind: pathKind,
+            interfaceNames: interfaceNames
+        )
+        guard pathKind == .awdl else { return resolved }
+        let interfaces = InterfaceSummary(interfaceNames)
+        if interfaces.hasApplePrivateNCM {
+            return .proximityWiredLike
+        }
+        if interfaces.hasBridge {
+            return .wired
+        }
+        if resolved == .proximityWiredLike && interfaces.names.isEmpty {
+            return .proximityWiredLike
+        }
+        return .awdlRadio
     }
 
     private struct InterfaceSummary {

@@ -280,6 +280,7 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Desktop stream restart copy preserves client path fields")
     func desktopStreamRestartCopyPreservesClientPathFields() {
+        let contractID = UUID()
         let request = StartDesktopStreamMessage(
             scaleFactor: nil,
             displayWidth: 3008,
@@ -287,7 +288,14 @@ struct MirageKitStreamControlSerializationTests {
             targetFrameRate: 60,
             clientTransportPathKind: .wifi,
             clientMediaPathProfile: .localWiFi,
-            clientPathSignature: "status=satisfied|kind=wifi|media=localWiFi"
+            clientPathSignature: "status=satisfied|kind=wifi|media=localWiFi",
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "scene-main",
+            desktopGeometryDisplayPixelWidth: 2752,
+            desktopGeometryDisplayPixelHeight: 2064,
+            desktopGeometryEncodedPixelWidth: 2752,
+            desktopGeometryEncodedPixelHeight: 2064,
+            desktopGeometryRefreshTargetHz: 60
         )
 
         let copy = StartDesktopStreamMessage(copying: request, startupRequestID: UUID())
@@ -295,6 +303,92 @@ struct MirageKitStreamControlSerializationTests {
         #expect(copy.clientTransportPathKind == request.clientTransportPathKind)
         #expect(copy.clientMediaPathProfile == request.clientMediaPathProfile)
         #expect(copy.clientPathSignature == request.clientPathSignature)
+        #expect(copy.desktopGeometryContractID == contractID)
+        #expect(copy.desktopGeometrySceneIdentity == "scene-main")
+        #expect(copy.desktopGeometryDisplayPixelWidth == 2752)
+        #expect(copy.desktopGeometryDisplayPixelHeight == 2064)
+        #expect(copy.desktopGeometryEncodedPixelWidth == 2752)
+        #expect(copy.desktopGeometryEncodedPixelHeight == 2064)
+        #expect(copy.desktopGeometryRefreshTargetHz == 60)
+    }
+
+    @Test("Desktop geometry contract fields serialize on startup resize and acceptance")
+    func desktopGeometryContractFieldsSerializeOnStartupResizeAndAcceptance() throws {
+        let contractID = UUID()
+
+        let startDesktop = StartDesktopStreamMessage(
+            scaleFactor: nil,
+            displayWidth: 1376,
+            displayHeight: 1032,
+            targetFrameRate: 60,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "iPad-main-scene",
+            desktopGeometryDisplayPixelWidth: 2752,
+            desktopGeometryDisplayPixelHeight: 2064,
+            desktopGeometryEncodedPixelWidth: 2408,
+            desktopGeometryEncodedPixelHeight: 1806,
+            desktopGeometryRefreshTargetHz: 60
+        )
+        let startEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
+        let (decodedStartEnvelope, _) = try requireParsedControlMessage(from: startEnvelope.serialize())
+        let decodedStart = try decodedStartEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decodedStart.desktopGeometryContractID == contractID)
+        #expect(decodedStart.desktopGeometrySceneIdentity == "iPad-main-scene")
+        #expect(decodedStart.desktopGeometryDisplayPixelWidth == 2752)
+        #expect(decodedStart.desktopGeometryDisplayPixelHeight == 2064)
+        #expect(decodedStart.desktopGeometryEncodedPixelWidth == 2408)
+        #expect(decodedStart.desktopGeometryEncodedPixelHeight == 1806)
+        #expect(decodedStart.desktopGeometryRefreshTargetHz == 60)
+
+        let resize = DisplayResolutionChangeMessage(
+            streamID: 7,
+            displayWidth: 1376,
+            displayHeight: 1032,
+            transitionID: UUID(),
+            requestedDisplayScaleFactor: 2.0,
+            requestedStreamScale: 0.875,
+            encoderMaxWidth: 2408,
+            encoderMaxHeight: 1806,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "iPad-main-scene",
+            desktopGeometryRefreshTargetHz: 45
+        )
+        let resizeEnvelope = try ControlMessage(type: .displayResolutionChange, content: resize)
+        let (decodedResizeEnvelope, _) = try requireParsedControlMessage(from: resizeEnvelope.serialize())
+        let decodedResize = try decodedResizeEnvelope.decode(DisplayResolutionChangeMessage.self)
+        #expect(decodedResize.desktopGeometryContractID == contractID)
+        #expect(decodedResize.desktopGeometrySceneIdentity == "iPad-main-scene")
+        #expect(decodedResize.desktopGeometryRefreshTargetHz == 45)
+
+        let desktopStarted = DesktopStreamStartedMessage(
+            streamID: 7,
+            desktopSessionID: UUID(),
+            width: 2408,
+            height: 1806,
+            frameRate: 45,
+            codec: .hevc,
+            displayCount: 1,
+            acceptedDisplayScaleFactor: 2.0,
+            presentationWidth: 1376,
+            presentationHeight: 1032,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "iPad-main-scene",
+            desktopGeometryDisplayPixelWidth: 2752,
+            desktopGeometryDisplayPixelHeight: 2064,
+            desktopGeometryEncodedPixelWidth: 2408,
+            desktopGeometryEncodedPixelHeight: 1806,
+            desktopGeometryRefreshTargetHz: 45
+        )
+        let startedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
+        let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
+        let decodedStarted = try decodedStartedEnvelope.decode(DesktopStreamStartedMessage.self)
+        #expect(decodedStarted.desktopGeometryContractID == contractID)
+        #expect(decodedStarted.desktopGeometrySceneIdentity == "iPad-main-scene")
+        #expect(decodedStarted.desktopGeometryDisplayPixelWidth == 2752)
+        #expect(decodedStarted.desktopGeometryDisplayPixelHeight == 2064)
+        #expect(decodedStarted.desktopGeometryEncodedPixelWidth == 2408)
+        #expect(decodedStarted.desktopGeometryEncodedPixelHeight == 1806)
+        #expect(decodedStarted.desktopGeometryRefreshTargetHz == 45)
     }
 
     @Test("Stream startup requests default missing host buffering policy to freshest frame")

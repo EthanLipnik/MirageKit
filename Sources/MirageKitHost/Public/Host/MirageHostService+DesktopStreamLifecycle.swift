@@ -17,12 +17,17 @@ extension MirageHostService {
     func sendDesktopStreamStartedNotification(
         _ notification: DesktopStreamStartedNotification,
         logDesktopStartStep: (String) -> Void
-    )
-    async throws -> CGSize {
+        )
+        async throws -> CGSize {
         let streamStart = await notification.streamContext.streamStartSnapshot
+        let encodedResolution = CGSize(
+            width: streamStart.encodedDimensions.width,
+            height: streamStart.encodedDimensions.height
+        )
         let startedDisplayResolution = await currentDesktopStartedResolution(
             fallback: notification.captureResolution
         )
+        let encodedDimensions = streamStart.encodedDimensions
         let startupAttemptID = UUID()
         desktopPresentationGeneration &+= 1
         let message = DesktopStreamStartedMessage(
@@ -42,7 +47,14 @@ extension MirageHostService {
             allowsClientResize: notification.allowsClientResize,
             acceptedDisplayScaleFactor: notification.acceptedDisplayScaleFactor,
             presentationWidth: Int(notification.presentationResolution.width.rounded()),
-            presentationHeight: Int(notification.presentationResolution.height.rounded())
+            presentationHeight: Int(notification.presentationResolution.height.rounded()),
+            desktopGeometryContractID: notification.desktopGeometryContractID,
+            desktopGeometrySceneIdentity: notification.desktopGeometrySceneIdentity,
+            desktopGeometryDisplayPixelWidth: Int(startedDisplayResolution.width.rounded()),
+            desktopGeometryDisplayPixelHeight: Int(startedDisplayResolution.height.rounded()),
+            desktopGeometryEncodedPixelWidth: Int(encodedDimensions.width),
+            desktopGeometryEncodedPixelHeight: Int(encodedDimensions.height),
+            desktopGeometryRefreshTargetHz: notification.desktopGeometryRefreshTargetHz ?? streamStart.targetFrameRate
         )
 
         do {
@@ -51,9 +63,19 @@ extension MirageHostService {
                 startupAttemptID: startupAttemptID,
                 sessionID: notification.activeClientContext.sessionID,
                 clientID: notification.activeClientContext.client.id,
-                kind: .desktop
+                kind: .desktop,
+                desktopGeometryContract: message.streamReadyDesktopGeometryContract
             )
             try await notification.activeClientContext.send(.desktopStreamStarted, content: message)
+            recordCurrentDesktopGeometryContract(
+                contractID: notification.desktopGeometryContractID,
+                sceneIdentity: notification.desktopGeometrySceneIdentity,
+                presentationResolution: notification.presentationResolution,
+                displayPixelResolution: startedDisplayResolution,
+                encodedPixelResolution: encodedResolution,
+                acceptedDisplayScaleFactor: notification.acceptedDisplayScaleFactor,
+                refreshTargetHz: notification.desktopGeometryRefreshTargetHz
+            )
             MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(notification.streamID) kind=desktop")
             logDesktopStartStep("desktopStreamStarted sent")
             return startedDisplayResolution
@@ -137,6 +159,7 @@ extension MirageHostService {
         if let failedStreamID {
             cancelPendingStartupAttempt(streamID: failedStreamID)
             streamsByID.removeValue(forKey: failedStreamID)
+            mediaPathClientEvidenceByStreamID.removeValue(forKey: failedStreamID)
             streamStartupBaseTimes.removeValue(forKey: failedStreamID)
             streamStartupRegistrationLogged.remove(failedStreamID)
             transportSendErrorReported.remove(failedStreamID)
@@ -152,6 +175,7 @@ extension MirageHostService {
         desktopStreamID = nil
         desktopSessionID = nil
         desktopRequestedScaleFactor = nil
+        clearCurrentDesktopGeometryContract()
         notifyActiveStreamActivityChanged()
         desktopStreamMode = .unified
         desktopCursorPresentation = .simulatedCursor
@@ -418,6 +442,7 @@ extension MirageHostService {
         desktopStreamClientContext = nil
         notifyActiveStreamActivityChanged()
         streamsByID.removeValue(forKey: streamID)
+        mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
         transportSendErrorReported.remove(streamID)

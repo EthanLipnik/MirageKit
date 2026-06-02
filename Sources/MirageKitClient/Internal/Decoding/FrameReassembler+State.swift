@@ -17,10 +17,28 @@ extension FrameReassembler {
         return totalPacketsReceived > 0
     }
 
+    var hasAcceptedPackets: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return acceptedPacketsReceived > 0
+    }
+
+    var packetAcceptanceSnapshot: PacketAcceptanceSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return PacketAcceptanceSnapshot(
+            rawPacketsReceived: totalPacketsReceived,
+            acceptedPacketsReceived: acceptedPacketsReceived
+        )
+    }
+
     var snapshotMetrics: Metrics {
         lock.lock()
         defer { lock.unlock() }
-        let pFrameLatency = pFrameCompletionLatencyMetricsLocked(now: Date())
+        let now = Date()
+        let frameLatency = frameCompletionLatencyMetricsLocked(now: now)
+        let keyframeLatency = frameCompletionLatencyMetricsLocked(now: now, keyframesOnly: true)
+        let pFrameLatency = pFrameCompletionLatencyMetricsLocked(now: now)
         return Metrics(
             droppedFrames: droppedFrameCount,
             pendingFrameCount: pendingFrames.count,
@@ -33,6 +51,12 @@ extension FrameReassembler {
             incompleteFrameLifetimeTimeouts: incompleteFrameLifetimeTimeoutCount,
             missingFragmentTimeouts: missingFragmentTimeoutCount,
             forwardGapTimeouts: forwardGapTimeoutCount,
+            frameCompletionLatencyP50Ms: frameLatency.p50,
+            frameCompletionLatencyP95Ms: frameLatency.p95,
+            frameCompletionLatencyMaxMs: frameLatency.max,
+            keyframeCompletionLatencyP50Ms: keyframeLatency.p50,
+            keyframeCompletionLatencyP95Ms: keyframeLatency.p95,
+            keyframeCompletionLatencyMaxMs: keyframeLatency.max,
             pFrameCompletionLatencyP50Ms: pFrameLatency.p50,
             pFrameCompletionLatencyP95Ms: pFrameLatency.p95,
             pFrameCompletionLatencyMaxMs: pFrameLatency.max,
@@ -123,6 +147,12 @@ extension FrameReassembler {
         return lastPacketReceivedTime
     }
 
+    var latestAcceptedPacketReceivedTime: CFAbsoluteTime {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastAcceptedPacketReceivedTime
+    }
+
     var isAwaitingKeyframe: Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -143,6 +173,11 @@ extension FrameReassembler {
             isAwaitingKeyframe: awaitingKeyframe,
             awaitingSince: awaitingKeyframeSince,
             latestPacketReceivedTime: lastPacketReceivedTime,
+            latestAcceptedPacketReceivedTime: lastAcceptedPacketReceivedTime,
+            packetAcceptanceSnapshot: PacketAcceptanceSnapshot(
+                rawPacketsReceived: totalPacketsReceived,
+                acceptedPacketsReceived: acceptedPacketsReceived
+            ),
             latestPendingKeyframeProgress: latestPendingKeyframeProgressLocked(now: now),
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,
@@ -184,8 +219,13 @@ extension FrameReassembler {
             missingFragmentTimeoutCount = 0
             forwardGapTimeoutCount = 0
             fecRecoveredFragmentCount = 0
+            frameCompletionLatencySamples.removeAll(keepingCapacity: false)
             pFrameCompletionLatencySamples.removeAll(keepingCapacity: false)
             lastPacketReceivedTime = 0
+            lastAcceptedPacketReceivedTime = 0
+            totalPacketsReceived = 0
+            acceptedPacketsReceived = 0
+            packetsDiscardedCRC = 0
             startupKeyframeTimeoutOverrideEnabled = false
         }
         MirageLogger.log(.frameAssembly, "Reassembler reset for stream \(streamID)")
@@ -220,6 +260,7 @@ extension FrameReassembler {
                 }
             }
             clearAwaitingKeyframe()
+            frameCompletionLatencySamples.removeAll(keepingCapacity: false)
             pFrameCompletionLatencySamples.removeAll(keepingCapacity: false)
         }
         MirageLogger.log(
@@ -319,8 +360,21 @@ extension FrameReassembler {
         }
     }
 
-    func recordPFrameCompletionLatencyLocked(frameNumber: UInt32, frame: PendingFrame, now: Date) {
+    func recordFrameCompletionLatencyLocked(frame: PendingFrame, completedAt: Date) -> Double {
         let latencyMs = max(0, frame.lastProgressAt.timeIntervalSince(frame.receivedAt) * 1000)
+        frameCompletionLatencySamples.append(
+            FrameCompletionLatencySample(
+                completedAt: completedAt,
+                latencyMs: latencyMs,
+                isKeyframe: frame.isKeyframe
+            )
+        )
+        trimFrameCompletionLatencySamplesLocked(now: completedAt)
+        return latencyMs
+    }
+
+    func recordPFrameCompletionLatencyLocked(frameNumber: UInt32, frame: PendingFrame, now: Date) {
+        let latencyMs = recordFrameCompletionLatencyLocked(frame: frame, completedAt: now)
         let completionGapMs = max(
             0,
             now.timeIntervalSince(lastCompletedVideoFrameCompletedAt ?? frame.receivedAt) * 1000
@@ -373,6 +427,34 @@ extension FrameReassembler {
             latencies.last ?? 0,
             lateCount
         )
+    }
+
+    func frameCompletionLatencyMetricsLocked(
+        now: Date,
+        keyframesOnly: Bool = false
+    ) -> (p50: Double, p95: Double, max: Double) {
+        trimFrameCompletionLatencySamplesLocked(now: now)
+        let samples = keyframesOnly
+            ? frameCompletionLatencySamples.filter(\.isKeyframe)
+            : frameCompletionLatencySamples
+        guard !samples.isEmpty else { return (0, 0, 0) }
+
+        let latencies = samples
+            .map(\.latencyMs)
+            .sorted()
+        return (
+            percentile(latencies, fraction: 0.50),
+            percentile(latencies, fraction: 0.95),
+            latencies.last ?? 0
+        )
+    }
+
+    private func trimFrameCompletionLatencySamplesLocked(now: Date) {
+        let cutoff = now.addingTimeInterval(-pFrameCompletionLatencySampleWindow)
+        while let first = frameCompletionLatencySamples.first,
+              first.completedAt < cutoff {
+            frameCompletionLatencySamples.removeFirst()
+        }
     }
 
     private func trimPFrameCompletionLatencySamplesLocked(now: Date) {

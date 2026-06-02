@@ -22,6 +22,28 @@ struct ClientContext {
     let controlChannel: MirageControlChannel
     /// Loom network-path metadata captured when the session was accepted.
     let pathSnapshot: LoomSessionNetworkPathSnapshot?
+    /// Mirage/Loom feature identifiers negotiated during authenticated session setup.
+    let negotiatedFeatures: Set<String>
+
+    init(
+        sessionID: UUID,
+        client: MirageConnectedClient,
+        controlChannel: MirageControlChannel,
+        pathSnapshot: LoomSessionNetworkPathSnapshot?,
+        negotiatedFeatures: Set<String> = []
+    ) {
+        self.sessionID = sessionID
+        self.client = client
+        self.controlChannel = controlChannel
+        self.pathSnapshot = pathSnapshot
+        self.negotiatedFeatures = negotiatedFeatures
+    }
+
+    var supportsDesktopGeometryContract: Bool {
+        MiragePeerAdvertisementMetadata.supportsDesktopGeometryContract(
+            negotiatedFeatures: negotiatedFeatures
+        )
+    }
 
     /// Returns whether a control session appears to be on the local peer-to-peer path.
     static func isPeerToPeerConnection(

@@ -18,8 +18,11 @@ extension StreamPacketSender {
         completedAt: CFAbsoluteTime,
         totalFragments: Int,
         didDrop: Bool,
+        queuedUnreliableDrops: QueuedUnreliableDropCounts,
         error: (any Error)?
     ) {
+        recordQueuedUnreliableDrops(queuedUnreliableDrops)
+
         if let error {
             onSendError?(error)
         } else if !didDrop {

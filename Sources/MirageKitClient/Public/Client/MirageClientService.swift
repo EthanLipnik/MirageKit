@@ -350,6 +350,13 @@ public final class MirageClientService {
     var isProcessingReceivedData = false
     var hasCompletedBootstrap = false
     var mediaSecurityContext: MirageMediaSecurityContext?
+    var negotiatedSessionFeatures: Set<String> = []
+
+    var supportsDesktopGeometryContract: Bool {
+        MiragePeerAdvertisementMetadata.supportsDesktopGeometryContract(
+            negotiatedFeatures: negotiatedSessionFeatures
+        )
+    }
 
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
@@ -380,8 +387,6 @@ public final class MirageClientService {
     var transportRefreshRequests: UInt64 = 0
     /// Count of receiver-side stall events observed during the active session.
     var stallEvents: UInt64 = 0
-    /// Current jitter hold applied to smooth receiver playback under transport pressure.
-    var activeJitterHoldMs: Int = 0
     /// Runtime frame-rate caps applied by workload safety by stream.
     var runtimeWorkloadSafetyFrameRateCapsByStream: [StreamID: RuntimeWorkloadSafetyFrameRateCap] = [:]
     /// Target frame rates restored when temporary workload-safety caps expire.
@@ -405,7 +410,7 @@ public final class MirageClientService {
     /// User-selected preferred network type for connection racing.
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
 
-    /// Whether local Wi-Fi/LAN control attempts should be tried before AWDL proximity attempts.
+    /// Whether local Wi-Fi/LAN control attempts should be tried before low-latency wireless proximity attempts.
     public var preferWiFiBeforeAwdlProximity = false
     /// Debug route override used to force one transport/interface for the next connection attempt.
     public var debugRouteOverride: MirageDebugRouteOverride?

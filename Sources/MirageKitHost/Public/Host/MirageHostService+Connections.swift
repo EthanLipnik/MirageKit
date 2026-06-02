@@ -21,7 +21,8 @@ extension MirageHostService {
             deviceID: hostID,
             deviceName: serviceName,
             deviceType: .mac,
-            advertisement: advertisedPeerAdvertisement
+            advertisement: advertisedPeerAdvertisement,
+            supportedFeatures: MiragePeerAdvertisementMetadata.sessionSupportedFeatures
         )
     }
 
@@ -243,7 +244,8 @@ extension MirageHostService {
                 sessionID: sessionID,
                 client: client,
                 controlChannel: controlChannel,
-                pathSnapshot: pathSnapshot
+                pathSnapshot: pathSnapshot,
+                negotiatedFeatures: Set(context.negotiatedFeatures)
             )
             connectedClients.append(client)
             clientsBySessionID[sessionID] = clientContext
@@ -256,6 +258,7 @@ extension MirageHostService {
 
             await sendSessionState(to: clientContext)
             await activateDeferredAudioIfNeeded(clientID: client.id)
+            startMediaPathObserver(clientContext: clientContext)
             startReceivingFromClient(clientContext: clientContext)
             startClientLivenessMonitorIfNeeded()
             delegate?.didConnectClient(client)

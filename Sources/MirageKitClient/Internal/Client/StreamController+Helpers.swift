@@ -200,57 +200,36 @@ extension StreamController {
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {
+        receiverTransportPathKind = kind
         reassembler.setTransportPathKind(kind)
-        if kind != .awdl {
-            setAwdlTransportActive(false)
-        }
+        updateAwdlTransportActive()
     }
 
     func setMediaPathProfile(_ profile: MirageMediaPathProfile) {
+        receiverMediaPathProfile = profile
         reassembler.setMediaPathProfile(profile)
-        setAwdlTransportActive(profile.usesAwdlRadioPolicy)
+        updateAwdlTransportActive()
+    }
+
+    private func updateAwdlTransportActive() {
+        setAwdlTransportActive(
+            MirageMediaPathProfile.resolveRealtimeProfile(
+                pathKind: receiverTransportPathKind,
+                mediaPathProfile: receiverMediaPathProfile
+            ).usesAwdlRadioPolicy
+        )
     }
 
     private func setAwdlTransportActive(_ awdlActive: Bool) {
         guard awdlTransportActive != awdlActive else { return }
         awdlTransportActive = awdlActive
-        if !awdlActive {
-            adaptiveJitterHoldMs = 0
-            adaptiveJitterStressStreak = 0
-            adaptiveJitterStableStreak = 0
-        }
     }
 
-    func evaluateAdaptiveJitterHold(receivedFPS: Double) {
-        guard awdlTransportActive else {
-            guard adaptiveJitterHoldMs != 0 ||
-                adaptiveJitterStressStreak != 0 ||
-                adaptiveJitterStableStreak != 0 else {
-                return
-            }
-            adaptiveJitterHoldMs = 0
-            adaptiveJitterStressStreak = 0
-            adaptiveJitterStableStreak = 0
-            return
-        }
-
-        let state = Self.nextAdaptiveJitterState(
-            current: AdaptiveJitterState(
-                holdMs: adaptiveJitterHoldMs,
-                stressStreak: adaptiveJitterStressStreak,
-                stableStreak: adaptiveJitterStableStreak
-            ),
-            receivedFPS: receivedFPS,
-            targetFPS: decodeSchedulerTargetFPS
-        )
-        guard state.holdMs != adaptiveJitterHoldMs ||
-            state.stressStreak != adaptiveJitterStressStreak ||
-            state.stableStreak != adaptiveJitterStableStreak else {
-            return
-        }
-        adaptiveJitterHoldMs = state.holdMs
-        adaptiveJitterStressStreak = state.stressStreak
-        adaptiveJitterStableStreak = state.stableStreak
+    nonisolated static func receiverIngressJitterMs(
+        packetGapMs: Double,
+        frameBudgetMs: Double
+    ) -> Double {
+        max(0, packetGapMs - max(1, frameBudgetMs))
     }
 
     func setResizeState(_ newState: ResizeState) async {

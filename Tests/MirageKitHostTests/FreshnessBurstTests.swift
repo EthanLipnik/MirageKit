@@ -101,7 +101,7 @@ struct FreshnessBurstTests {
             transportPathKind: .awdl
         )
         let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
-        await context.setupPacketSender(sendPacket: { _, onComplete in
+        await context.setupPacketSender(sendPacketWithMetadata: { _, _, onComplete in
             pendingCompletions.withLock {
                 $0.append(StreamPacketSenderPendingSendCompletion(onComplete: onComplete))
             }

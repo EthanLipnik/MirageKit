@@ -46,6 +46,7 @@ extension MirageHostService {
 
     /// Removes an active stream session and clears derived window indexes.
     func removeActiveStreamSession(streamID: StreamID) {
+        mediaPathClientEvidenceByStreamID.removeValue(forKey: streamID)
         let removedSession = activeSessionByStreamID.removeValue(forKey: streamID)
         activeStreams.removeAll { $0.id == streamID }
 

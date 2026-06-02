@@ -238,8 +238,6 @@ public extension MirageClientService {
         fastPathState.clearStartupPacketPending(streamID)
         cancelStartupRegistrationRetry(streamID: streamID)
         cancelForegroundRecoveryMonitor(for: streamID)
-        activeJitterHoldMs = 0
-
         if let controller = controllersByStream.removeValue(forKey: streamID) {
             await controller.stop()
         }
@@ -307,7 +305,6 @@ public extension MirageClientService {
         clearDecoderColorDepthState(for: streamID)
         pendingDesktopRequestedColorDepth = nil
         pendingDesktopRequestedLatencyMode = nil
-        activeJitterHoldMs = 0
         mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
         activeStreamCodecs.removeValue(forKey: streamID)
 

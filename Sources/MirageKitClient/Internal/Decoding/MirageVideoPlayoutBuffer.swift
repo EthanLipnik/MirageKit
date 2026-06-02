@@ -91,6 +91,7 @@ struct MirageVideoPlayoutBuffer {
     private var latencyMode: MirageStreamLatencyMode = .lowestLatency
     private var transportPathKind: MirageNetworkPathKind = .unknown
     private var mediaPathProfile: MirageMediaPathProfile = .unknown
+    private var baseTargetPlayoutDelayMs: Double = 0
     private var adaptedDelayMs: Double = 0
     private var playbackStarted = false
 
@@ -107,6 +108,7 @@ struct MirageVideoPlayoutBuffer {
         latencyMode = .lowestLatency
         transportPathKind = .unknown
         mediaPathProfile = .unknown
+        baseTargetPlayoutDelayMs = 0
         adaptedDelayMs = 0
         playbackStarted = false
         resetPlayoutAnchors()
@@ -201,6 +203,7 @@ struct MirageVideoPlayoutBuffer {
         }
         guard frameIsReadyForPlayout(frame, policy: policy, now: now) else {
             if policy.latencyMode == .balanced,
+               !policy.usesAwdlRealtimePolicy,
                let recoveryFrame = selectBalancedRecoveryFrame(
                    from: &frames,
                    policy: policy,
@@ -246,7 +249,7 @@ struct MirageVideoPlayoutBuffer {
     ) {
         configureIfNeeded(policy: policy, now: now)
         guard policy.usesBufferedPlayout, playbackStarted else { return }
-        guard policy.latencyMode != .balanced else {
+        guard policy.latencyMode != .balanced || policy.usesAwdlRealtimePolicy else {
             resetPlayoutAnchors()
             return
         }
@@ -265,7 +268,7 @@ struct MirageVideoPlayoutBuffer {
     ) {
         configureIfNeeded(policy: policy, now: now)
         guard policy.usesBufferedPlayout, playbackStarted else { return }
-        guard policy.latencyMode != .balanced else { return }
+        guard policy.latencyMode != .balanced || policy.usesAwdlRealtimePolicy else { return }
         increaseDelay(
             reason: .frameAfterEmptyTick,
             amountMs: max(15, policy.displayFrameIntervalMs * 1.5),
@@ -300,19 +303,34 @@ struct MirageVideoPlayoutBuffer {
         policy: MiragePresentationLatencyPolicy,
         now: CFAbsoluteTime
     ) {
-        guard latencyMode != policy.latencyMode ||
+        let policyBaseTargetPlayoutDelayMs = policy.baseTargetPlayoutDelayMs
+        let pathPolicyChanged = latencyMode != policy.latencyMode ||
             transportPathKind != policy.transportPathKind ||
-            mediaPathProfile != policy.mediaPathProfile else { return }
+            mediaPathProfile != policy.mediaPathProfile
+        let baseTargetChanged = abs(baseTargetPlayoutDelayMs - policyBaseTargetPlayoutDelayMs) > 0.5
+        guard pathPolicyChanged || baseTargetChanged else { return }
+        let previousBaseTargetPlayoutDelayMs = baseTargetPlayoutDelayMs
         latencyMode = policy.latencyMode
         transportPathKind = policy.transportPathKind
         mediaPathProfile = policy.mediaPathProfile
-        adaptedDelayMs = policy.baseTargetPlayoutDelayMs
-        playbackStarted = false
-        resetPlayoutAnchors()
+        baseTargetPlayoutDelayMs = policyBaseTargetPlayoutDelayMs
+        if pathPolicyChanged {
+            adaptedDelayMs = policyBaseTargetPlayoutDelayMs
+        } else if policyBaseTargetPlayoutDelayMs > previousBaseTargetPlayoutDelayMs {
+            adaptedDelayMs = max(adaptedDelayMs, policyBaseTargetPlayoutDelayMs)
+        } else {
+            adaptedDelayMs = min(policy.maximumTargetPlayoutDelayMs, max(policy.minimumTargetPlayoutDelayMs, adaptedDelayMs))
+        }
+        if pathPolicyChanged || policyBaseTargetPlayoutDelayMs > previousBaseTargetPlayoutDelayMs {
+            playbackStarted = false
+            resetPlayoutAnchors()
+        }
         consecutiveBurstFrames = 0
         stableWindowStartTime = now
         lastInstabilityTime = now
-        lastDelayIncreaseTime = 0
+        if pathPolicyChanged {
+            lastDelayIncreaseTime = 0
+        }
     }
 
     private mutating func targetPlayoutTime(
@@ -475,7 +493,7 @@ struct MirageVideoPlayoutBuffer {
             }
         }
 
-        guard policy.latencyMode != .balanced else { return }
+        guard policy.latencyMode != .balanced || policy.usesAwdlRealtimePolicy else { return }
         let expectedDepth = max(1, Int((effectiveDelayMs(policy: policy) / policy.displayFrameIntervalMs).rounded(.up)))
         guard consecutiveBurstFrames >= 2 || queuedFrameCount > expectedDepth + 3 else { return }
         increaseDelay(
@@ -496,7 +514,13 @@ struct MirageVideoPlayoutBuffer {
             stableWindowStartTime = now
             return
         }
-        let stableWindow = policy.latencyMode == .balanced ? 0.75 : 2.5
+        let stableWindow = if policy.usesAwdlRealtimePolicy {
+            1.5
+        } else if policy.latencyMode == .balanced {
+            0.75
+        } else {
+            2.5
+        }
         let quietSinceInstability = lastInstabilityTime <= 0 || now - lastInstabilityTime >= stableWindow
         guard quietSinceInstability, now - stableWindowStartTime >= stableWindow else { return }
         let baselineDelayMs = policy.baseTargetPlayoutDelayMs
@@ -504,9 +528,13 @@ struct MirageVideoPlayoutBuffer {
             stableWindowStartTime = now
             return
         }
-        let recoveryStep = policy.latencyMode == .balanced
-            ? max(5, policy.displayFrameIntervalMs)
-            : max(5, policy.displayFrameIntervalMs * 0.5)
+        let recoveryStep = if policy.usesAwdlRealtimePolicy {
+            max(8, policy.displayFrameIntervalMs * 0.5)
+        } else if policy.latencyMode == .balanced {
+            max(5, policy.displayFrameIntervalMs)
+        } else {
+            max(5, policy.displayFrameIntervalMs * 0.5)
+        }
         adaptedDelayMs = max(baselineDelayMs, adaptedDelayMs - recoveryStep)
         stableWindowStartTime = now
     }
@@ -537,6 +565,9 @@ struct MirageVideoPlayoutBuffer {
     }
 
     private func hardLatenessSeconds(policy: MiragePresentationLatencyPolicy) -> CFTimeInterval {
+        if policy.usesAwdlRealtimePolicy {
+            return max(0.080, min(0.150, policy.maximumTargetPlayoutDelayMs / 1000))
+        }
         if policy.latencyMode == .balanced {
             return max(0.025, min(0.080, policy.maximumTargetPlayoutDelayMs / 1000))
         }
@@ -545,6 +576,9 @@ struct MirageVideoPlayoutBuffer {
 
     private func maximumRemoteDeltaSeconds(policy: MiragePresentationLatencyPolicy) -> CFTimeInterval {
         let frameInterval = policy.sourceFrameIntervalMs / 1000
+        if policy.usesAwdlRealtimePolicy {
+            return max(frameInterval * 8, policy.maximumTargetPlayoutDelayMs / 1000)
+        }
         if policy.latencyMode == .balanced {
             return max(frameInterval * 6, policy.maximumTargetPlayoutDelayMs / 1000)
         }

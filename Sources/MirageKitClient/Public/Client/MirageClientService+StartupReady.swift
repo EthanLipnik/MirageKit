@@ -74,13 +74,15 @@ extension MirageClientService {
     func sendStreamReadyAck(
         streamID: StreamID,
         startupAttemptID: UUID,
-        kind: MirageStartupStreamKind
+        kind: MirageStartupStreamKind,
+        desktopGeometryContract: StreamReadyDesktopGeometryContract? = nil
     ) async {
         do {
             let ready = StreamReadyMessage(
                 streamID: streamID,
                 startupAttemptID: startupAttemptID,
-                kind: kind
+                kind: kind,
+                desktopGeometryContract: desktopGeometryContract
             )
             try await sendControlMessage(.streamReady, content: ready)
             MirageLogger.client(

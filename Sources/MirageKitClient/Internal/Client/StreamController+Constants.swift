@@ -34,8 +34,10 @@ extension StreamController {
     static let maxQueuedFrames: Int = 15
     /// Maximum compressed frame bytes retained for AWDL radio before dependency recovery.
     static let awdlMaxQueuedFrameBytes: Int = 32 * 1024 * 1024
+    /// Lower frame-count bound for the AWDL radio pre-decode jitter buffer.
+    static let awdlMinQueuedFrames: Int = 8
     /// Upper frame-count bound for the AWDL radio pre-decode jitter buffer.
-    static let awdlMaxQueuedFrameCap: Int = 72
+    static let awdlMaxQueuedFrameCap: Int = 30
     /// Poll interval while waiting for the first presented frame after startup/reset/resize.
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
@@ -85,18 +87,6 @@ extension StreamController {
     static let decodeSubmissionDecodeBoundGapFPS: Double = 2.5
     /// FPS gap that marks the source as the likely cadence limiter.
     static let decodeSubmissionSourceBoundGapFPS: Double = 1.0
-    /// Maximum adaptive jitter hold used to smooth transport bursts.
-    static let adaptiveJitterHoldMaxMs: Int = 12
-    /// Ratio below which adaptive jitter is treated as stressed.
-    static let adaptiveJitterStressThreshold: Double = 0.88
-    /// Number of stressed reporting windows before increasing adaptive jitter hold.
-    static let adaptiveJitterStressWindows: Int = 2
-    /// Number of stable reporting windows before reducing adaptive jitter hold.
-    static let adaptiveJitterStableWindows: Int = 4
-    /// Milliseconds added when adaptive jitter increases.
-    static let adaptiveJitterStepUpMs: Int = 2
-    /// Milliseconds removed when adaptive jitter relaxes.
-    static let adaptiveJitterStepDownMs: Int = 1
 
     static func awdlMaxQueuedFrames(targetFPS: Int) -> Int {
         let targetFPS = max(1, targetFPS)
@@ -104,6 +94,6 @@ extension StreamController {
             (Double(targetFPS) * MirageAwdlMediaController.decodeQueueWindowMs / 1_000.0)
                 .rounded(.up)
         )
-        return min(awdlMaxQueuedFrameCap, max(maxQueuedFrames + 1, frames))
+        return min(awdlMaxQueuedFrameCap, max(awdlMinQueuedFrames, frames))
     }
 }

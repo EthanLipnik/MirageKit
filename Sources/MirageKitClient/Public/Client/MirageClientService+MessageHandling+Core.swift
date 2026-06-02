@@ -178,6 +178,7 @@ extension MirageClientService {
         }
 
         let peerIdentity = context.peerIdentity
+        negotiatedSessionFeatures = Set(context.negotiatedFeatures)
         guard let hostIdentityKeyID = peerIdentity.identityKeyID else {
             throw MirageError.protocolError(
                 "Authenticated Loom session is missing host identity key"

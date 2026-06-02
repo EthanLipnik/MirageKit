@@ -11,8 +11,20 @@ import Foundation
 import MirageKit
 
 extension VideoDecoder {
+    struct DecodeSubmissionSnapshot: Sendable, Equatable {
+        let limit: Int
+        let inFlight: Int
+    }
+
     nonisolated static func baselineDecodeSubmissionLimit(targetFrameRate: Int) -> Int {
         targetFrameRate >= 120 ? 3 : 2
+    }
+
+    var decodeSubmissionSnapshot: DecodeSubmissionSnapshot {
+        DecodeSubmissionSnapshot(
+            limit: decodeSubmissionLimit,
+            inFlight: inFlightDecodeSubmissions
+        )
     }
 
     func setDecodeSubmissionLimit(limit: Int, reason: String? = nil) {

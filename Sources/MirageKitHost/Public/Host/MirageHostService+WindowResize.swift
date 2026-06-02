@@ -236,13 +236,26 @@ extension MirageHostService {
         requestedDisplayScaleFactor: CGFloat? = nil,
         requestedStreamScale: CGFloat? = nil,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        desktopGeometryContractID: UUID? = nil,
+        desktopGeometrySceneIdentity: String? = nil,
+        desktopGeometryRefreshTargetHz: Int? = nil
     )
     async {
         if streamID == desktopStreamID {
             if desktopUsesHostResolution {
                 MirageLogger.host(
                     "Ignoring display resolution change for host-resolution desktop stream \(streamID): " +
+                        "\(Int(newResolution.width))x\(Int(newResolution.height)) pts"
+                )
+                return
+            }
+            if rejectsContractlessDesktopResolutionChange(
+                streamID: streamID,
+                desktopGeometryContractID: desktopGeometryContractID
+            ) {
+                MirageLogger.host(
+                    "Ignoring contractless desktop resolution change for stream \(streamID): " +
                         "\(Int(newResolution.width))x\(Int(newResolution.height)) pts"
                 )
                 return
@@ -255,7 +268,10 @@ extension MirageHostService {
                     requestedDisplayScaleFactor: requestedDisplayScaleFactor,
                     requestedStreamScale: requestedStreamScale,
                     encoderMaxWidth: encoderMaxWidth,
-                    encoderMaxHeight: encoderMaxHeight
+                    encoderMaxHeight: encoderMaxHeight,
+                    desktopGeometryContractID: desktopGeometryContractID,
+                    desktopGeometrySceneIdentity: desktopGeometrySceneIdentity,
+                    desktopGeometryRefreshTargetHz: desktopGeometryRefreshTargetHz
                 )
             )
             return
@@ -290,6 +306,15 @@ extension MirageHostService {
             return
         }
         await enqueueWindowResolutionChange(streamID: streamID, logicalResolution: newResolution)
+    }
+
+    func rejectsContractlessDesktopResolutionChange(
+        streamID: StreamID,
+        desktopGeometryContractID: UUID?
+    ) -> Bool {
+        streamID == desktopStreamID &&
+            desktopCurrentGeometryContractID != nil &&
+            desktopGeometryContractID == nil
     }
 
     /// Applies a logical resize to an app-atlas stream that does not own a live `StreamContext`.

@@ -88,6 +88,53 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.message.contains("captureAdmissionDrops=31"))
     }
 
+    @Test("AWDL host policy telemetry is included in anomaly diagnostics")
+    func awdlHostPolicyTelemetryIsIncludedInAnomalyDiagnostics() {
+        let diagnostic = clientStreamingAnomalyDiagnostic(
+            sample: ClientStreamingAnomalySample(
+                streamID: 23,
+                trigger: "awdl-telemetry",
+                decodedFPS: 45,
+                receivedFPS: 45,
+                layerEnqueueFPS: 45,
+                uniqueLayerEnqueueFPS: 45,
+                visibleFrameFPS: 45,
+                visibleFrameCadenceKnown: true,
+                pendingFrameCount: 1,
+                pendingFrameAgeMs: 12,
+                overwrittenPendingFrames: 0,
+                displayLayerNotReadyCount: 0,
+                decodeHealthy: true,
+                decodeSubmissionLimit: 2,
+                presentationTier: .activeLive,
+                decoderOutputPixelFormat: "420f",
+                usingHardwareDecoder: true,
+                targetFrameRate: 60,
+                hostMetrics: makeHostMetrics(
+                    targetFrameRate: 60,
+                    encodedFPS: 45,
+                    captureFPS: 60,
+                    encodeAttemptFPS: 45,
+                    awdlPolicyState: "stressed",
+                    awdlPolicyTrigger: "networkJitter",
+                    awdlSelectedLever: "resolutionScale",
+                    awdlPlayoutDelayMs: 64,
+                    awdlResolutionScale: 0.875,
+                    awdlQualityReductionAllowed: false,
+                    awdlHostPacingBudgetBps: 22_000_000
+                )
+            )
+        )
+
+        #expect(diagnostic.message.contains("hostAwdlState=stressed"))
+        #expect(diagnostic.message.contains("hostAwdlTrigger=networkJitter"))
+        #expect(diagnostic.message.contains("hostAwdlLever=resolutionScale"))
+        #expect(diagnostic.message.contains("hostAwdlPlayout=64.0ms"))
+        #expect(diagnostic.message.contains("hostAwdlScale=0.875"))
+        #expect(diagnostic.message.contains("hostAwdlQualityCuts=false"))
+        #expect(diagnostic.message.contains("hostAwdlPacing=22.0Mbps"))
+    }
+
     @Test("Equal received and decoded cadence is not classified as decode-bound")
     func equalReceivedAndDecodedCadenceIsNotDecodeBound() {
         let diagnostic = clientStreamingAnomalyDiagnostic(
@@ -247,6 +294,13 @@ struct ClientStreamingAnomalyDiagnosticTests {
         encodedFPS: Double,
         captureFPS: Double,
         encodeAttemptFPS: Double,
+        awdlPolicyState: String? = nil,
+        awdlPolicyTrigger: String? = nil,
+        awdlSelectedLever: String? = nil,
+        awdlPlayoutDelayMs: Double? = nil,
+        awdlResolutionScale: Double? = nil,
+        awdlQualityReductionAllowed: Bool? = nil,
+        awdlHostPacingBudgetBps: Int? = nil,
         captureAdmissionDrops: UInt64? = 0,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = 5.0
@@ -258,6 +312,13 @@ struct ClientStreamingAnomalyDiagnosticTests {
             droppedFrames: 0,
             activeQuality: 1.0,
             targetFrameRate: targetFrameRate,
+            awdlPolicyState: awdlPolicyState,
+            awdlPolicyTrigger: awdlPolicyTrigger,
+            awdlSelectedLever: awdlSelectedLever,
+            awdlPlayoutDelayMs: awdlPlayoutDelayMs,
+            awdlResolutionScale: awdlResolutionScale,
+            awdlQualityReductionAllowed: awdlQualityReductionAllowed,
+            awdlHostPacingBudgetBps: awdlHostPacingBudgetBps,
             captureAdmissionDrops: captureAdmissionDrops,
             frameBudgetMs: frameBudgetMs,
             averageEncodeMs: averageEncodeMs,

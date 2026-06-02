@@ -110,6 +110,56 @@ struct DesktopResizeCoordinatorTests {
         #expect(startup.isEffectivelySameStreamGeometry(as: firstDrawable))
     }
 
+    @Test("Accepted geometry rejects reused contract with different pixels")
+    func acceptedGeometryRejectsReusedContractWithDifferentPixels() {
+        let contractID = UUID()
+        let target = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            refreshTargetHz: 45,
+            logicalResolution: CGSize(width: 1512, height: 982),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2360,
+            encoderMaxHeight: 1640
+        )
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: target.logicalResolution,
+            displayScaleFactor: target.displayScaleFactor,
+            requestedStreamScale: target.requestedStreamScale,
+            encoderMaxWidth: target.encoderMaxWidth,
+            encoderMaxHeight: target.encoderMaxHeight
+        )
+
+        #expect(target.acceptedGeometryRejectionReason(
+            acceptedContractID: contractID,
+            acceptedSceneIdentity: "scene-a",
+            acceptedLogicalResolution: target.logicalResolution,
+            acceptedDisplayPixelSize: geometry.displayPixelSize,
+            acceptedEncodedPixelSize: geometry.encodedPixelSize,
+            acceptedDisplayScaleFactor: 2.0,
+            acceptedRefreshTargetHz: 45
+        ) == nil)
+        #expect(target.acceptedGeometryRejectionReason(
+            acceptedContractID: contractID,
+            acceptedSceneIdentity: "scene-a",
+            acceptedLogicalResolution: target.logicalResolution,
+            acceptedDisplayPixelSize: CGSize(width: 2048, height: 1536),
+            acceptedEncodedPixelSize: geometry.encodedPixelSize,
+            acceptedDisplayScaleFactor: 2.0,
+            acceptedRefreshTargetHz: 45
+        )?.contains("displayPixels=") == true)
+        #expect(target.acceptedGeometryRejectionReason(
+            acceptedContractID: contractID,
+            acceptedSceneIdentity: "scene-a",
+            acceptedLogicalResolution: target.logicalResolution,
+            acceptedDisplayPixelSize: geometry.displayPixelSize,
+            acceptedEncodedPixelSize: CGSize(width: 2048, height: 1536),
+            acceptedDisplayScaleFactor: 2.0,
+            acceptedRefreshTargetHz: 45
+        )?.contains("encodedPixels=") == true)
+    }
+
     @Test("Accepts only the matching active transition")
     func acceptsOnlyMatchingActiveTransition() {
         let coordinator = DesktopResizeCoordinator()
@@ -306,10 +356,65 @@ struct DesktopResizeCoordinatorTests {
 
         #expect(service.desktopResizeCoordinator.queuedTarget == secondTarget)
         #expect(service.desktopResizeCoordinator.latestRequestedTarget == secondTarget)
+        #expect(service.desktopResizeCoordinator.queuedDispatchPolicy == .settledWindowMetrics)
         #expect(service.desktopResizeCoordinator.activeTransition == nil)
         #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
         #expect(!service.desktopResizeCoordinator.isResizing)
         #expect(!service.desktopResizeCoordinator.maskActive)
+    }
+
+    @Test("AWDL startup desktop resize coalesces until first presented frame")
+    func awdlStartupDesktopResizeCoalescesUntilFirstPresentedFrame() {
+        let service = MirageClientService()
+        let streamID: StreamID = 44
+        seedDesktopSession(service, streamID: streamID)
+        service.handleControlPathUpdate(Self.awdlRadioSnapshot())
+        service.sessionStore.setClientRecoveryStatus(for: streamID, status: .startup)
+        service.desktopResizeCoordinator.lastSentTarget = target(logicalWidth: 1366, logicalHeight: 1024)
+        let latestTarget = target(logicalWidth: 1512, logicalHeight: 982)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: latestTarget,
+            hasPresentedFrame: false,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == latestTarget)
+        #expect(service.desktopResizeCoordinator.queuedDispatchPolicy == .settledWindowMetrics)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+        service.clearDesktopResizeState(streamID: streamID)
+    }
+
+    @Test("Queued startup desktop resize waits for window metrics after first presentation")
+    func queuedStartupDesktopResizeWaitsForWindowMetricsAfterFirstPresentation() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 43
+        seedDesktopSession(service, streamID: streamID)
+        service.desktopResizeWindowSettlingDelay = .milliseconds(200)
+        let target = target(logicalWidth: 1512, logicalHeight: 982)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: target,
+            hasPresentedFrame: false,
+            useHostResolution: false
+        )
+        service.handleDesktopPresentationReady(streamID: streamID)
+        await Task.yield()
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == target)
+        #expect(service.desktopResizeCoordinator.queuedDispatchPolicy == .settledWindowMetrics)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask != nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        service.clearDesktopResizeState(streamID: streamID)
     }
 
     @Test("No-op desktop resize is suppressed even while client recovery is active")
@@ -495,6 +600,22 @@ struct DesktopResizeCoordinatorTests {
         #expect(service.desktopResizeCoordinator.activeTransition == nil)
 
         service.clearDesktopResizeState(streamID: streamID)
+    }
+
+    private static func awdlRadioSnapshot() -> MirageNetworkPathSnapshot {
+        MirageNetworkPathClassifier.classify(
+            interfaceNames: ["awdl0"],
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
     }
 
 }

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Loom
 import MirageKit
 
 #if os(macOS)
@@ -14,9 +15,9 @@ import MirageKit
 actor StreamPacketSender {
     let maxPayloadSize: Int
     let mediaSecurityKey: MirageMediaPacketKey?
-    let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
-    let sendPacketReliably: (@Sendable (Data) async throws -> Void)?
-    let videoTransportMode: MirageVideoTransportMode
+    let sendPacket: PacketMetadataSendHandler
+    let queuedUnreliableDiagnosticsProvider:
+        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)?
     let onSendError: (@Sendable (Error) -> Void)?
     let duplicatesParameterSetPackets: Bool
     nonisolated let onDependencyFrameDropped:
@@ -68,13 +69,14 @@ actor StreamPacketSender {
     var lateNonKeyframeSendCount: UInt64 = 0
     var generationAbortDropCount: UInt64 = 0
     var nonKeyframeHoldDropCount: UInt64 = 0
+    var queuedUnreliableDropCounts = QueuedUnreliableDropCounts()
 
     init(
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
-        videoTransportMode: MirageVideoTransportMode = .unreliableQueued,
+        sendPacketWithMetadata: @escaping PacketMetadataSendHandler,
+        queuedUnreliableDiagnosticsProvider:
+        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)? = nil,
         onSendError: (@Sendable (Error) -> Void)? = nil,
         duplicatesParameterSetPackets: Bool = false,
         onDependencyFrameDropped:
@@ -84,11 +86,10 @@ actor StreamPacketSender {
     ) {
         self.maxPayloadSize = maxPayloadSize
         mediaSecurityKey = mediaSecurityContext.map(MirageMediaPacketKey.init(context:))
-        self.sendPacket = sendPacket
-        self.sendPacketReliably = sendPacketReliably
-        self.videoTransportMode = sendPacketReliably == nil ? .unreliableQueued : videoTransportMode
+        sendPacket = sendPacketWithMetadata
+        self.queuedUnreliableDiagnosticsProvider = queuedUnreliableDiagnosticsProvider
         self.onSendError = onSendError
-        self.duplicatesParameterSetPackets = duplicatesParameterSetPackets && !self.videoTransportMode.usesReliableOrderedDelivery
+        self.duplicatesParameterSetPackets = duplicatesParameterSetPackets
         self.onDependencyFrameDropped = onDependencyFrameDropped
         self.onFrameTransportCompleted = onFrameTransportCompleted
         packetBufferPool = PacketBufferPool(
@@ -271,8 +272,8 @@ extension StreamPacketSender {
         queuedWorkItems.append(QueuedWorkItem(item: item, accountedBytes: accountedBytes))
         queuedBytes += accountedBytes
 
-        if !item.isKeyframe, videoTransportMode.usesReliableOrderedDelivery {
-            enforceReliableQueueBoundsLocked()
+        if item.usesAwdlRealtimeQueuePolicy {
+            enforceAwdlRealtimeQueueBoundsLocked()
         } else if !item.isKeyframe {
             enforceRealtimeQueueBoundsLocked()
         }

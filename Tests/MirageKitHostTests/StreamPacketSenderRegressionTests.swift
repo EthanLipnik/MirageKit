@@ -10,124 +10,18 @@
 import CoreGraphics
 import CoreMedia
 import Foundation
+import Loom
 import MirageKit
 import Testing
 
 @Suite("Stream Packet Sender Regression")
 struct StreamPacketSenderRegressionTests {
-    @Test("Live media profiles use unreliable queued video transport")
-    func liveMediaProfilesUseUnreliableQueuedVideoTransport() {
-        let profiles: [MirageMediaPathProfile] = [
-            .awdlRadio,
-            .localWiFi,
-            .wired,
-            .proximityWiredLike,
-            .vpnOrOverlay,
-            .other,
-            .unknown,
-        ]
-
-        for profile in profiles {
-            #expect(MirageVideoTransportMode.defaultMode(for: profile) == .unreliableQueued)
-        }
-    }
-
-    @Test("Reliable ordered mode sends only data fragments sequentially")
-    func reliableOrderedModeSendsOnlyDataFragmentsSequentially() async throws {
-        let reliablePackets = Locked<[StreamPacketSenderReliablePacketSummary]>([])
-        let unreliableSendCount = Locked(0)
-        let inFlightReliableSendCount = Locked(0)
-        let maxInFlightReliableSendCount = Locked(0)
-        let sender = StreamPacketSender(
-            maxPayloadSize: 4,
-            sendPacket: { _, onComplete in
-                unreliableSendCount.withLock { $0 += 1 }
-                onComplete(nil)
-            },
-            sendPacketReliably: { packet in
-                guard let header = FrameHeader.deserialize(from: packet) else {
-                    Issue.record("Failed to deserialize reliable packet")
-                    return
-                }
-                let inFlight = inFlightReliableSendCount.withLock { count in
-                    count += 1
-                    return count
-                }
-                maxInFlightReliableSendCount.withLock { $0 = max($0, inFlight) }
-                reliablePackets.withLock {
-                    $0.append(StreamPacketSenderReliablePacketSummary(
-                        frameNumber: header.frameNumber,
-                        sequenceNumber: header.sequenceNumber,
-                        fragmentIndex: Int(header.fragmentIndex),
-                        fragmentCount: Int(header.fragmentCount),
-                        fecBlockSize: Int(header.fecBlockSize),
-                        isFECParity: header.flags.contains(.fecParity)
-                    ))
-                }
-                try await Task.sleep(for: .milliseconds(10))
-                inFlightReliableSendCount.withLock { $0 -= 1 }
-            },
-            videoTransportMode: .reliableOrdered,
-            duplicatesParameterSetPackets: true
-        )
-
-        await sender.start()
-        let generation = sender.currentGeneration
-        sender.enqueue(
-            makeStreamPacketWorkItem(
-                payload: makeStreamPacketPayload(byteCount: 10),
-                streamID: 40,
-                frameNumber: 11,
-                sequenceNumberStart: 90,
-                generation: generation,
-                isKeyframe: true,
-                fecBlockSize: 1
-            )
-        )
-
-        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
-            reliablePackets.read { $0.count } == 3
-        }
-        try await waitForStreamPacketQueuedBytesToDrain(sender)
-
-        #expect(unreliableSendCount.read { $0 } == 0)
-        #expect(maxInFlightReliableSendCount.read { $0 } == 1)
-        #expect(reliablePackets.read { $0 } == [
-            StreamPacketSenderReliablePacketSummary(
-                frameNumber: 11,
-                sequenceNumber: 90,
-                fragmentIndex: 0,
-                fragmentCount: 3,
-                fecBlockSize: 0,
-                isFECParity: false
-            ),
-            StreamPacketSenderReliablePacketSummary(
-                frameNumber: 11,
-                sequenceNumber: 91,
-                fragmentIndex: 1,
-                fragmentCount: 3,
-                fecBlockSize: 0,
-                isFECParity: false
-            ),
-            StreamPacketSenderReliablePacketSummary(
-                frameNumber: 11,
-                sequenceNumber: 92,
-                fragmentIndex: 2,
-                fragmentCount: 3,
-                fecBlockSize: 0,
-                isFECParity: false
-            ),
-        ])
-
-        await sender.stop()
-    }
-
     @Test("Unreliable keyframes duplicate parameter-set packet when enabled")
     func unreliableKeyframesDuplicateParameterSetPacketWhenEnabled() async throws {
         let sentHeaders = Locked<[FrameHeader]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 4,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -136,7 +30,6 @@ struct StreamPacketSenderRegressionTests {
                 sentHeaders.withLock { $0.append(header) }
                 onComplete(nil)
             },
-            videoTransportMode: .unreliableQueued,
             duplicatesParameterSetPackets: true
         )
 
@@ -166,13 +59,58 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Parameter-set duplicates participate in packet pacing")
+    func parameterSetDuplicatesParticipateInPacketPacing() async throws {
+        let sentHeaders = Locked<[FrameHeader]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 1200,
+            sendPacketWithMetadata: { packet, _, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                sentHeaders.withLock { $0.append(header) }
+                onComplete(nil)
+            },
+            duplicatesParameterSetPackets: true
+        )
+
+        await sender.start()
+        await sender.setTargetBitrateBps(8_000)
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 1),
+                streamID: 41,
+                frameNumber: 13,
+                sequenceNumberStart: 250,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            sentHeaders.read { $0.count } == 2
+        }
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+
+        let headers = sentHeaders.read { $0 }
+        let telemetry = await sender.telemetrySnapshot
+        #expect(headers.map { Int($0.fragmentIndex) } == [0, 0])
+        #expect(headers.map(\.sequenceNumber) == [250, 250])
+        #expect(telemetry.packetPacerSleepTotalMs > StreamPacketSender.packetPacerMaxSleepMsPerPacket)
+
+        await sender.stop()
+    }
+
     @Test("Sender-local deadline-past P-frames still send")
     func senderLocalDeadlinePastPFramesStillSend() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -220,7 +158,7 @@ struct StreamPacketSenderRegressionTests {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -268,7 +206,7 @@ struct StreamPacketSenderRegressionTests {
         let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -323,7 +261,7 @@ struct StreamPacketSenderRegressionTests {
         let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
@@ -369,6 +307,329 @@ struct StreamPacketSenderRegressionTests {
         completePendingStreamPacketSends(pendingCompletions)
         try await waitForStreamPacketQueuedBytesToDrain(sender)
         await sender.stop()
+    }
+
+    @Test("Queued unreliable media drops are nonfatal transport drops")
+    func queuedUnreliableMediaDropsAreNonfatalTransportDrops() async throws {
+        let sendErrorCount = Locked(0)
+        let completions = Locked<[StreamPacketSender.FrameTransportCompletion]>([])
+        let dropReasons: [LoomQueuedUnreliableSendDrop.Reason] = [
+            .deadlineExpired,
+            .queueLimit,
+            .superseded,
+            .unsupportedTransport,
+            .closed,
+        ]
+        let sender = StreamPacketSender(
+            maxPayloadSize: 4,
+            sendPacketWithMetadata: { _, metadata, onComplete in
+                onComplete(LoomQueuedUnreliableSendDrop(
+                    reason: dropReasons[metadata.fragmentIndex],
+                    profile: .proximityRealtimeDisplay,
+                    frameID: UInt64(metadata.frameNumber),
+                    fragmentIndex: metadata.fragmentIndex,
+                    fragmentCount: metadata.fragmentCount
+                ))
+            },
+            onSendError: { _ in
+                sendErrorCount.withLock { $0 += 1 }
+            },
+            onFrameTransportCompleted: { completion in
+                completions.withLock { $0.append(completion) }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 20),
+                streamID: 42,
+                frameNumber: 77,
+                sequenceNumberStart: 770,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 0.01
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            completions.read { !$0.isEmpty }
+        }
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+
+        #expect(sendErrorCount.read { $0 } == 0)
+        let completion = completions.read { $0.first }
+        #expect(completion?.frameNumber == 77)
+        #expect(completion?.didSend == false)
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.queuedUnreliableDeadlineExpiredDrops == 1)
+        #expect(telemetry.queuedUnreliableQueueLimitDrops == 1)
+        #expect(telemetry.queuedUnreliableSupersededDrops == 1)
+        #expect(telemetry.queuedUnreliableUnsupportedTransportDrops == 1)
+        #expect(telemetry.queuedUnreliableClosedDrops == 1)
+
+        await sender.stop()
+    }
+
+    @Test("AWDL P-frame metadata uses hard playout deadline")
+    func awdlPFrameMetadataUsesHardPlayoutDeadline() async throws {
+        let sentMetadata = Locked<[StreamPacketSender.TransportPacketMetadata]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, metadata, onComplete in
+                sentMetadata.withLock { $0.append(metadata) }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        let sendDeadline = CFAbsoluteTimeGetCurrent() + 0.050
+        let hardSendDeadline = sendDeadline + 0.180
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 42,
+                frameNumber: 79,
+                sequenceNumberStart: 790,
+                generation: generation,
+                sendDeadline: sendDeadline,
+                hardSendDeadline: hardSendDeadline,
+                usesAwdlRealtimeQueuePolicy: true
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            !sentMetadata.read { $0.isEmpty }
+        }
+
+        let metadata = try #require(sentMetadata.read { $0.first })
+        #expect(metadata.sendDeadline == hardSendDeadline)
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+        await sender.stop()
+    }
+
+    @Test("AWDL keyframe metadata uses recovery pacing deadline")
+    func awdlKeyframeMetadataUsesRecoveryPacingDeadline() async throws {
+        let sentMetadata = Locked<[StreamPacketSender.TransportPacketMetadata]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, metadata, onComplete in
+                sentMetadata.withLock { $0.append(metadata) }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        let sendDeadline = CFAbsoluteTimeGetCurrent() + 0.025
+        let recoveryPacingDeadline = sendDeadline + 0.160
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 42,
+                frameNumber: 80,
+                sequenceNumberStart: 800,
+                generation: generation,
+                isKeyframe: true,
+                sendDeadline: sendDeadline,
+                hardSendDeadline: recoveryPacingDeadline,
+                usesAwdlRealtimeQueuePolicy: true
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            !sentMetadata.read { $0.isEmpty }
+        }
+
+        let metadata = try #require(sentMetadata.read { $0.first })
+        #expect(metadata.isKeyframe)
+        #expect(metadata.sendDeadline == recoveryPacingDeadline)
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+        await sender.stop()
+    }
+
+    @Test("AWDL realtime sender sheds queued P-frames before Loom admission")
+    func awdlRealtimeSenderShedsQueuedPFramesBeforeLoomAdmission() async throws {
+        let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, _, onComplete in
+                pendingCompletions.withLock {
+                    $0.append(StreamPacketSenderPendingSendCompletion(onComplete: onComplete))
+                }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 64 * 1024),
+                streamID: 42,
+                frameNumber: 80,
+                sequenceNumberStart: 800,
+                generation: generation,
+                isKeyframe: true,
+                pacingOverride: StreamPacketSender.PacingOverride(rateBps: 1_000, burstBytes: 1),
+                usesAwdlRealtimeQueuePolicy: true
+            )
+        )
+
+        let now = CFAbsoluteTimeGetCurrent()
+        for frameNumber in 81 ... 88 {
+            sender.enqueue(
+                makeStreamPacketWorkItem(
+                    payload: makeStreamPacketPayload(byteCount: 16 * 1024),
+                    streamID: 42,
+                    frameNumber: UInt32(frameNumber),
+                    sequenceNumberStart: UInt32(frameNumber * 10),
+                    generation: generation,
+                    sendDeadline: now + 0.050,
+                    hardSendDeadline: now + 0.200,
+                    usesAwdlRealtimeQueuePolicy: true
+                )
+            )
+        }
+
+        let telemetry = try await waitForStreamPacketTelemetry(sender) {
+            $0.stalePacketDrops >= 6
+        }
+        #expect(telemetry.unstartedPFrameCount <= StreamPacketSender.maxAwdlQueuedNonKeyframes)
+        #expect(telemetry.stalePacketDrops >= 6)
+        #expect(await sender.requiresDependencyRecoveryKeyframe())
+
+        await sender.stop()
+        completePendingStreamPacketSends(pendingCompletions)
+    }
+
+    @Test("Queued unreliable parity drops do not fail completed data frames")
+    func queuedUnreliableParityDropsDoNotFailCompletedDataFrames() async throws {
+        let completions = Locked<[StreamPacketSender.FrameTransportCompletion]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 4,
+            sendPacketWithMetadata: { _, metadata, onComplete in
+                if metadata.isParity {
+                    onComplete(LoomQueuedUnreliableSendDrop(
+                        reason: .deadlineExpired,
+                        profile: .proximityRealtimeDisplay,
+                        frameID: UInt64(metadata.frameNumber),
+                        fragmentIndex: metadata.fragmentIndex,
+                        fragmentCount: metadata.fragmentCount
+                    ))
+                } else {
+                    onComplete(nil)
+                }
+            },
+            onFrameTransportCompleted: { completion in
+                completions.withLock { $0.append(completion) }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 10),
+                streamID: 42,
+                frameNumber: 78,
+                sequenceNumberStart: 780,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 0.05,
+                fecBlockSize: 2
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            completions.read { !$0.isEmpty }
+        }
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+
+        let completion = completions.read { $0.first }
+        #expect(completion?.frameNumber == 78)
+        #expect(completion?.didSend == true)
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.queuedUnreliableDeadlineExpiredDrops == 2)
+        #expect(telemetry.queuedUnreliableQueueLimitDrops == 0)
+        #expect(telemetry.queuedUnreliableSupersededDrops == 0)
+        #expect(telemetry.queuedUnreliableUnsupportedTransportDrops == 0)
+        #expect(telemetry.queuedUnreliableClosedDrops == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Queued unreliable metadata converts sender deadlines to Loom uptime")
+    func queuedUnreliableMetadataConvertsSenderDeadlinesToLoomUptime() {
+        let sendDeadline = CFAbsoluteTimeGetCurrent() + 0.250
+        let expectedFrameID = (UInt64(42) << 32) | UInt64(880)
+        let options = StreamPacketSender.TransportPacketMetadata(
+            streamID: 42,
+            frameNumber: 880,
+            fragmentIndex: 1,
+            fragmentCount: 4,
+            isKeyframe: false,
+            isParity: false,
+            isRecovery: false,
+            sendDeadline: sendDeadline
+        ).loomQueuedUnreliableSendOptions
+
+        let remainingMs = ((options.deadlineUptime ?? 0) - ProcessInfo.processInfo.systemUptime) * 1000
+        #expect(options.importance == .realtimeInterFrame)
+        #expect(options.frameID == expectedFrameID)
+        #expect(options.fragmentIndex == 1)
+        #expect(options.fragmentCount == 4)
+        #expect(options.dropsWhenExpired)
+        #expect(options.dropsWhenQueueFull)
+        #expect(remainingMs > 0)
+        #expect(remainingMs < 500)
+    }
+
+    @Test("FEC-protected P-frame metadata maps to recovery importance")
+    func fecProtectedPFrameMetadataMapsToRecoveryImportance() {
+        let expectedFrameID = (UInt64(42) << 32) | UInt64(881)
+        let options = StreamPacketSender.TransportPacketMetadata(
+            streamID: 42,
+            frameNumber: 881,
+            fragmentIndex: 0,
+            fragmentCount: 6,
+            isKeyframe: false,
+            isParity: false,
+            isRecovery: true,
+            sendDeadline: CFAbsoluteTimeGetCurrent() + 0.250
+        ).loomQueuedUnreliableSendOptions
+
+        #expect(options.importance == .realtimeRecovery)
+        #expect(options.frameID == expectedFrameID)
+        #expect(options.dropsWhenExpired)
+        #expect(!options.dropsWhenQueueFull)
+    }
+
+    @Test("Queued unreliable metadata scopes Loom frame groups by Mirage stream")
+    func queuedUnreliableMetadataScopesLoomFrameGroupsByMirageStream() {
+        let firstOptions = StreamPacketSender.TransportPacketMetadata(
+            streamID: 42,
+            frameNumber: 881,
+            fragmentIndex: 0,
+            fragmentCount: 6,
+            isKeyframe: false,
+            isParity: false,
+            isRecovery: false,
+            sendDeadline: CFAbsoluteTimeGetCurrent() + 0.250
+        ).loomQueuedUnreliableSendOptions
+        let secondOptions = StreamPacketSender.TransportPacketMetadata(
+            streamID: 43,
+            frameNumber: 881,
+            fragmentIndex: 0,
+            fragmentCount: 6,
+            isKeyframe: false,
+            isParity: false,
+            isRecovery: false,
+            sendDeadline: CFAbsoluteTimeGetCurrent() + 0.250
+        ).loomQueuedUnreliableSendOptions
+
+        #expect(firstOptions.frameID != secondOptions.frameID)
+        #expect(firstOptions.frameID == ((UInt64(42) << 32) | UInt64(881)))
+        #expect(secondOptions.frameID == ((UInt64(43) << 32) | UInt64(881)))
     }
 
 }
@@ -439,7 +700,10 @@ func makeStreamPacketWorkItem(
     isKeyframe: Bool = false,
     encodedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
     sendDeadline: CFAbsoluteTime? = nil,
-    fecBlockSize: Int = 0
+    hardSendDeadline: CFAbsoluteTime? = nil,
+    fecBlockSize: Int = 0,
+    pacingOverride: StreamPacketSender.PacingOverride? = nil,
+    usesAwdlRealtimeQueuePolicy: Bool = false
 ) -> StreamPacketSender.WorkItem {
     StreamPacketSender.WorkItem(
         encodedData: payload,
@@ -459,21 +723,14 @@ func makeStreamPacketWorkItem(
         generation: generation,
         encodedAt: encodedAt,
         sendDeadline: sendDeadline,
-        pacingOverride: nil
+        hardSendDeadline: hardSendDeadline,
+        pacingOverride: pacingOverride,
+        usesAwdlRealtimeQueuePolicy: usesAwdlRealtimeQueuePolicy
     )
 }
 
 struct StreamPacketSenderSubmittedPacket {
     let frameNumber: UInt32
-}
-
-struct StreamPacketSenderReliablePacketSummary: Equatable {
-    let frameNumber: UInt32
-    let sequenceNumber: UInt32
-    let fragmentIndex: Int
-    let fragmentCount: Int
-    let fecBlockSize: Int
-    let isFECParity: Bool
 }
 
 final class StreamPacketSenderPendingSendCompletion: @unchecked Sendable {

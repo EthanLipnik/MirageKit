@@ -135,9 +135,8 @@ actor StreamController {
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
     var awdlTransportActive: Bool = false
-    var adaptiveJitterHoldMs: Int = 0
-    var adaptiveJitterStressStreak: Int = 0
-    var adaptiveJitterStableStreak: Int = 0
+    var receiverTransportPathKind: MirageNetworkPathKind = .unknown
+    var receiverMediaPathProfile: MirageMediaPathProfile = .unknown
 
     var lastPresentedSequenceObserved: UInt64 = 0
     var lastPresentedProgressTime: CFAbsoluteTime = 0

@@ -288,7 +288,11 @@ extension StreamController {
         }
         let now = currentTime
         let coalesceInterval = Self.keyframeRequestCoalesceInterval(targetFPS: decodeSchedulerTargetFPS)
-        if !bypassRetryGate,
+        let bypassesBootstrapRetryGates = bypassRetryGate ||
+            reason.bypassesBootstrapRetryGates ||
+            awaitingFirstFrameAfterResize ||
+            clientRecoveryStatus == .postResizeAwaitingFirstFrame
+        if !bypassesBootstrapRetryGates,
            lastRecoveryRequestDispatchTime > 0,
            now - lastRecoveryRequestDispatchTime < coalesceInterval {
             let remainingMs = Int(max(0, coalesceInterval - (now - lastRecoveryRequestDispatchTime)) * 1000)
@@ -303,6 +307,7 @@ extension StreamController {
             snapshot.latestPendingKeyframeProgress == nil
         trimRecoveryKeyframeDispatchWindow(now: now)
         if recoveryKeyframeDispatchTimes.count >= Self.recoveryKeyframeDispatchLimit,
+           !bypassesBootstrapRetryGates,
            !keyframeStarvedWithoutProgress,
            reason != .decodeErrorThreshold {
             MirageLogger.client(
@@ -317,7 +322,7 @@ extension StreamController {
             }
             return false
         }
-        let keyframeDecision = bypassRetryGate
+        let keyframeDecision = bypassesBootstrapRetryGates
             ? StreamRecoveryDecision.requestKeyframe
             : keyframeRequestDecision(now: now, reason: reason, snapshot: snapshot)
         guard keyframeDecision == .requestKeyframe else {
@@ -328,7 +333,7 @@ extension StreamController {
             now: now,
             reason: reason.logLabel,
             targetFPS: decodeSchedulerTargetFPS,
-            forceNewEpisode: bypassRetryGate ||
+            forceNewEpisode: bypassesBootstrapRetryGates ||
                 reason == .manualRecovery ||
                 reason == .decodeErrorThreshold
         )

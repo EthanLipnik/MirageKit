@@ -281,14 +281,54 @@ package struct StreamReadyMessage: Codable {
     /// Stream family that became ready.
     package let kind: MirageStartupStreamKind
 
+    /// Desktop geometry accepted by the client for this startup attempt.
+    package let desktopGeometryContract: StreamReadyDesktopGeometryContract?
+
     /// Creates a stream readiness signal.
     package init(
         streamID: StreamID,
         startupAttemptID: UUID,
-        kind: MirageStartupStreamKind
+        kind: MirageStartupStreamKind,
+        desktopGeometryContract: StreamReadyDesktopGeometryContract? = nil
     ) {
         self.streamID = streamID
         self.startupAttemptID = startupAttemptID
         self.kind = kind
+        self.desktopGeometryContract = desktopGeometryContract
+    }
+}
+
+/// Desktop geometry echoed by the client when acknowledging startup readiness.
+package struct StreamReadyDesktopGeometryContract: Codable, Sendable, Equatable {
+    package let contractID: UUID
+    package let sceneIdentity: String?
+    package let logicalWidth: Int
+    package let logicalHeight: Int
+    package let displayPixelWidth: Int
+    package let displayPixelHeight: Int
+    package let encodedPixelWidth: Int
+    package let encodedPixelHeight: Int
+    package let refreshTargetHz: Int?
+
+    package init(
+        contractID: UUID,
+        sceneIdentity: String?,
+        logicalWidth: Int,
+        logicalHeight: Int,
+        displayPixelWidth: Int,
+        displayPixelHeight: Int,
+        encodedPixelWidth: Int,
+        encodedPixelHeight: Int,
+        refreshTargetHz: Int?
+    ) {
+        self.contractID = contractID
+        self.sceneIdentity = sceneIdentity?.isEmpty == false ? sceneIdentity : nil
+        self.logicalWidth = logicalWidth
+        self.logicalHeight = logicalHeight
+        self.displayPixelWidth = displayPixelWidth
+        self.displayPixelHeight = displayPixelHeight
+        self.encodedPixelWidth = encodedPixelWidth
+        self.encodedPixelHeight = encodedPixelHeight
+        self.refreshTargetHz = refreshTargetHz.map { max(1, $0) }
     }
 }

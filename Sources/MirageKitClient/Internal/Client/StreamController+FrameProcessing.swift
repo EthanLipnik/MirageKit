@@ -329,21 +329,7 @@ extension StreamController {
             }
         }
         guard frame != nil else { return nil }
-        await maybeApplyAdaptiveJitterHold()
         return frame
-    }
-
-    private func maybeApplyAdaptiveJitterHold() async {
-        guard awdlTransportActive else { return }
-        guard !decodeQueueRequiresKeyframe else { return }
-        guard queuedFrames.count < maxQueuedFrameBudget / 2 else { return }
-        let holdMs = max(0, min(Self.adaptiveJitterHoldMaxMs, adaptiveJitterHoldMs))
-        guard holdMs > 0 else { return }
-        do {
-            try await Task.sleep(for: .milliseconds(Int64(holdMs)))
-        } catch {
-            return
-        }
     }
 
     private var maxQueuedFrameBudget: Int {

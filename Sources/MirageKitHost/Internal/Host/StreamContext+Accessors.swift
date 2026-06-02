@@ -51,6 +51,34 @@ struct StreamMediaPathSnapshot: Sendable {
     let mediaPathProfile: MirageMediaPathProfile
 }
 
+/// Actor-isolated state needed to rebuild a desktop media pipeline without
+/// reallocating the desktop stream or control session.
+struct DesktopPipelineRestartSnapshot: Sendable {
+    let encoderConfig: MirageEncoderConfiguration
+    let requestedStreamScale: CGFloat
+    let requestedAudioChannelCount: Int
+    let runtimeQualityAdjustmentEnabled: Bool
+    let encoderCatchUpQualityAdjustmentEnabled: Bool
+    let lowLatencyHighResolutionCompressionBoostEnabled: Bool
+    let disableResolutionCap: Bool
+    let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
+    let latencyMode: MirageStreamLatencyMode
+    let requestedLatencyMode: MirageStreamLatencyMode
+    let hostBufferingPolicy: MirageHostBufferingPolicy
+    let requestedHostBufferingPolicy: MirageHostBufferingPolicy
+    let enteredBitrate: Int?
+    let explicitEnteredBitrate: Int?
+    let bitrateAdaptationCeiling: Int?
+    let encoderMaxWidth: Int?
+    let encoderMaxHeight: Int?
+    let captureShowsCursor: Bool
+    let displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
+    let virtualDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
+    let usesDisplayRefreshCadence: Bool?
+    let nextDimensionToken: UInt16
+    let nextEpoch: UInt16
+}
+
 /// Virtual-display geometry captured as one actor-isolated snapshot for stream-setting updates.
 struct VirtualDisplayGeometrySnapshot: Sendable {
     /// Shared display backing the stream.
@@ -205,6 +233,47 @@ extension StreamContext {
         StreamMediaPathSnapshot(
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile
+        )
+    }
+
+    var desktopPipelineRestartSnapshot: DesktopPipelineRestartSnapshot {
+        DesktopPipelineRestartSnapshot(
+            encoderConfig: encoderConfig,
+            requestedStreamScale: requestedStreamScale,
+            requestedAudioChannelCount: requestedAudioChannelCount,
+            runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
+            encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled,
+            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
+            disableResolutionCap: disableResolutionCap,
+            capturePressureProfile: capturePressureProfile,
+            latencyMode: latencyMode,
+            requestedLatencyMode: requestedLatencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
+            requestedHostBufferingPolicy: requestedHostBufferingPolicy,
+            enteredBitrate: enteredTargetBitrate,
+            explicitEnteredBitrate: explicitEnteredTargetBitrate,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            captureShowsCursor: captureShowsCursor,
+            displayP3CoverageStatusOverride: displayP3CoverageStatusOverride,
+            virtualDisplaySnapshot: virtualDisplayContext,
+            usesDisplayRefreshCadence: desktopCaptureUsesDisplayRefreshCadenceOverride,
+            nextDimensionToken: dimensionToken &+ 1,
+            nextEpoch: epoch &+ 1
+        )
+    }
+
+    func seedReplacementPipelineTokens(
+        dimensionToken: UInt16,
+        epoch: UInt16,
+        reason: String
+    ) {
+        self.dimensionToken = dimensionToken
+        self.epoch = epoch
+        resetPipelineStateForReconfiguration(reason: reason)
+        MirageLogger.stream(
+            "Replacement media pipeline seeded stream=\(streamID) token=\(dimensionToken) epoch=\(epoch) reason=\(reason)"
         )
     }
 

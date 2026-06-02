@@ -18,6 +18,13 @@ extension MirageHostService {
         queuedDesktopResizeRequest = nil
         desktopResizeTransactionState = .idle
         desktopPresentationGeneration = 0
+        desktopCurrentGeometryContractID = nil
+        desktopCurrentGeometrySceneIdentity = nil
+        desktopCurrentGeometryPresentationResolution = nil
+        desktopCurrentGeometryDisplayPixelResolution = nil
+        desktopCurrentGeometryEncodedPixelResolution = nil
+        desktopCurrentGeometryDisplayScaleFactor = nil
+        desktopCurrentGeometryRefreshTargetHz = nil
     }
 
     /// Coalesces desktop resize requests and applies the latest queued resolution.

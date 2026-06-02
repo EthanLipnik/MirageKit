@@ -78,6 +78,56 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         )
     }
 
+    package static func proximityInterfaceDiagnostics() -> String {
+        struct InterfaceDiagnostic {
+            var name: String
+            var flags: Int32 = 0
+            var addressFamilies: Set<String> = []
+
+            var description: String {
+                let families = addressFamilies.sorted().joined(separator: ",")
+                let renderedFamilies = families.isEmpty ? "none" : families
+                return "\(name)(" +
+                    "up=\((flags & IFF_UP) != 0)," +
+                    "running=\((flags & IFF_RUNNING) != 0)," +
+                    "families=\(renderedFamilies)," +
+                    "flags=0x\(String(flags, radix: 16))" +
+                    ")"
+            }
+        }
+
+        var pointer: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&pointer) == 0, let first = pointer else {
+            return "unavailable"
+        }
+        defer {
+            freeifaddrs(pointer)
+        }
+
+        var diagnosticsByName: [String: InterfaceDiagnostic] = [:]
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let current = cursor {
+            let interface = current.pointee
+            cursor = interface.ifa_next
+
+            let name = String(cString: interface.ifa_name).lowercased()
+            guard isProximityDiagnosticInterface(name) else { continue }
+
+            var diagnostic = diagnosticsByName[name] ?? InterfaceDiagnostic(name: name)
+            diagnostic.flags = Int32(interface.ifa_flags)
+            if let family = interface.ifa_addr.map({ addressFamilyName(Int32($0.pointee.sa_family)) }) {
+                diagnostic.addressFamilies.insert(family)
+            }
+            diagnosticsByName[name] = diagnostic
+        }
+
+        let diagnostics = diagnosticsByName.values.sorted { $0.name < $1.name }
+        if diagnostics.isEmpty {
+            return "none"
+        }
+        return diagnostics.map(\.description).joined(separator: ",")
+    }
+
     private func record(_ path: NWPath) {
         let interfaceTypesByName = path.availableInterfaces.reduce(into: [String: NWInterface.InterfaceType]()) {
             partialResult,
@@ -96,6 +146,27 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         stateQueue.sync {
             currentPathKind = localDefaultRouteKind
             self.interfaceTypesByName = interfaceTypesByName
+        }
+    }
+
+    private static func isProximityDiagnosticInterface(_ name: String) -> Bool {
+        name.hasPrefix("anpi") ||
+            name.hasPrefix("apni") ||
+            name.hasPrefix("awdl") ||
+            name.hasPrefix("bridge") ||
+            name.hasPrefix("llw")
+    }
+
+    private static func addressFamilyName(_ family: Int32) -> String {
+        switch family {
+        case AF_INET:
+            "ipv4"
+        case AF_INET6:
+            "ipv6"
+        case AF_LINK:
+            "link"
+        default:
+            "af\(family)"
         }
     }
 

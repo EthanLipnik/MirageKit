@@ -46,12 +46,15 @@ struct DesktopVirtualDisplayStartupAttempt: Equatable {
 
 /// Stable key describing the display configuration requested by desktop startup.
 struct DesktopVirtualDisplayStartupRequest: Equatable, Codable {
+    let requestedLogicalWidth: Int
+    let requestedLogicalHeight: Int
     let requestedPixelWidth: Int
     let requestedPixelHeight: Int
     let requestedRefreshRate: Int
     let requestedColorDepth: MirageStreamColorDepth
     let requestedColorSpace: MirageColorSpace
     let requestedHiDPI: Bool
+    let requestedStreamScaleBasis: Int
 }
 
 /// Ordered desktop virtual-display startup attempts for one request.
@@ -74,11 +77,13 @@ private func desktopVirtualDisplayStartupTargetDefaultsKey(
     for request: DesktopVirtualDisplayStartupRequest
 ) -> String {
     "\(desktopVirtualDisplayStartupTargetDefaultsPrefix)." +
+        "\(request.requestedLogicalWidth)x\(request.requestedLogicalHeight)." +
         "\(request.requestedPixelWidth)x\(request.requestedPixelHeight)." +
         "hz=\(request.requestedRefreshRate)." +
         "depth=\(request.requestedColorDepth.rawValue)." +
         "color=\(request.requestedColorSpace.rawValue)." +
-        "hidpi=\(request.requestedHiDPI ? 1 : 0)"
+        "hidpi=\(request.requestedHiDPI ? 1 : 0)." +
+        "streamScale=\(request.requestedStreamScaleBasis)"
 }
 
 /// Loads the cached preferred startup target for a request.
@@ -158,11 +163,13 @@ func desktopVirtualDisplayStartupPlan(
     requestedScaleFactor: CGFloat,
     requestedRefreshRate: Int,
     requestedColorDepth: MirageStreamColorDepth,
-    requestedColorSpace: MirageColorSpace
+    requestedColorSpace: MirageColorSpace,
+    requestedStreamScale: CGFloat = 1.0
 ) -> DesktopVirtualDisplayStartupPlan {
+    let normalizedLogicalResolution = MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
     let primary = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
-            logicalResolution: logicalResolution,
+            logicalResolution: normalizedLogicalResolution,
             defaultScaleFactor: requestedScaleFactor
         ),
         refreshRate: requestedRefreshRate,
@@ -174,17 +181,20 @@ func desktopVirtualDisplayStartupPlan(
     )
 
     let request = DesktopVirtualDisplayStartupRequest(
+        requestedLogicalWidth: Int(normalizedLogicalResolution.width.rounded()),
+        requestedLogicalHeight: Int(normalizedLogicalResolution.height.rounded()),
         requestedPixelWidth: Int(primary.backingScale.pixelResolution.width.rounded()),
         requestedPixelHeight: Int(primary.backingScale.pixelResolution.height.rounded()),
         requestedRefreshRate: requestedRefreshRate,
         requestedColorDepth: requestedColorDepth,
         requestedColorSpace: requestedColorSpace,
-        requestedHiDPI: primary.backingScale.scaleFactor > 1.5
+        requestedHiDPI: primary.backingScale.scaleFactor > 1.5,
+        requestedStreamScaleBasis: Int((MirageStreamGeometry.clampStreamScale(requestedStreamScale) * 1000).rounded())
     )
 
     let conservative = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
-            logicalResolution: logicalResolution,
+            logicalResolution: normalizedLogicalResolution,
             defaultScaleFactor: 1.0
         ),
         refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: requestedRefreshRate),

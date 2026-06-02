@@ -32,24 +32,18 @@ enum StreamCaptureEngineSetupError: Error, LocalizedError {
 }
 
 extension StreamContext {
-    /// Configures the packet sender for encoded frame output.
+    /// Configures the packet sender for encoded frame output with per-fragment transport metadata.
     func setupPacketSender(
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
+        sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: (@Sendable (Error) -> Void)? = nil
     ) async {
-        let requestedVideoTransportMode = MirageVideoTransportMode.defaultMode(for: mediaPathProfile)
-        let videoTransportMode = sendPacketReliably == nil ? .unreliableQueued : requestedVideoTransportMode
-        self.videoTransportMode = videoTransportMode
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext,
-            sendPacket: sendPacket,
-            sendPacketReliably: sendPacketReliably,
-            videoTransportMode: videoTransportMode,
+            sendPacketWithMetadata: sendPacketWithMetadata,
+            queuedUnreliableDiagnosticsProvider: mediaSendDiagnosticsProvider,
             onSendError: onSendError,
-            duplicatesParameterSetPackets: mediaPathProfile.usesAwdlRadioPolicy &&
-                !videoTransportMode.usesReliableOrderedDelivery,
+            duplicatesParameterSetPackets: mediaPathProfile.usesAwdlRadioPolicy,
             onDependencyFrameDropped: { [weak self] streamID, frameNumber, reason in
                 Task(priority: .userInitiated) {
                     await self?.handlePacketSenderDependencyFrameDrop(
@@ -169,7 +163,7 @@ extension StreamContext {
             frameByteCount: frameByteCount,
             now: now
         )
-        let fecBlockSize = videoTransportMode.usesReliableOrderedDelivery ? 0 : requestedFECBlockSize
+        let fecBlockSize = requestedFECBlockSize
         let projectedPlan = Self.projectedFragmentPlan(
             frameByteCount: frameByteCount,
             maxPayloadSize: maxPayloadSize,
@@ -233,7 +227,8 @@ extension StreamContext {
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,
             targetBitrateBps: currentTargetBitrateBps,
-            maxPayloadSize: maxPayloadSize
+            maxPayloadSize: maxPayloadSize,
+            awdlDecision: latestAwdlMediaDecisionSnapshot
         )
 
         let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
@@ -268,10 +263,44 @@ extension StreamContext {
             generation: generation,
             encodedAt: now,
             sendDeadline: admissionDecision.sendDeadline,
+            hardSendDeadline: awdlHardSendDeadline(
+                sendDeadline: admissionDecision.sendDeadline,
+                isKeyframe: isKeyframe,
+                packetCount: projectedPlan.packetCount
+            ),
             targetFrameRate: currentFrameRate,
-            pacingOverride: pacingOverride
+            pacingOverride: pacingOverride,
+            usesAwdlRealtimeQueuePolicy: mediaPathProfile.usesAwdlRadioPolicy
         )
         packetSender.enqueue(workItem)
+    }
+
+    private func awdlHardSendDeadline(
+        sendDeadline: CFAbsoluteTime,
+        isKeyframe: Bool,
+        packetCount: Int
+    ) -> CFAbsoluteTime? {
+        guard mediaPathProfile.usesAwdlRadioPolicy,
+              sendDeadline.isFinite else {
+            return nil
+        }
+        let playoutDelayMs = min(
+            MirageAwdlMediaController.maximumPlayoutDelayMs,
+            max(
+                MirageAwdlMediaController.minimumPlayoutDelayMs,
+                receiverPlayoutDelayTargetMs ??
+                    latestAwdlMediaDecisionSnapshot?.playoutDelayMs ??
+                    MirageAwdlMediaController.basePlayoutDelayMs
+            )
+        )
+        let frameInterval = 1.0 / Double(max(1, currentFrameRate))
+        if isKeyframe {
+            let packetPressureMs = min(80.0, Double(max(0, packetCount)) * 0.03)
+            let recoveryWindowMs = min(200.0, max(120.0, playoutDelayMs + 40.0 + packetPressureMs))
+            return sendDeadline + recoveryWindowMs / 1_000.0
+        }
+        let allowanceSeconds = max(frameInterval * 2.0, max(50.0, playoutDelayMs) / 1_000.0)
+        return sendDeadline + allowanceSeconds
     }
 
     private static func projectedFragmentPlan(

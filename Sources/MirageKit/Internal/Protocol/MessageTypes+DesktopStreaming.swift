@@ -121,6 +121,27 @@ package struct StartDesktopStreamMessage: Codable {
     /// When true, the host should use its current display resolution instead of the client-provided dimensions.
     package var useHostResolution: Bool?
 
+    /// Client geometry contract identity for startup-size acceptance and stale-start rejection.
+    package var desktopGeometryContractID: UUID?
+
+    /// Diagnostic scene identity associated with the client drawable that produced this startup geometry.
+    package var desktopGeometrySceneIdentity: String?
+
+    /// Client-requested display pixel width for the startup geometry contract.
+    package var desktopGeometryDisplayPixelWidth: Int?
+
+    /// Client-requested display pixel height for the startup geometry contract.
+    package var desktopGeometryDisplayPixelHeight: Int?
+
+    /// Client-requested encoded pixel width for the startup geometry contract.
+    package var desktopGeometryEncodedPixelWidth: Int?
+
+    /// Client-requested encoded pixel height for the startup geometry contract.
+    package var desktopGeometryEncodedPixelHeight: Int?
+
+    /// Client-requested refresh target for the startup geometry contract.
+    package var desktopGeometryRefreshTargetHz: Int?
+
     /// Creates a desktop-stream startup request.
     package init(
         startupRequestID: UUID = UUID(),
@@ -148,7 +169,14 @@ package struct StartDesktopStreamMessage: Codable {
         mediaMaxPacketSize: Int? = nil,
         clientTransportPathKind: MirageNetworkPathKind? = nil,
         clientMediaPathProfile: MirageMediaPathProfile? = nil,
-        clientPathSignature: String? = nil
+        clientPathSignature: String? = nil,
+        desktopGeometryContractID: UUID? = nil,
+        desktopGeometrySceneIdentity: String? = nil,
+        desktopGeometryDisplayPixelWidth: Int? = nil,
+        desktopGeometryDisplayPixelHeight: Int? = nil,
+        desktopGeometryEncodedPixelWidth: Int? = nil,
+        desktopGeometryEncodedPixelHeight: Int? = nil,
+        desktopGeometryRefreshTargetHz: Int? = nil
     ) {
         self.startupRequestID = startupRequestID
         self.scaleFactor = scaleFactor
@@ -176,6 +204,13 @@ package struct StartDesktopStreamMessage: Codable {
         self.clientTransportPathKind = clientTransportPathKind
         self.clientMediaPathProfile = clientMediaPathProfile
         self.clientPathSignature = clientPathSignature
+        self.desktopGeometryContractID = desktopGeometryContractID
+        self.desktopGeometrySceneIdentity = desktopGeometrySceneIdentity
+        self.desktopGeometryDisplayPixelWidth = desktopGeometryDisplayPixelWidth
+        self.desktopGeometryDisplayPixelHeight = desktopGeometryDisplayPixelHeight
+        self.desktopGeometryEncodedPixelWidth = desktopGeometryEncodedPixelWidth
+        self.desktopGeometryEncodedPixelHeight = desktopGeometryEncodedPixelHeight
+        self.desktopGeometryRefreshTargetHz = desktopGeometryRefreshTargetHz
     }
 
     /// Creates a copy of an existing desktop-start request with a new startup identity.
@@ -210,7 +245,14 @@ package struct StartDesktopStreamMessage: Codable {
             mediaMaxPacketSize: request.mediaMaxPacketSize,
             clientTransportPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
-            clientPathSignature: request.clientPathSignature
+            clientPathSignature: request.clientPathSignature,
+            desktopGeometryContractID: request.desktopGeometryContractID,
+            desktopGeometrySceneIdentity: request.desktopGeometrySceneIdentity,
+            desktopGeometryDisplayPixelWidth: request.desktopGeometryDisplayPixelWidth,
+            desktopGeometryDisplayPixelHeight: request.desktopGeometryDisplayPixelHeight,
+            desktopGeometryEncodedPixelWidth: request.desktopGeometryEncodedPixelWidth,
+            desktopGeometryEncodedPixelHeight: request.desktopGeometryEncodedPixelHeight,
+            desktopGeometryRefreshTargetHz: request.desktopGeometryRefreshTargetHz
         )
         bitrateAdaptationCeiling = request.bitrateAdaptationCeiling
         encoderMaxWidth = request.encoderMaxWidth
@@ -369,11 +411,48 @@ package struct DesktopStreamStartedMessage: Codable {
     /// Client presentation/window sizing height, separate from capture pixels.
     package var presentationHeight: Int?
 
+    /// Geometry contract identity accepted by the host for this startup or resize transition.
+    package var desktopGeometryContractID: UUID?
+
+    /// Diagnostic scene identity associated with the accepted client drawable.
+    package var desktopGeometrySceneIdentity: String?
+
+    /// Host-accepted display pixel width for the geometry contract.
+    package var desktopGeometryDisplayPixelWidth: Int?
+
+    /// Host-accepted display pixel height for the geometry contract.
+    package var desktopGeometryDisplayPixelHeight: Int?
+
+    /// Host-accepted encoded pixel width for the geometry contract.
+    package var desktopGeometryEncodedPixelWidth: Int?
+
+    /// Host-accepted encoded pixel height for the geometry contract.
+    package var desktopGeometryEncodedPixelHeight: Int?
+
+    /// Host-accepted refresh target for the geometry contract.
+    package var desktopGeometryRefreshTargetHz: Int?
+
     /// Client presentation size, falling back to capture size when not sent separately.
     package var presentationSize: CGSize {
         CGSize(
             width: presentationWidth ?? width,
             height: presentationHeight ?? height
+        )
+    }
+
+    /// Geometry contract the client should echo when acknowledging desktop startup readiness.
+    package var streamReadyDesktopGeometryContract: StreamReadyDesktopGeometryContract? {
+        guard let desktopGeometryContractID else { return nil }
+        return StreamReadyDesktopGeometryContract(
+            contractID: desktopGeometryContractID,
+            sceneIdentity: desktopGeometrySceneIdentity,
+            logicalWidth: Int(presentationSize.width.rounded()),
+            logicalHeight: Int(presentationSize.height.rounded()),
+            displayPixelWidth: desktopGeometryDisplayPixelWidth ?? width,
+            displayPixelHeight: desktopGeometryDisplayPixelHeight ?? height,
+            encodedPixelWidth: desktopGeometryEncodedPixelWidth ?? width,
+            encodedPixelHeight: desktopGeometryEncodedPixelHeight ?? height,
+            refreshTargetHz: desktopGeometryRefreshTargetHz
         )
     }
 
@@ -397,7 +476,14 @@ package struct DesktopStreamStartedMessage: Codable {
         allowsClientResize: Bool = true,
         acceptedDisplayScaleFactor: CGFloat? = nil,
         presentationWidth: Int? = nil,
-        presentationHeight: Int? = nil
+        presentationHeight: Int? = nil,
+        desktopGeometryContractID: UUID? = nil,
+        desktopGeometrySceneIdentity: String? = nil,
+        desktopGeometryDisplayPixelWidth: Int? = nil,
+        desktopGeometryDisplayPixelHeight: Int? = nil,
+        desktopGeometryEncodedPixelWidth: Int? = nil,
+        desktopGeometryEncodedPixelHeight: Int? = nil,
+        desktopGeometryRefreshTargetHz: Int? = nil
     ) {
         self.streamID = streamID
         self.desktopSessionID = desktopSessionID
@@ -418,6 +504,13 @@ package struct DesktopStreamStartedMessage: Codable {
         self.acceptedDisplayScaleFactor = acceptedDisplayScaleFactor
         self.presentationWidth = presentationWidth
         self.presentationHeight = presentationHeight
+        self.desktopGeometryContractID = desktopGeometryContractID
+        self.desktopGeometrySceneIdentity = desktopGeometrySceneIdentity
+        self.desktopGeometryDisplayPixelWidth = desktopGeometryDisplayPixelWidth
+        self.desktopGeometryDisplayPixelHeight = desktopGeometryDisplayPixelHeight
+        self.desktopGeometryEncodedPixelWidth = desktopGeometryEncodedPixelWidth
+        self.desktopGeometryEncodedPixelHeight = desktopGeometryEncodedPixelHeight
+        self.desktopGeometryRefreshTargetHz = desktopGeometryRefreshTargetHz
     }
 }
 

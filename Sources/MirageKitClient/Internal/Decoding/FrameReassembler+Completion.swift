@@ -139,6 +139,7 @@ extension FrameReassembler {
                     expectedBytes: frame.expectedTotalBytes
                 )
             } else {
+                _ = recordFrameCompletionLatencyLocked(frame: frame, completedAt: completedAt)
                 recordCompletedVideoFrameTimingLocked(frame: frame, completedAt: completedAt)
             }
 
@@ -376,7 +377,7 @@ extension FrameReassembler {
                     "Frame \(frameNumber) timed out (\(timeoutCause)): " +
                         "\(receivedCount)/\(totalCount) fragments\(isKeyframe ? " (KEYFRAME)" : "")"
                 )
-                if missingDataFragments > 0, !isKeyframe {
+                if missingDataFragments > 0 {
                     incompleteFrameTimeouts += 1
                     if lifetimeTimedOut && !noProgressTimedOut {
                         incompleteFrameLifetimeTimeouts += 1
@@ -598,6 +599,9 @@ extension FrameReassembler {
         if isLenientRemotePathLocked {
             return pFrameNoProgressTimeoutRemote
         }
+        if usesAwdlRadioPolicyLocked {
+            return pFrameNoProgressTimeoutAwdl
+        }
         return pFrameNoProgressTimeout
     }
 
@@ -605,7 +609,7 @@ extension FrameReassembler {
         if isLenientRemotePathLocked {
             return pFrameAbsoluteLifetimeCapRemoteLowestLatency
         }
-        if mediaPathProfile.usesAwdlRadioPolicy {
+        if usesAwdlRadioPolicyLocked {
             return pFrameAbsoluteLifetimeCapAwdl
         }
         if latencyMode == .smoothest || transportPathKind == .vpn {
@@ -615,10 +619,17 @@ extension FrameReassembler {
     }
 
     private func bufferedForwardGapTimeoutLocked() -> TimeInterval {
-        if mediaPathProfile.usesAwdlRadioPolicy {
+        if usesAwdlRadioPolicyLocked {
             return awdlBufferedForwardGapTimeoutLocked()
         }
         return isLenientRemotePathLocked ? remoteBufferedForwardGapTimeout : pFrameTimeoutLocked()
+    }
+
+    private var usesAwdlRadioPolicyLocked: Bool {
+        MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
+        ).usesAwdlRadioPolicy
     }
 
     private func keyframeNoProgressTimeoutLocked(for frame: PendingFrame) -> TimeInterval {

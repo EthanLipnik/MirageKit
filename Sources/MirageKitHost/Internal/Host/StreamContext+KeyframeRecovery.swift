@@ -58,6 +58,16 @@ extension StreamContext {
         }
 
         let requiresImmediateChainRepair = recoveryCauseRequiresImmediateChainRepair(recoveryCause)
+        if shouldCoalesceAwdlRecoveryKeyframeRequest(
+            recoveryCause: recoveryCause,
+            requiresImmediateChainRepair: requiresImmediateChainRepair
+        ) {
+            MirageLogger.stream(
+                "\(reason) skipped (AWDL recovery keyframe already pending, "
+                    + "cause=\(recoveryCause.rawValue))"
+            )
+            return false
+        }
         if !requiresImmediateChainRepair,
            !recoveryCauseBypassesAdaptiveKeyframeCooldown(recoveryCause),
            isRecoveryKeyframeCooldownActive(now: now) {
@@ -99,6 +109,21 @@ extension StreamContext {
     ) {
         lastAcceptedExplicitKeyframeRequestCause = recoveryCause
         lastAcceptedExplicitKeyframeRequestTime = now
+    }
+
+    private func shouldCoalesceAwdlRecoveryKeyframeRequest(
+        recoveryCause: MirageMediaFeedbackRecoveryCause,
+        requiresImmediateChainRepair: Bool
+    ) -> Bool {
+        guard mediaPathProfile.usesAwdlRadioPolicy,
+              requiresImmediateChainRepair else {
+            return false
+        }
+        if pendingKeyframeReason != nil { return true }
+        if pendingReceiverAcceptedKeyframeFrameNumber != nil { return true }
+        if isKeyframeEncoding { return true }
+        if case .emergencyKeyframePending = frameChainState { return true }
+        return false
     }
 
     private func completeAcceptedKeyframeRecoveryRequest(now: CFAbsoluteTime, reason: String) async {

@@ -36,28 +36,87 @@ extension MirageClientService {
         }
     }
 
-    /// Emits throttled AWDL radio metrics when steady-state diagnostics are enabled.
+    /// Emits throttled AWDL radio metrics while an AWDL media path is active.
     func logAwdlRadioTelemetryIfNeeded(
         streamID: StreamID? = nil,
         metrics: StreamController.ClientFrameMetrics? = nil
     ) {
-        guard MirageSteadyStateDiagnostics.isEnabled else { return }
-        guard controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true else { return }
+        guard currentMediaPathUsesAwdlRadioPolicy else { return }
         let now = CFAbsoluteTimeGetCurrent()
-        guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 5.0 else { return }
+        guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 1.0 else { return }
         lastAwdlTelemetryLogTime = now
         let path = controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue
         let media = controlPathSnapshot?.mediaProfile.rawValue ?? MirageMediaPathProfile.unknown.rawValue
         if let metrics {
             let streamText = streamID.map { "\($0)" } ?? "-"
-            MirageLogger.metrics(
+            let hostSnapshot = streamID.flatMap { metricsStore.snapshot(for: $0) }
+            let targetFPS = max(1, hostSnapshot?.hostTargetFrameRate ?? 60)
+            let targetQueueFrames = Self.awdlPresentationTargetFrames(
+                targetFPS: targetFPS,
+                targetDelayMs: metrics.smoothestTargetDelayMs
+            )
+            let queueBacklogFrames = max(0, metrics.pendingFrameCount - targetQueueFrames)
+            let targetFillDeficitFrames = max(0, targetQueueFrames - metrics.pendingFrameCount)
+            let trueUnderfillFrames = Self.awdlPresentationUnderfillFrames(
+                targetQueueFrames: targetQueueFrames,
+                pendingFrameCount: metrics.pendingFrameCount,
+                presentationStallCount: metrics.presentationStallCount,
+                displayTickNoFrameCount: metrics.displayTickNoFrameCount,
+                pendingFrameNotReadyDisplayTickCount: metrics.pendingFrameNotReadyDisplayTickCount
+            )
+            let hostActualBitrate = hostSnapshot?.hostEncoderActualBitrateBps ??
+                hostSnapshot?.hostCurrentBitrate ??
+                hostSnapshot?.hostEncoderRequestedBitrateBps
+            MirageLogger.client(
                 "AWDL client telemetry: stream=\(streamText) " +
                     "path=\(path) media=\(media) " +
+                    "hostEncoded=\(formatAwdlResolution(hostSnapshot)) " +
+                    "hostFPS=\(targetFPS) " +
+                    "hostBitrateMbps=\(formatAwdlBitrate(hostActualBitrate)) " +
+                    "hostQuality=\(formatAwdlOptionalMetric(hostSnapshot?.hostActiveQuality)) " +
+                    "hostScale=\(formatAwdlOptionalMetric(hostSnapshot?.hostEffectiveStreamScale)) " +
+                    "hostPressure=\(hostSnapshot?.hostRealtimePressureState ?? "-") " +
+                    "hostReason=\(hostSnapshot?.hostRealtimePressureReason ?? "-") " +
+                    "hostAwdlState=\(hostSnapshot?.hostAwdlPolicyState ?? "-") " +
+                    "hostAwdlTrigger=\(hostSnapshot?.hostAwdlPolicyTrigger ?? "-") " +
+                    "hostAwdlLever=\(hostSnapshot?.hostAwdlSelectedLever ?? "-") " +
+                    "hostAwdlPlayoutMs=\(formatAwdlOptionalMetric(hostSnapshot?.hostAwdlPlayoutDelayMs)) " +
+                    "hostAwdlScale=\(formatAwdlOptionalMetric(hostSnapshot?.hostAwdlResolutionScale)) " +
+                    "hostAwdlQualityCuts=\(formatAwdlOptionalBool(hostSnapshot?.hostAwdlQualityReductionAllowed)) " +
+                    "hostAwdlPacingMbps=\(formatAwdlBitrate(hostSnapshot?.hostAwdlPacingBudgetBps)) " +
+                    "hostSendProfile=\(hostSnapshot?.hostMediaSendProfile ?? "-") " +
+                    "hostQueueBytes=\(formatAwdlOptionalInteger(hostSnapshot?.hostSendQueueBytes)) " +
+                    "hostPacerSleepMs=\(formatAwdlOptionalMetric(hostSnapshot?.hostPacketPacerAverageSleepMs)) " +
+                    "hostDeadlineDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostSenderLocalDeadlineDrops)) " +
+                    "hostStaleDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostStalePacketDrops)) " +
+                    "hostHoldDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostNonKeyframeHoldDrops)) " +
+                    "loomQueuedDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCount)) " +
+                    "loomDeadlineDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDeadlineExpiredDrops)) " +
+                    "loomQueueDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableQueueLimitDrops)) " +
+                    "loomSupersededDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableSupersededDrops)) " +
+                    "loomUnsupportedTransportDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableUnsupportedTransportDrops)) " +
+                    "loomClosedDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableClosedDrops)) " +
+                    "loomPending=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliablePendingPackets)) " +
+                    "loomOutstanding=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableOutstandingPackets)) " +
+                    "loomQueuedBytes=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableQueuedBytes)) " +
+                    "loomQueuedBytesMax=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableQueuedBytesMax)) " +
+                    "loomEnq=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableEnqueuedCount)) " +
+                    "loomSent=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableSentCount)) " +
+                    "loomDone=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableCompletedCount)) " +
+                    "loomErr=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableErrorCount)) " +
+                    "loomDwellP99Ms=\(formatAwdlOptionalMetric(hostSnapshot?.hostQueuedUnreliableQueueDwellP99Ms)) " +
+                    "loomSendGapP99Ms=\(formatAwdlOptionalMetric(hostSnapshot?.hostQueuedUnreliableSendGapP99Ms)) " +
+                    "loomContentP99Ms=\(formatAwdlOptionalMetric(hostSnapshot?.hostQueuedUnreliableContentProcessedP99Ms)) " +
                     "rxFPS=\(formatAwdlMetric(metrics.receivedFPS)) " +
                     "decodeFPS=\(formatAwdlMetric(metrics.decodedFPS)) " +
+                    "decodeSubmissions=\(metrics.inFlightDecodeSubmissions)/\(metrics.decodeSubmissionLimit) " +
                     "presentFPS=\(formatAwdlMetric(metrics.visibleFrameFPS)) " +
                     "rxGapMaxMs=\(formatAwdlMetric(metrics.receivedWorstGapMs)) " +
                     "rxP99Ms=\(formatAwdlMetric(metrics.receivedFrameIntervalP99Ms)) " +
+                    "ingressJitterP99Ms=\(formatAwdlMetric(metrics.receiverIngressJitterP99Ms)) " +
+                    "frameP95Ms=\(formatAwdlMetric(metrics.reassemblerFrameCompletionLatencyP95Ms)) " +
+                    "keyframeP95Ms=\(formatAwdlMetric(metrics.reassemblerKeyframeCompletionLatencyP95Ms)) " +
+                    "pFrameP50Ms=\(formatAwdlMetric(metrics.reassemblerPFrameCompletionLatencyP50Ms)) " +
                     "pFrameP95Ms=\(formatAwdlMetric(metrics.reassemblerPFrameCompletionLatencyP95Ms)) " +
                     "latePFrames=\(metrics.reassemblerLatePFrameCompletionCount) " +
                     "reassemblyFrames=\(metrics.reassemblerPendingFrameCount) " +
@@ -67,26 +126,82 @@ extension MirageClientService {
                     "forwardGaps=\(metrics.reassemblerForwardGapTimeouts) " +
                     "playoutTargetMs=\(formatAwdlMetric(metrics.smoothestTargetDelayMs)) " +
                     "playoutFrames=\(metrics.playoutDelayFrames) " +
+                    "queueFrames=\(metrics.pendingFrameCount) " +
+                    "targetQueueFrames=\(targetQueueFrames) " +
+                    "backlogFrames=\(queueBacklogFrames) " +
+                    "targetFillDeficitFrames=\(targetFillDeficitFrames) " +
+                    "underfillFrames=\(trueUnderfillFrames) " +
                     "presentGapMaxMs=\(formatAwdlMetric(metrics.worstPresentationGapMs)) " +
                     "underflows=\(metrics.displayTickNoFrameCount) " +
+                    "pendingNotReadyTicks=\(metrics.pendingFrameNotReadyDisplayTickCount) " +
                     "presentationStalls=\(metrics.presentationStallCount) " +
                     "queueDrops=\(metrics.smoothestQueueDrops) " +
                     "decodeHealthy=\(metrics.decodeHealthy) " +
-                    "activeJitterHoldMs=\(activeJitterHoldMs) " +
                     "stalls=\(stallEvents) pathSwitches=\(awdlPathSwitches) " +
                     "hostRefreshReq=\(transportRefreshRequests)"
             )
         } else {
-            MirageLogger.metrics(
+            MirageLogger.client(
                 "AWDL client telemetry: path=\(path) media=\(media) " +
                     "stalls=\(stallEvents) pathSwitches=\(awdlPathSwitches) " +
-                    "hostRefreshReq=\(transportRefreshRequests) activeJitterHoldMs=\(activeJitterHoldMs)"
+                    "hostRefreshReq=\(transportRefreshRequests)"
             )
         }
     }
 
+    private static func awdlPresentationTargetFrames(targetFPS: Int, targetDelayMs: Double) -> Int {
+        guard targetDelayMs > 0 else { return 0 }
+        let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
+        return max(1, Int((targetDelayMs / frameBudgetMs).rounded(.up)))
+    }
+
+    private static func awdlPresentationUnderfillFrames(
+        targetQueueFrames: Int,
+        pendingFrameCount: Int,
+        presentationStallCount: UInt64,
+        displayTickNoFrameCount: UInt64,
+        pendingFrameNotReadyDisplayTickCount: UInt64
+    ) -> Int {
+        guard presentationStallCount > 0 ||
+            displayTickNoFrameCount > 0 ||
+            pendingFrameNotReadyDisplayTickCount > 0 else {
+            return 0
+        }
+        return max(0, targetQueueFrames - pendingFrameCount)
+    }
+
     private func formatAwdlMetric(_ value: Double) -> String {
         String(format: "%.1f", max(0, value))
+    }
+
+    private func formatAwdlOptionalMetric(_ value: Double?) -> String {
+        guard let value else { return "-" }
+        return formatAwdlMetric(value)
+    }
+
+    private func formatAwdlBitrate(_ bitrate: Int?) -> String {
+        guard let bitrate, bitrate > 0 else { return "-" }
+        return String(format: "%.1f", Double(bitrate) / 1_000_000.0)
+    }
+
+    private func formatAwdlOptionalBool(_ value: Bool?) -> String {
+        guard let value else { return "-" }
+        return value ? "true" : "false"
+    }
+
+    private func formatAwdlOptionalInteger<T: BinaryInteger>(_ value: T?) -> String {
+        guard let value else { return "-" }
+        return "\(value)"
+    }
+
+    private func formatAwdlResolution(_ snapshot: MirageClientMetricsSnapshot?) -> String {
+        guard let width = snapshot?.hostEncodedWidth,
+              let height = snapshot?.hostEncodedHeight,
+              width > 0,
+              height > 0 else {
+            return "-"
+        }
+        return "\(width)x\(height)"
     }
 
     /// Clears the bounded control-path history after disconnect or connection reset.
@@ -121,8 +236,8 @@ extension MirageClientService {
     }
 
     func effectiveLatencyModeForCurrentMediaPath(_ latencyMode: MirageStreamLatencyMode?) -> MirageStreamLatencyMode? {
-        guard let mediaPathProfile = controlPathSnapshot?.mediaProfile,
-              mediaPathProfile.usesAwdlRadioPolicy else {
+        guard currentMediaPathUsesAwdlRadioPolicy,
+              let mediaPathProfile = effectiveMediaPathProfileForCurrentPath else {
             return latencyMode
         }
         return MirageAwdlMediaController.fixedLatencyMode(
@@ -134,10 +249,29 @@ extension MirageClientService {
     func effectiveHostBufferingPolicyForCurrentMediaPath(
         _ policy: MirageHostBufferingPolicy?
     ) -> MirageHostBufferingPolicy? {
-        guard controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true else {
+        guard currentMediaPathUsesAwdlRadioPolicy else {
             return policy
         }
         return .stability
+    }
+
+    func effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
+        _ enabled: Bool?
+    ) -> Bool? {
+        guard currentMediaPathUsesAwdlRadioPolicy, enabled == true else {
+            return enabled
+        }
+        return false
+    }
+
+    func effectiveFrameRateForCurrentMediaPath(_ requestedFrameRate: Int) -> Int {
+        guard let mediaPathProfile = effectiveMediaPathProfileForCurrentPath else {
+            return max(1, requestedFrameRate)
+        }
+        return MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+            requestedFrameRate: requestedFrameRate,
+            mediaPathProfile: mediaPathProfile
+        )
     }
 
     func applyCurrentClientPathFields(to request: inout StartDesktopStreamMessage) {
@@ -219,6 +353,26 @@ extension MirageClientService {
     private static func awdlInterfaceNames(from status: MirageClientNetworkPathStatus) -> [String] {
         status.interfaceNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { $0.hasPrefix("awdl") }
+            .filter(isAwdlRadioInterfaceName)
+    }
+
+    private static func isAwdlRadioInterfaceName(_ interfaceName: String) -> Bool {
+        interfaceName.hasPrefix("awdl") || interfaceName.hasPrefix("llw")
+    }
+
+    var currentMediaPathUsesAwdlRadioPolicy: Bool {
+        guard let snapshot = controlPathSnapshot else { return false }
+        return MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: snapshot.kind,
+            mediaPathProfile: snapshot.mediaProfile
+        ).usesAwdlRadioPolicy
+    }
+
+    var effectiveMediaPathProfileForCurrentPath: MirageMediaPathProfile? {
+        guard let snapshot = controlPathSnapshot else { return nil }
+        return MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: snapshot.kind,
+            mediaPathProfile: snapshot.mediaProfile
+        )
     }
 }

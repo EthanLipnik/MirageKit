@@ -106,6 +106,286 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.maxWireBytes < frameBytes(for: 60_000_000))
     }
 
+    @Test("AWDL timing pressure records structural pressure before cutting quality")
+    func awdlTimingPressureRecordsStructuralPressureBeforeCuttingQuality() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = recordDelivery(
+            controller: &controller,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 120,
+            completionGapMs: 120,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: false
+        )
+
+        #expect(decision == nil)
+        #expect(controller.latestReason == .startup)
+        let signal = try #require(controller.latestQualityGatedPFramePressure)
+        #expect(signal.reason == .pFrameLatency)
+        #expect(signal.deliveryMs == 120)
+        #expect(signal.targetClearMs == 80)
+    }
+
+    @Test("AWDL survival permits P-frame timing quality cuts")
+    func awdlSurvivalPermitsPFrameTimingQualityCuts() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 120,
+            completionGapMs: 120,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: true
+        ))
+
+        #expect(decision.reason == .pFrameLatency)
+        #expect(decision.state == .pressured)
+    }
+
+    @Test("AWDL receiver completion gap records structural pressure with clean packet span")
+    func awdlReceiverCompletionGapRecordsStructuralPressureWithCleanPacketSpan() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = recordDelivery(
+            controller: &controller,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 12,
+            completionGapMs: 120,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: false
+        )
+
+        #expect(decision == nil)
+        let signal = try #require(controller.latestQualityGatedPFramePressure)
+        #expect(signal.reason == .pFrameLatency)
+        #expect(signal.packetSpanMs == 12)
+        #expect(signal.completionGapMs == 120)
+        #expect(signal.deliveryMs == 120)
+    }
+
+    @Test("AWDL survival uses receiver completion gap for P-frame timing cuts")
+    func awdlSurvivalUsesReceiverCompletionGapForPFrameTimingCuts() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 12,
+            completionGapMs: 120,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: true
+        ))
+
+        #expect(decision.reason == .pFrameLatency)
+        #expect(decision.state == .pressured)
+        #expect(decision.quality < 0.60)
+    }
+
+    @Test("AWDL encoded oversize sends before quality reduction is allowed")
+    func awdlEncodedOversizeSendsBeforeQualityReductionIsAllowed() {
+        var controller = HostAdaptivePFrameController()
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: 360 * 1024,
+            wireBytes: 360 * 1024,
+            packetCount: packetCount(forWireBytes: 360 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 18_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.12,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .balanced,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: false,
+            now: 10
+        )
+
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
+    }
+
+    @Test("AWDL frame budget clamps high encoder readability hint to transport ceiling")
+    func awdlFrameBudgetClampsHighEncoderReadabilityHintToTransportCeiling() {
+        var controller = HostAdaptivePFrameController()
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: 120 * 1024,
+            wireBytes: 120 * 1024,
+            packetCount: packetCount(forWireBytes: 120 * 1024),
+            isKeyframe: false,
+            receiverHealthy: false,
+            senderHealthy: false,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 72_000_000,
+            requestedTargetBitrateBps: 220_000_000,
+            startupCeilingBps: 32_000_000,
+            minimumBitrateFloorBps: 18_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.32,
+            qualityFloor: 0.16,
+            steadyQualityCeiling: 0.42,
+            latencyMode: .balanced,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: false,
+            now: 10
+        )
+
+        #expect(decision.byteRatio > 1.5)
+        #expect(decision.budgetDecision == nil)
+    }
+
+    @Test("AWDL catastrophic oversize repairs chain without budget cut before quality reduction is allowed")
+    func awdlCatastrophicOversizeRepairsChainWithoutBudgetCutBeforeQualityReductionIsAllowed() {
+        var controller = HostAdaptivePFrameController()
+        let operatingFrameBytes = 4 * 1024 * 1024
+        let requestedFrameBytes = 16 * 1024 * 1024
+        let oversizedFrameBytes = 12 * 1024 * 1024
+
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: oversizedFrameBytes,
+            wireBytes: oversizedFrameBytes,
+            packetCount: packetCount(forWireBytes: oversizedFrameBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: bitrate(forFrameBytes: operatingFrameBytes),
+            requestedTargetBitrateBps: bitrate(forFrameBytes: requestedFrameBytes),
+            startupCeilingBps: bitrate(forFrameBytes: requestedFrameBytes),
+            minimumBitrateFloorBps: 18_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.12,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .balanced,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: false,
+            now: 10
+        )
+
+        #expect(decision.admission == .dropPFrameStartChainRepair)
+        #expect(decision.budgetDecision == nil)
+    }
+
+    @Test("AWDL catastrophic oversize can cut budget once quality reduction is allowed")
+    func awdlCatastrophicOversizeCanCutBudgetOnceQualityReductionIsAllowed() throws {
+        var controller = HostAdaptivePFrameController()
+        let operatingFrameBytes = 4 * 1024 * 1024
+        let requestedFrameBytes = 16 * 1024 * 1024
+        let oversizedFrameBytes = 12 * 1024 * 1024
+
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: oversizedFrameBytes,
+            wireBytes: oversizedFrameBytes,
+            packetCount: packetCount(forWireBytes: oversizedFrameBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: bitrate(forFrameBytes: operatingFrameBytes),
+            requestedTargetBitrateBps: bitrate(forFrameBytes: requestedFrameBytes),
+            startupCeilingBps: bitrate(forFrameBytes: requestedFrameBytes),
+            minimumBitrateFloorBps: 18_000_000,
+            currentFrameRate: 30,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.12,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .balanced,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 120,
+            awdlQualityReductionAllowed: true,
+            now: 10
+        )
+        let budget = try #require(decision.budgetDecision)
+
+        #expect(decision.admission == .dropPFrameStartChainRepair)
+        #expect(budget.reason == .adaptiveRepair)
+        #expect(budget.maxWireBytes < oversizedFrameBytes)
+        #expect(budget.quality < 0.60)
+        #expect(budget.quality >= 0.12)
+    }
+
+    @Test("Frame-rate retune preserves AWDL per-frame bitrate budget")
+    func frameRateRetunePreservesAwdlPerFrameBitrateBudget() throws {
+        var controller = HostAdaptivePFrameController()
+
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 40 * 1024,
+            wireBytes: 40 * 1024,
+            packetCount: packetCount(forWireBytes: 40 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 18_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.12,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .balanced,
+            mediaPathProfile: .awdlRadio,
+            receiverPlayoutDelayTargetMs: 80,
+            awdlQualityReductionAllowed: false,
+            now: 10
+        )
+        let initialBudget = try #require(controller.operatingTargetWireBytes)
+
+        controller.retuneForFrameRateChange(
+            from: 60,
+            to: 30,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 18_000_000,
+            maxPayloadSize: 1_200,
+            mediaPathProfile: .awdlRadio
+        )
+        let demotedBudget = try #require(controller.operatingTargetWireBytes)
+
+        #expect(demotedBudget == initialBudget)
+        #expect(controller.runtimeCeilingBps == 30_000_000)
+
+        controller.retuneForFrameRateChange(
+            from: 30,
+            to: 60,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 18_000_000,
+            maxPayloadSize: 1_200,
+            mediaPathProfile: .awdlRadio
+        )
+
+        #expect(controller.operatingTargetWireBytes == initialBudget)
+    }
+
     @Test("Clean samples do not raise quality while capacity learning is paused")
     func cleanSamplesDoNotRaiseQualityWhileCapacityLearningIsPaused() {
         var controller = HostAdaptivePFrameController()
@@ -649,6 +929,9 @@ private func recordDelivery(
     completionGapMs: Double,
     currentQuality: Float = 0.60,
     latencyMode: MirageStreamLatencyMode = .lowestLatency,
+    mediaPathProfile: MirageMediaPathProfile = .unknown,
+    receiverPlayoutDelayTargetMs: Double? = nil,
+    awdlQualityReductionAllowed: Bool = true,
     now: CFAbsoluteTime = 10
 ) -> HostFrameBudgetDecision? {
     controller.recordFrameTransportCompletion(
@@ -676,6 +959,9 @@ private func recordDelivery(
         qualityFloor: 0.03,
         steadyQualityCeiling: 0.90,
         latencyMode: latencyMode,
+        mediaPathProfile: mediaPathProfile,
+        receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+        awdlQualityReductionAllowed: awdlQualityReductionAllowed,
         now: now
     )
 }

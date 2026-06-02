@@ -127,6 +127,7 @@ extension MirageClientService {
         connectedHostIdentityKeyID = nil
         connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
+        negotiatedSessionFeatures = []
         setMediaSecurityContext(nil)
         receiveBuffer = Data()
         stopHeartbeat()
@@ -193,7 +194,6 @@ extension MirageClientService {
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
         clearControlPathState()
-        activeJitterHoldMs = 0
         resetRuntimeWorkloadSafetyState()
         decoderCompatibilityCurrentColorDepthByStream.removeAll()
         decoderCompatibilityBaselineColorDepthByStream.removeAll()

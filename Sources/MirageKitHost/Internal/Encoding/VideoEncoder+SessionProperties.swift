@@ -95,8 +95,14 @@ extension VideoEncoder {
         let windowSeconds: Double?
     }
 
-    func frameDelayCount(for mode: MirageStreamLatencyMode) -> Int {
-        switch mode {
+    nonisolated static func frameDelayCount(
+        for mode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile = .unknown
+    ) -> Int {
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return 1
+        }
+        return switch mode {
         case .smoothest:
             2
         case .lowestLatency, .balanced:
@@ -104,9 +110,18 @@ extension VideoEncoder {
         }
     }
 
+    nonisolated static func prioritizeEncodingSpeedOverQuality(
+        mediaPathProfile: MirageMediaPathProfile
+    ) -> Bool {
+        !mediaPathProfile.usesAwdlRadioPolicy
+    }
+
     func applySessionLatencySettings(_ session: VTCompressionSession, logReason: String? = nil) {
         let mode = latencyMode
-        let resolvedFrameDelayCount = frameDelayCount(for: mode)
+        let resolvedFrameDelayCount = Self.frameDelayCount(
+            for: mode,
+            mediaPathProfile: mediaPathProfile
+        )
         let applied = setProperty(
             session,
             key: kVTCompressionPropertyKey_MaxFrameDelayCount,
@@ -242,7 +257,8 @@ extension VideoEncoder {
                 latencyMode: latencyMode,
                 streamKind: streamKind,
                 colorDepth: configuration.colorDepth,
-                pixelFormat: activePixelFormat
+                pixelFormat: activePixelFormat,
+                mediaPathProfile: mediaPathProfile
             ) {
                 MirageLogger.encoder(
                     "Encoder spec: standard low-latency rate control requested for \(streamKind.rawValue) \(width)x\(height)"
@@ -337,7 +353,8 @@ extension VideoEncoder {
                 streamKind: streamKind,
                 codec: codec,
                 colorDepth: configuration.colorDepth,
-                pixelFormat: activePixelFormat
+                pixelFormat: activePixelFormat,
+                mediaPathProfile: mediaPathProfile
             )
         case 1:
             // Drop low-latency rate control, keep hardware requirement

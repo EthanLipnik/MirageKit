@@ -26,8 +26,8 @@ extension StreamContext {
     private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
     private static let lowLatencyHighResolutionBoostMinimumPressureScale: Float = 0.45
     private static let mapperMinimumQuality: Float = 0.03
-    private static let awdlInteractiveFrameQualityFloor: Float = 0.12
-    private static let awdlInteractiveKeyframeQualityFloor: Float = 0.10
+    private static let awdlInteractiveFrameQualityFloor: Float = 0.16
+    private static let awdlInteractiveKeyframeQualityFloor: Float = 0.14
 
     private struct DerivedQualityTargets {
         let frameQuality: Float
@@ -63,7 +63,7 @@ extension StreamContext {
 
         let previousBitrate = encoderConfig.bitrate
         let previousCeiling = bitrateAdaptationCeiling
-        encoderConfig.bitrate = decision.startupBitrateBps
+        encoderConfig.bitrate = decision.encoderStartupBitrateBps
         currentTargetBitrateBps = decision.startupBitrateBps
         startupBitrate = decision.startupBitrateBps
         bitrateAdaptationCeiling = decision.maximumCeilingBps
@@ -72,22 +72,26 @@ extension StreamContext {
         encoderThroughputMinimumBitrateFloorBps = decision.encoderThroughputMinimumBitrateFloorBps
         realtimeSenderPacingBitrateBps = decision.startupBitrateBps
         await packetSender?.setTargetBitrateBps(decision.startupBitrateBps)
-        if encoder != nil, previousBitrate != decision.startupBitrateBps {
-            await encoder?.updateBitrate(decision.startupBitrateBps)
+        if encoder != nil, previousBitrate != decision.encoderStartupBitrateBps {
+            await encoder?.updateBitrate(decision.encoderStartupBitrateBps)
             scheduleRateControlRetuneValidation(
                 previousBitrate: previousBitrate,
-                targetBitrate: decision.startupBitrateBps
+                targetBitrate: decision.encoderStartupBitrateBps
             )
         }
 
         let prefix = logLabel.map { "\($0): " } ?? ""
         let previousBitrateText = previousBitrate.map(mirageFormattedMegabitRate) ?? "auto"
         let previousCeilingText = previousCeiling.map(mirageFormattedMegabitRate) ?? "none"
+        let encoderStartupText = decision.encoderStartupBitrateBps == decision.startupBitrateBps
+            ? ""
+            : " encoderStartup \(mirageFormattedMegabitRate(decision.encoderStartupBitrateBps))"
         MirageLogger.stream(
             "\(prefix)host adaptive budget \(decision.reason): " +
                 "startup \(mirageFormattedMegabitRate(decision.startupBitrateBps)) " +
                 "ceiling \(mirageFormattedMegabitRate(decision.maximumCeilingBps)) " +
-                "floor \(mirageFormattedMegabitRate(decision.minimumBitrateFloorBps)) " +
+                "floor \(mirageFormattedMegabitRate(decision.minimumBitrateFloorBps))" +
+                "\(encoderStartupText) " +
                 "(client target \(previousBitrateText), ceiling \(previousCeilingText))"
         )
     }
@@ -95,7 +99,6 @@ extension StreamContext {
     /// Returns the runtime quality floor for the active bitrate policy.
     func resolvedRuntimeQualityFloor(for qualityCeiling: Float) -> Float {
         let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
-        guard ceiling > 0 else { return 0 }
         let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
         let floorFactor: Float = if let pressureRatio = runtimeBitratePressureRatio() {
             max(0.08, min(bitrateCappedQualityFloorFactor, pressureRatio * 0.90))
@@ -103,17 +106,18 @@ extension StreamContext {
             hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
         }
         let minimumFloor = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
-        let floor = max(minimumFloor, ceiling * floorFactor)
         if mediaPathProfile.usesAwdlRadioPolicy {
-            return min(ceiling, max(Self.awdlInteractiveFrameQualityFloor, floor))
+            let floor = ceiling > 0 ? max(minimumFloor, ceiling * floorFactor) : 0
+            return awdlBoundedInteractiveFrameQuality(floor)
         }
+        guard ceiling > 0 else { return 0 }
+        let floor = max(minimumFloor, ceiling * floorFactor)
         return min(ceiling, floor)
     }
 
     /// Returns the runtime keyframe quality floor for the active bitrate policy.
     func resolvedRuntimeKeyframeQualityFloor(for qualityCeiling: Float) -> Float {
         let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
-        guard ceiling > 0 else { return 0 }
         let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
         let floorFactor: Float = if let pressureRatio = runtimeBitratePressureRatio() {
             max(0.05, min(bitrateCappedKeyframeFloorFactor, pressureRatio * 0.75))
@@ -121,11 +125,45 @@ extension StreamContext {
             hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
         }
         let minimumFloor = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
-        let floor = max(minimumFloor, ceiling * floorFactor)
         if mediaPathProfile.usesAwdlRadioPolicy {
-            return min(ceiling, max(Self.awdlInteractiveKeyframeQualityFloor, floor))
+            let floor = ceiling > 0 ? max(minimumFloor, ceiling * floorFactor) : 0
+            return awdlBoundedInteractiveKeyframeQuality(
+                floor,
+                frameQuality: resolvedRuntimeQualityCeiling(for: ceiling)
+            )
         }
+        guard ceiling > 0 else { return 0 }
+        let floor = max(minimumFloor, ceiling * floorFactor)
         return min(ceiling, floor)
+    }
+
+    func resolvedRuntimeQualityCeiling(for proposedCeiling: Float) -> Float {
+        let configuredCeiling = max(0.0, min(compressionQualityCeiling, steadyQualityCeiling))
+        let ceiling = max(0.0, min(configuredCeiling, proposedCeiling))
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return ceiling }
+        guard ceiling > 0 || configuredCeiling > 0 || compressionQualityCeiling > 0 else { return 0 }
+        return awdlBoundedInteractiveFrameQuality(ceiling)
+    }
+
+    func resolvedRuntimeKeyframeQualityCeiling(for proposedCeiling: Float) -> Float {
+        let configuredCeiling = max(0.0, min(compressionQualityCeiling, steadyQualityCeiling))
+        let ceiling = max(0.0, min(configuredCeiling, proposedCeiling))
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return ceiling }
+        guard ceiling > 0 || configuredCeiling > 0 || compressionQualityCeiling > 0 else { return 0 }
+        return awdlBoundedInteractiveKeyframeQuality(ceiling, frameQuality: resolvedRuntimeQualityCeiling(for: ceiling))
+    }
+
+    private func awdlBoundedInteractiveFrameQuality(_ quality: Float) -> Float {
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return quality }
+        guard compressionQualityCeiling > 0 else { return 0 }
+        return min(compressionQualityCeiling, max(Self.awdlInteractiveFrameQualityFloor, quality))
+    }
+
+    private func awdlBoundedInteractiveKeyframeQuality(_ quality: Float, frameQuality: Float) -> Float {
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return min(quality, frameQuality) }
+        guard compressionQualityCeiling > 0 else { return 0 }
+        let bounded = min(compressionQualityCeiling, max(Self.awdlInteractiveKeyframeQualityFloor, quality))
+        return min(max(0, frameQuality), bounded)
     }
 
     private func runtimeBitratePressureRatio() -> Float? {
@@ -242,8 +280,13 @@ extension StreamContext {
             targetBitrateBps: targetBitrateBps,
             frameRate: currentFrameRate
         )
-        let cappedFrameQuality = min(qualityBoost.frameQuality, compressionQualityCeiling)
-        let cappedKeyframeQuality = min(qualityBoost.keyframeQuality, cappedFrameQuality)
+        let cappedFrameQuality = awdlBoundedInteractiveFrameQuality(
+            min(qualityBoost.frameQuality, compressionQualityCeiling)
+        )
+        let cappedKeyframeQuality = awdlBoundedInteractiveKeyframeQuality(
+            min(qualityBoost.keyframeQuality, cappedFrameQuality),
+            frameQuality: cappedFrameQuality
+        )
         let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
             targetBitrateBps: targetBitrateBps,
             width: width,
@@ -293,8 +336,10 @@ extension StreamContext {
         )
 
         let previousActiveQuality = activeQuality
-        if activeQuality > targets.frameQuality {
-            activeQuality = targets.frameQuality
+        let boundedTargetQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
+        if activeQuality > boundedTargetQuality ||
+            (mediaPathProfile.usesAwdlRadioPolicy && activeQuality < qualityFloor) {
+            activeQuality = boundedTargetQuality
             await encoder?.updateQuality(activeQuality)
         }
 

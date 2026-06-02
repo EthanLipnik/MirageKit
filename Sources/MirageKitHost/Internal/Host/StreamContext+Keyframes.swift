@@ -191,6 +191,7 @@ extension StreamContext {
         )
         noteLossEvent(reason: label, enablePFrameFEC: false)
         let now = CFAbsoluteTimeGetCurrent()
+        let awdlQualityReductionAllowed = currentAwdlFrameBudgetReductionAllowed(now: now)
         let budgetDecision = if reason == .staleChain {
             adaptivePFrameController.recordFreshnessPressure(
                 currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
@@ -203,6 +204,9 @@ extension StreamContext {
                 qualityFloor: qualityFloor,
                 steadyQualityCeiling: configuredQualityCeiling,
                 latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+                awdlQualityReductionAllowed: awdlQualityReductionAllowed,
                 now: now
             )
         } else {
@@ -217,28 +221,45 @@ extension StreamContext {
                 qualityFloor: qualityFloor,
                 steadyQualityCeiling: configuredQualityCeiling,
                 latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+                awdlQualityReductionAllowed: awdlQualityReductionAllowed,
                 now: now
             )
         }
-        await applyFrameBudgetDecision(budgetDecision, now: now)
+        if let budgetDecision {
+            await applyFrameBudgetDecision(budgetDecision, now: now)
+        } else if mediaPathProfile.usesAwdlRadioPolicy, !awdlQualityReductionAllowed {
+            realtimePressureState = .pressured
+            realtimePressureReason = reason == .staleChain
+                ? HostAdaptivePFrameController.Reason.receiverFreshness.rawValue
+                : HostAdaptivePFrameController.Reason.senderDeadline.rawValue
+            let applied = await applyAwdlHostStructuralAdaptationIfNeeded(
+                reason: reason == .staleChain ? "sender-stale-chain" : "sender-deadline-drop",
+                at: now
+            )
+            MirageLogger.metrics(
+                "AWDL sender-local pressure held quality for stream \(streamID): " +
+                    "structural adaptation \(applied ? "applied" : "pending-or-exhausted") " +
+                    "dropReason=\(reason.rawValue) frame=\(frameNumber)"
+            )
+        }
         startFrameChainRepair(
             reason: "sender-dependency-drop",
             firstBrokenFrame: frameNumber,
             now: now
         )
         await noteEmergencyKeyframePrepared(using: budgetDecision)
-        if isRecoveryKeyframeCooldownActive(now: now) {
+        let bypassesRecoveryCooldown = packetSenderDependencyDropBypassesRecoveryCooldown()
+        if !bypassesRecoveryCooldown, isRecoveryKeyframeCooldownActive(now: now) {
             dependencyRecoveryRetryNecessary = true
             logRecoveryKeyframeCooldownSuppression(reason: label, now: now)
-            scheduleFrameChainRepairKeyframeRetry(
-                reason: label,
-                bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
-            )
+            scheduleFrameChainRepairKeyframeRetry(reason: label, bypassesRecoveryCooldown: false)
             return
         }
         let queued = await scheduleEmergencyChainRepairKeyframe(
             reason: label,
-            bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError,
+            bypassesRecoveryCooldown: bypassesRecoveryCooldown,
             now: now
         )
         guard queued else {
@@ -247,9 +268,11 @@ extension StreamContext {
                 "\(label) coalesced frame=\(frameNumber) reason=\(reason.rawValue) "
                     + "queuedBytes=\(queuedBytes) retryNecessary=true"
             )
-            scheduleFrameChainRepairKeyframeRetry(
+            schedulePacketSenderDependencyRecoveryKeyframeRetry(
+                frameNumber: frameNumber,
                 reason: label,
-                bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
+                dropReason: reason,
+                bypassesRecoveryCooldown: bypassesRecoveryCooldown
             )
             return
         }
@@ -262,30 +285,43 @@ extension StreamContext {
         )
     }
 
+    private func packetSenderDependencyDropBypassesRecoveryCooldown() -> Bool {
+        mediaPathProfile.usesAwdlRadioPolicy || latestReceiverRecoveryCause == .decodeError
+    }
+
     private func schedulePacketSenderDependencyRecoveryKeyframeRetry(
         frameNumber: UInt32,
-        reason: StreamPacketSender.DependencyFrameDropReason
+        reason: String,
+        dropReason: StreamPacketSender.DependencyFrameDropReason,
+        bypassesRecoveryCooldown: Bool
     ) {
         dependencyRecoveryKeyframeRetryTask?.cancel()
         let now = CFAbsoluteTimeGetCurrent()
-        let delaySeconds = dependencyRecoveryKeyframeRetryDelay(now: now)
+        let delaySeconds = dependencyRecoveryKeyframeRetryDelay(
+            now: now,
+            bypassesRecoveryCooldown: bypassesRecoveryCooldown
+        )
         dependencyRecoveryKeyframeRetryTask = Task(priority: .userInitiated) { [weak self] in
             try? await Task.sleep(for: .seconds(delaySeconds))
             guard !Task.isCancelled else { return }
             await self?.retryPacketSenderDependencyRecoveryKeyframe(
                 frameNumber: frameNumber,
-                reason: reason
+                reason: dropReason,
+                bypassesRecoveryCooldown: bypassesRecoveryCooldown
             )
         }
         let delayMs = Int((delaySeconds * 1000).rounded())
         MirageLogger.stream(
             "Scheduled packet sender dependency keyframe retry in \(delayMs)ms "
-                + "frame=\(frameNumber) reason=\(reason.rawValue) "
+                + "frame=\(frameNumber) reason=\(reason) dropReason=\(dropReason.rawValue) "
                 + "queuedBytes=\(dependencyRecoveryPendingQueuedBytes) retryNecessary=true"
         )
     }
 
-    private func dependencyRecoveryKeyframeRetryDelay(now: CFAbsoluteTime) -> CFAbsoluteTime {
+    private func dependencyRecoveryKeyframeRetryDelay(
+        now: CFAbsoluteTime,
+        bypassesRecoveryCooldown: Bool
+    ) -> CFAbsoluteTime {
         let inFlightDelay = max(0, keyframeSendDeadline - now)
         let cooldownDelay: CFAbsoluteTime
         if lastKeyframeRequestTime > 0 {
@@ -293,7 +329,7 @@ extension StreamContext {
         } else {
             cooldownDelay = 0
         }
-        let recoveryCooldownDelay = recoveryKeyframeCooldownRemaining(now: now)
+        let recoveryCooldownDelay = bypassesRecoveryCooldown ? 0 : recoveryKeyframeCooldownRemaining(now: now)
 
         var budgetDelay: CFAbsoluteTime = 0
         if mediaPathProfile.usesAwdlRadioPolicy {
@@ -309,7 +345,8 @@ extension StreamContext {
 
     private func retryPacketSenderDependencyRecoveryKeyframe(
         frameNumber: UInt32,
-        reason: StreamPacketSender.DependencyFrameDropReason
+        reason: StreamPacketSender.DependencyFrameDropReason,
+        bypassesRecoveryCooldown: Bool
     ) async {
         dependencyRecoveryKeyframeRetryTask = nil
         guard isRunning else { return }
@@ -322,12 +359,14 @@ extension StreamContext {
 
         let label = "Packet sender dependency drop retry"
         let now = CFAbsoluteTimeGetCurrent()
-        if isRecoveryKeyframeCooldownActive(now: now) {
+        if !bypassesRecoveryCooldown, isRecoveryKeyframeCooldownActive(now: now) {
             dependencyRecoveryRetryNecessary = true
             logRecoveryKeyframeCooldownSuppression(reason: label, now: now)
             schedulePacketSenderDependencyRecoveryKeyframeRetry(
                 frameNumber: frameNumber,
-                reason: reason
+                reason: label,
+                dropReason: reason,
+                bypassesRecoveryCooldown: false
             )
             return
         }
@@ -339,7 +378,7 @@ extension StreamContext {
         await noteEmergencyKeyframePrepared(using: nil)
         let queued = await scheduleEmergencyChainRepairKeyframe(
             reason: label,
-            bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError,
+            bypassesRecoveryCooldown: bypassesRecoveryCooldown,
             now: now
         )
         guard queued else {
@@ -350,7 +389,9 @@ extension StreamContext {
             )
             schedulePacketSenderDependencyRecoveryKeyframeRetry(
                 frameNumber: frameNumber,
-                reason: reason
+                reason: label,
+                dropReason: reason,
+                bypassesRecoveryCooldown: bypassesRecoveryCooldown
             )
             return
         }
@@ -396,7 +437,9 @@ extension StreamContext {
     func recoveryCauseBypassesAdaptiveKeyframeCooldown(
         _ recoveryCause: MirageMediaFeedbackRecoveryCause
     ) -> Bool {
-        recoveryCause == .decodeError
+        recoveryCause == .decodeError ||
+            recoveryCause == .startupTimeout ||
+            recoveryCause == .memoryBudget
     }
 
     func recoveryCauseRequiresImmediateChainRepair(
@@ -437,6 +480,11 @@ extension StreamContext {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
             keyframeInFlightFrameNumber = nil
+            pendingKeyframeReason = nil
+            pendingKeyframeDeadline = 0
+            pendingKeyframeRequiresFlush = false
+            pendingKeyframeRequiresReset = false
+            pendingKeyframeUrgent = false
         }
 
         let queued = queueKeyframe(
@@ -622,14 +670,17 @@ extension StreamContext {
             if isKeyframe, isStartupTransportProtectionActive(now: now) {
                 return MirageAwdlMediaController.startupKeyframeFECBlockSizeForAwdlRadio()
             }
-            if isLossModeActive(now: now) || isKeyframe {
-                return MirageAwdlMediaController.keyframeFECBlockSize()
+            if isKeyframe {
+                return latestAwdlMediaDecisionSnapshot?.keyframeFECBlockSize ??
+                    MirageAwdlMediaController.keyframeFECBlockSize()
             }
-            return MirageAwdlMediaController.pFrameFECBlockSize(
+            let staticBlockSize = MirageAwdlMediaController.pFrameFECBlockSize(
                 frameByteCount: frameByteCount,
                 maxPayloadSize: maxPayloadSize,
-                isLossModeActive: false
+                isLossModeActive: isLossModeActive(now: now) || isPFrameFECActive(now: now)
             )
+            let policyBlockSize = latestAwdlMediaDecisionSnapshot?.pFrameFECBlockSize ?? 0
+            return max(staticBlockSize, policyBlockSize)
         }
         if isKeyframe, isStartupTransportProtectionActive(now: now) {
             return startupKeyframeFECBlockSize
@@ -644,22 +695,25 @@ extension StreamContext {
         transportPathKind: MirageNetworkPathKind,
         mediaPathProfile: MirageMediaPathProfile,
         targetBitrateBps: Int?,
-        maxPayloadSize: Int
+        maxPayloadSize: Int,
+        awdlDecision: MirageAwdlMediaController.Decision? = nil
     ) -> StreamPacketSender.PacingOverride? {
         if isKeyframe {
             return keyframePacingOverride(
                 transportPathKind: transportPathKind,
                 mediaPathProfile: mediaPathProfile,
                 targetBitrateBps: targetBitrateBps,
-                maxPayloadSize: maxPayloadSize
+                maxPayloadSize: maxPayloadSize,
+                awdlDecision: awdlDecision
             )
         }
 
         guard mediaPathProfile.usesAwdlRadioPolicy else { return nil }
         let packetBudget = max(1, maxPayloadSize)
         return StreamPacketSender.PacingOverride(
-            rateBps: MirageAwdlMediaController.pacingBudgetBps(targetBitrateBps: targetBitrateBps),
-            burstBytes: packetBudget * MirageAwdlMediaController.pFramePacketBurst
+            rateBps: awdlDecision?.hostPacingBudgetBps ??
+                MirageAwdlMediaController.pacingBudgetBps(targetBitrateBps: targetBitrateBps),
+            burstBytes: packetBudget * (awdlDecision?.pFramePacketBurst ?? MirageAwdlMediaController.pFramePacketBurst)
         )
     }
 
@@ -676,12 +730,18 @@ extension StreamContext {
         transportPathKind: MirageNetworkPathKind,
         mediaPathProfile: MirageMediaPathProfile,
         targetBitrateBps: Int?,
-        maxPayloadSize: Int
+        maxPayloadSize: Int,
+        awdlDecision: MirageAwdlMediaController.Decision? = nil
     ) -> StreamPacketSender.PacingOverride {
         if mediaPathProfile.usesAwdlRadioPolicy {
             return StreamPacketSender.PacingOverride(
-                rateBps: MirageAwdlMediaController.pacingBudgetBps(targetBitrateBps: targetBitrateBps),
-                burstBytes: max(1, maxPayloadSize) * MirageAwdlMediaController.keyframePacketBurst
+                rateBps: awdlDecision?.keyframePacingBudgetBps ??
+                    MirageAwdlMediaController.keyframePacingBudgetBps(
+                        targetBitrateBps: targetBitrateBps,
+                        state: .starting
+                    ),
+                burstBytes: max(1, maxPayloadSize) *
+                    (awdlDecision?.keyframePacketBurst ?? MirageAwdlMediaController.keyframePacketBurst)
             )
         }
 

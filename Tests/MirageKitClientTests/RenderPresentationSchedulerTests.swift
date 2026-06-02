@@ -130,6 +130,42 @@ struct RenderPresentationSchedulerTests {
         #expect(submitCount == 2)
     }
 
+    @Test("AWDL fixed realtime waits for display clock before startup submission")
+    func awdlFixedRealtimeWaitsForDisplayClockBeforeStartupSubmission() {
+        let streamID: StreamID = 922
+        configureAwdlPresentationTiming(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let pendingFrames = SimulatedPendingFrames()
+        var scheduledCallbacks: [@Sendable () -> Void] = []
+        let scheduler = MirageRenderPresentationScheduler(
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { _ in pendingFrames.submit() },
+            hasPendingFrame: { pendingFrames.hasPendingFrame },
+            pendingFrameCount: { pendingFrames.pendingCount }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        pendingFrames.enqueue()
+
+        scheduler.handleFrameAvailable(referenceTime: 1)
+        scheduler.requestImmediateSubmission(referenceTime: 2)
+        scheduler.requestReadinessRetry(referenceTime: 3)
+        scheduler.requestRendererReadySubmission(referenceTime: 4)
+
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(pendingFrames.submittedCount == 0)
+        #expect(pendingFrames.pendingCount == 1)
+
+        scheduler.setDisplayClockActive(true)
+        scheduler.handleDisplayTick(referenceTime: 5)
+
+        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.pendingCount == 0)
+    }
+
     @Test("Active live display clock suppresses arrival fallback after a fresh tick")
     func activeLiveDisplayClockSuppressesArrivalFallbackAfterFreshTick() {
         let streamID: StreamID = 906
@@ -259,8 +295,8 @@ struct RenderPresentationSchedulerTests {
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
     }
 
-    @Test("AWDL waits for display tick after an empty tick")
-    func awdlWaitsForDisplayTickAfterEmptyTick() {
+    @Test("AWDL fixed realtime policy waits for cadence after an empty tick")
+    func awdlFixedRealtimePolicyWaitsForCadenceAfterEmptyTick() {
         let streamID: StreamID = 921
         configureAwdlPresentationTiming(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -293,7 +329,6 @@ struct RenderPresentationSchedulerTests {
         #expect(pendingFrames.submittedCount == 0)
         #expect(pendingFrames.pendingCount == 1)
 
-        wallTime += 0.006
         scheduler.handleDisplayTick(referenceTime: 1.016)
         #expect(pendingFrames.submittedCount == 1)
         #expect(pendingFrames.pendingCount == 0)
@@ -342,6 +377,50 @@ struct RenderPresentationSchedulerTests {
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 0)
         #expect(telemetry.frameArrivedAfterNoFrameTickCount == 1)
         #expect(telemetry.noFrameTickToFrameArrivalMaxMs >= 9)
+    }
+
+    @Test("AWDL records late arrival after an empty display tick without catch-up")
+    func awdlRecordsLateArrivalAfterEmptyDisplayTickWithoutCatchUp() {
+        let streamID: StreamID = 917
+        configureAwdlPresentationTiming(for: streamID)
+        let pendingFrames = SimulatedPendingFrames()
+        var scheduledCallbacks: [@Sendable () -> Void] = []
+        var wallTime: CFTimeInterval = 1
+
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let scheduler = MirageRenderPresentationScheduler(
+            referenceTimeProvider: { wallTime },
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { _ in pendingFrames.submit() },
+            hasPendingFrame: { pendingFrames.hasPendingFrame },
+            pendingFrameCount: { pendingFrames.pendingCount }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.handleDisplayTick(referenceTime: 1)
+        pendingFrames.enqueue()
+        wallTime = 1.010
+        scheduler.handleFrameAvailable(referenceTime: 1.001)
+
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(pendingFrames.submittedCount == 0)
+        #expect(pendingFrames.pendingCount == 1)
+
+        scheduler.handleDisplayTick(referenceTime: 1.016)
+        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.pendingCount == 0)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.displayTickNoFrameCount == 1)
+        #expect(telemetry.frameArrivalFallbackCount == 0)
+        #expect(telemetry.frameArrivalFallbackScheduledCount == 0)
+        #expect(telemetry.frameArrivalFallbackSubmittedCount == 0)
+        #expect(telemetry.frameArrivedAfterNoFrameTickCount == 1)
     }
 
     @Test("Smoothest pending frame not ready is not counted as an empty display tick")

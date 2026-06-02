@@ -26,7 +26,7 @@ struct PacketizerChecksumTests {
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: makeSecurityContext(),
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else { return }
                 captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
                 onComplete(nil)
@@ -83,7 +83,7 @@ struct PacketizerChecksumTests {
 
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else { return }
                 captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
                 onComplete(nil)
@@ -141,7 +141,7 @@ struct PacketizerChecksumTests {
         let recordedSequences = Locked<[UInt32]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet, onComplete in
+            sendPacketWithMetadata: { packet, _, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else {
                     onComplete(nil)
                     return
@@ -192,7 +192,7 @@ struct PacketizerChecksumTests {
         let sendContinuation = Locked<CheckedContinuationBox?>(nil)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { _, onComplete in
+            sendPacketWithMetadata: { _, _, onComplete in
                 sendStarted.withLock { $0 = true }
                 sendContinuation.withLock { $0 = CheckedContinuationBox(onComplete: onComplete) }
             }

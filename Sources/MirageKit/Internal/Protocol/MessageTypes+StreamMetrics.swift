@@ -158,6 +158,13 @@ package struct StreamMetricsMessage: Codable {
     package let realtimeBitrateCeiling: Int?
     package let realtimePressureState: String?
     package let realtimePressureReason: String?
+    package let awdlPolicyState: String?
+    package let awdlPolicyTrigger: String?
+    package let awdlSelectedLever: String?
+    package let awdlPlayoutDelayMs: Double?
+    package let awdlResolutionScale: Double?
+    package let awdlQualityReductionAllowed: Bool?
+    package let awdlHostPacingBudgetBps: Int?
     package let captureAdmissionDrops: UInt64?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
@@ -182,6 +189,31 @@ package struct StreamMetricsMessage: Codable {
     package let senderLocalDeadlineDrops: UInt64?
     package let generationAbortDrops: UInt64?
     package let nonKeyframeHoldDrops: UInt64?
+    package let queuedUnreliableDeadlineExpiredDrops: UInt64?
+    package let queuedUnreliableQueueLimitDrops: UInt64?
+    package let queuedUnreliableSupersededDrops: UInt64?
+    package let queuedUnreliableUnsupportedTransportDrops: UInt64?
+    package let queuedUnreliableClosedDrops: UInt64?
+    package let queuedUnreliablePendingPackets: Int?
+    package let queuedUnreliableOutstandingPackets: Int?
+    package let queuedUnreliableQueuedBytes: Int?
+    package let queuedUnreliablePendingPacketMax: Int?
+    package let queuedUnreliableOutstandingPacketMax: Int?
+    package let queuedUnreliableQueuedBytesMax: Int?
+    package let queuedUnreliableEnqueuedCount: UInt64?
+    package let queuedUnreliableSentCount: UInt64?
+    package let queuedUnreliableCompletedCount: UInt64?
+    package let queuedUnreliableDroppedCount: UInt64?
+    package let queuedUnreliableErrorCount: UInt64?
+    package let queuedUnreliableQueueDwellP50Ms: Double?
+    package let queuedUnreliableQueueDwellP95Ms: Double?
+    package let queuedUnreliableQueueDwellP99Ms: Double?
+    package let queuedUnreliableSendGapP50Ms: Double?
+    package let queuedUnreliableSendGapP95Ms: Double?
+    package let queuedUnreliableSendGapP99Ms: Double?
+    package let queuedUnreliableContentProcessedP50Ms: Double?
+    package let queuedUnreliableContentProcessedP95Ms: Double?
+    package let queuedUnreliableContentProcessedP99Ms: Double?
     package let usingHardwareEncoder: Bool?
     package let encoderGPURegistryID: UInt64?
     package let encodedWidth: Int?
@@ -230,6 +262,13 @@ package struct StreamMetricsMessage: Codable {
         realtimeBitrateCeiling: Int? = nil,
         realtimePressureState: String? = nil,
         realtimePressureReason: String? = nil,
+        awdlPolicyState: String? = nil,
+        awdlPolicyTrigger: String? = nil,
+        awdlSelectedLever: String? = nil,
+        awdlPlayoutDelayMs: Double? = nil,
+        awdlResolutionScale: Double? = nil,
+        awdlQualityReductionAllowed: Bool? = nil,
+        awdlHostPacingBudgetBps: Int? = nil,
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
@@ -254,6 +293,31 @@ package struct StreamMetricsMessage: Codable {
         senderLocalDeadlineDrops: UInt64? = nil,
         generationAbortDrops: UInt64? = nil,
         nonKeyframeHoldDrops: UInt64? = nil,
+        queuedUnreliableDeadlineExpiredDrops: UInt64? = nil,
+        queuedUnreliableQueueLimitDrops: UInt64? = nil,
+        queuedUnreliableSupersededDrops: UInt64? = nil,
+        queuedUnreliableUnsupportedTransportDrops: UInt64? = nil,
+        queuedUnreliableClosedDrops: UInt64? = nil,
+        queuedUnreliablePendingPackets: Int? = nil,
+        queuedUnreliableOutstandingPackets: Int? = nil,
+        queuedUnreliableQueuedBytes: Int? = nil,
+        queuedUnreliablePendingPacketMax: Int? = nil,
+        queuedUnreliableOutstandingPacketMax: Int? = nil,
+        queuedUnreliableQueuedBytesMax: Int? = nil,
+        queuedUnreliableEnqueuedCount: UInt64? = nil,
+        queuedUnreliableSentCount: UInt64? = nil,
+        queuedUnreliableCompletedCount: UInt64? = nil,
+        queuedUnreliableDroppedCount: UInt64? = nil,
+        queuedUnreliableErrorCount: UInt64? = nil,
+        queuedUnreliableQueueDwellP50Ms: Double? = nil,
+        queuedUnreliableQueueDwellP95Ms: Double? = nil,
+        queuedUnreliableQueueDwellP99Ms: Double? = nil,
+        queuedUnreliableSendGapP50Ms: Double? = nil,
+        queuedUnreliableSendGapP95Ms: Double? = nil,
+        queuedUnreliableSendGapP99Ms: Double? = nil,
+        queuedUnreliableContentProcessedP50Ms: Double? = nil,
+        queuedUnreliableContentProcessedP95Ms: Double? = nil,
+        queuedUnreliableContentProcessedP99Ms: Double? = nil,
         usingHardwareEncoder: Bool? = nil,
         encoderGPURegistryID: UInt64? = nil,
         encodedWidth: Int? = nil,
@@ -301,6 +365,13 @@ package struct StreamMetricsMessage: Codable {
         self.realtimeBitrateCeiling = realtimeBitrateCeiling
         self.realtimePressureState = realtimePressureState
         self.realtimePressureReason = realtimePressureReason
+        self.awdlPolicyState = awdlPolicyState
+        self.awdlPolicyTrigger = awdlPolicyTrigger
+        self.awdlSelectedLever = awdlSelectedLever
+        self.awdlPlayoutDelayMs = awdlPlayoutDelayMs
+        self.awdlResolutionScale = awdlResolutionScale
+        self.awdlQualityReductionAllowed = awdlQualityReductionAllowed
+        self.awdlHostPacingBudgetBps = awdlHostPacingBudgetBps
         self.captureAdmissionDrops = captureAdmissionDrops
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs
@@ -325,6 +396,31 @@ package struct StreamMetricsMessage: Codable {
         self.senderLocalDeadlineDrops = senderLocalDeadlineDrops
         self.generationAbortDrops = generationAbortDrops
         self.nonKeyframeHoldDrops = nonKeyframeHoldDrops
+        self.queuedUnreliableDeadlineExpiredDrops = queuedUnreliableDeadlineExpiredDrops
+        self.queuedUnreliableQueueLimitDrops = queuedUnreliableQueueLimitDrops
+        self.queuedUnreliableSupersededDrops = queuedUnreliableSupersededDrops
+        self.queuedUnreliableUnsupportedTransportDrops = queuedUnreliableUnsupportedTransportDrops
+        self.queuedUnreliableClosedDrops = queuedUnreliableClosedDrops
+        self.queuedUnreliablePendingPackets = queuedUnreliablePendingPackets
+        self.queuedUnreliableOutstandingPackets = queuedUnreliableOutstandingPackets
+        self.queuedUnreliableQueuedBytes = queuedUnreliableQueuedBytes
+        self.queuedUnreliablePendingPacketMax = queuedUnreliablePendingPacketMax
+        self.queuedUnreliableOutstandingPacketMax = queuedUnreliableOutstandingPacketMax
+        self.queuedUnreliableQueuedBytesMax = queuedUnreliableQueuedBytesMax
+        self.queuedUnreliableEnqueuedCount = queuedUnreliableEnqueuedCount
+        self.queuedUnreliableSentCount = queuedUnreliableSentCount
+        self.queuedUnreliableCompletedCount = queuedUnreliableCompletedCount
+        self.queuedUnreliableDroppedCount = queuedUnreliableDroppedCount
+        self.queuedUnreliableErrorCount = queuedUnreliableErrorCount
+        self.queuedUnreliableQueueDwellP50Ms = queuedUnreliableQueueDwellP50Ms
+        self.queuedUnreliableQueueDwellP95Ms = queuedUnreliableQueueDwellP95Ms
+        self.queuedUnreliableQueueDwellP99Ms = queuedUnreliableQueueDwellP99Ms
+        self.queuedUnreliableSendGapP50Ms = queuedUnreliableSendGapP50Ms
+        self.queuedUnreliableSendGapP95Ms = queuedUnreliableSendGapP95Ms
+        self.queuedUnreliableSendGapP99Ms = queuedUnreliableSendGapP99Ms
+        self.queuedUnreliableContentProcessedP50Ms = queuedUnreliableContentProcessedP50Ms
+        self.queuedUnreliableContentProcessedP95Ms = queuedUnreliableContentProcessedP95Ms
+        self.queuedUnreliableContentProcessedP99Ms = queuedUnreliableContentProcessedP99Ms
         self.usingHardwareEncoder = usingHardwareEncoder
         self.encoderGPURegistryID = encoderGPURegistryID
         self.encodedWidth = encodedWidth
@@ -340,5 +436,21 @@ package struct StreamMetricsMessage: Codable {
         self.displayP3CoverageStatus = displayP3CoverageStatus
         self.tenBitDisplayP3Validated = tenBitDisplayP3Validated
         self.ultra444Validated = ultra444Validated
+    }
+}
+
+extension StreamMetricsMessage {
+    package var queuedUnreliableDropCount: UInt64 {
+        (queuedUnreliableDeadlineExpiredDrops ?? 0) +
+            (queuedUnreliableQueueLimitDrops ?? 0) +
+            (queuedUnreliableSupersededDrops ?? 0) +
+            (queuedUnreliableUnsupportedTransportDrops ?? 0) +
+            (queuedUnreliableClosedDrops ?? 0)
+    }
+
+    package var transportPressureDropCount: UInt64 {
+        (stalePacketDrops ?? 0) +
+            (senderLocalDeadlineDrops ?? 0) +
+            queuedUnreliableDropCount
     }
 }

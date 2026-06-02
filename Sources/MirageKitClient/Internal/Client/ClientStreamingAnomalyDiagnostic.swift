@@ -205,104 +205,6 @@ struct ClientStreamingAnomalySample {
         self.videoIngressMetrics = videoIngressMetrics
     }
 
-    fileprivate var metricsSnapshot: MirageClientMetricsSnapshot {
-        var snapshot = MirageClientMetricsSnapshot(
-            decodedFPS: decodedFPS,
-            receivedFPS: receivedFPS,
-            clientReceivedWorstGapMs: receivedWorstGapMs,
-            clientReceivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
-            clientReceivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms,
-            clientDisplayTickFPS: displayTickFPS,
-            clientSubmitAttemptFPS: submitAttemptFPS,
-            clientLayerAcceptedFPS: layerAcceptedFPS,
-            clientPresentedFPS: visibleFrameFPS,
-            submittedFPS: submittedFPS,
-            uniqueSubmittedFPS: uniqueSubmittedFPS,
-            pendingFrameCount: pendingFrameCount,
-            clientPendingFrameAgeMs: pendingFrameAgeMs,
-            clientSmoothestDisplayDebtMs: smoothestDisplayDebtMs,
-            clientSmoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
-            clientOverwrittenPendingFrames: overwrittenPendingFrames,
-            clientSmoothestQueueDrops: smoothestQueueDrops,
-            clientSmoothestDisplayDebtDrops: smoothestDisplayDebtDrops,
-            clientSmoothestFifoResetCount: smoothestFifoResetCount,
-            clientSmoothestDepthDrops: smoothestDepthDrops,
-            clientSmoothestAgeDrops: smoothestAgeDrops,
-            clientSmoothestDropsUnder100ms: smoothestDropsUnder100ms,
-            clientSmoothestDroppedFrameAgeMaxMs: smoothestDroppedFrameAgeMaxMs,
-            clientLateFrameDrops: lateFrameDrops,
-            clientDisplayLayerNotReadyCount: displayLayerNotReadyCount,
-            clientRepeatedFrameCount: repeatedFrameCount,
-            clientMissedVSyncCount: missedVSyncCount,
-            clientDisplayTickIntervalP95Ms: displayTickIntervalP95Ms,
-            clientDisplayTickIntervalP99Ms: displayTickIntervalP99Ms,
-            clientPlayoutDelayFrames: playoutDelayFrames,
-            clientPresentationStallCount: presentationStallCount,
-            clientWorstPresentationGapMs: worstPresentationGapMs,
-            clientFrameIntervalP95Ms: frameIntervalP95Ms,
-            clientFrameIntervalP99Ms: frameIntervalP99Ms,
-            decodeHealthy: decodeHealthy,
-            clientReassemblerPendingFrameCount: reassemblerPendingFrameCount,
-            clientReassemblerPendingKeyframeCount: reassemblerPendingKeyframeCount,
-            clientReassemblerPendingBytes: reassemblerPendingBytes,
-            clientFrameBufferPoolRetainedBytes: frameBufferPoolRetainedBytes,
-            clientReassemblerBudgetEvictions: reassemblerBudgetEvictions,
-            clientReassemblerIncompleteFrameTimeouts: reassemblerIncompleteFrameTimeouts,
-            clientReassemblerIncompleteFrameNoProgressTimeouts: reassemblerIncompleteFrameNoProgressTimeouts,
-            clientReassemblerIncompleteFrameLifetimeTimeouts: reassemblerIncompleteFrameLifetimeTimeouts,
-            clientReassemblerMissingFragmentTimeouts: reassemblerMissingFragmentTimeouts,
-            clientReassemblerForwardGapTimeouts: reassemblerForwardGapTimeouts,
-            hostEncodedFPS: hostMetrics?.encodedFPS ?? 0,
-            hostIdleFPS: hostMetrics?.idleEncodedFPS ?? 0,
-            hostDroppedFrames: hostMetrics?.droppedFrames ?? 0,
-            hostActiveQuality: hostMetrics.map { Double($0.activeQuality) } ?? 0,
-            hostTargetFrameRate: hostMetrics?.targetFrameRate ?? targetFrameRate,
-            hostEnteredBitrate: hostMetrics?.enteredBitrate,
-            hostCurrentBitrate: hostMetrics?.currentBitrate,
-            hostRequestedTargetBitrate: hostMetrics?.requestedTargetBitrate,
-            hostBitrateAdaptationCeiling: hostMetrics?.bitrateAdaptationCeiling,
-            hostStartupBitrate: hostMetrics?.startupBitrate,
-            hostCaptureAdmissionDrops: hostMetrics?.captureAdmissionDrops,
-            hostFrameBudgetMs: hostMetrics?.frameBudgetMs,
-            hostAverageEncodeMs: hostMetrics?.averageEncodeMs,
-            hostCaptureIngressFPS: hostMetrics?.captureIngressFPS,
-            hostCaptureFPS: hostMetrics?.captureFPS,
-            hostEncodeAttemptFPS: hostMetrics?.encodeAttemptFPS,
-            hostUsingHardwareEncoder: hostMetrics?.usingHardwareEncoder,
-            hostEncoderGPURegistryID: hostMetrics?.encoderGPURegistryID,
-            hostEncodedWidth: hostMetrics?.encodedWidth,
-            hostEncodedHeight: hostMetrics?.encodedHeight,
-            hostCapturePixelFormat: hostMetrics?.capturePixelFormat,
-            hostCaptureColorPrimaries: hostMetrics?.captureColorPrimaries,
-            hostEncoderPixelFormat: hostMetrics?.encoderPixelFormat,
-            hostEncoderChromaSampling: hostMetrics?.encoderChromaSampling,
-            hostEncoderProfile: hostMetrics?.encoderProfile,
-            hostEncoderColorPrimaries: hostMetrics?.encoderColorPrimaries,
-            hostEncoderTransferFunction: hostMetrics?.encoderTransferFunction,
-            hostEncoderYCbCrMatrix: hostMetrics?.encoderYCbCrMatrix,
-            hostDisplayP3CoverageStatus: hostMetrics?.displayP3CoverageStatus,
-            hostTenBitDisplayP3Validated: hostMetrics?.tenBitDisplayP3Validated,
-            hostUltra444Validated: hostMetrics?.ultra444Validated,
-            clientDecoderOutputPixelFormat: decoderOutputPixelFormat,
-            clientUsingHardwareDecoder: usingHardwareDecoder,
-            hasHostMetrics: hostMetrics != nil
-        )
-        snapshot.hostSendQueueBytes = hostMetrics?.sendQueueBytes
-        snapshot.hostSendStartDelayAverageMs = hostMetrics?.sendStartDelayAverageMs
-        snapshot.hostSendStartDelayMaxMs = hostMetrics?.sendStartDelayMaxMs
-        snapshot.hostSendCompletionAverageMs = hostMetrics?.sendCompletionAverageMs
-        snapshot.hostSendCompletionMaxMs = hostMetrics?.sendCompletionMaxMs
-        snapshot.hostPacketPacerAverageSleepMs = hostMetrics?.packetPacerAverageSleepMs
-        snapshot.hostPacketPacerTotalSleepMs = hostMetrics?.packetPacerTotalSleepMs
-        snapshot.hostPacketPacerMaxSleepMs = hostMetrics?.packetPacerMaxSleepMs
-        snapshot.hostPacketPacerFrameMaxSleepMs = hostMetrics?.packetPacerFrameMaxSleepMs
-        snapshot.hostStalePacketDrops = hostMetrics?.stalePacketDrops
-        snapshot.hostSenderLocalDeadlineDrops = hostMetrics?.senderLocalDeadlineDrops
-        snapshot.hostGenerationAbortDrops = hostMetrics?.generationAbortDrops
-        snapshot.hostNonKeyframeHoldDrops = hostMetrics?.nonKeyframeHoldDrops
-        snapshot.applyHostCaptureCadence(hostMetrics?.captureCadence)
-        return snapshot
-    }
 }
 
 struct ClientStreamingAnomalyDiagnostic: Equatable {
@@ -318,7 +220,6 @@ struct ClientStreamingAnomalyDiagnostic: Equatable {
 func clientStreamingAnomalyDiagnostic(
     sample: ClientStreamingAnomalySample
 ) -> ClientStreamingAnomalyDiagnostic {
-    let snapshot = sample.metricsSnapshot
     let hostCadencePressure: HostCadencePressureDiagnostic? = if let hostMetrics = sample.hostMetrics {
         hostCadencePressureDiagnostic(sample: HostCadencePressureDiagnosticSample(metrics: hostMetrics))
     } else {
@@ -326,14 +227,15 @@ func clientStreamingAnomalyDiagnostic(
     }
     let bottleneckKind = resolvedAnomalyBottleneckKind(
         sample: sample,
-        snapshot: snapshot,
         hostCadencePressure: hostCadencePressure
     )
     let label = anomalyLabel(
         bottleneckKind: bottleneckKind,
         hostCadencePressure: hostCadencePressure
     )
-    let hostTransportDrops = (sample.hostMetrics?.stalePacketDrops ?? 0) +
+    let hostTransportDrops = sample.hostMetrics?.transportPressureDropCount ?? 0
+    let hostQueuedUnreliableDrops = sample.hostMetrics?.queuedUnreliableDropCount ?? 0
+    let hostSenderDrops = hostTransportDrops +
         (sample.hostMetrics?.generationAbortDrops ?? 0) +
         (sample.hostMetrics?.nonKeyframeHoldDrops ?? 0)
     let hostQueueText = sample.hostMetrics?.sendQueueBytes.map { "\((Double($0) / 1024.0).rounded())KB" } ?? "--"
@@ -345,6 +247,7 @@ func clientStreamingAnomalyDiagnostic(
     let hostCaptureDriftText = (sample.hostMetrics?.captureCadence?.displayTimeDriftCount).map(String.init) ?? "--"
     let virtualTimingText = (sample.hostMetrics?.captureCadence?.virtualDisplayTimingSuspect).map { $0 ? "true" : "false" } ?? "--"
     let captureAdmissionDropsText = sample.hostMetrics?.captureAdmissionDrops.map(String.init) ?? "--"
+    let awdlQualityReductionText = sample.hostMetrics?.awdlQualityReductionAllowed.map { $0 ? "true" : "false" } ?? "--"
     let videoIngress = sample.videoIngressMetrics
     let decoderFormat = sample.decoderOutputPixelFormat ?? "unknown"
     let hardwareDecoderText = sample.usingHardwareDecoder.map { $0 ? "true" : "false" } ?? "unknown"
@@ -401,6 +304,13 @@ func clientStreamingAnomalyDiagnostic(
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +
         "hostCaptureGapP99=\(hostCaptureGapP99Text)ms hostCaptureWorstGap=\(hostCaptureWorstGapText)ms " +
         "hostDisplayDrift=\(hostCaptureDriftText) virtualTimingSuspect=\(virtualTimingText) " +
+        "hostAwdlState=\(sample.hostMetrics?.awdlPolicyState ?? "--") " +
+        "hostAwdlTrigger=\(sample.hostMetrics?.awdlPolicyTrigger ?? "--") " +
+        "hostAwdlLever=\(sample.hostMetrics?.awdlSelectedLever ?? "--") " +
+        "hostAwdlPlayout=\(formattedMs(sample.hostMetrics?.awdlPlayoutDelayMs))ms " +
+        "hostAwdlScale=\(formattedScale(sample.hostMetrics?.awdlResolutionScale)) " +
+        "hostAwdlQualityCuts=\(awdlQualityReductionText) " +
+        "hostAwdlPacing=\(formattedMbps(sample.hostMetrics?.awdlHostPacingBudgetBps))Mbps " +
         // Idle-vs-wedge distinguishers: high raw-callback + high idle frames with low
         // renderable cadence = benign static content (SCK delivering no-change frames);
         // low raw-callback = SCK starved / wedged virtual display (a real cadence bug).
@@ -416,7 +326,15 @@ func clientStreamingAnomalyDiagnostic(
         "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms " +
         "pacerTotal=\(sample.hostMetrics?.packetPacerTotalSleepMs.map(String.init) ?? "--")ms " +
         "pacerFrameMax=\(sample.hostMetrics?.packetPacerFrameMaxSleepMs.map(String.init) ?? "--")ms " +
-        "transportDrops=\(hostTransportDrops) senderLocalDeadlineDrops=\(sample.hostMetrics?.senderLocalDeadlineDrops.map(String.init) ?? "--") " +
+        "transportDrops=\(hostTransportDrops) hostSenderDrops=\(hostSenderDrops) " +
+        "senderLocalDeadlineDrops=\(sample.hostMetrics?.senderLocalDeadlineDrops.map(String.init) ?? "--") " +
+        "loomQueuedDrops=\(hostQueuedUnreliableDrops) " +
+        "loomDeadlineDrops=\(sample.hostMetrics?.queuedUnreliableDeadlineExpiredDrops.map(String.init) ?? "--") " +
+        "loomQueueDrops=\(sample.hostMetrics?.queuedUnreliableQueueLimitDrops.map(String.init) ?? "--") " +
+        "loomSupersededDrops=\(sample.hostMetrics?.queuedUnreliableSupersededDrops.map(String.init) ?? "--") " +
+        "loomUnsupportedTransportDrops=" +
+        "\(sample.hostMetrics?.queuedUnreliableUnsupportedTransportDrops.map(String.init) ?? "--") " +
+        "loomClosedDrops=\(sample.hostMetrics?.queuedUnreliableClosedDrops.map(String.init) ?? "--") " +
         "presentationStalls=\(sample.presentationStallCount) " +
         "worstPresentationGap=\(formattedMs(sample.worstPresentationGapMs))ms " +
         "frameP95=\(formattedMs(sample.frameIntervalP95Ms))ms frameP99=\(formattedMs(sample.frameIntervalP99Ms))ms"
@@ -430,12 +348,8 @@ func clientStreamingAnomalyDiagnostic(
 
 private func resolvedAnomalyBottleneckKind(
     sample: ClientStreamingAnomalySample,
-    snapshot: MirageClientMetricsSnapshot,
     hostCadencePressure: HostCadencePressureDiagnostic?
 ) -> MirageStreamBottleneckKind {
-    let classified = MirageStreamBottleneckKind.classify(snapshot: snapshot)
-    guard classified == .unknown else { return classified }
-
     if let hostCadencePressure {
         switch hostCadencePressure.kind {
         case .captureAdmissionPressure,
@@ -448,6 +362,25 @@ private func resolvedAnomalyBottleneckKind(
     }
 
     let targetFPS = Double(max(1, sample.targetFrameRate))
+    if let hostMetrics = sample.hostMetrics {
+        let transportAssessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: max(0, hostMetrics.sendQueueBytes ?? 0),
+                queueStressBytes: 800_000,
+                packetPacerAverageSleepMs: max(0, hostMetrics.packetPacerAverageSleepMs ?? 0),
+                packetPacerStressThresholdMs: 0.75,
+                sendStartDelayAverageMs: max(0, hostMetrics.sendStartDelayAverageMs ?? 0),
+                sendStartDelayStressThresholdMs: 2.0,
+                sendCompletionAverageMs: max(0, hostMetrics.sendCompletionAverageMs ?? 0),
+                sendCompletionStressThresholdMs: 12.0,
+                transportDropCount: hostMetrics.transportPressureDropCount
+            )
+        )
+        if transportAssessment.primaryStress && !transportAssessment.isPacerOnlyStress {
+            return .networkBound
+        }
+    }
+
     let decodeGapGrace = max(5.0, targetFPS * 0.10)
     let presentationGapGrace = max(4.0, targetFPS * 0.10)
     let pendingAgeThresholdMs = max(20.0, (1000.0 / targetFPS) * 1.5)
@@ -541,4 +474,14 @@ private func formattedFPS(_ value: Double?) -> String {
 private func formattedMs(_ value: Double?) -> String {
     guard let value else { return "--" }
     return value.formatted(.number.precision(.fractionLength(1)))
+}
+
+private func formattedScale(_ value: Double?) -> String {
+    guard let value else { return "--" }
+    return value.formatted(.number.precision(.fractionLength(3)))
+}
+
+private func formattedMbps(_ bitrate: Int?) -> String {
+    guard let bitrate else { return "--" }
+    return (Double(bitrate) / 1_000_000.0).formatted(.number.precision(.fractionLength(1)))
 }

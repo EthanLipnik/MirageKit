@@ -43,9 +43,10 @@ extension StreamContext {
         let normalizedSenderPacingBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: senderPacingBitrateBps ?? targetBitrate
         ) ?? targetBitrate
+        let senderPacingMinimumFloor = mediaPathProfile.usesAwdlRadioPolicy ? 1 : minimumBitrateFloor
         let senderPacingBitrate = min(
-            max(minimumBitrateFloor, normalizedSenderPacingBitrate),
-            max(minimumBitrateFloor, ceiling)
+            max(senderPacingMinimumFloor, normalizedSenderPacingBitrate),
+            max(senderPacingMinimumFloor, ceiling)
         )
         let now = CFAbsoluteTimeGetCurrent()
         let transportBitrateChanged = targetBitrate != currentTargetBitrateBps
@@ -214,15 +215,37 @@ extension StreamContext {
         logBitrateContract(event: "encoder_settings_update")
     }
 
-    func updateFrameRate(_ fps: Int) async throws {
-        guard isRunning, let captureEngine else { return }
-        let clamped = max(1, fps)
+    func updateFrameRate(_ fps: Int, updatesAwdlInteractiveCeiling: Bool = true) async throws {
+        let clamped = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+            requestedFrameRate: fps,
+            mediaPathProfile: mediaPathProfile
+        )
+        let previousFrameRate = currentFrameRate
         captureFrameRateOverride = clamped
         let desiredCaptureRate = resolvedCaptureFrameRate(for: clamped)
-        if desiredCaptureRate != captureFrameRate { try await captureEngine.updateFrameRate(desiredCaptureRate) }
         currentFrameRate = clamped
+        if updatesAwdlInteractiveCeiling {
+            awdlInteractiveFrameRateCeiling = clamped
+        }
         encoderConfig = encoderConfig.withTargetFrameRate(clamped)
-        await refreshCaptureCadence()
+        adaptivePFrameController.retuneForFrameRateChange(
+            from: previousFrameRate,
+            to: clamped,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            maxPayloadSize: maxPayloadSize,
+            mediaPathProfile: mediaPathProfile
+        )
+        if isRunning, let captureEngine {
+            if desiredCaptureRate != captureFrameRate {
+                try await captureEngine.updateFrameRate(desiredCaptureRate)
+            }
+            await refreshCaptureCadence()
+        } else {
+            captureFrameRate = desiredCaptureRate
+        }
         await encoder?.updateFrameRate(clamped)
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Frame rate update")
@@ -478,7 +501,11 @@ extension StreamContext {
         }
     }
 
-    func updateEmergencyRecoveryScale(_ newScale: CGFloat, reason: String) async throws {
+    func updateEmergencyRecoveryScale(
+        _ newScale: CGFloat,
+        reason: String,
+        advancesDimensionToken: Bool = false
+    ) async throws {
         let clampedScale = StreamContext.clampStreamScale(newScale)
         let rollbackSnapshot = makeResizeRollbackSnapshot()
         let previousScale = streamScale
@@ -508,8 +535,15 @@ extension StreamContext {
 
         currentContentRect = .zero
 
+        if advancesDimensionToken {
+            dimensionToken &+= 1
+            MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
+        }
         await packetSender?.bumpGeneration(reason: "emergency recovery scale update")
-        resetPipelineStateForReconfiguration(reason: "emergency recovery scale update")
+        resetPipelineStateForReconfiguration(
+            reason: "emergency recovery scale update",
+            preservePendingGeometryRecoveryKeyframe: true
+        )
 
         baseCaptureSize = derivedBaseSize
         streamScale = resolvedScale

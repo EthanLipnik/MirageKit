@@ -321,7 +321,10 @@ extension MirageClientService {
         requestedDisplayScaleFactor: CGFloat,
         requestedStreamScale: CGFloat,
         encoderMaxWidth: Int?,
-        encoderMaxHeight: Int?
+        encoderMaxHeight: Int?,
+        desktopGeometryContractID: UUID?,
+        desktopGeometrySceneIdentity: String?,
+        desktopGeometryRefreshTargetHz: Int?
     )
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
@@ -342,13 +345,17 @@ extension MirageClientService {
             requestedDisplayScaleFactor: clampedDisplayScaleFactor,
             requestedStreamScale: clampedStreamScale,
             encoderMaxWidth: encoderMaxWidth,
-            encoderMaxHeight: encoderMaxHeight
+            encoderMaxHeight: encoderMaxHeight,
+            desktopGeometryContractID: desktopGeometryContractID,
+            desktopGeometrySceneIdentity: desktopGeometrySceneIdentity,
+            desktopGeometryRefreshTargetHz: desktopGeometryRefreshTargetHz
         )
         MirageLogger.client(
             "Sending desktop resize request for stream \(streamID): " +
                 "\(Int(scaledResolution.width))x\(Int(scaledResolution.height)) pts " +
                 "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px), " +
                 "transition=\(transitionID.uuidString), " +
+                "contract=\(desktopGeometryContractID?.uuidString ?? "nil"), " +
                 "displayScale=\(String(format: "%.3f", clampedDisplayScaleFactor)), " +
                 "streamScale=\(String(format: "%.3f", clampedStreamScale))"
         )

@@ -42,6 +42,13 @@ extension MirageClientMetricsStore {
             snapshot.hostRealtimeBitrateCeiling = metrics.realtimeBitrateCeiling
             snapshot.hostRealtimePressureState = metrics.realtimePressureState
             snapshot.hostRealtimePressureReason = metrics.realtimePressureReason
+            snapshot.hostAwdlPolicyState = metrics.awdlPolicyState
+            snapshot.hostAwdlPolicyTrigger = metrics.awdlPolicyTrigger
+            snapshot.hostAwdlSelectedLever = metrics.awdlSelectedLever
+            snapshot.hostAwdlPlayoutDelayMs = metrics.awdlPlayoutDelayMs
+            snapshot.hostAwdlResolutionScale = metrics.awdlResolutionScale
+            snapshot.hostAwdlQualityReductionAllowed = metrics.awdlQualityReductionAllowed
+            snapshot.hostAwdlPacingBudgetBps = metrics.awdlHostPacingBudgetBps
             snapshot.hostCaptureAdmissionDrops = metrics.captureAdmissionDrops
             snapshot.hostFrameBudgetMs = metrics.frameBudgetMs
             snapshot.hostAverageEncodeMs = metrics.averageEncodeMs
@@ -86,6 +93,31 @@ extension MirageClientMetricsStore {
             snapshot.hostSenderLocalDeadlineDrops = metrics.senderLocalDeadlineDrops
             snapshot.hostGenerationAbortDrops = metrics.generationAbortDrops
             snapshot.hostNonKeyframeHoldDrops = metrics.nonKeyframeHoldDrops
+            snapshot.hostQueuedUnreliableDeadlineExpiredDrops = metrics.queuedUnreliableDeadlineExpiredDrops
+            snapshot.hostQueuedUnreliableQueueLimitDrops = metrics.queuedUnreliableQueueLimitDrops
+            snapshot.hostQueuedUnreliableSupersededDrops = metrics.queuedUnreliableSupersededDrops
+            snapshot.hostQueuedUnreliableUnsupportedTransportDrops = metrics.queuedUnreliableUnsupportedTransportDrops
+            snapshot.hostQueuedUnreliableClosedDrops = metrics.queuedUnreliableClosedDrops
+            snapshot.hostQueuedUnreliablePendingPackets = metrics.queuedUnreliablePendingPackets
+            snapshot.hostQueuedUnreliableOutstandingPackets = metrics.queuedUnreliableOutstandingPackets
+            snapshot.hostQueuedUnreliableQueuedBytes = metrics.queuedUnreliableQueuedBytes
+            snapshot.hostQueuedUnreliablePendingPacketMax = metrics.queuedUnreliablePendingPacketMax
+            snapshot.hostQueuedUnreliableOutstandingPacketMax = metrics.queuedUnreliableOutstandingPacketMax
+            snapshot.hostQueuedUnreliableQueuedBytesMax = metrics.queuedUnreliableQueuedBytesMax
+            snapshot.hostQueuedUnreliableEnqueuedCount = metrics.queuedUnreliableEnqueuedCount
+            snapshot.hostQueuedUnreliableSentCount = metrics.queuedUnreliableSentCount
+            snapshot.hostQueuedUnreliableCompletedCount = metrics.queuedUnreliableCompletedCount
+            snapshot.hostQueuedUnreliableDroppedCount = metrics.queuedUnreliableDroppedCount
+            snapshot.hostQueuedUnreliableErrorCount = metrics.queuedUnreliableErrorCount
+            snapshot.hostQueuedUnreliableQueueDwellP50Ms = metrics.queuedUnreliableQueueDwellP50Ms
+            snapshot.hostQueuedUnreliableQueueDwellP95Ms = metrics.queuedUnreliableQueueDwellP95Ms
+            snapshot.hostQueuedUnreliableQueueDwellP99Ms = metrics.queuedUnreliableQueueDwellP99Ms
+            snapshot.hostQueuedUnreliableSendGapP50Ms = metrics.queuedUnreliableSendGapP50Ms
+            snapshot.hostQueuedUnreliableSendGapP95Ms = metrics.queuedUnreliableSendGapP95Ms
+            snapshot.hostQueuedUnreliableSendGapP99Ms = metrics.queuedUnreliableSendGapP99Ms
+            snapshot.hostQueuedUnreliableContentProcessedP50Ms = metrics.queuedUnreliableContentProcessedP50Ms
+            snapshot.hostQueuedUnreliableContentProcessedP95Ms = metrics.queuedUnreliableContentProcessedP95Ms
+            snapshot.hostQueuedUnreliableContentProcessedP99Ms = metrics.queuedUnreliableContentProcessedP99Ms
         }
     }
 

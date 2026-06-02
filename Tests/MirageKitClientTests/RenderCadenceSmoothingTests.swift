@@ -182,7 +182,7 @@ struct RenderCadenceSmoothingTests {
         for (pathKind, expectedDelayMs) in [
             (MirageNetworkPathKind.wired, 50.0),
             (.wifi, 100.0),
-            (.awdl, 160.0),
+            (.awdl, MirageAwdlMediaController.basePlayoutDelayMs),
             (.vpn, 250.0),
         ] {
             MirageRenderStreamStore.shared.clear(for: streamID)
@@ -207,8 +207,8 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Path-only AWDL recent input keeps smoothest stability floor")
-    func pathOnlyAwdlRecentInputKeepsSmoothestStabilityFloor() {
+    @Test("Path-only AWDL uses realtime radio playout")
+    func pathOnlyAwdlUsesRealtimeRadioPlayout() {
         let streamID: StreamID = 413
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -231,7 +231,8 @@ struct RenderCadenceSmoothingTests {
             for: streamID
         )
 
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 96)
+        let targetDelayMs = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs ?? 0
+        #expect(targetDelayMs == MirageAwdlMediaController.basePlayoutDelayMs)
     }
 
     @Test("Balanced Wi-Fi uses two-frame playout hold and immediate display timing")
@@ -290,10 +291,426 @@ struct RenderCadenceSmoothingTests {
         )
 
         #expect(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero) == nil)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 24)
+        #expect(
+            MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs ==
+                MirageAwdlMediaController.basePlayoutDelayMs
+        )
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         #expect(timing.latencyMode == .balanced)
         #expect(!timing.displaysImmediately)
+    }
+
+    @Test("AWDL path kind without media profile uses fixed realtime playout")
+    func awdlPathKindWithoutMediaProfileUsesFixedRealtimePlayout() {
+        let streamID: StreamID = 419
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+
+        #expect(timing.latencyMode == .balanced)
+        #expect(timing.usesFixedRealtimeDisplayPolicy)
+        #expect(!timing.displaysImmediately)
+        #expect(timing.playoutDelayFrames >= 2)
+    }
+
+    @Test("AWDL path kind with other profile uses fixed realtime playout")
+    func awdlPathKindWithOtherProfileUsesFixedRealtimePlayout() {
+        let streamID: StreamID = 420
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .other)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+
+        #expect(timing.latencyMode == .balanced)
+        #expect(timing.usesFixedRealtimeDisplayPolicy)
+        #expect(!timing.displaysImmediately)
+        #expect(timing.playoutDelayFrames >= 2)
+    }
+
+    @Test("AWDL path kind with proximity wired profile keeps immediate presentation")
+    func awdlPathKindWithProximityWiredProfileKeepsImmediatePresentation() {
+        let streamID: StreamID = 421
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .proximityWiredLike)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 120,
+                displayFPS: 120,
+                latencyMode: .lowestLatency
+            )
+        )
+
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+
+        #expect(timing.latencyMode == .lowestLatency)
+        #expect(!timing.usesFixedRealtimeDisplayPolicy)
+        #expect(timing.displaysImmediately)
+    }
+
+    @Test("AWDL receiver pressure raises local playout target before underfill")
+    func awdlReceiverPressureRaisesLocalPlayoutTargetBeforeUnderfill() {
+        let streamID: StreamID = 417
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+        MirageRenderStreamStore.shared.updateAwdlReceiverPlayoutTarget(
+            for: streamID,
+            targetFPS: 60,
+            receiverJitterP99Ms: 160,
+            presentationStallCount: 0
+        )
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        #expect(
+            MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs ==
+                MirageAwdlMediaController.stableMaximumPlayoutDelayMs
+        )
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.smoothestTargetDelayMs == MirageAwdlMediaController.stableMaximumPlayoutDelayMs)
+        #expect(telemetry.playoutDelayFrames == 5)
+    }
+
+    @Test("AWDL completed receive gaps do not raise local playout without ingress jitter")
+    func awdlCompletedReceiveGapsDoNotRaiseLocalPlayoutWithoutIngressJitter() {
+        let streamID: StreamID = 418
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+        MirageRenderStreamStore.shared.updateAwdlReceiverPlayoutTarget(
+            for: streamID,
+            targetFPS: 60,
+            presentationStallCount: 0
+        )
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        #expect(
+            MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs ==
+                MirageAwdlMediaController.basePlayoutDelayMs
+        )
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.smoothestTargetDelayMs == MirageAwdlMediaController.basePlayoutDelayMs)
+        #expect(telemetry.playoutDelayFrames == 2)
+    }
+
+    @Test("AWDL presentation latency policy accepts receiver target")
+    func awdlPresentationLatencyPolicyAcceptsReceiverTarget() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            awdlReceiverPlayoutDelayTargetMs: 96
+        )
+
+        #expect(policy.baseTargetPlayoutDelayMs == 96)
+        #expect(policy.targetPlayoutDelayFrames == 6)
+    }
+
+    @Test("AWDL presentation policy does not reduce receiver playout target twice for input")
+    func awdlPresentationPolicyDoesNotReduceReceiverPlayoutTargetTwiceForInput() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            hasRecentInteraction: true,
+            lastInteractionAgeSeconds: 0.400,
+            awdlReceiverPlayoutDelayTargetMs: 80
+        )
+
+        #expect(policy.inputDelayReductionFraction == 0)
+        #expect(policy.effectiveTargetPlayoutDelayMs(adaptedDelayMs: policy.baseTargetPlayoutDelayMs) == 80)
+        #expect(policy.targetPlayoutDelayFrames == 5)
+    }
+
+    @Test("AWDL receiver policy caps stale local backlog below legacy smoothest window")
+    func awdlReceiverPolicyCapsStaleLocalBacklogBelowLegacySmoothestWindow() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            awdlReceiverPlayoutDelayTargetMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+        )
+
+        #expect(policy.maximumQueueAgeMs < 300)
+        #expect(policy.maximumQueueAgeMs <= MirageAwdlMediaController.maximumReceiverQueueAgeMs)
+        #expect(policy.smoothestDisplayDebtCapMs <= MirageAwdlMediaController.maximumReceiverDisplayDebtMs)
+        #expect(policy.hardResetDebtMs <= MirageAwdlMediaController.maximumReceiverHardResetDebtMs)
+    }
+
+    @Test("AWDL drops stale local backlog even when target playout is still future")
+    func awdlDropsStaleLocalBacklogEvenWhenTargetPlayoutIsStillFuture() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            awdlReceiverPlayoutDelayTargetMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames = makeRenderFrames(count: 4, decodeTime: now - 0.215).map {
+            $0.withPlayoutMetadata(
+                transportPathKind: .awdl,
+                targetPlayoutTime: now + 0.120,
+                targetPlayoutDelayMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+            )
+        }
+
+        let selection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+
+        #expect(selection.frame == nil)
+        #expect(selection.trimResult.smoothestAgeDrops == 3)
+        #expect(selection.trimResult.smoothestDisplayDebtDrops == 0)
+        #expect(selection.trimResult.smoothestFifoResetCount == 1)
+        #expect(frames.count == 1)
+    }
+
+    @Test("AWDL underfill grows adaptive playout delay")
+    func awdlUnderfillGrowsAdaptivePlayoutDelay() throws {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        var buffer = MirageVideoPlayoutBuffer()
+        let now = CFAbsoluteTimeGetCurrent()
+        var frames = [makeRenderFrames(count: 1, decodeTime: now)[0]]
+
+        _ = buffer.enqueue(frames.removeFirst(), into: &frames, policy: policy, now: now)
+        let firstSelection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now + 0.060
+        )
+        let first = try #require(firstSelection.frame)
+        frames.removeAll()
+
+        buffer.recordDisplayTickWithoutFrame(policy: policy, now: now + 0.080)
+        let next = MirageRenderFrame(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            sequence: first.sequence + 1,
+            decodeTime: now + 0.085,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            remotePresentationTime: .invalid
+        )
+        _ = buffer.enqueue(next, into: &frames, policy: policy, now: now + 0.085)
+
+        let delayMs = try #require(frames.first?.targetPlayoutDelayMs)
+        #expect(delayMs >= 48)
+        #expect(delayMs <= MirageAwdlMediaController.maximumPlayoutDelayMs)
+    }
+
+    @Test("AWDL playout hold is not reported as pending-not-ready underflow")
+    func awdlPlayoutHoldIsNotReportedAsPendingNotReadyUnderflow() {
+        let streamID: StreamID = 422
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        #expect(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero) == nil)
+        MirageRenderStreamStore.shared.notePendingFrameNotReadyDisplayTick(for: streamID)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.pendingFrameNotReadyDisplayTickCount == 0)
+        #expect(telemetry.pendingFrameCount == 1)
+    }
+
+    @Test("AWDL does not use balanced recovery freshest fallback")
+    func awdlDoesNotUseBalancedRecoveryFreshestFallback() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames = makeRenderFrames(count: 1, decodeTime: now).map {
+            $0.withPlayoutMetadata(
+                transportPathKind: .awdl,
+                targetPlayoutTime: now + 0.200,
+                targetPlayoutDelayMs: MirageAwdlMediaController.basePlayoutDelayMs
+            )
+        }
+
+        let selection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+
+        #expect(selection.frame == nil)
+        #expect(selection.trimResult.smoothestFifoResetCount == 0)
+        #expect(frames.count == 1)
+    }
+
+    @Test("AWDL blocks balanced recovery fallback with queued future frames")
+    func awdlBlocksBalancedRecoveryFallbackWithQueuedFutureFrames() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames = makeRenderFrames(count: 4, decodeTime: now - 0.180).map {
+            $0.withPlayoutMetadata(
+                transportPathKind: .awdl,
+                targetPlayoutTime: now + 0.120,
+                targetPlayoutDelayMs: MirageAwdlMediaController.basePlayoutDelayMs
+            )
+        }
+
+        let selection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+
+        #expect(selection.frame == nil)
+        #expect(selection.trimResult.smoothestFifoResetCount == 0)
+        #expect(frames.count == 4)
+    }
+
+    @Test("AWDL path kind with unknown profile still uses AWDL playout policy")
+    func awdlPathKindWithUnknownProfileStillUsesAwdlPlayoutPolicy() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .unknown
+        )
+
+        #expect(policy.mediaPathProfile == .awdlRadio)
+        #expect(policy.latencyMode == .balanced)
+        #expect(policy.usesBufferedPlayout)
+        #expect(policy.baseTargetPlayoutDelayMs == MirageAwdlMediaController.basePlayoutDelayMs)
+    }
+
+    @Test("AWDL path kind with proximity wired profile does not use AWDL playout policy")
+    func awdlPathKindWithProximityWiredProfileDoesNotUseAwdlPlayoutPolicy() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 120,
+            displayFPS: 120,
+            transportPathKind: .awdl,
+            mediaPathProfile: .proximityWiredLike
+        )
+
+        #expect(policy.mediaPathProfile == .proximityWiredLike)
+        #expect(policy.latencyMode == .lowestLatency)
+        #expect(!policy.usesAwdlRealtimePolicy)
+        #expect(!policy.usesBufferedPlayout)
+        #expect(policy.targetPlayoutDelayFrames == 0)
+    }
+
+    @Test("AWDL path kind with smoothest unknown profile still resolves AWDL playout policy")
+    func awdlPathKindWithSmoothestUnknownProfileStillResolvesAwdlPlayoutPolicy() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .smoothest,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .unknown
+        )
+
+        #expect(policy.mediaPathProfile == .awdlRadio)
+        #expect(policy.latencyMode == .balanced)
+        #expect(policy.usesAwdlRealtimePolicy)
+        #expect(policy.targetPlayoutDelayFrames >= 1)
     }
 
     @Test("Balanced empty ticks do not grow playout delay")
@@ -380,6 +797,72 @@ struct RenderCadenceSmoothingTests {
         #expect(hardSelection.frame?.sequence == 10)
         #expect(hardSelection.trimResult.smoothestFifoResetCount == 1)
         #expect(hardFrames.count == 1)
+    }
+
+    @Test("AWDL preserves ordered playout instead of display debt FIFO reset")
+    func awdlPreservesOrderedPlayoutInsteadOfDisplayDebtFifoReset() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            awdlReceiverPlayoutDelayTargetMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames = makeRenderFrames(count: 4, decodeTime: now - 0.180).map {
+            $0.withPlayoutMetadata(
+                transportPathKind: .awdl,
+                targetPlayoutTime: now - 0.110,
+                targetPlayoutDelayMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+            )
+        }
+
+        let selection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+
+        #expect(selection.frame?.sequence == 1)
+        #expect(selection.trimResult.smoothestDisplayDebtDrops == 0)
+        #expect(selection.trimResult.smoothestFifoResetCount == 0)
+        #expect(frames.count == 4)
+    }
+
+    @Test("AWDL drops frames after bounded realtime display debt")
+    func awdlDropsFramesAfterBoundedRealtimeDisplayDebt() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .lowestLatency,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            awdlReceiverPlayoutDelayTargetMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames = makeRenderFrames(count: 4, decodeTime: now - 0.150).map {
+            $0.withPlayoutMetadata(
+                transportPathKind: .awdl,
+                targetPlayoutTime: now - 0.190,
+                targetPlayoutDelayMs: MirageAwdlMediaController.maximumPlayoutDelayMs
+            )
+        }
+
+        let selection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+
+        #expect(selection.frame?.sequence == 4)
+        #expect(selection.trimResult.smoothestDisplayDebtDrops == 3)
+        #expect(selection.trimResult.smoothestFifoResetCount == 1)
+        #expect(frames.count == 1)
     }
 
     @Test("Smoothest ProMotion tolerates short jitter without mass drops")

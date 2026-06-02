@@ -15,7 +15,7 @@ import Testing
 @Suite("Client Connection Endpoint Address Planning")
 struct ClientConnectionEndpointAddressPlanningTests {
     @MainActor
-    @Test("Client waits for AWDL scoped address evidence without attempting hostname fallback")
+    @Test("Client treats AWDL scoped address as a last resort without hostname fallback")
     func controlSessionAttemptsSkipAwdlWithoutScopedLiteral() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61050))
@@ -54,12 +54,12 @@ struct ClientConnectionEndpointAddressPlanningTests {
         )
 
         // No awdl0-scoped literal was resolved, so AWDL must not be attempted:
-        // the .local%awdl0 hostname form cannot bring up AWDL. The planner still
-        // reports pending AWDL evidence so bootstrap can briefly replan from a
-        // fresher Bonjour snapshot before committing to LAN fallback.
+        // the .local%awdl0 hostname form cannot bring up AWDL. Since plain AWDL
+        // is a last-resort route, a viable LAN fallback should not stall while
+        // waiting for fresher AWDL address evidence.
         #expect(attempts.allSatisfy { $0.routeTier != .awdl })
         #expect(service.hasPendingAwdlScopedAddressResolution(for: host))
-        #expect(service.shouldWaitForPendingAwdlScopedAddress(host: host, attempts: attempts))
+        #expect(!service.shouldWaitForPendingAwdlScopedAddress(host: host, attempts: attempts))
         // LAN fallback is still planned so the connection still succeeds.
         #expect(!attempts.isEmpty)
 
@@ -87,14 +87,54 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         let refreshedAwdlAttempts = refreshedAttempts.filter { $0.routeTier == .awdl }
         #expect(!service.hasPendingAwdlScopedAddressResolution(for: refreshedHost))
-        #expect(refreshedAwdlAttempts.map(\.transportKind) == [.udp, .tcp])
+        #expect(refreshedAwdlAttempts.map(\.transportKind) == [.udp])
         #expect(refreshedAwdlAttempts.allSatisfy { $0.isPeerToPeerPreferred })
         #expect(refreshedAwdlAttempts.allSatisfy { $0.proximityInterfaceNames == ["awdl0"] })
         #expect(
-            refreshedAttempts.prefix(refreshedAwdlAttempts.count).allSatisfy {
+            refreshedAttempts.suffix(refreshedAwdlAttempts.count).allSatisfy {
                 $0.routeTier == .awdl
             }
         )
+    }
+
+    @MainActor
+    @Test("Scoped AWDL direct attempts exclude TCP transport")
+    func scopedAwdlDirectAttemptsExcludeTCPTransport() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61052))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61053))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61054))
+        let awdlAddress = try #require(IPv6Address("fe80::3%awdl0"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(awdlAddress),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let awdlAttempts = attempts.filter { $0.routeTier == .awdl }
+
+        #expect(awdlAttempts.map(\.transportKind) == [.udp, .quic])
+        #expect(awdlAttempts.allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(!attempts.contains { $0.transportKind == .tcp })
     }
 
     @MainActor
@@ -152,40 +192,60 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        let proximityAttempts = Array(attempts.prefix(15))
-        let fallbackAttempts = Array(attempts.suffix(3))
-
-        #expect(attempts.count == 18)
-        #expect(proximityAttempts.allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(proximityAttempts.map { $0.proximityInterfaceNames.first ?? "" } == [
+        #expect(attempts.count == 17)
+        #expect(attempts.map { $0.proximityInterfaceNames.first ?? "" } == [
             "anpi0", "anpi0", "anpi0",
             "bridge100", "bridge100", "bridge100",
-            "llw0", "llw0", "llw0",
             "en3", "en3", "en3",
-            "awdl0", "awdl0", "awdl0",
+            "llw0", "llw0", "llw0",
+            "", "", "",
+            "awdl0", "awdl0",
         ])
-        #expect(proximityAttempts.map(\.routeTier) == [
+        #expect(attempts.map(\.routeTier) == [
             .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
             .bridge, .bridge, .bridge,
-            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
             .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .awdl, .awdl, .awdl,
+            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
+            .wifiLAN, .wifiLAN, .wifiLAN,
+            .awdl, .awdl,
         ])
-        #expect(proximityAttempts.map(\.transportKind) == [
+        #expect(attempts.map(\.transportKind) == [
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
+            .udp, .quic,
         ])
-        #expect(fallbackAttempts.allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(fallbackAttempts.map(\.transportKind) == [.udp, .quic, .tcp])
-        #expect(fallbackAttempts.map(\.routeTier) == [.wifiLAN, .wifiLAN, .wifiLAN])
+        #expect(attempts[0..<12].allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[12..<15].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts[15..<17].allSatisfy { $0.isPeerToPeerPreferred })
     }
 
     @MainActor
-    @Test("Client can prefer Wi-Fi LAN attempts before AWDL while keeping other proximity routes first")
-    func controlSessionAttemptsPreferWiFiBeforeAwdlWhenRequested() throws {
+    @Test("Wi-Fi preference ranks mixed wired LAN and Wi-Fi before LLW")
+    func wifiPreferenceRanksMixedWiredLANAndWiFiBeforeLowLatencyWireless() {
+        let service = MirageClientService(deviceName: "Test Device")
+
+        #expect(
+            service.controlSessionRouteRank(for: .lowLatencyWireless) <
+                service.controlSessionRouteRank(for: .mixedEthernetSameLAN)
+        )
+
+        service.preferWiFiBeforeAwdlProximity = true
+        #expect(
+            service.controlSessionRouteRank(for: .mixedEthernetSameLAN) <
+                service.controlSessionRouteRank(for: .wifiLAN)
+        )
+        #expect(
+            service.controlSessionRouteRank(for: .wifiLAN) <
+                service.controlSessionRouteRank(for: .lowLatencyWireless)
+        )
+    }
+
+    @MainActor
+    @Test("Client can prefer Wi-Fi LAN attempts before LLW while keeping wired proximity first")
+    func controlSessionAttemptsPreferWiFiBeforeLowLatencyWirelessWhenRequested() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61046))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61047))
@@ -242,13 +302,14 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(attempts.map(\.routeTier) == [
             .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
             .bridge, .bridge, .bridge,
-            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
             .wifiLAN, .wifiLAN, .wifiLAN,
-            .awdl, .awdl, .awdl,
+            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
+            .awdl, .awdl,
         ])
-        #expect(attempts.prefix(9).allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts[9..<12].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts.suffix(3).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.prefix(6).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[6..<9].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts[9..<12].allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(2).allSatisfy { $0.isPeerToPeerPreferred })
     }
 
     @MainActor
@@ -300,19 +361,20 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         #expect(proximityAttempts.map(\.routeTier) == [
             .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .awdl, .awdl, .awdl,
+            .awdl, .awdl,
         ])
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
     }
 
     @MainActor
-    @Test("Client ranks mixed Ethernet same LAN after AWDL before Wi-Fi LAN")
-    func controlSessionAttemptsRankMixedEthernetSameLANAfterAwdlBeforeWiFiLAN() throws {
+    @Test("Client ranks LLW before mixed Ethernet same LAN by default")
+    func controlSessionAttemptsRankLowLatencyWirelessBeforeMixedEthernetSameLANByDefault() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61046))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61047))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61048))
         let awdlAddress = try #require(IPv6Address("fe80::2%awdl0"))
+        let llwAddress = try #require(IPv6Address("fe80::3%llw0"))
         let host = try LoomPeer(
             id: deviceID,
             name: "Altair",
@@ -333,9 +395,11 @@ struct ClientConnectionEndpointAddressPlanningTests {
             ),
             resolvedAddresses: [
                 .ipv4(#require(IPv4Address("192.168.1.50"))),
+                .ipv6(llwAddress),
                 .ipv6(awdlAddress),
             ],
             discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "llw0", type: .other, index: 13),
                 LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
             ]
         )
@@ -351,11 +415,13 @@ struct ClientConnectionEndpointAddressPlanningTests {
         )
 
         #expect(attempts.map(\.routeTier) == [
-            .awdl, .awdl, .awdl,
+            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
             .mixedEthernetSameLAN, .mixedEthernetSameLAN, .mixedEthernetSameLAN,
+            .awdl, .awdl,
         ])
         #expect(attempts.prefix(3).allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts.suffix(3).allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts[3..<6].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(2).allSatisfy { $0.isPeerToPeerPreferred })
     }
 
     @MainActor
@@ -407,7 +473,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         #expect(proximityAttempts.map(\.routeTier) == [
             .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .awdl, .awdl, .awdl,
+            .awdl, .awdl,
         ])
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceKind == .wiredEthernet })
@@ -516,8 +582,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Client tries scoped AWDL address before resolved IP fallback")
-    func controlSessionAttemptsPreferScopedAwdlBeforeResolvedAddressFallback() throws {
+    @Test("Client tries scoped AWDL address after resolved IP fallback")
+    func controlSessionAttemptsPreferResolvedAddressFallbackBeforeScopedAwdl() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61029))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61033))
@@ -563,10 +629,6 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv6(awdlAddress),
             port: udpPort
         )
-        let expectedAwdlTCPEndpoint: NWEndpoint = .hostPort(
-            host: .ipv6(awdlAddress),
-            port: tcpPort
-        )
         let expectedAwdlQUICEndpoint: NWEndpoint = .hostPort(
             host: .ipv6(awdlAddress),
             port: quicPort
@@ -584,20 +646,18 @@ struct ClientConnectionEndpointAddressPlanningTests {
             port: tcpPort
         )
 
-        #expect(attempts.count == 6)
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp, .udp, .quic, .tcp])
-        #expect(attempts[0].isPeerToPeerPreferred)
-        #expect(attempts[0].endpoint.debugDescription == expectedAwdlUDPEndpoint.debugDescription)
-        #expect(attempts[1].isPeerToPeerPreferred)
-        #expect(attempts[1].endpoint.debugDescription == expectedAwdlQUICEndpoint.debugDescription)
-        #expect(attempts[2].isPeerToPeerPreferred)
-        #expect(attempts[2].endpoint.debugDescription == expectedAwdlTCPEndpoint.debugDescription)
-        #expect(!attempts[3].isPeerToPeerPreferred)
-        #expect(attempts[3].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
-        #expect(!attempts[4].isPeerToPeerPreferred)
-        #expect(attempts[4].endpoint.debugDescription == expectedFallbackQUICEndpoint.debugDescription)
-        #expect(!attempts[5].isPeerToPeerPreferred)
-        #expect(attempts[5].endpoint.debugDescription == expectedFallbackTCPEndpoint.debugDescription)
+        #expect(attempts.count == 5)
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp, .udp, .quic])
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
+        #expect(!attempts[1].isPeerToPeerPreferred)
+        #expect(attempts[1].endpoint.debugDescription == expectedFallbackQUICEndpoint.debugDescription)
+        #expect(!attempts[2].isPeerToPeerPreferred)
+        #expect(attempts[2].endpoint.debugDescription == expectedFallbackTCPEndpoint.debugDescription)
+        #expect(attempts[3].isPeerToPeerPreferred)
+        #expect(attempts[3].endpoint.debugDescription == expectedAwdlUDPEndpoint.debugDescription)
+        #expect(attempts[4].isPeerToPeerPreferred)
+        #expect(attempts[4].endpoint.debugDescription == expectedAwdlQUICEndpoint.debugDescription)
     }
 
     @MainActor
@@ -723,6 +783,156 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(attempts[0].routeTier == .awdl)
         #expect(attempts[0].isPeerToPeerPreferred)
         #expect(attempts[0].proximityInterfaceNames == ["awdl0"])
+    }
+
+    @MainActor
+    @Test("Active AWDL route suppression filters low-latency wireless endpoints")
+    func activeAwdlRouteSuppressionFiltersLowLatencyWirelessEndpoints() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61058))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61059))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61060))
+        let llwAddress = try #require(IPv6Address("fe80::6%llw0"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:sharedwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(llwAddress),
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "llw0", type: .other, index: 13),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.suppressAwdlProximityRoute(
+            for: host,
+            interfaceNames: ["llw0"],
+            duration: 900,
+            reason: "unit test"
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:sharedwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+        let expectedFallbackUDPEndpoint: NWEndpoint = try .hostPort(
+            host: .ipv4(#require(IPv4Address("192.168.1.50"))),
+            port: udpPort
+        )
+
+        #expect(attempts.count == 3)
+        #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(!attempts.contains { $0.routeTier == .lowLatencyWireless })
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Forced LLW route accepts low-latency wireless endpoints")
+    func forcedLowLatencyWirelessRouteAcceptsLowLatencyWirelessEndpoints() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61061))
+        let llwAddress = try #require(IPv6Address("fe80::7%llw0"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [.ipv6(llwAddress)],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "llw0", type: .other, index: 13),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.debugRouteOverride = MirageDebugRouteOverride(
+            transportKind: .udp,
+            interfaceKind: .llw
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(attempts.count == 1)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].routeTier == .lowLatencyWireless)
+        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].proximityInterfaceNames == ["llw0"])
+    }
+
+    @MainActor
+    @Test("Forced AWDL route does not claim low-latency wireless endpoints")
+    func forcedAwdlRouteDoesNotClaimLowLatencyWirelessEndpoints() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61062))
+        let llwAddress = try #require(IPv6Address("fe80::8%llw0"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [.ipv6(llwAddress)],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "llw0", type: .other, index: 13),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.debugRouteOverride = MirageDebugRouteOverride(
+            transportKind: .udp,
+            interfaceKind: .awdl
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(attempts.isEmpty)
     }
 
     @MainActor
@@ -957,8 +1167,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("AWDL attempts use short timeout before fallback")
-    func awdlAttemptsUseShortTimeoutBeforeFallback() throws {
+    @Test("AWDL attempts keep short timeout when reached as fallback")
+    func awdlAttemptsUseShortTimeoutWhenReachedAsFallback() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61032))
         let awdlAddress = try #require(IPv6Address("fe80::6%awdl0"))
@@ -988,12 +1198,15 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let attempts = service.controlSessionAttempts(for: host)
 
         #expect(attempts.count == 3)
-        #expect(attempts[0].isPeerToPeerPreferred)
-        #expect(service.controlSessionConnectTimeout(for: attempts[0]) == .seconds(2))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(6))
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(service.controlSessionConnectTimeout(for: attempts[0]) == .seconds(5))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(20))
         #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(service.controlSessionConnectTimeout(for: attempts[1]) == .seconds(5))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[1]) == .seconds(20))
+        #expect(service.controlSessionConnectTimeout(for: attempts[1]) == .seconds(30))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[1]) == .seconds(30))
+        #expect(attempts[2].isPeerToPeerPreferred)
+        #expect(service.controlSessionConnectTimeout(for: attempts[2]) == .seconds(2))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[2]) == .seconds(6))
     }
 
     @MainActor

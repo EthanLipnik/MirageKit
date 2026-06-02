@@ -122,6 +122,42 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.maxInFlightFrames == 3)
     }
 
+    @Test("AWDL desktop starts with sidecar-style host pipeline slack")
+    func awdlDesktopStartsWithSidecarStyleHostPipelineSlack() async {
+        let context = makeContext(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            mediaPathProfile: .awdlRadio
+        )
+
+        #expect(await context.latencyMode == .balanced)
+        #expect(await context.hostBufferingPolicy == .stability)
+        #expect(await context.useLowLatencyPipeline == false)
+        #expect(await context.minInFlightFrames == 2)
+        #expect(await context.maxInFlightFrames == 2)
+        #expect(await context.maxInFlightFramesCap == 3)
+        #expect(await context.frameBufferDepth == 3)
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 3)
+    }
+
+    @Test("AWDL 30 fps demoted desktop keeps bounded host pipeline")
+    func awdl30FPSDemotedDesktopKeepsBoundedHostPipeline() async {
+        let context = makeContext(
+            latencyMode: .balanced,
+            targetFrameRate: 30,
+            hostBufferingPolicy: .stability,
+            mediaPathProfile: .awdlRadio
+        )
+
+        #expect(await context.minInFlightFrames == 1)
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 2)
+        #expect(await context.frameBufferDepth == 2)
+    }
+
     @Test("120 Hz desktop smoothest keeps enough host pipeline depth")
     func desktopSmoothest120HzKeepsEnoughHostPipelineDepth() async {
         let context = makeContext(
@@ -143,7 +179,8 @@ struct DesktopLowLatencyInFlightTests {
         streamKind: VideoEncoder.StreamKind = .desktop,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         targetFrameRate: Int = 60,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
+        mediaPathProfile: MirageMediaPathProfile? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: targetFrameRate,
@@ -162,7 +199,8 @@ struct DesktopLowLatencyInFlightTests {
             runtimeQualityAdjustmentEnabled: false,
             lowLatencyHighResolutionCompressionBoostEnabled: false,
             latencyMode: latencyMode,
-            hostBufferingPolicy: hostBufferingPolicy
+            hostBufferingPolicy: hostBufferingPolicy,
+            mediaPathProfile: mediaPathProfile
         )
     }
 }

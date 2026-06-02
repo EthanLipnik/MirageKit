@@ -196,6 +196,7 @@ extension MirageRenderStreamStore {
                 selectedFrameNumber: nil,
                 renderedCursor: nil,
                 renderedFrameNumber: nil,
+                renderedFrameSubmittedTime: 0,
                 repeatedDisplayTicks: 0,
                 droppedForLatency: 0
             )
@@ -217,6 +218,7 @@ extension MirageRenderStreamStore {
             selectedFrameNumber: state.lastSelectedFrameNumber,
             renderedCursor: renderedCursor,
             renderedFrameNumber: state.lastSubmittedFrameNumber,
+            renderedFrameSubmittedTime: state.lastSubmittedTime,
             repeatedDisplayTicks: state.repeatedFrameCountSinceLastSnapshot,
             droppedForLatency: state.smoothestQueueDropsSinceLastSnapshot + state.lateFrameDropsSinceLastSnapshot
         )
@@ -278,6 +280,7 @@ extension MirageRenderStreamStore {
                 displayLayerNotReadyCount: 0,
                 repeatedFrameCount: 0,
                 displayTickNoFrameCount: 0,
+                pendingFrameNotReadyDisplayTickCount: 0,
                 frameArrivedAfterNoFrameTickCount: 0,
                 frameArrivalFallbackCount: 0,
                 frameArrivalFallbackScheduledCount: 0,
@@ -377,6 +380,8 @@ extension MirageRenderStreamStore {
         let displayLayerNotReadyCount = state.displayLayerNotReadyCountSinceLastSnapshot
         let repeatedFrameCount = state.repeatedFrameCountSinceLastSnapshot
         let displayTickNoFrameCount = state.displayTickNoFrameCountSinceLastSnapshot
+        let pendingFrameNotReadyDisplayTickCount = state
+            .pendingFrameNotReadyDisplayTickCountSinceLastSnapshot
         let frameArrivedAfterNoFrameTickCount = state.frameArrivedAfterNoFrameTickCountSinceLastSnapshot
         let frameArrivalFallbackCount = state.frameArrivalFallbackCountSinceLastSnapshot
         let frameArrivalFallbackScheduledCount = state.frameArrivalFallbackScheduledCountSinceLastSnapshot
@@ -393,7 +398,10 @@ extension MirageRenderStreamStore {
         )
         let displayTickIntervalP95Ms = percentile(displayTickIntervalSamples, percentile: 0.95)
         let displayTickIntervalP99Ms = percentile(displayTickIntervalSamples, percentile: 0.99)
-        let playoutDelayFrames = state.playoutDelayFrames
+        let playoutDelayFrames = latencyPolicy.usesAwdlRealtimePolicy
+            ? latencyPolicy.targetPlayoutDelayFrames
+            : state.playoutDelayFrames
+        state.playoutDelayFrames = playoutDelayFrames
         if consumesCounters {
             state.overwrittenPendingFramesSinceLastSnapshot = 0
             state.smoothestQueueDropsSinceLastSnapshot = 0
@@ -410,6 +418,7 @@ extension MirageRenderStreamStore {
             state.displayLayerNotReadyCountSinceLastSnapshot = 0
             state.repeatedFrameCountSinceLastSnapshot = 0
             state.displayTickNoFrameCountSinceLastSnapshot = 0
+            state.pendingFrameNotReadyDisplayTickCountSinceLastSnapshot = 0
             state.frameArrivedAfterNoFrameTickCountSinceLastSnapshot = 0
             state.frameArrivalFallbackCountSinceLastSnapshot = 0
             state.frameArrivalFallbackScheduledCountSinceLastSnapshot = 0
@@ -455,6 +464,7 @@ extension MirageRenderStreamStore {
             displayLayerNotReadyCount: displayLayerNotReadyCount,
             repeatedFrameCount: repeatedFrameCount,
             displayTickNoFrameCount: displayTickNoFrameCount,
+            pendingFrameNotReadyDisplayTickCount: pendingFrameNotReadyDisplayTickCount,
             frameArrivedAfterNoFrameTickCount: frameArrivedAfterNoFrameTickCount,
             frameArrivalFallbackCount: frameArrivalFallbackCount,
             frameArrivalFallbackScheduledCount: frameArrivalFallbackScheduledCount,
@@ -482,6 +492,36 @@ extension MirageRenderStreamStore {
         )
         state.displayTickNoFrameCountSinceLastSnapshot &+= 1
         state.lock.unlock()
+    }
+
+    func notePendingFrameNotReadyDisplayTick(for streamID: StreamID) {
+        let state = streamState(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+        state.lock.lock()
+        if pendingFrameIsWaitingForAwdlPlayoutLocked(state: state, now: now) {
+            state.lock.unlock()
+            return
+        }
+        state.pendingFrameNotReadyDisplayTickCountSinceLastSnapshot &+= 1
+        state.lock.unlock()
+    }
+
+    private func pendingFrameIsWaitingForAwdlPlayoutLocked(
+        state: MirageRenderStreamState,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        let policy = presentationLatencyPolicyLocked(state: state, now: now)
+        guard policy.usesAwdlRealtimePolicy,
+              let first = state.pendingFrames.first,
+              let targetPlayoutTime = first.targetPlayoutTime else {
+            return false
+        }
+        let targetDelayMs = first.targetPlayoutDelayMs > 0 ? first.targetPlayoutDelayMs : policy.baseTargetPlayoutDelayMs
+        let effectiveDelayMs = policy.effectiveTargetPlayoutDelayMs(adaptedDelayMs: targetDelayMs)
+        let reductionSeconds = max(0, targetDelayMs - effectiveDelayMs) / 1000
+        let effectiveTarget = max(first.decodeTime, targetPlayoutTime - reductionSeconds)
+        let readinessSlackSeconds = min(0.004, max(0.001, policy.displayFrameIntervalMs / 3000))
+        return now + readinessSlackSeconds < effectiveTarget
     }
 
     func noteFrameArrivedAfterNoFrameTick(for streamID: StreamID, delayMs: Double) {

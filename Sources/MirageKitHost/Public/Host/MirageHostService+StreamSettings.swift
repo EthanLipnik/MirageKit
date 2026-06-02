@@ -319,7 +319,16 @@ extension MirageHostService {
                         height: streamStart.encodedDimensions.height
                     )
                 )
-                let presentationResolution = displayResolution
+                let encodedResolution = CGSize(
+                    width: streamStart.encodedDimensions.width,
+                    height: streamStart.encodedDimensions.height
+                )
+                let geometryContract = reusableCurrentDesktopGeometryContract(
+                    displayPixelResolution: displayResolution,
+                    encodedPixelResolution: encodedResolution,
+                    refreshTargetHz: streamStart.targetFrameRate
+                )
+                desktopPresentationGeneration &+= 1
                 let message = DesktopStreamStartedMessage(
                     streamID: streamID,
                     desktopSessionID: desktopSessionID,
@@ -330,14 +339,36 @@ extension MirageHostService {
                     displayCount: 1,
                     dimensionToken: streamStart.dimensionToken,
                     acceptedMediaMaxPacketSize: streamStart.mediaMaxPacketSize,
+                    transitionPhase: .resize,
+                    transitionOutcome: .resized,
+                    desktopPresentationGeneration: desktopPresentationGeneration,
                     captureSource: desktopCaptureSource,
                     allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
-                    acceptedDisplayScaleFactor: desktopRequestedScaleFactor,
-                    presentationWidth: Int(presentationResolution.width.rounded()),
-                    presentationHeight: Int(presentationResolution.height.rounded())
+                    acceptedDisplayScaleFactor: geometryContract.acceptedDisplayScaleFactor,
+                    presentationWidth: Int(geometryContract.presentationResolution.width.rounded()),
+                    presentationHeight: Int(geometryContract.presentationResolution.height.rounded()),
+                    desktopGeometryContractID: geometryContract.contractID,
+                    desktopGeometrySceneIdentity: geometryContract.sceneIdentity,
+                    desktopGeometryDisplayPixelWidth: Int(geometryContract.displayPixelResolution.width.rounded()),
+                    desktopGeometryDisplayPixelHeight: Int(geometryContract.displayPixelResolution.height.rounded()),
+                    desktopGeometryEncodedPixelWidth: Int(geometryContract.encodedPixelResolution.width.rounded()),
+                    desktopGeometryEncodedPixelHeight: Int(geometryContract.encodedPixelResolution.height.rounded()),
+                    desktopGeometryRefreshTargetHz: geometryContract.refreshTargetHz ?? streamStart.targetFrameRate
                 )
                 if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
                     MirageLogger.error(.host, "Failed to encode desktopStreamStarted update for stream \(streamID)")
+                } else if geometryContract.contractID == nil {
+                    clearCurrentDesktopGeometryContract()
+                } else {
+                    recordCurrentDesktopGeometryContract(
+                        contractID: geometryContract.contractID,
+                        sceneIdentity: geometryContract.sceneIdentity,
+                        presentationResolution: geometryContract.presentationResolution,
+                        displayPixelResolution: geometryContract.displayPixelResolution,
+                        encodedPixelResolution: geometryContract.encodedPixelResolution,
+                        acceptedDisplayScaleFactor: geometryContract.acceptedDisplayScaleFactor,
+                        refreshTargetHz: geometryContract.refreshTargetHz
+                    )
                 }
             }
 

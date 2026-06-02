@@ -77,6 +77,168 @@ struct FrameReassemblerKeyframeRecoveryTests {
         #expect(reassembler.isAwaitingKeyframe == false)
     }
 
+    @Test("Newer dimension-token keyframe advances recovery token")
+    func newerDimensionTokenKeyframeAdvancesRecoveryToken() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.updateExpectedDimensionToken(0)
+
+        let newerTokenPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x11])
+        reassembler.processPacket(
+            newerTokenPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 9,
+                payload: newerTokenPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 2
+            )
+        )
+
+        #expect(deliveredCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == true)
+
+        let newerTokenKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x02])
+        reassembler.processPacket(
+            newerTokenKeyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 10,
+                payload: newerTokenKeyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 2
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe == false)
+
+        let currentTokenPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x12])
+        reassembler.processPacket(
+            currentTokenPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 11,
+                payload: currentTokenPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 2
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+    }
+
+    @Test("Fragmented newer dimension-token keyframe advances recovery token")
+    func fragmentedNewerDimensionTokenKeyframeAdvancesRecoveryToken() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.updateExpectedDimensionToken(0)
+
+        let newerTokenPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x11])
+        reassembler.processPacket(
+            newerTokenPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 19,
+                payload: newerTokenPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == true)
+
+        let firstFragment = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x02, 0xAA])
+        let secondFragment = Data([0xBB, 0xCC, 0xDD])
+        let frameByteCount = UInt32(firstFragment.count + secondFragment.count)
+
+        reassembler.processPacket(
+            secondFragment,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 20,
+                payload: secondFragment,
+                fragmentIndex: 1,
+                fragmentCount: 2,
+                frameByteCount: frameByteCount,
+                dimensionToken: 1
+            )
+        )
+        reassembler.processPacket(
+            firstFragment,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 20,
+                payload: firstFragment,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: frameByteCount,
+                dimensionToken: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe == false)
+
+        let currentTokenPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x12])
+        reassembler.processPacket(
+            currentTokenPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 21,
+                payload: currentTokenPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+    }
+
+    @Test("Older dimension-token keyframe stays rejected after token advance")
+    func olderDimensionTokenKeyframeStaysRejectedAfterTokenAdvance() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.updateExpectedDimensionToken(2)
+
+        let olderTokenKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            olderTokenKeyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 20,
+                payload: olderTokenKeyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == true)
+    }
+
     @Test("Dimension-change reset preserves delivered keyframe anchor")
     func dimensionChangeResetPreservesDeliveredKeyframeAnchor() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)

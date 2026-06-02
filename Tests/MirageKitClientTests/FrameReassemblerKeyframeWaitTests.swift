@@ -160,6 +160,131 @@ extension FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe == false)
     }
 
+    @Test("AWDL P-frame no-progress timeout uses bounded realtime window without keyframe wait")
+    func awdlPFrameNoProgressTimeoutUsesBoundedRealtimeWindowWithoutKeyframeWait() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        reassembler.setTransportPathKind(.awdl)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let incompletePFrame = Data(repeating: 0xAB, count: 1200)
+        reassembler.processPacket(
+            incompletePFrame,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: incompletePFrame,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        Thread.sleep(forTimeInterval: 0.36)
+
+        let timeoutProbe = Data(repeating: 0xCD, count: 1200)
+        reassembler.processPacket(
+            timeoutProbe,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 3,
+                payload: timeoutProbe,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe == false)
+        #expect(reassembler.snapshotMetrics.incompleteFrameTimeouts == 1)
+    }
+
+    @Test("Proximity wired AWDL path uses normal P-frame timeout without keyframe wait")
+    func proximityWiredAwdlPathUsesNormalPFrameTimeoutWithoutKeyframeWait() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        reassembler.setTransportPathKind(.awdl)
+        reassembler.setMediaPathProfile(.proximityWiredLike)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let incompletePFrame = Data(repeating: 0xAB, count: 1200)
+        reassembler.processPacket(
+            incompletePFrame,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: incompletePFrame,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        Thread.sleep(forTimeInterval: 0.45)
+
+        let timeoutProbe = Data(repeating: 0xCD, count: 1200)
+        reassembler.processPacket(
+            timeoutProbe,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 3,
+                payload: timeoutProbe,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe == false)
+        #expect(reassembler.snapshotMetrics.incompleteFrameTimeouts == 1)
+    }
+
     @Test("Buffered forward gap without pending expected frame skips forward")
     func bufferedForwardGapWithoutExpectedFrameSkipsForward() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
@@ -283,7 +408,7 @@ extension FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe == false)
         #expect(reassembler.snapshotMetrics.forwardGapTimeouts == 0)
 
-        Thread.sleep(forTimeInterval: 0.36)
+        Thread.sleep(forTimeInterval: 0.24)
         reassembler.pollTimeouts()
 
         #expect(deliveredCounter.value == 1)

@@ -86,9 +86,8 @@ extension MirageReceiverHealthController {
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
-        let remoteTransportDropCount = snapshot.hostStalePacketDrops ?? 0
-        let transportDropCount = remoteTransportDropCount +
-            (snapshot.hostSenderLocalDeadlineDrops ?? 0)
+        let remoteTransportDropCount = snapshot.hostTransportPressureDropCount
+        let transportDropCount = remoteTransportDropCount
         let clientIncompleteFrameTimeouts = snapshot.clientReassemblerIncompleteFrameTimeouts
         let clientIncompleteFrameNoProgressTimeouts =
             snapshot.clientReassemblerIncompleteFrameNoProgressTimeouts

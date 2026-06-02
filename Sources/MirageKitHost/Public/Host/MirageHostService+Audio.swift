@@ -323,7 +323,7 @@ extension MirageHostService {
         }
     }
 
-    private func setAudioSourceCaptureHandler(clientID: UUID, streamID: StreamID) async {
+    func setAudioSourceCaptureHandler(clientID: UUID, streamID: StreamID) async {
         for active in activeStreams where active.client.id == clientID {
             if active.id == streamID {
                 guard let context = streamsByID[active.id] else { continue }
