@@ -90,6 +90,113 @@ extension MirageHostService {
         )
     }
 
+    nonisolated static func runQualityTestTransferSession(
+        request: QualityTestRequestMessage,
+        transferByteCount: UInt64,
+        transferEngine: LoomTransferEngine,
+        clientContext: ClientContext,
+        hostCaptureCapability: MirageHostCaptureCapability?
+    ) async {
+        do {
+            let incomingTransfer = try await awaitQualityTestTransfer(
+                testID: request.testID,
+                transferEngine: transferEngine,
+                timeout: .seconds(10)
+            )
+            guard incomingTransfer.offer.byteLength == transferByteCount else {
+                try await incomingTransfer.decline()
+                throw MirageError.protocolError(
+                    "Connection test transfer size mismatch: expected \(transferByteCount), got \(incomingTransfer.offer.byteLength)"
+                )
+            }
+
+            let sink = MirageQualityTestDiscardSink()
+            try await incomingTransfer.accept(using: sink)
+            let terminalProgress = await MirageTransferProgress.terminalProgress(
+                from: incomingTransfer.progressEvents
+            )
+            guard terminalProgress?.state == .completed else {
+                throw MirageError.protocolError(
+                    "Connection test transfer did not complete"
+                )
+            }
+
+            let metrics = await sink.metrics()
+            let bytesWritten = Int(clamping: metrics.bytesWritten)
+            let completionMessage = QualityTestStageCompleteMessage(
+                testID: request.testID,
+                stageID: MirageQualityTestTransfer.stageID,
+                probeKind: .transport,
+                startedAtTimestampNs: metrics.startedAtTimestampNs,
+                measurementEndedAtTimestampNs: metrics.completedAtTimestampNs,
+                sentPacketCount: bytesWritten > 0 ? 1 : 0,
+                sentPayloadBytes: bytesWritten,
+                deliveryWindowMissed: false
+            )
+            try await clientContext.send(.qualityTestStageComplete, content: completionMessage)
+
+            let benchmarkMessage = QualityTestBenchmarkMessage(
+                testID: request.testID,
+                encodeMs: nil,
+                hostCaptureCapability: hostCaptureCapability
+            )
+            try await clientContext.send(.qualityTestResult, content: benchmarkMessage)
+
+            let durationSeconds = Double(metrics.durationMs) / 1000.0
+            let throughputMbps = durationSeconds > 0
+                ? (Double(metrics.bytesWritten) * 8.0) / durationSeconds / 1_000_000.0
+                : 0
+            MirageLogger.host(
+                "Quality test object transfer completed bytes=\(metrics.bytesWritten) durationMs=\(metrics.durationMs) throughput \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps"
+            )
+        } catch is CancellationError {
+            MirageLogger.host("Quality test object transfer cancelled")
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Quality test object transfer failed: "
+            )
+        }
+    }
+
+    nonisolated private static func awaitQualityTestTransfer(
+        testID: UUID,
+        transferEngine: LoomTransferEngine,
+        timeout: Duration
+    ) async throws -> LoomIncomingTransfer {
+        try await withThrowingTaskGroup(of: LoomIncomingTransfer.self) { group in
+            group.addTask {
+                for await transfer in transferEngine.incomingTransfers {
+                    guard MirageQualityTestTransfer.isMatchingTransfer(
+                        offer: transfer.offer,
+                        testID: testID
+                    ) else {
+                        continue
+                    }
+                    return transfer
+                }
+                throw MirageError.protocolError(
+                    "Connection test transfer stream closed before an offer arrived."
+                )
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw MirageError.protocolError(
+                    "Timed out waiting for connection test transfer offer."
+                )
+            }
+
+            let transfer = try await group.next() ?? {
+                throw MirageError.protocolError(
+                    "Connection test transfer wait ended unexpectedly."
+                )
+            }()
+            group.cancelAll()
+            return transfer
+        }
+    }
+
     nonisolated static func sendQualityTestStage(
         _ stage: MirageQualityTestPlan.Stage,
         testID: UUID,

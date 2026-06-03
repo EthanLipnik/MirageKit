@@ -34,7 +34,7 @@ struct MirageKitStreamControlSerializationTests {
         #expect(serialized.count == mirageAudioHeaderSize)
         let decoded = AudioPacketHeader.deserialize(from: serialized)
         #expect(decoded != nil)
-        #expect(decoded?.version == 260602)
+        #expect(decoded?.version == 260603)
         #expect(decoded?.version == MirageKit.protocolVersion)
         #expect(decoded?.codec == .pcm16LE)
         #expect(decoded?.flags.contains(.discontinuity) == true)
@@ -475,13 +475,15 @@ struct MirageKitStreamControlSerializationTests {
             plan: MirageQualityTestPlan(stages: []),
             payloadBytes: 1188,
             mediaMaxPacketSize: 1400,
-            stopAfterFirstBreach: true
+            stopAfterFirstBreach: true,
+            transferByteCount: 100_000_000
         )
         let qualityEnvelope = try ControlMessage(type: .qualityTestRequest, content: qualityRequest)
         let (decodedQualityEnvelope, _) = try requireParsedControlMessage(from: qualityEnvelope.serialize())
         let decodedQualityRequest = try decodedQualityEnvelope.decode(QualityTestRequestMessage.self)
         #expect(decodedQualityRequest.mediaMaxPacketSize == 1400)
         #expect(decodedQualityRequest.stopAfterFirstBreach)
+        #expect(decodedQualityRequest.transferByteCount == 100_000_000)
 
         let started = StreamStartedMessage(
             streamID: 42,

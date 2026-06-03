@@ -107,6 +107,34 @@ extension MirageHostService {
         qualityTestIDsByClientID[client.id] = request.testID
         let sessionToken = qualityTestSessionTokensByClientID[client.id] ?? UUID()
 
+        if request.transferByteCount > 0 {
+            let hostCaptureCapability = hostCaptureCapabilityProvider?()
+            let transferByteCount = request.transferByteCount
+            let task = Task.detached(
+                priority: .userInitiated
+            ) { [weak self, clientContext, request, transferByteCount, hostCaptureCapability] in
+                defer {
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        guard self.qualityTestSessionTokensByClientID[client.id] == sessionToken else { return }
+                        self.qualityTestTasksByClientID.removeValue(forKey: client.id)
+                        self.qualityTestSessionTokensByClientID.removeValue(forKey: client.id)
+                        self.qualityTestIDsByClientID.removeValue(forKey: client.id)
+                    }
+                }
+
+                await Self.runQualityTestTransferSession(
+                    request: request,
+                    transferByteCount: transferByteCount,
+                    transferEngine: clientContext.transferEngine,
+                    clientContext: clientContext,
+                    hostCaptureCapability: hostCaptureCapability
+                )
+            }
+            qualityTestTasksByClientID[client.id] = task
+            return
+        }
+
         let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
         let pathKind = pathSnapshot?.kind
         let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(

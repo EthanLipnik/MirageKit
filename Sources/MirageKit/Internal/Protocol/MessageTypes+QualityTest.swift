@@ -26,19 +26,24 @@ package struct QualityTestRequestMessage: Codable {
     /// Whether the host should stop after the first stage that breaches limits.
     package let stopAfterFirstBreach: Bool
 
+    /// Byte count for a Loom object-transfer based connection test, or zero for staged probes.
+    package let transferByteCount: UInt64
+
     /// Creates a quality-test request.
     package init(
         testID: UUID,
         plan: MirageQualityTestPlan,
         payloadBytes: Int,
         mediaMaxPacketSize: Int,
-        stopAfterFirstBreach: Bool = false
+        stopAfterFirstBreach: Bool = false,
+        transferByteCount: UInt64 = 0
     ) {
         self.testID = testID
         self.plan = plan
         self.payloadBytes = payloadBytes
         self.mediaMaxPacketSize = mediaMaxPacketSize
         self.stopAfterFirstBreach = stopAfterFirstBreach
+        self.transferByteCount = transferByteCount
     }
 }
 

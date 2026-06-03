@@ -107,6 +107,7 @@ struct HostSharedClipboardTests {
                 sessionID: sessionID,
                 client: client,
                 controlChannel: serverControl,
+                transferEngine: LoomTransferEngine(session: pair.server),
                 pathSnapshot: nil
             )
             let mediaSecurityContext = MirageMediaSecurityContext(

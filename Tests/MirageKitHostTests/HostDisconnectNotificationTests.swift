@@ -50,6 +50,7 @@ struct HostDisconnectNotificationTests {
             sessionID: sessionID,
             client: client,
             controlChannel: serverControl,
+            transferEngine: LoomTransferEngine(session: pair.server),
             pathSnapshot: nil
         )
         host.connectedClients = [client]

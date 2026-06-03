@@ -20,6 +20,8 @@ struct ClientContext {
     let client: MirageConnectedClient
     /// Ordered control transport used for host-to-client messages.
     let controlChannel: MirageControlChannel
+    /// Session-scoped Loom transfer engine for bulk objects on this client session.
+    let transferEngine: LoomTransferEngine
     /// Loom network-path metadata captured when the session was accepted.
     let pathSnapshot: LoomSessionNetworkPathSnapshot?
     /// Mirage/Loom feature identifiers negotiated during authenticated session setup.
@@ -29,12 +31,14 @@ struct ClientContext {
         sessionID: UUID,
         client: MirageConnectedClient,
         controlChannel: MirageControlChannel,
+        transferEngine: LoomTransferEngine,
         pathSnapshot: LoomSessionNetworkPathSnapshot?,
         negotiatedFeatures: Set<String> = []
     ) {
         self.sessionID = sessionID
         self.client = client
         self.controlChannel = controlChannel
+        self.transferEngine = transferEngine
         self.pathSnapshot = pathSnapshot
         self.negotiatedFeatures = negotiatedFeatures
     }

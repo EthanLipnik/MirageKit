@@ -249,6 +249,7 @@ extension MirageHostService {
                 sessionID: sessionID,
                 client: client,
                 controlChannel: controlChannel,
+                transferEngine: LoomTransferEngine(session: session),
                 pathSnapshot: pathSnapshot,
                 negotiatedFeatures: Set(context.negotiatedFeatures)
             )

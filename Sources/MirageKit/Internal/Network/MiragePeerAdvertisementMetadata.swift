@@ -29,7 +29,14 @@ package enum MiragePeerAdvertisementMetadata {
     package static let desktopGeometryContractFeature = "mirage.desktop-geometry-contract.v1"
 
     package static var sessionSupportedFeatures: [String] {
-        Array(Set(LoomSessionHelloRequest.defaultFeatures + [desktopGeometryContractFeature])).sorted()
+        Array(
+            Set(
+                LoomSessionHelloRequest.defaultFeatures + [
+                    desktopGeometryContractFeature,
+                ]
+            )
+        )
+        .sorted()
     }
 
     package static func supportsDesktopGeometryContract(negotiatedFeatures: Set<String>) -> Bool {

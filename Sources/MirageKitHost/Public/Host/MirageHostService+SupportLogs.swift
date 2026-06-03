@@ -149,11 +149,13 @@ extension MirageHostService {
                 session,
                 expectedClient: expectedClient
             )
+            guard let expectedClientContext = clientsByID[expectedClient.id] else {
+                throw MirageError.protocolError("Missing client context for Loom transfer session")
+            }
 
             let source = try LoomFileTransferSource(url: archiveURL)
             let byteLength = await source.byteLength
-            let engine = LoomTransferEngine(session: session)
-            let outgoing = try await engine.offerTransfer(
+            let outgoing = try await expectedClientContext.transferEngine.offerTransfer(
                 LoomTransferOffer(
                     logicalName: archiveURL.lastPathComponent,
                     byteLength: byteLength,

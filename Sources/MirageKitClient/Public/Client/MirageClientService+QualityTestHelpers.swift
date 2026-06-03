@@ -12,6 +12,8 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    nonisolated static let qualityTestObjectTransferStageCompletionTimeout: Duration = .seconds(5)
+
     nonisolated static func validatedQualityTestStageResult(
         _ stageResult: MirageQualityTestSummary.StageResult,
         metrics: (
@@ -108,7 +110,8 @@ extension MirageClientService {
             plan: plan,
             payloadBytes: payloadBytes,
             mediaMaxPacketSize: mediaMaxPacketSize,
-            stopAfterFirstBreach: stopAfterFirstBreach
+            stopAfterFirstBreach: stopAfterFirstBreach,
+            transferByteCount: 0
         )
         try await sendControlMessage(.qualityTestRequest, content: request)
 
@@ -219,6 +222,129 @@ extension MirageClientService {
         return results
     }
 
+    func runQualityTestObjectTransferSession(
+        testID: UUID,
+        payloadBytes: Int,
+        mediaMaxPacketSize: Int,
+        onStageUpdate: (@MainActor (MirageQualityTestProgressUpdate) -> Void)? = nil
+    ) async throws -> [MirageQualityTestSummary.StageResult] {
+        guard let transferEngine else {
+            throw MirageError.protocolError("Missing authenticated Loom transfer engine for connection test")
+        }
+
+        let stage = MirageQualityTestPlan.Stage(
+            id: MirageQualityTestTransfer.stageID,
+            probeKind: .transport,
+            targetBitrateBps: 0,
+            durationMs: 0,
+            settleGraceMs: 0
+        )
+        let plan = MirageQualityTestPlan(stages: [stage])
+        let transferBox = QualityTestOutgoingTransferBox()
+
+        return try await withTaskCancellationHandler {
+            qualityTestPendingTestID = testID
+            qualityTestStageCompletionBuffer.removeAll()
+            defer {
+                completeQualityTestStageCompletionWaiter(result: nil)
+                qualityTestStageCompletionBuffer.removeAll()
+            }
+
+            let request = QualityTestRequestMessage(
+                testID: testID,
+                plan: plan,
+                payloadBytes: payloadBytes,
+                mediaMaxPacketSize: mediaMaxPacketSize,
+                transferByteCount: MirageQualityTestTransfer.byteCount
+            )
+            try await sendControlMessage(.qualityTestRequest, content: request)
+
+            onStageUpdate?(
+                MirageQualityTestProgressUpdate(
+                    currentStage: 1,
+                    totalStages: 1,
+                    completedStages: 0,
+                    probeKind: .transport,
+                    targetBitrateBps: 0,
+                    latestCompletedStageResult: nil,
+                    transferredBytes: 0,
+                    totalBytes: MirageQualityTestTransfer.byteCount
+                )
+            )
+
+            let source = MirageQualityTestNoiseSource()
+            let outgoingTransfer = try await transferEngine.offerTransfer(
+                LoomTransferOffer(
+                    logicalName: MirageQualityTestTransfer.logicalName,
+                    byteLength: MirageQualityTestTransfer.byteCount,
+                    contentType: "application/octet-stream",
+                    metadata: MirageQualityTestTransfer.metadata(testID: testID)
+                ),
+                source: source
+            )
+            transferBox.store(outgoingTransfer)
+
+            let progressTask = Task { @MainActor in
+                for await progress in outgoingTransfer.makeProgressObserver() {
+                    onStageUpdate?(
+                        MirageQualityTestProgressUpdate(
+                            currentStage: 1,
+                            totalStages: 1,
+                            completedStages: progress.state == .completed ? 1 : 0,
+                            probeKind: .transport,
+                            targetBitrateBps: 0,
+                            latestCompletedStageResult: nil,
+                            transferredBytes: progress.bytesTransferred,
+                            totalBytes: progress.totalBytes
+                        )
+                    )
+                }
+            }
+            defer {
+                progressTask.cancel()
+            }
+
+            let terminalProgress = await MirageTransferProgress.terminalProgress(
+                from: outgoingTransfer.progressEvents
+            )
+            switch terminalProgress?.state {
+            case .completed:
+                break
+            case .cancelled, .declined:
+                throw CancellationError()
+            default:
+                throw MirageError.protocolError("Connection test transfer did not complete.")
+            }
+
+            guard let completion = await awaitQualityTestStageCompletion(
+                testID: testID,
+                stageID: stage.id,
+                timeout: Self.qualityTestObjectTransferStageCompletionTimeout
+            ) else {
+                throw MirageError.protocolError("Connection test failed: timed out waiting for transfer completion.")
+            }
+            let stageResult = try buildQualityTestTransferStageResult(completion)
+            onStageUpdate?(
+                MirageQualityTestProgressUpdate(
+                    currentStage: 1,
+                    totalStages: 1,
+                    completedStages: 1,
+                    probeKind: .transport,
+                    targetBitrateBps: 0,
+                    latestCompletedStageResult: stageResult,
+                    transferredBytes: MirageQualityTestTransfer.byteCount,
+                    totalBytes: MirageQualityTestTransfer.byteCount
+                )
+            )
+            transferBox.clear()
+            return [stageResult]
+        } onCancel: {
+            Task {
+                await transferBox.cancel()
+            }
+        }
+    }
+
     func runQualityTestStage(
         testID: UUID,
         stageID: Int,
@@ -309,4 +435,71 @@ extension MirageClientService {
         )
     }
 
+    func buildQualityTestTransferStageResult(
+        _ completion: QualityTestStageCompleteMessage
+    ) throws -> MirageQualityTestSummary.StageResult {
+        guard completion.stageID == MirageQualityTestTransfer.stageID else {
+            throw MirageError.protocolError("Connection test failed: received transfer completion for stage \(completion.stageID).")
+        }
+        guard completion.probeKind == .transport else {
+            throw MirageError.protocolError("Connection test failed: transfer completion used \(completion.probeKind.rawValue).")
+        }
+        guard completion.sentPayloadBytes > 0, completion.sentPacketCount > 0 else {
+            throw MirageError.protocolError("Connection test failed: no transfer bytes were reported.")
+        }
+
+        let actualDurationMs = max(
+            1,
+            Int((completion.measurementEndedAtTimestampNs &- completion.startedAtTimestampNs) / 1_000_000)
+        )
+        let throughputBps = Int(
+            Double(completion.sentPayloadBytes * 8) / (Double(actualDurationMs) / 1000.0)
+        )
+        return MirageQualityTestSummary.StageResult(
+            stageID: MirageQualityTestTransfer.stageID,
+            probeKind: .transport,
+            targetBitrateBps: 0,
+            durationMs: actualDurationMs,
+            throughputBps: throughputBps,
+            lossPercent: 0,
+            sentPacketCount: completion.sentPacketCount,
+            receivedPacketCount: completion.sentPacketCount,
+            sentPayloadBytes: completion.sentPayloadBytes,
+            receivedPayloadBytes: completion.sentPayloadBytes,
+            deliveryWindowMissed: false,
+            receiveSpanMs: Double(actualDurationMs),
+            interArrivalP95Ms: nil,
+            interArrivalP99Ms: nil,
+            deliveryWindowMissReason: nil
+        )
+    }
+
+}
+
+private final class QualityTestOutgoingTransferBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var transfer: LoomOutgoingTransfer?
+
+    func store(_ transfer: LoomOutgoingTransfer) {
+        lock.lock()
+        self.transfer = transfer
+        lock.unlock()
+    }
+
+    func clear() {
+        _ = takeTransfer()
+    }
+
+    func cancel() async {
+        let transfer = takeTransfer()
+        await transfer?.cancel()
+    }
+
+    private func takeTransfer() -> LoomOutgoingTransfer? {
+        lock.lock()
+        defer { lock.unlock() }
+        let transfer = transfer
+        self.transfer = nil
+        return transfer
+    }
 }

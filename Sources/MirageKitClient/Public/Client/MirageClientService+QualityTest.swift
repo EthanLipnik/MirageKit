@@ -33,6 +33,10 @@ public struct MirageQualityTestProgressUpdate: Sendable {
     public let targetBitrateBps: Int
     /// Most recent completed stage result, when available.
     public let latestCompletedStageResult: MirageQualityTestSummary.StageResult?
+    /// Bytes transferred so far for object-transfer based tests.
+    public let transferredBytes: UInt64?
+    /// Total bytes expected for object-transfer based tests.
+    public let totalBytes: UInt64?
 
     /// Creates a quality-test progress update.
     public init(
@@ -41,7 +45,9 @@ public struct MirageQualityTestProgressUpdate: Sendable {
         completedStages: Int,
         probeKind: MirageQualityTestPlan.ProbeKind,
         targetBitrateBps: Int,
-        latestCompletedStageResult: MirageQualityTestSummary.StageResult?
+        latestCompletedStageResult: MirageQualityTestSummary.StageResult?,
+        transferredBytes: UInt64? = nil,
+        totalBytes: UInt64? = nil
     ) {
         self.currentStage = currentStage
         self.totalStages = totalStages
@@ -49,6 +55,8 @@ public struct MirageQualityTestProgressUpdate: Sendable {
         self.probeKind = probeKind
         self.targetBitrateBps = targetBitrateBps
         self.latestCompletedStageResult = latestCompletedStageResult
+        self.transferredBytes = transferredBytes
+        self.totalBytes = totalBytes
     }
 }
 
@@ -79,8 +87,9 @@ extension MirageClientService {
 
             let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
             let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
+            let usesObjectTransfer = includeThroughput
             let executionPlan =
-                includeThroughput
+                includeThroughput && !usesObjectTransfer
                     ? Self.qualityTestExecutionPlan(for: mode)
                     : QualityTestExecutionPlan(
                         plan: MirageQualityTestPlan(stages: []),
@@ -90,22 +99,32 @@ extension MirageClientService {
                     )
 
             if includeThroughput {
-                MirageLogger.client(
-                    "Quality test starting (payload \(payloadBytes)B, p2p \(networkConfig.enablePeerToPeer), maxPacket \(mediaMaxPacketSize)B, stages \(executionPlan.plan.stages.count))"
-                )
+                if usesObjectTransfer {
+                    MirageLogger.client(
+                        "Quality test starting object transfer (bytes \(MirageQualityTestTransfer.byteCount), p2p \(networkConfig.enablePeerToPeer), maxPacket \(mediaMaxPacketSize)B)"
+                    )
+                } else {
+                    MirageLogger.client(
+                        "Quality test starting (payload \(payloadBytes)B, p2p \(networkConfig.enablePeerToPeer), maxPacket \(mediaMaxPacketSize)B, stages \(executionPlan.plan.stages.count))"
+                    )
+                }
             } else {
                 MirageLogger.client("Quality baseline starting (stream probe only)")
             }
 
-            let benchmarkTask = Task { try await runDecodeBenchmark() }
+            let benchmarkTask: Task<Double, Error>? = usesObjectTransfer
+                ? nil
+                : Task { try await runDecodeBenchmark() }
             let hostBenchmarkTimeout = Duration.milliseconds(
-                executionPlan.plan.totalDurationMs + 20000
+                usesObjectTransfer
+                    ? 125_000
+                    : executionPlan.plan.totalDurationMs + 20000
             )
             let hostBenchmarkTask = Task { [weak self] in
                 await self?.awaitQualityTestBenchmark(testID: testID, timeout: hostBenchmarkTimeout)
             }
             defer {
-                benchmarkTask.cancel()
+                benchmarkTask?.cancel()
                 hostBenchmarkTask.cancel()
                 if qualityTestPendingTestID == testID {
                     qualityTestPendingTestID = nil
@@ -119,42 +138,66 @@ extension MirageClientService {
             }
             try Task.checkCancellation()
 
-            let stageResults = try await runQualityTestSession(
-                testID: testID,
-                plan: executionPlan.plan,
-                payloadBytes: payloadBytes,
-                mediaMaxPacketSize: mediaMaxPacketSize,
-                mode: mode,
-                stopAfterFirstBreach: executionPlan.stopAfterFirstBreach,
-                onStageUpdate: onStageUpdate
-            )
+            let stageResults: [MirageQualityTestSummary.StageResult]
+            if usesObjectTransfer {
+                stageResults = try await runQualityTestObjectTransferSession(
+                    testID: testID,
+                    payloadBytes: payloadBytes,
+                    mediaMaxPacketSize: mediaMaxPacketSize,
+                    onStageUpdate: onStageUpdate
+                )
+            } else {
+                stageResults = try await runQualityTestSession(
+                    testID: testID,
+                    plan: executionPlan.plan,
+                    payloadBytes: payloadBytes,
+                    mediaMaxPacketSize: mediaMaxPacketSize,
+                    mode: mode,
+                    stopAfterFirstBreach: executionPlan.stopAfterFirstBreach,
+                    onStageUpdate: onStageUpdate
+                )
+            }
 
-            let clientDecodeMs = try await benchmarkTask.value
+            let clientDecodeMs = try await benchmarkTask?.value
             let hostBenchmark = await hostBenchmarkTask.value
 
-            let transportSummary = Self.summarizeQualityTestPhase(
-                stageResults: stageResults,
-                measurementStageIDs: executionPlan.transportMeasurementStageIDs,
-                throughputFloor: Self.qualityTestProfile(for: mode).transport.throughputFloor,
-                lossCeiling: Self.qualityTestProfile(for: mode).transport.lossCeiling,
-                payloadBytes: payloadBytes,
-                requiresLossBelowCeiling: mode == .connectionLimit,
-                allowsMeasuredFallback: mode != .connectionLimit
-            )
-            let streamingSummary = Self.summarizeQualityTestPhase(
-                stageResults: stageResults,
-                measurementStageIDs: executionPlan.streamingReplayMeasurementStageIDs,
-                throughputFloor: Self.qualityTestProfile(for: mode).streamingReplay.throughputFloor,
-                lossCeiling: Self.qualityTestProfile(for: mode).streamingReplay.lossCeiling,
-                payloadBytes: payloadBytes,
-                requiresLossBelowCeiling: mode == .connectionLimit,
-                allowsMeasuredFallback: mode != .connectionLimit
-            )
-            let resolvedBitrates = Self.resolvedQualityTestSummaryBitrates(
-                mode: mode,
-                transportSummary: transportSummary,
-                streamingSummary: streamingSummary
-            )
+            let resolvedBitrates: (transportHeadroomBps: Int, streamingSafeBitrateBps: Int)
+            let lossPercent: Double
+            if usesObjectTransfer {
+                let measuredThroughputBps = stageResults.map(\.throughputBps).max() ?? 0
+                resolvedBitrates = (
+                    transportHeadroomBps: measuredThroughputBps,
+                    streamingSafeBitrateBps: measuredThroughputBps
+                )
+                lossPercent = 0
+            } else {
+                let transportSummary = Self.summarizeQualityTestPhase(
+                    stageResults: stageResults,
+                    measurementStageIDs: executionPlan.transportMeasurementStageIDs,
+                    throughputFloor: Self.qualityTestProfile(for: mode).transport.throughputFloor,
+                    lossCeiling: Self.qualityTestProfile(for: mode).transport.lossCeiling,
+                    payloadBytes: payloadBytes,
+                    requiresLossBelowCeiling: mode == .connectionLimit,
+                    allowsMeasuredFallback: mode != .connectionLimit
+                )
+                let streamingSummary = Self.summarizeQualityTestPhase(
+                    stageResults: stageResults,
+                    measurementStageIDs: executionPlan.streamingReplayMeasurementStageIDs,
+                    throughputFloor: Self.qualityTestProfile(for: mode).streamingReplay.throughputFloor,
+                    lossCeiling: Self.qualityTestProfile(for: mode).streamingReplay.lossCeiling,
+                    payloadBytes: payloadBytes,
+                    requiresLossBelowCeiling: mode == .connectionLimit,
+                    allowsMeasuredFallback: mode != .connectionLimit
+                )
+                resolvedBitrates = Self.resolvedQualityTestSummaryBitrates(
+                    mode: mode,
+                    transportSummary: transportSummary,
+                    streamingSummary: streamingSummary
+                )
+                lossPercent =
+                    streamingSummary.bitrateBps > 0
+                        ? streamingSummary.lossPercent : transportSummary.lossPercent
+            }
 
             if resolvedBitrates.transportHeadroomBps <= 0
                 && resolvedBitrates.streamingSafeBitrateBps <= 0 {
@@ -163,9 +206,6 @@ extension MirageClientService {
                 )
             }
 
-            let lossPercent =
-                streamingSummary.bitrateBps > 0
-                    ? streamingSummary.lossPercent : transportSummary.lossPercent
             return MirageQualityTestSummary(
                 testID: testID,
                 rttMs: rttMs,
