@@ -182,6 +182,12 @@ extension StreamContext {
         guard droppedStreamID == streamID, isRunning else { return }
         let label = "Packet sender dependency drop"
         let queuedBytes = packetSender?.queuedByteCount ?? 0
+        if dependencyRecoveryPendingDropFrameNumber == frameNumber,
+           dependencyRecoveryPendingDropReason == reason,
+           frameChainSuppressesPFrames {
+            dependencyRecoveryPendingQueuedBytes = queuedBytes
+            return
+        }
         dependencyRecoveryPendingDropFrameNumber = frameNumber
         dependencyRecoveryPendingDropReason = reason
         dependencyRecoveryPendingQueuedBytes = queuedBytes
@@ -250,7 +256,7 @@ extension StreamContext {
             now: now
         )
         await noteEmergencyKeyframePrepared(using: budgetDecision)
-        let bypassesRecoveryCooldown = packetSenderDependencyDropBypassesRecoveryCooldown()
+        let bypassesRecoveryCooldown = packetSenderDependencyDropBypassesRecoveryCooldown(reason: reason)
         if !bypassesRecoveryCooldown, isRecoveryKeyframeCooldownActive(now: now) {
             dependencyRecoveryRetryNecessary = true
             logRecoveryKeyframeCooldownSuppression(reason: label, now: now)
@@ -285,8 +291,18 @@ extension StreamContext {
         )
     }
 
-    private func packetSenderDependencyDropBypassesRecoveryCooldown() -> Bool {
-        mediaPathProfile.usesAwdlRadioPolicy || latestReceiverRecoveryCause == .decodeError
+    private func packetSenderDependencyDropBypassesRecoveryCooldown(
+        reason: StreamPacketSender.DependencyFrameDropReason
+    ) -> Bool {
+        switch reason {
+        case .transportDrop,
+             .queueEviction,
+             .staleChain,
+             .oversizedFrame:
+            true
+        case .generationAbort:
+            mediaPathProfile.usesAwdlRadioPolicy || latestReceiverRecoveryCause == .decodeError
+        }
     }
 
     private func schedulePacketSenderDependencyRecoveryKeyframeRetry(

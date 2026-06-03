@@ -114,7 +114,7 @@ extension StreamContext {
         }
         return min(
             resolvedQualityCeiling,
-            max(floor, min(base, activeQuality * 0.35, resolvedQualityCeiling * 0.35))
+            max(floor, min(base, activeQuality * 0.65, resolvedQualityCeiling * 0.65))
         )
     }
 
@@ -122,7 +122,7 @@ extension StreamContext {
         let decisionQuality = decision?.keyframeQuality ?? emergencyKeyframeQuality()
         let floor = emergencyKeyframeQualityFloor()
         let emergencyCeiling = max(floor, min(keyframeQuality, resolvedQualityCeiling))
-        if decision?.reason == .adaptiveRepair {
+        if decision != nil {
             pendingEmergencyKeyframeQuality = max(
                 floor,
                 min(decisionQuality, emergencyCeiling, resolvedQualityCeiling)
@@ -205,6 +205,7 @@ extension StreamContext {
         }
 
         guard didSend else {
+            logFailedPFrameTransport(completion)
             await handlePacketSenderDependencyFrameDrop(
                 streamID: completion.streamID,
                 frameNumber: frameNumber,
@@ -214,6 +215,20 @@ extension StreamContext {
         }
         await handleCleanPFrameTransport(frameNumber: frameNumber, now: now)
         scheduleProcessingIfNeeded()
+    }
+
+    private func logFailedPFrameTransport(_ completion: StreamPacketSender.FrameTransportCompletion) {
+        let sendMs = completion.sendCompletionMs.formatted(.number.precision(.fractionLength(1)))
+        let transportMs = completion.transportDurationMs.formatted(.number.precision(.fractionLength(1)))
+        let drops = completion.queuedUnreliableDropCounts
+        MirageLogger.stream(
+            "event=p_frame_transport_failure stream=\(streamID) frame=\(completion.frameNumber) " +
+                "frameBytes=\(completion.frameByteCount) wireBytes=\(completion.wireBytes) " +
+                "packets=\(completion.packetCount) sendMs=\(sendMs) transportMs=\(transportMs) " +
+                "deadlineExpired=\(drops.deadlineExpired) queueLimit=\(drops.queueLimit) " +
+                "superseded=\(drops.superseded) unsupportedTransport=\(drops.unsupportedTransport) " +
+                "closed=\(drops.closed) token=\(completion.dimensionToken)"
+        )
     }
 
     private func recordFrameTransportCompletion(_ completion: StreamPacketSender.FrameTransportCompletion) {

@@ -41,6 +41,22 @@ extension StreamPacketSender {
                     )
             }
         }
+        if didDrop, !queuedUnreliableDrops.isEmpty {
+            let sendMs = max(0, (completedAt - item.encodedAt) * 1000)
+            let transportMs = max(0, (completedAt - startedAt) * 1000)
+            MirageLogger.stream(
+                "event=frame_transport_drop stream=\(item.streamID) frame=\(item.frameNumber) " +
+                    "keyframe=\(item.isKeyframe) frameBytes=\(item.frameByteCount) " +
+                    "wireBytes=\(item.wireBytes) packets=\(totalFragments) " +
+                    "sendMs=\((sendMs * 10).rounded() / 10) " +
+                    "transportMs=\((transportMs * 10).rounded() / 10) " +
+                    "deadlineExpired=\(queuedUnreliableDrops.deadlineExpired) " +
+                    "queueLimit=\(queuedUnreliableDrops.queueLimit) " +
+                    "superseded=\(queuedUnreliableDrops.superseded) " +
+                    "unsupportedTransport=\(queuedUnreliableDrops.unsupportedTransport) " +
+                    "closed=\(queuedUnreliableDrops.closed)"
+            )
+        }
         onFrameTransportCompleted?(FrameTransportCompletion(
             streamID: item.streamID,
             frameNumber: item.frameNumber,
@@ -49,6 +65,7 @@ extension StreamPacketSender {
             frameByteCount: item.frameByteCount,
             wireBytes: item.wireBytes,
             packetCount: totalFragments,
+            queuedUnreliableDropCounts: queuedUnreliableDrops,
             dimensionToken: item.dimensionToken,
             encodedAt: item.encodedAt,
             startedAt: startedAt,

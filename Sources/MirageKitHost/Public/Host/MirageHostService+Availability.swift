@@ -96,5 +96,42 @@ extension MirageHostService {
         advertisementRefreshTask?.cancel()
         advertisementRefreshTask = nil
     }
+
+    static func advertisement(
+        _ advertisement: LoomPeerAdvertisement,
+        withDirectTransportPorts ports: [LoomTransportKind: UInt16]
+    ) -> LoomPeerAdvertisement {
+        let pathKindsByTransport = advertisement.directTransports.reduce(
+            into: [LoomTransportKind: LoomDirectPathKind]()
+        ) { result, transport in
+            if let pathKind = transport.pathKind {
+                result[transport.transportKind] = pathKind
+            }
+        }
+        let directTransports = LoomTransportKind.allCases.compactMap {
+            transportKind -> LoomDirectTransportAdvertisement? in
+            guard let port = ports[transportKind], port > 0 else {
+                return nil
+            }
+            return LoomDirectTransportAdvertisement(
+                transportKind: transportKind,
+                port: port,
+                pathKind: pathKindsByTransport[transportKind]
+            )
+        }
+
+        return LoomPeerAdvertisement(
+            protocolVersion: advertisement.protocolVersion,
+            deviceID: advertisement.deviceID,
+            identityKeyID: advertisement.identityKeyID,
+            deviceType: advertisement.deviceType,
+            modelIdentifier: advertisement.modelIdentifier,
+            iconName: advertisement.iconName,
+            machineFamily: advertisement.machineFamily,
+            hostName: advertisement.hostName,
+            directTransports: directTransports,
+            metadata: advertisement.metadata
+        )
+    }
 }
 #endif

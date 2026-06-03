@@ -383,6 +383,7 @@ extension StreamPacketSender {
         let frameByteCount: Int
         let wireBytes: Int
         let packetCount: Int
+        let queuedUnreliableDropCounts: QueuedUnreliableDropCounts
         let dimensionToken: UInt16
         let encodedAt: CFAbsoluteTime
         let startedAt: CFAbsoluteTime

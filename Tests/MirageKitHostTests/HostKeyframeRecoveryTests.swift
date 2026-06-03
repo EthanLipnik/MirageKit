@@ -364,6 +364,17 @@ struct HostKeyframeRecoveryTests {
             return
         }
 
+        await context.handleFrameTransportCompleted(
+            frameTransportCompletion(frameNumber: 45, isKeyframe: false, didSend: true, now: now + 0.01)
+        )
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        let stateAfterCleanPFrame = await context.frameChainState
+        guard case .emergencyKeyframePending = stateAfterCleanPFrame else {
+            Issue.record("Expected clean P-frame completion to stay blocked before receiver acknowledgement")
+            return
+        }
+
         await context.applyReceiverMediaFeedback(
             receiverRecoveryFeedback(
                 sequence: 2,
@@ -418,8 +429,9 @@ struct HostKeyframeRecoveryTests {
 
     @Test("Dropped transport P-frame starts dependency chain repair")
     func droppedTransportPFrameStartsDependencyChainRepair() async {
-        let context = makeContext(transportPathKind: .awdl, mediaPathProfile: .awdlRadio)
+        let context = makeContext()
         await context.configureRunningForRepairRetryTest()
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
         let now = CFAbsoluteTimeGetCurrent()
 
         await context.handleFrameTransportCompleted(
@@ -428,6 +440,11 @@ struct HostKeyframeRecoveryTests {
 
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
         #expect(await context.pendingKeyframeReason == "Packet sender dependency drop")
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.dependencyRecoveryPendingDropFrameNumber == 45)
+        #expect(await context.dependencyRecoveryPendingDropReason == .transportDrop)
+        #expect(await context.dependencyRecoveryRetryNecessary == false)
         let state = await context.frameChainState
         guard case .emergencyKeyframePending = state else {
             Issue.record("Expected dropped transport P-frame to queue emergency keyframe repair")
@@ -1150,6 +1167,7 @@ struct HostKeyframeRecoveryTests {
             frameByteCount: isKeyframe ? 48_000 : 12_000,
             wireBytes: isKeyframe ? 50_000 : 13_000,
             packetCount: isKeyframe ? 38 : 10,
+            queuedUnreliableDropCounts: didSend ? QueuedUnreliableDropCounts() : QueuedUnreliableDropCounts(deadlineExpired: 1),
             dimensionToken: 0,
             encodedAt: now - 0.006,
             startedAt: now - 0.004,

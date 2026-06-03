@@ -457,6 +457,19 @@ extension StreamPacketSender {
             packetBuffer.release()
             self.reduceQueuedBytes(accountedPayloadBytes)
             if let drop = error as? LoomQueuedUnreliableSendDrop {
+                self.logQueuedUnreliableTransportDrop(
+                    drop,
+                    metadata: metadata,
+                    accountedPayloadBytes: accountedPayloadBytes
+                )
+                if !metadata.isKeyframe, !metadata.isParity {
+                    self.queueLock.withLock {
+                        self.markDependencyFrameDroppedLocked(
+                            context.item,
+                            reason: .transportDrop
+                        )
+                    }
+                }
                 context.transportCompletionTracker.finishDroppedSubmission(
                     drop,
                     countsAsFrameDrop: !metadata.isParity
@@ -476,6 +489,11 @@ extension StreamPacketSender {
         context.transportCompletionTracker.registerSubmission()
         sendPacket(packet, metadata) { error in
             if let drop = error as? LoomQueuedUnreliableSendDrop {
+                self.logQueuedUnreliableTransportDrop(
+                    drop,
+                    metadata: metadata,
+                    accountedPayloadBytes: packet.count
+                )
                 context.transportCompletionTracker.finishDroppedSubmission(drop, countsAsFrameDrop: false)
             } else {
                 context.transportCompletionTracker.finishSubmission(error: error)
@@ -506,6 +524,28 @@ extension StreamPacketSender {
             return item.sendDeadline
         }
         return hardSendDeadline(for: item)
+    }
+
+    private nonisolated func logQueuedUnreliableTransportDrop(
+        _ drop: LoomQueuedUnreliableSendDrop,
+        metadata: TransportPacketMetadata,
+        accountedPayloadBytes: Int
+    ) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let deadlineRemainingMs = Int(max(0, (metadata.sendDeadline - now) * 1000).rounded())
+        let profile = drop.profile?.rawValue ?? "nil"
+        let frameID = drop.frameID.map(String.init) ?? "nil"
+        let loomFragmentIndex = drop.fragmentIndex.map(String.init) ?? "nil"
+        let loomFragmentCount = drop.fragmentCount.map(String.init) ?? "nil"
+        MirageLogger.stream(
+            "event=queued_unreliable_transport_drop stream=\(metadata.streamID) " +
+                "frame=\(metadata.frameNumber) fragment=\(metadata.fragmentIndex)/\(metadata.fragmentCount) " +
+                "keyframe=\(metadata.isKeyframe) parity=\(metadata.isParity) recovery=\(metadata.isRecovery) " +
+                "loomReason=\(drop.reason.rawValue) profile=\(profile) frameID=\(frameID) " +
+                "loomFragment=\(loomFragmentIndex)/\(loomFragmentCount) " +
+                "deadlineRemainingMs=\(deadlineRemainingMs) accountedPayloadBytes=\(accountedPayloadBytes) " +
+                "queuedBytes=\(queuedByteCount)"
+        )
     }
 
     /// Copies packet payload bytes immediately after the fixed Mirage frame header.

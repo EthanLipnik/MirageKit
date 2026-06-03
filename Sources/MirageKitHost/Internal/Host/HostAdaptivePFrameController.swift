@@ -90,6 +90,7 @@ struct HostAdaptivePFrameController: Equatable {
         case clientRecovery = "client-recovery"
         case senderDeadline = "sender-deadline"
         case receiverFreshness = "receiver-freshness"
+        case transportBacklog = "transport-backlog"
         case adaptiveRepair = "adaptive-repair"
     }
 
@@ -203,6 +204,7 @@ struct HostAdaptivePFrameController: Equatable {
     private static let receiverPanicCutScale = 0.45
     private static let senderDeadlineCutScale = 0.70
     private static let receiverFreshnessCutScale = 0.55
+    private static let transportBacklogCutScale = 0.78
     private static let minimumFrameWireBytes = 6 * 1024
     private static let minimumPacketCount = 8
     private static let nearFloorTargetRatio = 1.25
@@ -956,6 +958,63 @@ struct HostAdaptivePFrameController: Equatable {
             scale: Self.receiverFreshnessCutScale,
             state: .severe,
             reason: .receiverFreshness,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: currentQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: steadyQualityCeiling,
+            latencyMode: latencyMode,
+            now: now
+        )
+    }
+
+    mutating func recordTransportBacklogPressure(
+        severe: Bool,
+        currentBitrateBps: Int?,
+        requestedTargetBitrateBps: Int?,
+        startupCeilingBps: Int?,
+        minimumBitrateFloorBps: Int,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        currentQuality: Float,
+        qualityFloor: Float,
+        steadyQualityCeiling: Float,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        receiverPlayoutDelayTargetMs: Double? = nil,
+        awdlQualityReductionAllowed: Bool = true,
+        now: CFAbsoluteTime
+    ) -> HostFrameBudgetDecision? {
+        guard frameBudgetReductionAllowed(
+            mediaPathProfile: mediaPathProfile,
+            awdlQualityReductionAllowed: awdlQualityReductionAllowed
+        ) else {
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+            return nil
+        }
+        let input = budgetInput(
+            currentBitrateBps: currentBitrateBps,
+            requestedTargetBitrateBps: requestedTargetBitrateBps,
+            startupCeilingBps: startupCeilingBps,
+            minimumBitrateFloorBps: minimumBitrateFloorBps,
+            mediaPathProfile: mediaPathProfile
+        )
+        initializeIfNeeded(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        let scale = severe
+            ? min(Self.transportBacklogCutScale, Self.receiverFreshnessCutScale)
+            : Self.transportBacklogCutScale
+        return cutBudget(
+            scale: scale,
+            state: severe ? .severe : .pressured,
+            reason: .transportBacklog,
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,

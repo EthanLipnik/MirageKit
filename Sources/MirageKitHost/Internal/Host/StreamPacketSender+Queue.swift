@@ -205,6 +205,7 @@ extension StreamPacketSender {
         dependencyRecoveryRequiresKeyframe = true
         latestDependencyDropGeneration = item.generation
         latestDependencyDropFrameNumber = max(latestDependencyDropFrameNumber, item.frameNumber)
+        discardQueuedNonKeyframesLocked(countAsHoldDrops: true)
         guard !wasAlreadyHolding else { return }
         onDependencyFrameDropped?(item.streamID, item.frameNumber, reason)
     }

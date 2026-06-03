@@ -344,10 +344,10 @@ extension StreamPacketSenderRegressionTests {
         try await Task.sleep(for: .milliseconds(50))
 
         let telemetry = await sender.telemetrySnapshot
-        #expect(telemetry.stalePacketDrops == 3)
-        #expect(telemetry.senderLocalDeadlineDrops == 3)
+        #expect(telemetry.stalePacketDrops == 1)
+        #expect(telemetry.senderLocalDeadlineDrops == 1)
         #expect(telemetry.lateNonKeyframeSends == 2)
-        #expect(telemetry.nonKeyframeHoldDrops == 1)
+        #expect(telemetry.nonKeyframeHoldDrops == 3)
         #expect(submittedPackets.read { $0.map(\.frameNumber) } == [501, 502])
         #expect(dependencyDropCount.read { $0 == 1 })
         #expect(await sender.requiresDependencyRecoveryKeyframe())

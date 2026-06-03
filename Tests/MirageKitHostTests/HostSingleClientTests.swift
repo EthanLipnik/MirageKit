@@ -15,6 +15,53 @@ import Testing
 #if os(macOS)
 @Suite("Host Single-Client")
 struct HostSingleClientTests {
+    @Test("Bound direct transport ports stay in host advertisement")
+    @MainActor
+    func boundDirectTransportPortsStayInHostAdvertisement() {
+        let baseAdvertisement = LoomPeerAdvertisement(
+            protocolVersion: 260603,
+            deviceID: UUID(),
+            identityKeyID: "identity-key",
+            deviceType: .mac,
+            modelIdentifier: "Mac16,5",
+            iconName: "macstudio",
+            machineFamily: "desktop",
+            hostName: "altair.local",
+            directTransports: [
+                LoomDirectTransportAdvertisement(
+                    transportKind: .udp,
+                    port: 1,
+                    pathKind: .wifi
+                ),
+            ],
+            metadata: ["mirage.vpn-access": "1"]
+        )
+
+        let updatedAdvertisement = MirageHostService.advertisement(
+            baseAdvertisement,
+            withDirectTransportPorts: [
+                .udp: 53812,
+                .quic: 64995,
+                .tcp: 53812,
+            ]
+        )
+
+        #expect(updatedAdvertisement.protocolVersion == baseAdvertisement.protocolVersion)
+        #expect(updatedAdvertisement.deviceID == baseAdvertisement.deviceID)
+        #expect(updatedAdvertisement.identityKeyID == baseAdvertisement.identityKeyID)
+        #expect(updatedAdvertisement.deviceType == baseAdvertisement.deviceType)
+        #expect(updatedAdvertisement.modelIdentifier == baseAdvertisement.modelIdentifier)
+        #expect(updatedAdvertisement.iconName == baseAdvertisement.iconName)
+        #expect(updatedAdvertisement.machineFamily == baseAdvertisement.machineFamily)
+        #expect(updatedAdvertisement.hostName == baseAdvertisement.hostName)
+        #expect(updatedAdvertisement.metadata == baseAdvertisement.metadata)
+        #expect(updatedAdvertisement.directTransports == [
+            LoomDirectTransportAdvertisement(transportKind: .tcp, port: 53812),
+            LoomDirectTransportAdvertisement(transportKind: .quic, port: 64995),
+            LoomDirectTransportAdvertisement(transportKind: .udp, port: 53812, pathKind: .wifi),
+        ])
+    }
+
     @Test("Single-client slot is exclusive")
     @MainActor
     func singleClientSlotIsExclusive() {

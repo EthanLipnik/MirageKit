@@ -371,6 +371,82 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Transport data drop starts dependency repair before sibling fragments complete")
+    func transportDataDropStartsDependencyRepairBeforeSiblingFragmentsComplete() async throws {
+        let submittedHeaders = Locked<[FrameHeader]>([])
+        let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
+        let dependencyDrops = Locked<[(frameNumber: UInt32, reason: StreamPacketSender.DependencyFrameDropReason)]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 4,
+            sendPacketWithMetadata: { packet, metadata, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedHeaders.withLock { $0.append(header) }
+                if header.frameNumber == 77, header.fragmentIndex == 0 {
+                    onComplete(LoomQueuedUnreliableSendDrop(
+                        reason: .deadlineExpired,
+                        profile: .interactiveMedia,
+                        frameID: UInt64(header.frameNumber),
+                        fragmentIndex: metadata.fragmentIndex,
+                        fragmentCount: metadata.fragmentCount
+                    ))
+                } else {
+                    pendingCompletions.withLock {
+                        $0.append(StreamPacketSenderPendingSendCompletion(onComplete: onComplete))
+                    }
+                }
+            },
+            onDependencyFrameDropped: { _, frameNumber, reason in
+                dependencyDrops.withLock { $0.append((frameNumber, reason)) }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 20),
+                streamID: 42,
+                frameNumber: 77,
+                sequenceNumberStart: 770,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 0.5
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            dependencyDrops.read { !$0.isEmpty }
+        }
+
+        #expect(dependencyDrops.read { $0.first?.frameNumber } == 77)
+        #expect(dependencyDrops.read { $0.first?.reason } == .transportDrop)
+        #expect(await sender.requiresDependencyRecoveryKeyframe())
+
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 4),
+                streamID: 42,
+                frameNumber: 78,
+                sequenceNumberStart: 780,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 0.5
+            )
+        )
+
+        let telemetry = try await waitForStreamPacketTelemetry(sender) {
+            $0.nonKeyframeHoldDrops >= 1
+        }
+        #expect(telemetry.nonKeyframeHoldDrops >= 1)
+        #expect(submittedHeaders.read { !$0.contains(where: { $0.frameNumber == 78 }) })
+
+        completePendingStreamPacketSends(pendingCompletions)
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+        await sender.stop()
+    }
+
     @Test("AWDL P-frame metadata uses hard playout deadline")
     func awdlPFrameMetadataUsesHardPlayoutDeadline() async throws {
         let sentMetadata = Locked<[StreamPacketSender.TransportPacketMetadata]>([])
@@ -493,10 +569,10 @@ struct StreamPacketSenderRegressionTests {
         }
 
         let telemetry = try await waitForStreamPacketTelemetry(sender) {
-            $0.stalePacketDrops >= 6
+            $0.stalePacketDrops + $0.nonKeyframeHoldDrops >= 6
         }
         #expect(telemetry.unstartedPFrameCount <= StreamPacketSender.maxAwdlQueuedNonKeyframes)
-        #expect(telemetry.stalePacketDrops >= 6)
+        #expect(telemetry.stalePacketDrops + telemetry.nonKeyframeHoldDrops >= 6)
         #expect(await sender.requiresDependencyRecoveryKeyframe())
 
         await sender.stop()

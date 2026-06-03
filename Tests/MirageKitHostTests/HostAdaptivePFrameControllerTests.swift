@@ -943,6 +943,31 @@ struct HostAdaptivePFrameControllerTests {
             allowedSpikeRatio: 2.0
         ) == 20)
     }
+
+    @Test("Transport backlog pressure trims P-frame budget without collapsing recovery quality")
+    func transportBacklogPressureTrimsPFrameBudgetWithoutCollapsingRecoveryQuality() throws {
+        var controller = HostAdaptivePFrameController()
+        let optionalDecision = controller.recordTransportBacklogPressure(
+            severe: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            now: 10
+        )
+        let decision = try #require(optionalDecision)
+
+        #expect(decision.reason == .transportBacklog)
+        #expect(decision.state == .pressured)
+        #expect(decision.targetBitrateBps < 60_000_000)
+        #expect(decision.quality > 0.40)
+        #expect(decision.keyframeQuality > decision.quality)
+    }
 }
 
 private func recordDelivery(

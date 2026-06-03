@@ -140,21 +140,11 @@ public extension MirageHostService {
     private func startListeners() async throws {
         do {
             MirageLogger.host("Starting Loom authenticated listeners...")
-            let ports = try await loomNode.startAuthenticatedAdvertising(
-                serviceName: serviceName,
-                helloProvider: { [weak self] in
-                    guard let self else {
-                        throw MirageError.protocolError("Host service deallocated during Loom hello creation")
-                    }
-                    return try await MainActor.run {
-                        try self.makeSessionHelloRequest()
-                    }
-                }
-            ) { [weak self] session in
-                Task { @MainActor [weak self] in
-                    await self?.handleIncomingSession(session)
-                }
-            }
+            let ports = try await startAuthenticatedAdvertisingWithDirectPortFallback()
+            advertisedPeerAdvertisement = Self.advertisement(
+                advertisedPeerAdvertisement,
+                withDirectTransportPorts: ports
+            )
             let controlPort = ports[.udp] ?? 0
             let directQUICPort = ports[.quic]
             remoteControlPort = directQUICPort
@@ -186,6 +176,49 @@ public extension MirageHostService {
             }
             state = .error(error.localizedDescription)
             throw error
+        }
+    }
+
+    private func startAuthenticatedAdvertisingWithDirectPortFallback() async throws -> [LoomTransportKind: UInt16] {
+        do {
+            return try await startAuthenticatedAdvertisingUsingCurrentConfiguration()
+        } catch where Self.isRetryableListenerStartError(error) && hasRequestedDirectListenerPorts {
+            MirageLogger.host(
+                "Configured direct listener ports unavailable; retrying with system-assigned ports: \(error)"
+            )
+            await loomNode.stopAdvertising()
+            clearRequestedDirectListenerPorts()
+            return try await startAuthenticatedAdvertisingUsingCurrentConfiguration()
+        }
+    }
+
+    private var hasRequestedDirectListenerPorts: Bool {
+        loomNode.configuration.controlPort > 0 ||
+            loomNode.configuration.udpPort > 0 ||
+            loomNode.configuration.quicPort > 0
+    }
+
+    private func clearRequestedDirectListenerPorts() {
+        loomNode.configuration.controlPort = 0
+        loomNode.configuration.udpPort = 0
+        loomNode.configuration.quicPort = 0
+    }
+
+    private func startAuthenticatedAdvertisingUsingCurrentConfiguration() async throws -> [LoomTransportKind: UInt16] {
+        try await loomNode.startAuthenticatedAdvertising(
+            serviceName: serviceName,
+            helloProvider: { [weak self] in
+                guard let self else {
+                    throw MirageError.protocolError("Host service deallocated during Loom hello creation")
+                }
+                return try await MainActor.run {
+                    try self.makeSessionHelloRequest()
+                }
+            }
+        ) { [weak self] session in
+            Task { @MainActor [weak self] in
+                await self?.handleIncomingSession(session)
+            }
         }
     }
 

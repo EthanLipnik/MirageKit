@@ -34,6 +34,15 @@ public enum MirageKit {
     /// UDP port used for overlay reachability probes.
     public static let overlayProbePort: UInt16 = 9852
 
+    /// Preferred TCP listener port used for direct Mirage sessions.
+    public static let directTCPPort: UInt16 = 9853
+
+    /// Preferred UDP listener port used for direct Mirage sessions.
+    public static let directUDPPort: UInt16 = 9854
+
+    /// Preferred QUIC listener port used for direct Mirage sessions.
+    public static let directQUICPort: UInt16 = 9855
+
     /// Stable user-visible substring emitted when bounded first-frame recovery is exhausted.
     public static let firstFramePresentationFailureTerminalMessage =
         "Stream failed to present its first frame after bounded recovery."

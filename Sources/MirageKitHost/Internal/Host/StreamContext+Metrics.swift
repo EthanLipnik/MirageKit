@@ -53,6 +53,7 @@ extension StreamContext {
             let packetTelemetry = await packetSender?.consumeTelemetrySnapshot(
                 queuedUnreliableProfile: mediaSendProfile
             )
+            await applyQueuedUnreliableBurstPressureIfNeeded(packetTelemetry, now: now)
             let displayP3CoverageStatus = resolvedDisplayP3CoverageStatus(
                 capture: captureValidation,
                 encoder: encoderValidation

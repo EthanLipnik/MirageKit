@@ -920,6 +920,7 @@ private extension StreamContext {
             frameByteCount: wireBytes,
             wireBytes: wireBytes,
             packetCount: max(1, (wireBytes + 1_199) / 1_200),
+            queuedUnreliableDropCounts: QueuedUnreliableDropCounts(),
             dimensionToken: 0,
             encodedAt: now - 0.010,
             startedAt: now - 0.008,
