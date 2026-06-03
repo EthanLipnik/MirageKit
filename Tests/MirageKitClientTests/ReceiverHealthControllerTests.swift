@@ -500,6 +500,83 @@ struct ReceiverHealthControllerTests {
         )
     }
 
+    @Test("Automatic transport health ignores cadence-only delivery collapse")
+    func automaticTransportHealthIgnoresCadenceOnlyDeliveryCollapse() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostEncodedFPS = 60
+        snapshot.receivedFPS = 8
+        snapshot.decodedFPS = 8
+        snapshot.submittedFPS = 8
+        snapshot.uniqueSubmittedFPS = 8
+
+        for sampleIndex in 0 ..< 4 {
+            let action = controller.advance(
+                snapshots: [snapshot],
+                currentBitrateBps: 48_000_000,
+                ceilingBps: 48_000_000,
+                now: 10 + Double(sampleIndex * 2),
+                usesCadenceDeliveryPressure: false
+            )
+            #expect(action == .none)
+        }
+
+        #expect(controller.state == .stable)
+        #expect(controller.lastTransportPressureReason == nil)
+    }
+
+    @Test("Automatic transport health ignores presentation-gap-only cadence")
+    func automaticTransportHealthIgnoresPresentationGapOnlyCadence() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientPresentationStallCount = 1
+        snapshot.clientWorstPresentationGapMs = 900
+
+        for sampleIndex in 0 ..< 4 {
+            let action = controller.advance(
+                snapshots: [snapshot],
+                currentBitrateBps: 48_000_000,
+                ceilingBps: 48_000_000,
+                now: 10 + Double(sampleIndex * 2),
+                usesCadenceDeliveryPressure: false
+            )
+            #expect(action == .none)
+        }
+
+        #expect(controller.state == .stable)
+        #expect(controller.lastTransportPressureReason == nil)
+    }
+
+    @Test("Automatic transport health backs off on stale receiver freshness")
+    func automaticTransportHealthBacksOffOnStaleReceiverFreshness() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.pendingFrameCount = 3
+        snapshot.clientPendingFrameAgeMs = 650
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 10,
+            usesCadenceDeliveryPressure: false
+        )
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 12,
+            usesCadenceDeliveryPressure: false
+        )
+
+        #expect(action == .backoff(targetBitrateBps: 40_800_000))
+        #expect(
+            controller.lastTransportPressureReason ==
+                "client freshness debt pendingAge=650.0ms displayDebt=0.0ms/0.0ms " +
+                "presentationGap=0.0ms stalls=0 reassemblerFrames=0 reassemblerBytes=0B"
+        )
+    }
+
     @Test("Support-log receive gaps back off without explicit drops")
     func supportLogReceiveGapsBackOffWithoutExplicitDrops() {
         var controller = MirageReceiverHealthController()

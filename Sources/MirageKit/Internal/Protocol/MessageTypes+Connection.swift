@@ -169,7 +169,16 @@ package struct TransportRefreshRequestMessage: Codable {
     }
 }
 
-/// Lease granted to let a client keep the control session alive briefly while backgrounded.
+/// How a host should retain a backgrounded client stream session.
+package enum ClientBackgroundLeaseMode: String, Codable, Equatable {
+    /// Retain the session only until the supplied duration expires.
+    case timed
+
+    /// Retain the paused stream session until the client foregrounds or the session ends.
+    case suspendedUntilForeground
+}
+
+/// Lease granted to let a client keep the control session alive while backgrounded.
 package struct ClientBackgroundLeaseMessage: Codable, Equatable {
     /// Unique identifier for this lease grant.
     package let leaseID: UUID
@@ -177,12 +186,37 @@ package struct ClientBackgroundLeaseMessage: Codable, Equatable {
     /// Lease duration in seconds.
     package let durationSeconds: TimeInterval
 
+    /// Host retention mode for the backgrounded session.
+    package let mode: ClientBackgroundLeaseMode
+
     /// Creates a background lease grant.
     package init(
         leaseID: UUID = UUID(),
-        durationSeconds: TimeInterval
+        durationSeconds: TimeInterval,
+        mode: ClientBackgroundLeaseMode = .timed
     ) {
         self.leaseID = leaseID
         self.durationSeconds = durationSeconds
+        self.mode = mode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case leaseID
+        case durationSeconds
+        case mode
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        leaseID = try container.decode(UUID.self, forKey: .leaseID)
+        durationSeconds = try container.decode(TimeInterval.self, forKey: .durationSeconds)
+        mode = try container.decode(ClientBackgroundLeaseMode.self, forKey: .mode)
+    }
+
+    package func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(leaseID, forKey: .leaseID)
+        try container.encode(durationSeconds, forKey: .durationSeconds)
+        try container.encode(mode, forKey: .mode)
     }
 }

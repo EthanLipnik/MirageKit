@@ -57,6 +57,19 @@ func hostClientLivenessDecision(
     return .disconnect
 }
 
+/// Returns whether background state should defer client liveness disconnects.
+func hostHasActiveBackgroundLease(
+    timedExpiration: Date?,
+    hasSuspendedLease: Bool,
+    hasActiveStreams: Bool,
+    now: Date
+) -> Bool {
+    if hasSuspendedLease, hasActiveStreams {
+        return true
+    }
+    return timedExpiration.map { $0 > now } ?? false
+}
+
 @MainActor
 extension MirageHostService {
     /// How often the liveness monitor checks connected clients.
@@ -105,10 +118,23 @@ extension MirageHostService {
         _ lease: ClientBackgroundLeaseMessage,
         for clientContext: ClientContext
     ) {
+        if lease.mode == .suspendedUntilForeground {
+            let client = clientContext.client
+            backgroundLeaseExpirationsByClientID.removeValue(forKey: client.id)
+            backgroundLeaseTasksByClientID[client.id]?.cancel()
+            backgroundLeaseTasksByClientID.removeValue(forKey: client.id)
+            suspendedBackgroundLeaseIDsByClientID[client.id] = lease.leaseID
+            MirageLogger.host(
+                "Background suspended-stream lease armed for \(client.name) leaseID=\(lease.leaseID.uuidString)"
+            )
+            return
+        }
+
         let duration = Self.clampedBackgroundLeaseDuration(lease.durationSeconds)
         let expiration = Date().addingTimeInterval(duration)
         let client = clientContext.client
         let sessionID = clientContext.sessionID
+        suspendedBackgroundLeaseIDsByClientID.removeValue(forKey: client.id)
         backgroundLeaseExpirationsByClientID[client.id] = expiration
         backgroundLeaseTasksByClientID[client.id]?.cancel()
         backgroundLeaseTasksByClientID[client.id] = Task { @MainActor [weak self] in
@@ -147,6 +173,7 @@ extension MirageHostService {
     /// Cancels any background lease for a client.
     func cancelBackgroundLease(clientID: UUID) {
         backgroundLeaseExpirationsByClientID.removeValue(forKey: clientID)
+        suspendedBackgroundLeaseIDsByClientID.removeValue(forKey: clientID)
         backgroundLeaseTasksByClientID[clientID]?.cancel()
         backgroundLeaseTasksByClientID.removeValue(forKey: clientID)
     }
@@ -199,7 +226,12 @@ extension MirageHostService {
             let controlWorkElapsed = controlSendActivitySnapshot[clientID].map { now - $0 }
             let hasActiveStreams = hasActiveStream(forClientID: clientID)
             let hasActiveControlWork = appListRequestTask != nil && pendingAppListRequest?.clientID == clientID
-            let hasActiveBackgroundLease = backgroundLeaseExpirationsByClientID[clientID].map { $0 > nowDate } ?? false
+            let hasActiveBackgroundLease = hostHasActiveBackgroundLease(
+                timedExpiration: backgroundLeaseExpirationsByClientID[clientID],
+                hasSuspendedLease: suspendedBackgroundLeaseIDsByClientID[clientID] != nil,
+                hasActiveStreams: hasActiveStreams,
+                now: nowDate
+            )
 
             switch hostClientLivenessDecision(
                 controlIdleSeconds: elapsed,

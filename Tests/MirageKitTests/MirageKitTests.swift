@@ -64,6 +64,54 @@ struct MirageKitTests {
         }
     }
 
+    @Test("Background lease payload requires mode")
+    func backgroundLeasePayloadRequiresMode() {
+        let leaseID = UUID(uuidString: "AC5DC09D-FA66-48BB-89C9-5EC4702CB6A0")!
+        let payload = """
+        {"leaseID":"\(leaseID.uuidString)","durationSeconds":120}
+        """.data(using: .utf8)!
+
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(
+                ClientBackgroundLeaseMessage.self,
+                from: payload
+            )
+        }
+    }
+
+    @Test("Background timed lease payload round trips mode")
+    func backgroundTimedLeasePayloadRoundTripsMode() throws {
+        let lease = ClientBackgroundLeaseMessage(
+            leaseID: UUID(uuidString: "AC5DC09D-FA66-48BB-89C9-5EC4702CB6A0")!,
+            durationSeconds: 120,
+            mode: .timed
+        )
+        let encoded = try JSONEncoder().encode(lease)
+        let decoded = try JSONDecoder().decode(
+            ClientBackgroundLeaseMessage.self,
+            from: encoded
+        )
+
+        #expect(decoded == lease)
+    }
+
+    @Test("Background suspended lease payload round trips mode")
+    func backgroundSuspendedLeasePayloadRoundTripsMode() throws {
+        let lease = ClientBackgroundLeaseMessage(
+            leaseID: UUID(uuidString: "3079EC2B-4240-464A-92BB-2BDE2746E990")!,
+            durationSeconds: 120,
+            mode: .suspendedUntilForeground
+        )
+
+        let encoded = try JSONEncoder().encode(lease)
+        let decoded = try JSONDecoder().decode(
+            ClientBackgroundLeaseMessage.self,
+            from: encoded
+        )
+
+        #expect(decoded == lease)
+    }
+
     @Test("Default stream cadence uses lowest latency")
     func defaultStreamCadenceUsesLowestLatency() {
         let target = MirageStreamCadenceTarget(sourceFPS: 60)
@@ -92,7 +140,7 @@ struct MirageKitTests {
 
         let deserialized = FrameHeader.deserialize(from: data)
         #expect(deserialized != nil)
-        #expect(deserialized?.version == 260531)
+        #expect(deserialized?.version == 260602)
         #expect(deserialized?.version == MirageKit.protocolVersion)
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
@@ -115,7 +163,7 @@ struct MirageKitTests {
         #expect(deserialized.type == .sessionBootstrapRequest)
 
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
-        #expect(MirageKit.protocolVersion == 260531)
+        #expect(MirageKit.protocolVersion == 260602)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }

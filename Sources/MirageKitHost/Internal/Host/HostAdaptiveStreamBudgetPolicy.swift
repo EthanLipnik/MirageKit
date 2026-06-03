@@ -51,6 +51,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     private static let highResolutionManualFloorFraction = 0.60
     private static let awdlStartupReadabilityFrameQuality: Float = 0.28
     private static let awdlStartupReadabilityCapBps = 72_000_000
+    private static let proximityAutomaticStartupReadabilityFrameQuality: Float = 0.65
 
     static func resolve(_ request: Request) -> Decision? {
         guard request.codec != .proRes4444 else { return nil }
@@ -102,6 +103,10 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             maximumCeiling: maximumCeiling,
             outputSize: request.outputSize
         ) : nil
+        let automaticReadabilityFloor = automaticStartupReadabilityFloor(
+            request: request,
+            maximumCeiling: maximumCeiling
+        )
         let clientStartupLimited = if let explicitStartup {
             manualStartupBitrate(
                 explicitStartup: explicitStartup,
@@ -116,19 +121,23 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         } else {
             hostStartup
         }
-        var startupBitrate = min(maximumCeiling, max(manualFloor ?? 1, clientStartupLimited))
+        var startupBitrate = min(
+            maximumCeiling,
+            max(manualFloor ?? 1, automaticReadabilityFloor ?? 1, clientStartupLimited)
+        )
         if usesAwdlInteractiveBudget {
             startupBitrate = max(
                 startupBitrate,
                 min(maximumCeiling, pathBudget.minimumFloorBps)
             )
         }
+        let automaticHostStartupLimit = max(hostStartup, automaticReadabilityFloor ?? hostStartup)
         if let automaticRequestedTarget, explicitStartup == nil, automaticRequestedTarget > hostStartup {
-            startupBitrate = min(maximumCeiling, hostStartup)
+            startupBitrate = min(maximumCeiling, automaticHostStartupLimit)
         } else if let automaticRequestedTarget,
                   !pathBudget.honorsRequestedStartup,
                   automaticRequestedTarget > hostStartup {
-            startupBitrate = min(maximumCeiling, hostStartup)
+            startupBitrate = min(maximumCeiling, automaticHostStartupLimit)
         }
 
         let minimumFloor = min(
@@ -194,6 +203,28 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         guard pixelCount >= highResolutionManualStartupPixels else { return nil }
         let floor = Int((Double(explicitStartup) * highResolutionManualFloorFraction).rounded(.down))
         return min(maximumCeiling, max(1, floor))
+    }
+
+    private static func automaticStartupReadabilityFloor(
+        request: Request,
+        maximumCeiling: Int
+    ) -> Int? {
+        guard request.enteredBitrateBps == nil,
+              request.mediaPathProfile == .proximityWiredLike else {
+            return nil
+        }
+        let width = max(2, Int(request.outputSize.width))
+        let height = max(2, Int(request.outputSize.height))
+        guard let readabilityBitrate = MirageBitrateQualityMapper.targetBitrateBps(
+            forFrameQuality: proximityAutomaticStartupReadabilityFrameQuality,
+            width: width,
+            height: height,
+            frameRate: request.frameRate,
+            maxBitrateBps: maximumCeiling
+        ) else {
+            return nil
+        }
+        return min(maximumCeiling, max(1, readabilityBitrate))
     }
 
     private static func clientMaximumCeiling(

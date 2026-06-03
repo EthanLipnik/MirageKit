@@ -105,6 +105,34 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 12_000_000)
     }
 
+    @Test("High-resolution proximity automatic startup protects readability floor")
+    func highResolutionProximityAutomaticStartupProtectsReadabilityFloor() throws {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 120_000_000,
+                requestedCeilingBps: 794_000_000,
+                outputWidth: 6000,
+                outputHeight: 3376,
+                mediaPathProfile: .proximityWiredLike,
+                transportPathKind: .wired
+            )
+        )
+        let expectedReadabilityFloor = try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: 0.65,
+                width: 6000,
+                height: 3376,
+                frameRate: 60,
+                maxBitrateBps: 300_000_000
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
+        #expect((decision?.startupBitrateBps ?? 0) > 120_000_000)
+        #expect(decision?.maximumCeilingBps == 300_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 12_000_000)
+    }
+
     @Test("High-resolution custom bitrate can keep encoder catch-up pinned to readability floor")
     func highResolutionCustomBitrateCanKeepEncoderCatchUpPinnedToReadabilityFloor() {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(

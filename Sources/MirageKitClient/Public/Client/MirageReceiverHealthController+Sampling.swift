@@ -53,19 +53,29 @@ struct ReceiverTransportPressureContext {
     let clientPFrameLatencySevere: Bool
     let clientFragmentLossStress: Bool
     let clientFragmentLossSevere: Bool
+    let clientPendingFrameAgeMs: Double
+    let clientSmoothestDisplayDebtMs: Double
+    let clientSmoothestDisplayDebtCapMs: Double
+    let clientPresentationStallCount: UInt64
+    let clientWorstPresentationGapMs: Double
+    let clientReassemblerPendingFrameCount: Int
+    let clientReassemblerPendingBytes: Int
     let hostEncodedFPS: Double
     let receivedFPS: Double
     let clientReceivedWorstGapMs: Double
     let clientReceivedFrameIntervalP95Ms: Double
     let clientReceivedFrameIntervalP99Ms: Double
-    let receiverDeliveryStress: Bool
-    let receiverDeliverySevere: Bool
+    let receiverCadenceStress: Bool
+    let receiverCadenceSevere: Bool
+    let receiverFreshnessStress: Bool
+    let receiverFreshnessSevere: Bool
 }
 
 extension MirageReceiverHealthController {
     static func sample(
         from snapshot: MirageClientMetricsSnapshot,
-        minimumHealthyFrameRate: Int? = nil
+        minimumHealthyFrameRate: Int? = nil,
+        usesCadenceDeliveryPressure: Bool = true
     ) -> ReceiverHealthSample {
         guard snapshot.hasHostMetrics else {
             return ReceiverHealthSample(
@@ -99,7 +109,8 @@ extension MirageReceiverHealthController {
         let clientLatePFrameCompletionCount = snapshot.clientLatePFrameCompletionCount
         let receiverDeliveryPressure = Self.receiverDeliveryPressure(
             snapshot,
-            minimumHealthyFrameRate: minimumHealthyFrameRate
+            minimumHealthyFrameRate: minimumHealthyFrameRate,
+            usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
         )
         let receiverMediaDeliveryFailureCount = clientIncompleteFrameTimeouts +
             clientMissingFragmentTimeouts +
@@ -170,13 +181,22 @@ extension MirageReceiverHealthController {
                 clientPFrameLatencySevere: clientPFrameLatencySevere,
                 clientFragmentLossStress: clientFragmentLossStress,
                 clientFragmentLossSevere: clientFragmentLossSevere,
+                clientPendingFrameAgeMs: receiverDeliveryPressure.pendingFrameAgeMs,
+                clientSmoothestDisplayDebtMs: receiverDeliveryPressure.smoothestDisplayDebtMs,
+                clientSmoothestDisplayDebtCapMs: receiverDeliveryPressure.smoothestDisplayDebtCapMs,
+                clientPresentationStallCount: receiverDeliveryPressure.presentationStallCount,
+                clientWorstPresentationGapMs: receiverDeliveryPressure.worstPresentationGapMs,
+                clientReassemblerPendingFrameCount: receiverDeliveryPressure.reassemblerPendingFrameCount,
+                clientReassemblerPendingBytes: receiverDeliveryPressure.reassemblerPendingBytes,
                 hostEncodedFPS: receiverDeliveryPressure.hostEncodedFPS,
                 receivedFPS: receiverDeliveryPressure.receivedFPS,
                 clientReceivedWorstGapMs: receiverDeliveryPressure.receivedWorstGapMs,
                 clientReceivedFrameIntervalP95Ms: receiverDeliveryPressure.receivedFrameIntervalP95Ms,
                 clientReceivedFrameIntervalP99Ms: receiverDeliveryPressure.receivedFrameIntervalP99Ms,
-                receiverDeliveryStress: receiverDeliveryPressure.stress,
-                receiverDeliverySevere: receiverDeliveryPressure.severe
+                receiverCadenceStress: receiverDeliveryPressure.cadenceStress,
+                receiverCadenceSevere: receiverDeliveryPressure.cadenceSevere,
+                receiverFreshnessStress: receiverDeliveryPressure.freshnessStress,
+                receiverFreshnessSevere: receiverDeliveryPressure.freshnessSevere
             )
         )
 
@@ -225,12 +245,21 @@ extension MirageReceiverHealthController {
             return "client p-frame latency p95=\(formatMilliseconds(context.clientPFrameCompletionLatencyP95Ms)) " +
                 "late=\(context.clientLatePFrameCompletionCount)"
         }
-        if context.receiverDeliverySevere || context.receiverDeliveryStress {
+        if context.receiverCadenceSevere || context.receiverCadenceStress {
             return "client delivery cadence host=\(formatFPS(context.hostEncodedFPS)) " +
                 "received=\(formatFPS(context.receivedFPS)) " +
                 "worstGap=\(formatMilliseconds(context.clientReceivedWorstGapMs)) " +
                 "p95=\(formatMilliseconds(context.clientReceivedFrameIntervalP95Ms)) " +
                 "p99=\(formatMilliseconds(context.clientReceivedFrameIntervalP99Ms))"
+        }
+        if context.receiverFreshnessSevere || context.receiverFreshnessStress {
+            return "client freshness debt pendingAge=\(formatMilliseconds(context.clientPendingFrameAgeMs)) " +
+                "displayDebt=\(formatMilliseconds(context.clientSmoothestDisplayDebtMs))/" +
+                "\(formatMilliseconds(context.clientSmoothestDisplayDebtCapMs)) " +
+                "presentationGap=\(formatMilliseconds(context.clientWorstPresentationGapMs)) " +
+                "stalls=\(context.clientPresentationStallCount) " +
+                "reassemblerFrames=\(context.clientReassemblerPendingFrameCount) " +
+                "reassemblerBytes=\(formatBytes(context.clientReassemblerPendingBytes))"
         }
         if context.sendDelaySevere || context.sendDelayStress {
             let startText = Self.formatMilliseconds(context.sendStartDelayAverageMs)
@@ -263,30 +292,123 @@ extension MirageReceiverHealthController {
 
     private static func receiverDeliveryPressure(
         _ snapshot: MirageClientMetricsSnapshot,
-        minimumHealthyFrameRate: Int?
+        minimumHealthyFrameRate: Int?,
+        usesCadenceDeliveryPressure: Bool
     ) -> (
         stress: Bool,
         severe: Bool,
+        cadenceStress: Bool,
+        cadenceSevere: Bool,
+        freshnessStress: Bool,
+        freshnessSevere: Bool,
+        pendingFrameAgeMs: Double,
+        smoothestDisplayDebtMs: Double,
+        smoothestDisplayDebtCapMs: Double,
+        presentationStallCount: UInt64,
+        worstPresentationGapMs: Double,
+        reassemblerPendingFrameCount: Int,
+        reassemblerPendingBytes: Int,
         hostEncodedFPS: Double,
         receivedFPS: Double,
         receivedWorstGapMs: Double,
         receivedFrameIntervalP95Ms: Double,
         receivedFrameIntervalP99Ms: Double
     ) {
-        let targetFrameRate = Double(max(1, minimumHealthyFrameRate ?? snapshot.hostTargetFrameRate))
         let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
+        let receivedWorstGapMs = max(0, snapshot.clientReceivedWorstGapMs)
+        let receivedFrameIntervalP95Ms = max(0, snapshot.clientReceivedFrameIntervalP95Ms)
+        let receivedFrameIntervalP99Ms = max(0, snapshot.clientReceivedFrameIntervalP99Ms)
+        let pendingFrameAgeMs = max(0, snapshot.clientPendingFrameAgeMs)
+        let smoothestDisplayDebtMs = max(0, snapshot.clientSmoothestDisplayDebtMs)
+        let smoothestDisplayDebtCapMs = max(0, snapshot.clientSmoothestDisplayDebtCapMs)
+        let worstPresentationGapMs = max(0, snapshot.clientWorstPresentationGapMs)
+        let reassemblerPendingFrameCount = max(0, snapshot.clientReassemblerPendingFrameCount)
+        let reassemblerPendingBytes = max(0, snapshot.clientReassemblerPendingBytes)
+
+        let pendingAgeStress = snapshot.pendingFrameCount > 0 &&
+            pendingFrameAgeMs >= Self.clientFreshnessPendingAgeStressMs
+        let pendingAgeSevere = snapshot.pendingFrameCount > 0 &&
+            pendingFrameAgeMs >= Self.clientFreshnessPendingAgeSevereMs
+        let displayDebtStress = smoothestDisplayDebtMs >= Self.clientFreshnessDisplayDebtStressMs ||
+            (smoothestDisplayDebtCapMs > 0 && smoothestDisplayDebtMs >= smoothestDisplayDebtCapMs)
+        let displayDebtSevere = smoothestDisplayDebtMs >= Self.clientFreshnessDisplayDebtSevereMs ||
+            (smoothestDisplayDebtCapMs > 0 && smoothestDisplayDebtMs >= smoothestDisplayDebtCapMs * 2.0)
+        let reassemblerBacklogStress = reassemblerPendingFrameCount >= Self.clientReassemblerPendingFrameStressCount ||
+            reassemblerPendingBytes >= Self.clientReassemblerPendingByteStressBytes
+        let reassemblerBacklogSevere = reassemblerPendingFrameCount >= Self.clientReassemblerPendingFrameSevereCount ||
+            reassemblerPendingBytes >= Self.clientReassemblerPendingByteSevereBytes
+        let backlogOrDropFreshnessStress = pendingAgeStress ||
+            displayDebtStress ||
+            reassemblerBacklogStress ||
+            snapshot.clientSmoothestDisplayDebtDrops > 0 ||
+            snapshot.clientSmoothestAgeDrops > 0 ||
+            snapshot.clientLateFrameDrops > 0
+        let canUsePresentationGapAsFreshness = usesCadenceDeliveryPressure || backlogOrDropFreshnessStress
+        let presentationGapStress = canUsePresentationGapAsFreshness &&
+            (snapshot.clientPresentationStallCount > 0 ||
+                worstPresentationGapMs >= Self.clientFreshnessPresentationGapStressMs)
+        let presentationGapSevere = canUsePresentationGapAsFreshness &&
+            (snapshot.clientPresentationStallCount >= Self.clientFreshnessPresentationStallSevereCount ||
+                worstPresentationGapMs >= Self.clientFreshnessPresentationGapSevereMs)
+        let freshnessStress = pendingAgeStress ||
+            displayDebtStress ||
+            presentationGapStress ||
+            reassemblerBacklogStress ||
+            snapshot.clientSmoothestDisplayDebtDrops > 0 ||
+            snapshot.clientSmoothestAgeDrops > 0 ||
+            snapshot.clientLateFrameDrops > 0
+        let freshnessSevere = pendingAgeSevere ||
+            displayDebtSevere ||
+            presentationGapSevere ||
+            reassemblerBacklogSevere
+
+        guard usesCadenceDeliveryPressure else {
+            return (
+                stress: freshnessStress,
+                severe: freshnessSevere,
+                cadenceStress: false,
+                cadenceSevere: false,
+                freshnessStress: freshnessStress,
+                freshnessSevere: freshnessSevere,
+                pendingFrameAgeMs: pendingFrameAgeMs,
+                smoothestDisplayDebtMs: smoothestDisplayDebtMs,
+                smoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
+                presentationStallCount: snapshot.clientPresentationStallCount,
+                worstPresentationGapMs: worstPresentationGapMs,
+                reassemblerPendingFrameCount: reassemblerPendingFrameCount,
+                reassemblerPendingBytes: reassemblerPendingBytes,
+                hostEncodedFPS: hostEncodedFPS,
+                receivedFPS: receivedFPS,
+                receivedWorstGapMs: receivedWorstGapMs,
+                receivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
+                receivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms
+            )
+        }
+
+        let targetFrameRate = Double(max(1, minimumHealthyFrameRate ?? snapshot.hostTargetFrameRate))
         let receiverHasStarted = receivedFPS > 0 || snapshot.decodedFPS > 0 || snapshot.submittedFPS > 0
         guard receiverHasStarted,
               hostEncodedFPS >= targetFrameRate * Self.hostDeliveryCadenceHealthyRatio else {
             return (
-                stress: false,
-                severe: false,
+                stress: freshnessStress,
+                severe: freshnessSevere,
+                cadenceStress: false,
+                cadenceSevere: false,
+                freshnessStress: freshnessStress,
+                freshnessSevere: freshnessSevere,
+                pendingFrameAgeMs: pendingFrameAgeMs,
+                smoothestDisplayDebtMs: smoothestDisplayDebtMs,
+                smoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
+                presentationStallCount: snapshot.clientPresentationStallCount,
+                worstPresentationGapMs: worstPresentationGapMs,
+                reassemblerPendingFrameCount: reassemblerPendingFrameCount,
+                reassemblerPendingBytes: reassemblerPendingBytes,
                 hostEncodedFPS: hostEncodedFPS,
                 receivedFPS: receivedFPS,
-                receivedWorstGapMs: max(0, snapshot.clientReceivedWorstGapMs),
-                receivedFrameIntervalP95Ms: max(0, snapshot.clientReceivedFrameIntervalP95Ms),
-                receivedFrameIntervalP99Ms: max(0, snapshot.clientReceivedFrameIntervalP99Ms)
+                receivedWorstGapMs: receivedWorstGapMs,
+                receivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
+                receivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms
             )
         }
 
@@ -294,9 +416,6 @@ extension MirageReceiverHealthController {
         let cadenceStress = receivedFPS < expectedReceiverFPS * Self.clientReceivedCadenceStressRatio
         let cadenceSevere = receivedFPS < expectedReceiverFPS * Self.clientReceivedCadenceSevereRatio
         let frameIntervalMs = 1_000.0 / max(1.0, expectedReceiverFPS)
-        let receivedWorstGapMs = max(0, snapshot.clientReceivedWorstGapMs)
-        let receivedFrameIntervalP95Ms = max(0, snapshot.clientReceivedFrameIntervalP95Ms)
-        let receivedFrameIntervalP99Ms = max(0, snapshot.clientReceivedFrameIntervalP99Ms)
         let gapStressThresholdMs = max(
             Self.clientReceivedGapStressMinimumMs,
             frameIntervalMs * Self.clientReceivedGapStressFrameMultiple
@@ -312,8 +431,19 @@ extension MirageReceiverHealthController {
             receivedFrameIntervalP99Ms >= gapSevereThresholdMs
 
         return (
-            stress: cadenceStress || gapStress,
-            severe: cadenceSevere || gapSevere,
+            stress: cadenceStress || gapStress || freshnessStress,
+            severe: cadenceSevere || gapSevere || freshnessSevere,
+            cadenceStress: cadenceStress || gapStress,
+            cadenceSevere: cadenceSevere || gapSevere,
+            freshnessStress: freshnessStress,
+            freshnessSevere: freshnessSevere,
+            pendingFrameAgeMs: pendingFrameAgeMs,
+            smoothestDisplayDebtMs: smoothestDisplayDebtMs,
+            smoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
+            presentationStallCount: snapshot.clientPresentationStallCount,
+            worstPresentationGapMs: worstPresentationGapMs,
+            reassemblerPendingFrameCount: reassemblerPendingFrameCount,
+            reassemblerPendingBytes: reassemblerPendingBytes,
             hostEncodedFPS: hostEncodedFPS,
             receivedFPS: receivedFPS,
             receivedWorstGapMs: receivedWorstGapMs,
@@ -358,24 +488,35 @@ extension MirageReceiverHealthController {
 
     static func worstSnapshot(
         from snapshots: [MirageClientMetricsSnapshot],
-        minimumHealthyFrameRate: Int?
+        minimumHealthyFrameRate: Int?,
+        usesCadenceDeliveryPressure: Bool = true
     ) -> MirageClientMetricsSnapshot {
         guard let firstSnapshot = snapshots.first else {
             preconditionFailure("Receiver-health sampling requires at least one metrics snapshot.")
         }
         return snapshots.max(by: { lhs, rhs in
-            healthPriority(for: lhs, minimumHealthyFrameRate: minimumHealthyFrameRate) <
-                healthPriority(for: rhs, minimumHealthyFrameRate: minimumHealthyFrameRate)
+            healthPriority(
+                for: lhs,
+                minimumHealthyFrameRate: minimumHealthyFrameRate,
+                usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
+            ) <
+                healthPriority(
+                    for: rhs,
+                    minimumHealthyFrameRate: minimumHealthyFrameRate,
+                    usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
+                )
         }) ?? firstSnapshot
     }
 
     private static func healthPriority(
         for snapshot: MirageClientMetricsSnapshot,
-        minimumHealthyFrameRate: Int?
+        minimumHealthyFrameRate: Int?,
+        usesCadenceDeliveryPressure: Bool
     ) -> Int {
         let sample = sample(
             from: snapshot,
-            minimumHealthyFrameRate: minimumHealthyFrameRate
+            minimumHealthyFrameRate: minimumHealthyFrameRate,
+            usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
         )
         var score = 0
         if sample.hasSevereTransportPressure {

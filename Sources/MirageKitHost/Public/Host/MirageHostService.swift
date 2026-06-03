@@ -348,6 +348,8 @@ public final class MirageHostService {
     var clientLivenessTask: Task<Void, Never>?
     /// Background lease expiration dates by client.
     var backgroundLeaseExpirationsByClientID: [UUID: Date] = [:]
+    /// Non-expiring suspended-stream lease IDs by client.
+    var suspendedBackgroundLeaseIDsByClientID: [UUID: UUID] = [:]
     /// Background lease timeout tasks by client.
     var backgroundLeaseTasksByClientID: [UUID: Task<Void, Never>] = [:]
 

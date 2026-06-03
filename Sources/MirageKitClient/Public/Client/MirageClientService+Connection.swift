@@ -290,12 +290,24 @@ public extension MirageClientService {
     /// Pause all streams without disconnecting.  The host stops encoding
     /// but keeps virtual displays and stream infrastructure alive so that
     /// `resumeStreaming()` can restart frames immediately with a keyframe.
-    func pauseStreaming(backgroundLeaseDuration: TimeInterval? = nil) {
+    func pauseStreaming(
+        backgroundLeaseDuration: TimeInterval? = nil,
+        suspendsUntilForeground: Bool = false
+    ) {
         if let backgroundLeaseDuration {
-            let lease = ClientBackgroundLeaseMessage(durationSeconds: backgroundLeaseDuration)
+            let mode: ClientBackgroundLeaseMode
+            if suspendsUntilForeground {
+                mode = .suspendedUntilForeground
+            } else {
+                mode = .timed
+            }
+            let lease = ClientBackgroundLeaseMessage(
+                durationSeconds: backgroundLeaseDuration,
+                mode: mode
+            )
             queueControlMessageBestEffort(.streamPauseAll, content: lease)
             MirageLogger.client(
-                "Sent streamPauseAll to host with background lease \(backgroundLeaseDuration)s"
+                "Sent streamPauseAll to host with background lease \(backgroundLeaseDuration)s mode=\(mode.rawValue)"
             )
             return
         }

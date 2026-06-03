@@ -94,7 +94,8 @@ public struct MirageReceiverHealthController: Sendable {
         allowsBackoff: Bool = true,
         prefersQualityRecovery: Bool = false,
         minimumHealthyFrameRate: Int? = nil,
-        minimumBitrateFloorBps: Int = 12_000_000
+        minimumBitrateFloorBps: Int = 12_000_000,
+        usesCadenceDeliveryPressure: Bool = true
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0, !snapshots.isEmpty else {
             reset()
@@ -103,7 +104,8 @@ public struct MirageReceiverHealthController: Sendable {
         return advance(
             snapshot: Self.worstSnapshot(
                 from: snapshots,
-                minimumHealthyFrameRate: minimumHealthyFrameRate
+                minimumHealthyFrameRate: minimumHealthyFrameRate,
+                usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
             ),
             currentBitrateBps: currentBitrateBps,
             ceilingBps: ceilingBps,
@@ -112,7 +114,8 @@ public struct MirageReceiverHealthController: Sendable {
             allowsBackoff: allowsBackoff,
             prefersQualityRecovery: prefersQualityRecovery,
             minimumHealthyFrameRate: minimumHealthyFrameRate,
-            minimumBitrateFloorBps: minimumBitrateFloorBps
+            minimumBitrateFloorBps: minimumBitrateFloorBps,
+            usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
         )
     }
 
@@ -126,7 +129,8 @@ public struct MirageReceiverHealthController: Sendable {
         allowsBackoff: Bool = true,
         prefersQualityRecovery: Bool = false,
         minimumHealthyFrameRate: Int? = nil,
-        minimumBitrateFloorBps: Int = 12_000_000
+        minimumBitrateFloorBps: Int = 12_000_000,
+        usesCadenceDeliveryPressure: Bool = true
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0 else {
             reset()
@@ -142,7 +146,8 @@ public struct MirageReceiverHealthController: Sendable {
 
         let sample = Self.sample(
             from: snapshot,
-            minimumHealthyFrameRate: minimumHealthyFrameRate
+            minimumHealthyFrameRate: minimumHealthyFrameRate,
+            usesCadenceDeliveryPressure: usesCadenceDeliveryPressure
         )
         lastTransportPressureReason = sample.transportPressureReason
         let effectiveAllowsBackoff = allowsBackoff &&

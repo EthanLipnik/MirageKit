@@ -6,6 +6,7 @@
 //
 
 #if os(macOS)
+import Foundation
 @testable import MirageKitHost
 import Testing
 
@@ -68,10 +69,54 @@ struct HostClientLivenessTests {
         )
     }
 
-    @Test("Background lease clamp allows two minutes")
-    func backgroundLeaseClampAllowsTwoMinutes() {
+    @Test("Timed background lease clamp allows two minutes")
+    func timedBackgroundLeaseClampAllowsTwoMinutes() {
         #expect(MirageHostService.clampedBackgroundLeaseDuration(120) == 120)
         #expect(MirageHostService.clampedBackgroundLeaseDuration(300) == 120)
+    }
+
+    @Test("Suspended background lease requires active stream state")
+    func suspendedBackgroundLeaseRequiresActiveStreamState() {
+        let now = Date(timeIntervalSinceReferenceDate: 100)
+
+        #expect(
+            hostHasActiveBackgroundLease(
+                timedExpiration: nil,
+                hasSuspendedLease: true,
+                hasActiveStreams: true,
+                now: now
+            )
+        )
+        #expect(
+            !hostHasActiveBackgroundLease(
+                timedExpiration: nil,
+                hasSuspendedLease: true,
+                hasActiveStreams: false,
+                now: now
+            )
+        )
+    }
+
+    @Test("Timed background lease defers only before expiration")
+    func timedBackgroundLeaseDefersOnlyBeforeExpiration() {
+        let now = Date(timeIntervalSinceReferenceDate: 100)
+
+        #expect(
+            hostHasActiveBackgroundLease(
+                timedExpiration: now.addingTimeInterval(1),
+                hasSuspendedLease: false,
+                hasActiveStreams: false,
+                now: now
+            )
+        )
+        #expect(
+            !hostHasActiveBackgroundLease(
+                timedExpiration: now.addingTimeInterval(-1),
+                hasSuspendedLease: false,
+                hasActiveStreams: true,
+                now: now
+            )
+        )
     }
 
     @Test("Stale media does not defer disconnect")
