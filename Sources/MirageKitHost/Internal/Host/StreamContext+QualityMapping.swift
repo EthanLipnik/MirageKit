@@ -34,6 +34,7 @@ extension StreamContext {
         let keyframeQuality: Float
         let bpp: Double?
         let frameRateScale: Double
+        let qualityReferenceFrameRate: Int
         let boostDrop: Float?
     }
 
@@ -221,7 +222,7 @@ extension StreamContext {
             targetBitrateBps: targetBitrateBps,
             width: width,
             height: height,
-            frameRate: frameRate
+            frameRate: MirageBitrateQualityMapper.qualityReferenceFrameRate(for: frameRate)
         ) {
             max(
                 Self.lowLatencyHighResolutionBoostMinimumPressureScale,
@@ -266,6 +267,9 @@ extension StreamContext {
     ) -> DerivedQualityTargets {
         let width = max(2, Int(outputSize.width))
         let height = max(2, Int(outputSize.height))
+        let qualityReferenceFrameRate = MirageBitrateQualityMapper.qualityReferenceFrameRate(
+            for: currentFrameRate
+        )
         let derived = MirageBitrateQualityMapper.derivedQualities(
             targetBitrateBps: targetBitrateBps,
             width: width,
@@ -291,13 +295,14 @@ extension StreamContext {
             targetBitrateBps: targetBitrateBps,
             width: width,
             height: height,
-            frameRate: currentFrameRate
+            frameRate: qualityReferenceFrameRate
         )
         return DerivedQualityTargets(
             frameQuality: cappedFrameQuality,
             keyframeQuality: cappedKeyframeQuality,
             bpp: bpp,
             frameRateScale: MirageBitrateQualityMapper.frameRateScale(frameRate: currentFrameRate, bpp: bpp),
+            qualityReferenceFrameRate: qualityReferenceFrameRate,
             boostDrop: qualityBoost.applied ? qualityBoost.drop : nil
         )
     }
@@ -397,6 +402,7 @@ extension StreamContext {
                 "n/a"
             }
             let scaleText = targets.frameRateScale.formatted(.number.precision(.fractionLength(2)))
+            let referenceFrameRate = targets.qualityReferenceFrameRate
             let boostText: String
             if let boostDrop = targets.boostDrop {
                 let dropText = boostDrop.formatted(.number.precision(.fractionLength(2)))
@@ -406,7 +412,7 @@ extension StreamContext {
             }
             MirageLogger
                 .stream(
-                    "\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText) (cap \(capText)), bpp \(bppText), fpsScale \(scaleText)\(boostText)"
+                    "\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText) (cap \(capText)), bpp \(bppText), fps=\(currentFrameRate), qualityRefFPS=\(referenceFrameRate), fpsScale \(scaleText)\(boostText)"
                 )
         }
     }

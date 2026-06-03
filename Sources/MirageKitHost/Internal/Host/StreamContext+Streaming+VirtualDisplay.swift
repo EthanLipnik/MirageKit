@@ -252,6 +252,14 @@ extension StreamContext {
         await refreshCaptureCadence()
 
         MirageLogger.stream(
+            streamBoundaryLog(
+                phase: "start",
+                kind: "shared-display-app",
+                width: Int(outputSize.width),
+                height: Int(outputSize.height)
+            )
+        )
+        MirageLogger.stream(
             "Started stream \(streamID) with shared-display app capture on display \(mirroredDisplaySnapshot.displayID) for window \(windowID) cluster=\(captureLayout.clusterWindowIDs)"
         )
     }

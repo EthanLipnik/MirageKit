@@ -58,6 +58,7 @@ extension StreamContext {
             logPrefix: "Custom frame"
         )
 
+        MirageLogger.stream(streamBoundaryLog(phase: "start", kind: "custom", width: width, height: height))
         MirageLogger.stream("Started custom stream \(streamID) at \(width)x\(height)")
         return makeCustomStreamFrameSink()
     }

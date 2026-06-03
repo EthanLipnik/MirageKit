@@ -112,8 +112,8 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Freeze monitor waits for decoder error after presentation stall")
-    func freezeMonitorWaitsForDecoderErrorAfterPresentationStall() async throws {
+    @Test("Freeze monitor requests keyframe after presentation stall")
+    func freezeMonitorRequestsKeyframeAfterPresentationStall() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let streamID: StreamID = 148
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -137,7 +137,11 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         reassembler.beginKeyframeWait()
 
         try await Task.sleep(for: .milliseconds(1_600))
-        #expect(keyframeCounter.value == 0)
+        try await streamControllerWaitUntil("freeze keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe)
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
@@ -195,8 +199,8 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Freeze monitor clears stale pending frame with transport pressure without keyframe")
-    func freezeMonitorClearsStalePendingFrameWithTransportPressureWithoutKeyframe() async throws {
+    @Test("Freeze monitor requests keyframe for stale pending frame with transport pressure")
+    func freezeMonitorRequestsKeyframeForStalePendingFrameWithTransportPressure() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let streamID: StreamID = 157
         let clock = StreamControllerManualTimeProvider(start: 8600)
@@ -240,9 +244,9 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
 
         await controller.evaluateFreezeState()
 
-        #expect(keyframeCounter.value == 0)
+        #expect(keyframeCounter.value == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
-        #expect(!reassembler.isAwaitingKeyframe)
+        #expect(reassembler.isAwaitingKeyframe)
 
         await controller.stop()
     }
@@ -327,8 +331,8 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Freeze monitor ignores stale media when host send telemetry is clean")
-    func freezeMonitorIgnoresStaleMediaWhenHostSendTelemetryIsClean() async throws {
+    @Test("Freeze monitor probes once before keyframe recovery when host send telemetry is clean")
+    func freezeMonitorProbesOnceBeforeKeyframeRecoveryWhenHostSendTelemetryIsClean() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let streamID: StreamID = 161
         let clock = StreamControllerManualTimeProvider(start: 8685)
@@ -366,6 +370,13 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
 
         #expect(keyframeCounter.value == 0)
         #expect(!reassembler.isAwaitingKeyframe)
+
+        clock.advance(by: StreamController.freezePresenterProbeGrace + 0.01)
+        await controller.testSeedFrameRates(decodedFPS: 0, receivedFPS: 0, now: clock.now)
+        await controller.evaluateFreezeState()
+
+        #expect(keyframeCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe)
 
         await controller.stop()
     }
@@ -429,8 +440,8 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.evaluateFreezeState()
 
         let reassembler = await controller.reassembler
-        #expect(keyframeCounter.value == 0)
-        #expect(!reassembler.isAwaitingKeyframe)
+        #expect(keyframeCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe)
 
         await controller.stop()
     }

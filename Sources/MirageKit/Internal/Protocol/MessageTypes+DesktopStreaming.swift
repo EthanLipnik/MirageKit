@@ -112,6 +112,12 @@ package struct StartDesktopStreamMessage: Codable {
     /// Diagnostic client control-path signature at stream start.
     package var clientPathSignature: String?
 
+    /// Client-selected policy path kind for stream budgeting.
+    package var clientPolicyPathKind: MirageNetworkPathKind?
+
+    /// Client-selected media policy profile for stream budgeting.
+    package var clientPolicyMediaPathProfile: MirageMediaPathProfile?
+
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
 
@@ -170,6 +176,8 @@ package struct StartDesktopStreamMessage: Codable {
         clientTransportPathKind: MirageNetworkPathKind? = nil,
         clientMediaPathProfile: MirageMediaPathProfile? = nil,
         clientPathSignature: String? = nil,
+        clientPolicyPathKind: MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil,
         desktopGeometryContractID: UUID? = nil,
         desktopGeometrySceneIdentity: String? = nil,
         desktopGeometryDisplayPixelWidth: Int? = nil,
@@ -204,6 +212,8 @@ package struct StartDesktopStreamMessage: Codable {
         self.clientTransportPathKind = clientTransportPathKind
         self.clientMediaPathProfile = clientMediaPathProfile
         self.clientPathSignature = clientPathSignature
+        self.clientPolicyPathKind = clientPolicyPathKind
+        self.clientPolicyMediaPathProfile = clientPolicyMediaPathProfile
         self.desktopGeometryContractID = desktopGeometryContractID
         self.desktopGeometrySceneIdentity = desktopGeometrySceneIdentity
         self.desktopGeometryDisplayPixelWidth = desktopGeometryDisplayPixelWidth
@@ -246,6 +256,8 @@ package struct StartDesktopStreamMessage: Codable {
             clientTransportPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
             clientPathSignature: request.clientPathSignature,
+            clientPolicyPathKind: request.clientPolicyPathKind,
+            clientPolicyMediaPathProfile: request.clientPolicyMediaPathProfile,
             desktopGeometryContractID: request.desktopGeometryContractID,
             desktopGeometrySceneIdentity: request.desktopGeometrySceneIdentity,
             desktopGeometryDisplayPixelWidth: request.desktopGeometryDisplayPixelWidth,

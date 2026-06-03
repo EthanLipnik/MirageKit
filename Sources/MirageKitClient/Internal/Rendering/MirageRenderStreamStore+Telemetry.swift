@@ -172,6 +172,7 @@ extension MirageRenderStreamStore {
     func submissionSnapshot(for streamID: StreamID) -> SubmissionSnapshot {
         guard let state = streamStateIfPresent(for: streamID) else {
             return SubmissionSnapshot(
+                cursor: .zero,
                 sequence: 0,
                 submittedTime: 0,
                 remotePresentationTime: .invalid
@@ -180,6 +181,10 @@ extension MirageRenderStreamStore {
 
         state.lock.lock()
         let snapshot = SubmissionSnapshot(
+            cursor: MirageRenderCursor(
+                generation: state.lastSubmittedGeneration,
+                sequence: state.lastSubmittedSequence
+            ),
             sequence: state.lastSubmittedSequence,
             submittedTime: state.lastSubmittedTime,
             remotePresentationTime: state.lastSubmittedRemotePresentationTime

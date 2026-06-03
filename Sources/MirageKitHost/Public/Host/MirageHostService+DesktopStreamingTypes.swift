@@ -201,6 +201,7 @@ extension MirageHostService {
         let hostBufferingPolicy: MirageHostBufferingPolicy
         let transportPathKind: MirageNetworkPathKind
         let mediaPathProfile: MirageMediaPathProfile
+        let mediaPathDiagnosticSummary: String?
         let enteredBitrate: Int?
         let bitrateAdaptationCeiling: Int?
         let encoderMaxWidth: Int?

@@ -17,6 +17,11 @@ extension StreamContext {
         value.formatted(.number.precision(.fractionLength(1)))
     }
 
+    private static let encoderThroughputBaselineSmoothing = 0.20
+    private static let encoderThroughputSpikePressureRatio = 1.35
+    private static let encoderThroughputCleanBacklogMinimumMs = 80.0
+    private static let encoderThroughputCleanBacklogSampleRatio = 1.50
+
     private func encoderCatchUpBacklogThresholdMs() -> Double {
         if mediaPathProfile.usesAwdlRadioPolicy {
             let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
@@ -37,6 +42,50 @@ extension StreamContext {
         case .smoothest:
             return 1_000
         }
+    }
+
+    private func encoderThroughputBaselineKey() -> String {
+        let width = Int(max(1, currentEncodedSize.width).rounded())
+        let height = Int(max(1, currentEncodedSize.height).rounded())
+        let scale = Double(streamScale)
+        return "\(width)x\(height)|\(encoderConfig.codec.rawValue)|\(String(format: "%.3f", scale))"
+    }
+
+    @discardableResult
+    private func refreshEncoderThroughputBaselineIfClean(
+        averageEncodeMs: Double,
+        encodeAttemptFPS: Double,
+        encodedFPS: Double
+    ) -> Double? {
+        let key = encoderThroughputBaselineKey()
+        if encoderThroughputHealthyBaselineKey != key {
+            encoderThroughputHealthyBaselineKey = key
+            encoderThroughputHealthyBaselineMs = nil
+        }
+
+        guard averageEncodeMs.isFinite,
+              averageEncodeMs > 0,
+              encodeAttemptFPS > 0,
+              encodedFPS > 0 else {
+            return encoderThroughputHealthyBaselineMs
+        }
+
+        let cleanBacklogLimit = max(
+            Self.encoderThroughputCleanBacklogMinimumMs,
+            averageEncodeMs * Self.encoderThroughputCleanBacklogSampleRatio
+        )
+        guard worstEncodeStartCaptureAgeMs <= cleanBacklogLimit,
+              frameInbox.pendingCount <= 1 else {
+            return encoderThroughputHealthyBaselineMs
+        }
+
+        if let baseline = encoderThroughputHealthyBaselineMs {
+            let alpha = Self.encoderThroughputBaselineSmoothing
+            encoderThroughputHealthyBaselineMs = baseline + (averageEncodeMs - baseline) * alpha
+        } else {
+            encoderThroughputHealthyBaselineMs = averageEncodeMs
+        }
+        return encoderThroughputHealthyBaselineMs
     }
 
     /// Logs periodic stream pipeline metrics and updates adaptive in-flight depth.
@@ -230,9 +279,23 @@ extension StreamContext {
             currentBitrate
         guard currentBitrate > 0, ceilingBitrate > 0 else { return }
 
-        if averageEncodeMs >= frameBudgetMs * pressureThreshold {
+        let encoderBacklogMs = worstEncodeStartCaptureAgeMs
+        let encoderBaselineMs = refreshEncoderThroughputBaselineIfClean(
+            averageEncodeMs: averageEncodeMs,
+            encodeAttemptFPS: encodeAttemptFPS,
+            encodedFPS: encodedFPS
+        )
+        let cadencePressureThresholdMs = frameBudgetMs * pressureThreshold
+        let encodePressureThresholdMs = if mediaPathProfile.usesAwdlRadioPolicy {
+            cadencePressureThresholdMs
+        } else {
+            encoderBaselineMs.map {
+                max(cadencePressureThresholdMs, $0 * Self.encoderThroughputSpikePressureRatio)
+            } ?? cadencePressureThresholdMs
+        }
+
+        if averageEncodeMs >= encodePressureThresholdMs {
             guard encoderCatchUpQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else { return }
-            let encoderBacklogMs = worstEncodeStartCaptureAgeMs
             let backlogThresholdMs = encoderCatchUpBacklogThresholdMs()
             guard backlogThresholdMs <= 0 || encoderBacklogMs >= backlogThresholdMs else { return }
             guard now - realtimeLastEncoderThroughputAdjustmentTime >= 0.45 else { return }
@@ -284,10 +347,18 @@ extension StreamContext {
             let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
             let backlogText = encoderBacklogMs.formatted(.number.precision(.fractionLength(1)))
             let thresholdText = backlogThresholdMs.formatted(.number.precision(.fractionLength(1)))
+            let baselineText: String = if let encoderBaselineMs {
+                "\(encoderBaselineMs.formatted(.number.precision(.fractionLength(1))))ms"
+            } else {
+                "none"
+            }
+            let pressureThresholdText = encodePressureThresholdMs
+                .formatted(.number.precision(.fractionLength(1)))
             MirageLogger.metrics(
                 "Encoder throughput budget cut stream \(streamID): " +
-                    "encodeAvg=\(avgText)ms budget=\(budgetText)ms backlog=\(backlogText)ms " +
-                    "threshold=\(thresholdText)ms " +
+                    "encodeAvg=\(avgText)ms baseline=\(baselineText) budget=\(budgetText)ms " +
+                    "pressureThreshold=\(pressureThresholdText)ms backlog=\(backlogText)ms " +
+                    "backlogThreshold=\(thresholdText)ms " +
                     "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
                     "encodedFPS=\(Self.formattedFPS(encodedFPS))"
             )

@@ -438,6 +438,7 @@ extension StreamContext {
         _ recoveryCause: MirageMediaFeedbackRecoveryCause
     ) -> Bool {
         recoveryCause == .decodeError ||
+            recoveryCause == .freezeTimeout ||
             recoveryCause == .startupTimeout ||
             recoveryCause == .memoryBudget
     }

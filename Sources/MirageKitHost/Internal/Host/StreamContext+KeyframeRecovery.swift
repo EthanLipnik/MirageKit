@@ -168,12 +168,12 @@ private extension MirageMediaFeedbackRecoveryCause {
     var allowsExplicitKeyframeRequest: Bool {
         switch self {
         case .decodeError,
+             .freezeTimeout,
              .manual,
              .startupTimeout,
              .none:
             true
         case .frameLoss,
-             .freezeTimeout,
              .memoryBudget:
             false
         }

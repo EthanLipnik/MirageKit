@@ -22,9 +22,8 @@ extension MirageClientService {
             defer { self.finishForegroundRecoveryMonitor(for: streamID, token: token) }
 
             let reassembler = controller.reassembler
-            let baselineSubmittedSequence = MirageRenderStreamStore.shared
+            let baselineSubmission = MirageRenderStreamStore.shared
                 .submissionSnapshot(for: streamID)
-                .sequence
             let startedAt = CFAbsoluteTimeGetCurrent()
             var requestedKeyframe = false
             var lastPresenterRecoveryTime: CFAbsoluteTime = 0
@@ -41,10 +40,9 @@ extension MirageClientService {
                     return
                 }
 
-                let latestSubmittedSequence = MirageRenderStreamStore.shared
+                let latestSubmission = MirageRenderStreamStore.shared
                     .submissionSnapshot(for: streamID)
-                    .sequence
-                if latestSubmittedSequence > baselineSubmittedSequence {
+                if latestSubmission.hasSubmittedFrame(after: baselineSubmission) {
                     MirageLogger.client(
                         "Recovery presentation resumed for stream \(streamID); ending retry loop trigger=\(trigger.logLabel)"
                     )

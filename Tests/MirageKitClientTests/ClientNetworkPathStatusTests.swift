@@ -105,6 +105,30 @@ struct ClientNetworkPathStatusTests {
         #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "VPN / Overlay")
     }
 
+    @Test("Active tunnel path wins over Wi-Fi flags")
+    func activeTunnelPathWinsOverWiFiFlags() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["utun4"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true,
+            localEndpointDescription: "100.89.180.101:53023",
+            remoteEndpointDescription: "100.75.233.52:55395"
+        )
+
+        #expect(snapshot.kind == .vpn)
+        #expect(snapshot.mediaProfile == .vpnOrOverlay)
+        #expect(snapshot.signature.localizedStandardContains("kind=vpn"))
+        #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "VPN / Overlay")
+    }
+
     @Test("Apple private proximity interfaces use proximity-class path presentation")
     func applePrivateProximityClassifierUsesProximityPresentation() {
         let snapshot = MirageNetworkPathClassifier.classify(
@@ -297,6 +321,18 @@ struct ClientNetworkPathStatusTests {
         #expect(profile == .localWiFi)
     }
 
+    @Test("Tunnel-only media profile wins over leaked Wi-Fi flags")
+    func tunnelOnlyMediaProfileWinsOverLeakedWiFiFlags() {
+        let profile = MirageMediaPathProfile.classify(
+            pathKind: .wifi,
+            interfaceNames: ["utun4"],
+            usesWiFi: true,
+            usesOther: true
+        )
+
+        #expect(profile == .vpnOrOverlay)
+    }
+
     @Test("Local default route keeps Wi-Fi ahead of available tunnel interfaces")
     func localDefaultRouteKeepsWiFiAheadOfAvailableTunnelInterfaces() {
         let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
@@ -309,6 +345,20 @@ struct ClientNetworkPathStatusTests {
         )
 
         #expect(kind == .wifi)
+    }
+
+    @Test("Local default route uses VPN when tunnel is the only active interface")
+    func localDefaultRouteUsesVPNWhenTunnelIsTheOnlyActiveInterface() {
+        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+            interfaceNames: ["utun4"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true
+        )
+
+        #expect(kind == .vpn)
     }
 
     @Test("Local default route keeps wired ahead of available tunnel interfaces")

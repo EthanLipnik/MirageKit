@@ -56,6 +56,14 @@ extension StreamContext {
         )
 
         MirageLogger.stream(
+            streamBoundaryLog(
+                phase: "start",
+                kind: "app-atlas",
+                width: Int(outputSize.width),
+                height: Int(outputSize.height)
+            )
+        )
+        MirageLogger.stream(
             "Started app atlas stream \(streamID) at \(Int(outputSize.width))x\(Int(outputSize.height))"
         )
         return makeCustomStreamFrameSink()

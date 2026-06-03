@@ -24,10 +24,7 @@ public enum MirageBitrateQualityMapper {
     private static let maximumKeyframeQualityMultiplier: Double = 0.92
     private static let unconstrainedBPPThreshold: Double = 0.16
     private static let constrainedBPPThreshold: Double = 0.03
-    private static let highRefreshBaseScale120: Double = 0.85
-    private static let highRefreshBaseScale90: Double = 0.90
-    private static let highRefreshRelaxedScale120: Double = 0.95
-    private static let highRefreshRelaxedScale90: Double = 0.97
+    private static let maximumQualityReferenceFrameRate = 60
 
     private struct Point {
         let bpp: Double
@@ -52,8 +49,9 @@ public enum MirageBitrateQualityMapper {
 
     /// Derives frame and keyframe quality values for the requested bitrate and stream geometry.
     ///
-    /// The mapping uses bits-per-pixel-per-frame as the baseline signal, applies additional
-    /// compression pressure for high refresh rates, and relaxes the ceiling at very high bitrates.
+    /// The mapping uses bits-per-pixel-per-frame as the baseline signal and relaxes the ceiling at
+    /// very high bitrates. High refresh rates above 60 Hz are treated as presentation opportunities,
+    /// not as a per-frame quality budget.
     public static func derivedQualities(
         targetBitrateBps: Int,
         width: Int,
@@ -73,16 +71,14 @@ public enum MirageBitrateQualityMapper {
             targetBitrateBps: targetBitrateBps,
             width: width,
             height: height,
-            frameRate: frameRate
+            frameRate: qualityReferenceFrameRate(for: frameRate)
         ) else {
             return (frameQuality: defaultFrameQuality, keyframeQuality: defaultKeyframeQuality)
         }
 
         let pressure = compressionPressure(for: bpp)
         let boostScale = Double(highBitrateBoostScale(targetBitrateBps: targetBitrateBps))
-        let mappedQuality = interpolateQuality(for: bpp) *
-            frameRateCompressionScale(for: frameRate, compressionPressure: pressure) *
-            boostScale
+        let mappedQuality = interpolateQuality(for: bpp) * boostScale
         let dynamicCeiling = Double(qualityCeiling(targetBitrateBps: targetBitrateBps))
         let frameQuality = Float(max(minimumFrameQuality, min(dynamicCeiling, mappedQuality)))
         let keyframeMultiplier = keyframeQualityMultiplier(
@@ -159,10 +155,14 @@ public enum MirageBitrateQualityMapper {
         return Double(targetBitrateBps) / pixelsPerSecond
     }
 
-    /// Returns the quality scale applied for high-refresh streams at the supplied compression level.
+    /// Returns the frame cadence used for bitrate-to-quality mapping.
+    package static func qualityReferenceFrameRate(for frameRate: Int) -> Int {
+        min(max(1, frameRate), maximumQualityReferenceFrameRate)
+    }
+
+    /// Returns the quality scale applied for the supplied display cadence.
     public static func frameRateScale(frameRate: Int, bpp: Double? = nil) -> Double {
-        let pressure = bpp.map { compressionPressure(for: $0) } ?? 1.0
-        return frameRateCompressionScale(for: frameRate, compressionPressure: pressure)
+        1.0
     }
 
     /// Returns normalized compression pressure, where `1` is constrained and `0` is unconstrained.
@@ -229,21 +229,4 @@ public enum MirageBitrateQualityMapper {
         return last.quality
     }
 
-    private static func frameRateCompressionScale(
-        for frameRate: Int,
-        compressionPressure: Double
-    ) -> Double {
-        let clampedPressure = max(0.0, min(1.0, compressionPressure))
-        if frameRate >= 120 {
-            return highRefreshBaseScale120 +
-                (highRefreshRelaxedScale120 - highRefreshBaseScale120) *
-                (1.0 - clampedPressure)
-        }
-        if frameRate >= 90 {
-            return highRefreshBaseScale90 +
-                (highRefreshRelaxedScale90 - highRefreshBaseScale90) *
-                (1.0 - clampedPressure)
-        }
-        return 1.0
-    }
 }

@@ -136,7 +136,9 @@ extension MirageHostService {
             hostSnapshot: hostSnapshot,
             clientPathKind: clientEvidence?.pathKind,
             clientMediaPathProfile: clientEvidence?.mediaPathProfile,
-            clientPathSignature: clientEvidence?.pathSignature
+            clientPathSignature: clientEvidence?.pathSignature,
+            clientPolicyPathKind: clientEvidence?.policyPathKind,
+            clientPolicyMediaPathProfile: clientEvidence?.policyMediaPathProfile
         )
     }
 
@@ -219,6 +221,7 @@ extension MirageHostService {
                     hostBufferingPolicy: restartSnapshot.requestedHostBufferingPolicy,
                     transportPathKind: policy.transportPathKind,
                     mediaPathProfile: policy.mediaPathProfile,
+                    mediaPathDiagnosticSummary: policy.diagnosticSummary,
                     enteredBitrate: restartSnapshot.explicitEnteredBitrate ?? restartSnapshot.enteredBitrate,
                     bitrateAdaptationCeiling: restartSnapshot.bitrateAdaptationCeiling,
                     encoderMaxWidth: restartSnapshot.encoderMaxWidth,

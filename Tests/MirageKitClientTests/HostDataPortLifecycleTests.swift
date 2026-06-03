@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 3/12/26.
 //
 
+import CoreMedia
 @testable import MirageKitClient
 import Testing
 
@@ -47,6 +48,31 @@ struct HostDataPortLifecycleTests {
             noProgressDuration: 1,
             hardRecoveryFloor: 8
         ))
+    }
+
+    @Test("Application-activation recovery recognizes presentation progress after render reset")
+    func applicationActivationRecoveryRecognizesPresentationProgressAfterRenderReset() {
+        let baseline = SubmissionSnapshot(
+            cursor: MirageRenderCursor(generation: 4, sequence: 1200),
+            sequence: 1200,
+            submittedTime: 100,
+            remotePresentationTime: .invalid
+        )
+        let cleared = SubmissionSnapshot(
+            cursor: MirageRenderCursor(generation: 5, sequence: 0),
+            sequence: 0,
+            submittedTime: 0,
+            remotePresentationTime: .invalid
+        )
+        let recovered = SubmissionSnapshot(
+            cursor: MirageRenderCursor(generation: 5, sequence: 1),
+            sequence: 1,
+            submittedTime: 101,
+            remotePresentationTime: .invalid
+        )
+
+        #expect(!cleared.hasSubmittedFrame(after: baseline))
+        #expect(recovered.hasSubmittedFrame(after: baseline))
     }
 
     @MainActor

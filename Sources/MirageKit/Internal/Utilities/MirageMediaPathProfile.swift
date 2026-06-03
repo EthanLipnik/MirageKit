@@ -49,6 +49,9 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         if pathKind == .vpn || usesCellular || pathKind == .cellular {
             return .vpnOrOverlay
         }
+        if interfaces.hasOverlay && !interfaces.hasNonProximityRouteInterface {
+            return .vpnOrOverlay
+        }
         if pathKind == .awdl {
             if interfaces.hasApplePrivateNCM {
                 return .proximityWiredLike

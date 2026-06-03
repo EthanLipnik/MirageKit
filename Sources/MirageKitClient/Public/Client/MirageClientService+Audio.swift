@@ -14,6 +14,7 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     func stopAudioConnection() {
+        let stoppedStreamID = audioRegisteredStreamID
         invalidateAudioStreamConfiguration()
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
@@ -31,6 +32,11 @@ extension MirageClientService {
         }
         Task { [audioPacketIngressQueue] in
             await audioPacketIngressQueue.reset()
+        }
+        if let stoppedStreamID {
+            MirageLogger.client(
+                "event=stream_boundary phase=end side=client media=audio stream=\(stoppedStreamID)"
+            )
         }
     }
 
@@ -66,11 +72,18 @@ extension MirageClientService {
             }
             guard let service = serviceBox.value else { return }
             await MainActor.run {
+                let hadActiveStream = service.audioRegisteredStreamID == streamID ||
+                    service.activeMediaStreams["audio/\(streamID)"] != nil
                 if service.audioRegisteredStreamID == streamID {
                     service.audioStreamReceiveTask = nil
                     service.audioRegisteredStreamID = nil
                 }
                 service.activeMediaStreams.removeValue(forKey: "audio/\(streamID)")
+                if hadActiveStream {
+                    MirageLogger.client(
+                        "event=stream_boundary phase=end side=client media=audio stream=\(streamID)"
+                    )
+                }
                 MirageLogger.client("Audio stream receive loop ended for stream \(streamID)")
             }
         }

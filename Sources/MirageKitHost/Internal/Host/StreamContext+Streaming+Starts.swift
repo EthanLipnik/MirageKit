@@ -106,6 +106,7 @@ extension StreamContext {
         )
         await refreshCaptureCadence()
 
+        MirageLogger.stream(streamBoundaryLog(phase: "start", kind: "desktop", width: width, height: height))
         MirageLogger.stream("Started desktop display stream \(streamID) at \(width)x\(height)")
     }
 }

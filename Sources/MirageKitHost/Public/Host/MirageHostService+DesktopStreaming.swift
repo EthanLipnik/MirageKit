@@ -252,6 +252,7 @@ async throws {
             hostBufferingPolicy: hostBufferingPolicy,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,
+            mediaPathDiagnosticSummary: mediaPathPolicy.diagnosticSummary,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,

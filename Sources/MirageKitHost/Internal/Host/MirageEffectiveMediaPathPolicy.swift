@@ -18,6 +18,8 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     let clientPathKind: MirageNetworkPathKind
     let clientMediaPathProfile: MirageMediaPathProfile
     let clientPathSignature: String?
+    let clientPolicyPathKind: MirageNetworkPathKind
+    let clientPolicyMediaPathProfile: MirageMediaPathProfile
     let transportPathKind: MirageNetworkPathKind
     let mediaPathProfile: MirageMediaPathProfile
 
@@ -25,24 +27,31 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         hostSnapshot: MirageNetworkPathSnapshot?,
         clientPathKind: MirageNetworkPathKind?,
         clientMediaPathProfile: MirageMediaPathProfile?,
-        clientPathSignature: String?
+        clientPathSignature: String?,
+        clientPolicyPathKind: MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil
     ) -> MirageEffectiveMediaPathPolicy {
         let hostKind = hostSnapshot?.kind ?? .unknown
         let hostProfile = hostSnapshot?.mediaProfile ?? .unknown
         let clientKind = clientPathKind ?? .unknown
         let clientProfile = clientMediaPathProfile ?? .unknown
+        let policyKind = clientPolicyPathKind ?? .unknown
+        let policyProfile = clientPolicyMediaPathProfile ?? .unknown
         let resolvedProfile = resolvedMediaPathProfile(
             hostKind: hostKind,
             hostSignature: hostSnapshot?.signature,
             host: hostProfile,
             clientKind: clientKind,
             clientSignature: clientPathSignature,
-            client: clientProfile
+            client: clientProfile,
+            clientPolicyKind: policyKind,
+            clientPolicy: policyProfile
         )
         let resolvedKind = resolvedTransportPathKind(
             resolvedProfile: resolvedProfile,
             hostKind: hostKind,
-            clientKind: clientKind
+            clientKind: clientKind,
+            clientPolicyKind: policyKind
         )
 
         return MirageEffectiveMediaPathPolicy(
@@ -52,6 +61,8 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
             clientPathKind: clientKind,
             clientMediaPathProfile: clientProfile,
             clientPathSignature: clientPathSignature,
+            clientPolicyPathKind: policyKind,
+            clientPolicyMediaPathProfile: policyProfile,
             transportPathKind: resolvedKind,
             mediaPathProfile: resolvedProfile
         )
@@ -63,7 +74,9 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         host: MirageMediaPathProfile,
         clientKind: MirageNetworkPathKind,
         clientSignature: String?,
-        client: MirageMediaPathProfile
+        client: MirageMediaPathProfile,
+        clientPolicyKind: MirageNetworkPathKind,
+        clientPolicy: MirageMediaPathProfile
     ) -> MirageMediaPathProfile {
         let hostResolved = resolvedAwdlSideProfile(
             kind: hostKind,
@@ -75,12 +88,23 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
             profile: client,
             signature: clientSignature
         ) ?? client
+        let policyResolved = resolvedAwdlSideProfile(
+            kind: clientPolicyKind,
+            profile: clientPolicy,
+            signature: clientSignature
+        ) ?? clientPolicy
 
+        if policyResolved == .vpnOrOverlay || clientPolicyKind == .vpn {
+            return .vpnOrOverlay
+        }
         if hostResolved.usesAwdlRadioPolicy || clientResolved.usesAwdlRadioPolicy {
             return .awdlRadio
         }
         if hostResolved == .proximityWiredLike || clientResolved == .proximityWiredLike {
             return .proximityWiredLike
+        }
+        if policyResolved != .unknown {
+            return policyResolved
         }
         if clientResolved != .unknown {
             return clientResolved
@@ -140,10 +164,17 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     private static func resolvedTransportPathKind(
         resolvedProfile: MirageMediaPathProfile,
         hostKind: MirageNetworkPathKind,
-        clientKind: MirageNetworkPathKind
+        clientKind: MirageNetworkPathKind,
+        clientPolicyKind: MirageNetworkPathKind
     ) -> MirageNetworkPathKind {
+        if resolvedProfile == .vpnOrOverlay {
+            return .vpn
+        }
         if resolvedProfile.usesAwdlRadioPolicy {
             return .awdl
+        }
+        if clientPolicyKind != .unknown {
+            return clientPolicyKind
         }
         if clientKind != .unknown {
             return clientKind
@@ -154,6 +185,7 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     var diagnosticSummary: String {
         "hostPath=\(hostPathKind.rawValue)/\(hostMediaPathProfile.rawValue) " +
             "clientPath=\(clientPathKind.rawValue)/\(clientMediaPathProfile.rawValue) " +
+            "clientPolicy=\(clientPolicyPathKind.rawValue)/\(clientPolicyMediaPathProfile.rawValue) " +
             "resolved=\(transportPathKind.rawValue)/\(mediaPathProfile.rawValue)"
     }
 }
@@ -170,7 +202,9 @@ extension MirageHostService {
         clientContext: ClientContext,
         clientPathKind: MirageNetworkPathKind?,
         clientMediaPathProfile: MirageMediaPathProfile?,
-        clientPathSignature: String?
+        clientPathSignature: String?,
+        clientPolicyPathKind: MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil
     ) -> MirageEffectiveMediaPathPolicy {
         let hostSnapshot = currentHostMediaPathSnapshot(
             liveSnapshot: nil,
@@ -180,7 +214,9 @@ extension MirageHostService {
             hostSnapshot: hostSnapshot,
             clientPathKind: clientPathKind,
             clientMediaPathProfile: clientMediaPathProfile,
-            clientPathSignature: clientPathSignature
+            clientPathSignature: clientPathSignature,
+            clientPolicyPathKind: clientPolicyPathKind,
+            clientPolicyMediaPathProfile: clientPolicyMediaPathProfile
         )
     }
 
@@ -188,7 +224,9 @@ extension MirageHostService {
         clientContext: ClientContext,
         clientPathKind: MirageNetworkPathKind?,
         clientMediaPathProfile: MirageMediaPathProfile?,
-        clientPathSignature: String?
+        clientPathSignature: String?,
+        clientPolicyPathKind: MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil
     ) async -> MirageEffectiveMediaPathPolicy {
         let hostSnapshot = currentHostMediaPathSnapshot(
             liveSnapshot: await clientContext.controlChannel.session.pathSnapshot,
@@ -198,7 +236,9 @@ extension MirageHostService {
             hostSnapshot: hostSnapshot,
             clientPathKind: clientPathKind,
             clientMediaPathProfile: clientMediaPathProfile,
-            clientPathSignature: clientPathSignature
+            clientPathSignature: clientPathSignature,
+            clientPolicyPathKind: clientPolicyPathKind,
+            clientPolicyMediaPathProfile: clientPolicyMediaPathProfile
         )
     }
 
@@ -210,7 +250,9 @@ extension MirageHostService {
             clientContext: clientContext,
             clientPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
-            clientPathSignature: request.clientPathSignature
+            clientPathSignature: request.clientPathSignature,
+            clientPolicyPathKind: request.clientPolicyPathKind,
+            clientPolicyMediaPathProfile: request.clientPolicyMediaPathProfile
         )
     }
 
@@ -222,7 +264,9 @@ extension MirageHostService {
             clientContext: clientContext,
             clientPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
-            clientPathSignature: request.clientPathSignature
+            clientPathSignature: request.clientPathSignature,
+            clientPolicyPathKind: request.clientPolicyPathKind,
+            clientPolicyMediaPathProfile: request.clientPolicyMediaPathProfile
         )
     }
 
@@ -234,7 +278,9 @@ extension MirageHostService {
             clientContext: clientContext,
             clientPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
-            clientPathSignature: request.clientPathSignature
+            clientPathSignature: request.clientPathSignature,
+            clientPolicyPathKind: request.clientPolicyPathKind,
+            clientPolicyMediaPathProfile: request.clientPolicyMediaPathProfile
         )
     }
 
@@ -246,7 +292,9 @@ extension MirageHostService {
             clientContext: clientContext,
             clientPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
-            clientPathSignature: request.clientPathSignature
+            clientPathSignature: request.clientPathSignature,
+            clientPolicyPathKind: request.clientPolicyPathKind,
+            clientPolicyMediaPathProfile: request.clientPolicyMediaPathProfile
         )
     }
 
@@ -258,7 +306,9 @@ extension MirageHostService {
             clientContext: clientContext,
             clientPathKind: request.clientTransportPathKind,
             clientMediaPathProfile: request.clientMediaPathProfile,
-            clientPathSignature: request.clientPathSignature
+            clientPathSignature: request.clientPathSignature,
+            clientPolicyPathKind: request.clientPolicyPathKind,
+            clientPolicyMediaPathProfile: request.clientPolicyMediaPathProfile
         )
     }
 }

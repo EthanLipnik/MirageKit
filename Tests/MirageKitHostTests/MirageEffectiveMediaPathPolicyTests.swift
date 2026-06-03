@@ -28,6 +28,49 @@ struct MirageEffectiveMediaPathPolicyTests {
         #expect(policy.mediaPathProfile == .localWiFi)
     }
 
+    @Test("VPN policy overrides raw WiFi path observation")
+    func vpnPolicyOverridesRawWiFiPathObservation() {
+        let policy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: Self.snapshot(kind: .wifi),
+            clientPathKind: .wifi,
+            clientMediaPathProfile: .localWiFi,
+            clientPathSignature: "status=satisfied|kind=wifi|media=localWiFi|if=en0",
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay
+        )
+
+        #expect(policy.clientPathKind == .wifi)
+        #expect(policy.clientMediaPathProfile == .localWiFi)
+        #expect(policy.clientPolicyPathKind == .vpn)
+        #expect(policy.clientPolicyMediaPathProfile == .vpnOrOverlay)
+        #expect(policy.transportPathKind == .vpn)
+        #expect(policy.mediaPathProfile == .vpnOrOverlay)
+    }
+
+    @Test("Stored VPN policy survives local-looking retune snapshots")
+    func storedVPNPolicySurvivesLocalLookingRetuneSnapshots() {
+        let startupPolicy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: Self.snapshot(kind: .wifi),
+            clientPathKind: .wifi,
+            clientMediaPathProfile: .localWiFi,
+            clientPathSignature: "status=satisfied|kind=wifi|media=localWiFi|if=en0",
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay
+        )
+        let evidence = HostStreamMediaPathClientEvidence(policy: startupPolicy)
+        let retunedPolicy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: Self.snapshot(kind: .wired),
+            clientPathKind: evidence.pathKind,
+            clientMediaPathProfile: evidence.mediaPathProfile,
+            clientPathSignature: evidence.pathSignature,
+            clientPolicyPathKind: evidence.policyPathKind,
+            clientPolicyMediaPathProfile: evidence.policyMediaPathProfile
+        )
+
+        #expect(retunedPolicy.transportPathKind == .vpn)
+        #expect(retunedPolicy.mediaPathProfile == .vpnOrOverlay)
+    }
+
     @Test("Either side AWDL resolves AWDL radio policy")
     func eitherSideAwdlResolvesAwdlRadioPolicy() {
         let hostAwdl = MirageEffectiveMediaPathPolicy.resolve(

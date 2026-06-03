@@ -173,6 +173,7 @@ extension StreamContext {
         }
         useVirtualDisplay = false
 
+        let boundaryLog = streamBoundaryLog(phase: "end", kind: streamKind.rawValue)
         await packetSender?.stop()
         packetSender = nil
 
@@ -183,6 +184,7 @@ extension StreamContext {
         isAppStream = false
         applicationProcessID = 0
 
+        MirageLogger.stream(boundaryLog)
         MirageLogger.stream("Stopped stream \(streamID)")
     }
 }

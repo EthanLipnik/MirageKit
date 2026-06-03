@@ -214,7 +214,25 @@ extension MirageClientService {
         controlPathSnapshot = nil
         currentControlPathKind = nil
         currentControlPathStatus = nil
+        streamingPolicyPathKindOverride = nil
+        streamingPolicyMediaPathProfileOverride = nil
         resetControlPathHistory()
+    }
+
+    /// Overrides the stream policy path used for host budgeting while keeping raw path observations separate.
+    public func setStreamingPolicyPathKindOverride(_ pathKind: MirageNetworkPathKind?) {
+        streamingPolicyPathKindOverride = pathKind
+        streamingPolicyMediaPathProfileOverride = pathKind.map {
+            MirageMediaPathProfile.classify(
+                pathKind: $0,
+                interfaceNames: controlPathSnapshot?.interfaceNames ?? [],
+                usesWiFi: controlPathSnapshot?.usesWiFi ?? false,
+                usesWired: controlPathSnapshot?.usesWired ?? false,
+                usesCellular: controlPathSnapshot?.usesCellular ?? false,
+                usesLoopback: controlPathSnapshot?.usesLoopback ?? false,
+                usesOther: controlPathSnapshot?.usesOther ?? false
+            )
+        }
     }
 
     func suppressCurrentAwdlProximityRouteIfNeeded(
@@ -278,24 +296,32 @@ extension MirageClientService {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
+        request.clientPolicyPathKind = streamingPolicyPathKindOverride
+        request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
     func applyCurrentClientPathFields(to request: inout StartStreamMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
+        request.clientPolicyPathKind = streamingPolicyPathKindOverride
+        request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
     func applyCurrentClientPathFields(to request: inout SelectAppMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
+        request.clientPolicyPathKind = streamingPolicyPathKindOverride
+        request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
     func applyCurrentClientPathFields(to request: inout StartCustomStreamMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
+        request.clientPolicyPathKind = streamingPolicyPathKindOverride
+        request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
     /// Appends a distinct control-path status sample, keeping only the most recent entries.

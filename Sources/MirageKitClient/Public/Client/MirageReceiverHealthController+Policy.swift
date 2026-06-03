@@ -83,12 +83,12 @@ extension MirageReceiverHealthController {
     static let clientReceivedGapSevereMinimumMs = 180.0
     static let clientReceivedGapStressFrameMultiple = 4.0
     static let clientReceivedGapSevereFrameMultiple = 8.0
-    static let clientFreshnessPendingAgeStressMs = 180.0
+    static let clientFreshnessPendingAgeStressMs = 350.0
     static let clientFreshnessPendingAgeSevereMs = 500.0
-    static let clientFreshnessDisplayDebtStressMs = 180.0
+    static let clientFreshnessDisplayDebtStressMs = 350.0
     static let clientFreshnessDisplayDebtSevereMs = 500.0
-    static let clientFreshnessPresentationGapStressMs = 250.0
-    static let clientFreshnessPresentationGapSevereMs = 750.0
+    static let clientFreshnessPresentationGapStressMs = 350.0
+    static let clientFreshnessPresentationGapSevereMs = 500.0
     static let clientFreshnessPresentationStallSevereCount: UInt64 = 2
     static let clientReassemblerPendingFrameStressCount = 3
     static let clientReassemblerPendingFrameSevereCount = 8

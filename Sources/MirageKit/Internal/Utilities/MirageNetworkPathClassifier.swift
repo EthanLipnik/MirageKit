@@ -80,6 +80,9 @@ package enum MirageNetworkPathClassifier {
             !interfaces.hasNonProximityRouteInterface {
             return .awdl
         }
+        if interfaces.hasOverlay && !interfaces.hasNonProximityRouteInterface {
+            return .vpn
+        }
         if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             return .wifi
         }
@@ -123,13 +126,21 @@ package enum MirageNetworkPathClassifier {
             )
         )
         let interfaces = InterfaceSummary(interfaceNames + endpointRouteInterfaces.names)
+        let usesOverlayEndpointAddress = endpointUsesOverlayAddress(
+            localEndpointDescription: localEndpointDescription,
+            remoteEndpointDescription: remoteEndpointDescription
+        )
         let kind: MirageNetworkPathKind
         if endpointRouteInterfaces.hasOverlay {
+            kind = .vpn
+        } else if interfaces.hasOverlay && usesOverlayEndpointAddress {
             kind = .vpn
         } else if endpointRouteInterfaces.hasBridge {
             kind = .wired
         } else if endpointRouteInterfaces.hasProximity {
             kind = .awdl
+        } else if interfaces.hasOverlay && !interfaces.hasNonProximityRouteInterface {
+            kind = .vpn
         } else if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             kind = .wifi
         } else if usesWired {
@@ -211,15 +222,47 @@ package enum MirageNetworkPathClassifier {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         let routePrefixes = ["%25", "%"]
-        let proximityPrefixes = ["anpi", "apni", "awdl", "llw", "bridge"]
+        let routeInterfacePrefixes = ["anpi", "apni", "awdl", "llw", "bridge", "utun"]
         return routePrefixes.flatMap { marker in
-            proximityPrefixes.compactMap { prefix in
+            routeInterfacePrefixes.compactMap { prefix in
                 guard let range = normalized.range(of: marker + prefix) else { return nil }
                 let suffix = normalized[range.upperBound...]
                 let digits = suffix.prefix { $0.isNumber }
                 return prefix + digits
             }
         }
+    }
+
+    private static func endpointUsesOverlayAddress(
+        localEndpointDescription: String?,
+        remoteEndpointDescription: String?
+    ) -> Bool {
+        containsSharedCarrierIPv4Address(localEndpointDescription) ||
+            containsSharedCarrierIPv4Address(remoteEndpointDescription)
+    }
+
+    private static func containsSharedCarrierIPv4Address(_ endpointDescription: String?) -> Bool {
+        guard let endpointDescription else { return false }
+        var token = ""
+        for scalar in endpointDescription.unicodeScalars {
+            if scalar == "." || CharacterSet.decimalDigits.contains(scalar) {
+                token.unicodeScalars.append(scalar)
+            } else {
+                if isSharedCarrierIPv4Token(token) { return true }
+                token.removeAll(keepingCapacity: true)
+            }
+        }
+        return isSharedCarrierIPv4Token(token)
+    }
+
+    private static func isSharedCarrierIPv4Token(_ token: String) -> Bool {
+        let parts = token.split(separator: ".")
+        guard parts.count == 4,
+              let first = Int(parts[0]),
+              let second = Int(parts[1]) else {
+            return false
+        }
+        return first == 100 && (64...127).contains(second)
     }
 
     /// Normalizes Network.framework interface names before path-specific classification.

@@ -225,6 +225,7 @@ public extension MirageHostService {
             hostBufferingPolicy: hostBufferingPolicy,
             transportPathKind: transportPathKind,
             mediaPathProfile: resolvedMediaPathPolicy.mediaPathProfile,
+            mediaPathDiagnosticSummary: resolvedMediaPathPolicy.diagnosticSummary,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight

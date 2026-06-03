@@ -40,8 +40,8 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeRequiresFlush == false)
     }
 
-    @Test("Only decode-error keyframe requests bypass adaptive cooldown")
-    func onlyDecodeErrorKeyframeRequestsBypassAdaptiveCooldown() async {
+    @Test("Decode-error and freeze-timeout keyframe requests bypass adaptive cooldown")
+    func decodeErrorAndFreezeTimeoutKeyframeRequestsBypassAdaptiveCooldown() async {
         let context = makeContext()
 
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -50,7 +50,7 @@ struct HostKeyframeRecoveryTests {
         #expect(!frameLossAck.accepted)
 
         let freezeAck = await context.requestKeyframe(recoveryCause: .freezeTimeout)
-        #expect(!freezeAck.accepted)
+        #expect(freezeAck.accepted)
 
         let decodeContext = makeContext()
         await decodeContext.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())

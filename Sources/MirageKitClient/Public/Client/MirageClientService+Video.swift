@@ -281,17 +281,26 @@ extension MirageClientService {
 
     /// Stop the video stream receive task for a specific stream.
     func stopVideoStreamReceive(for streamID: StreamID) {
+        let streamKey = "video/\(streamID)"
+        let hadActiveStream = videoStreamReceiveTasks[streamID] != nil ||
+            videoPacketIngressProcessors[streamID] != nil ||
+            activeMediaStreams[streamKey] != nil
         videoStreamReceiveTasks[streamID]?.cancel()
         videoStreamReceiveTasks.removeValue(forKey: streamID)
-        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
+        activeMediaStreams[streamKey]?.clearIncomingBytesBatchHandler()
         videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
         videoIngressTelemetryStore.clear(streamID: streamID)
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
-        activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        activeMediaStreams.removeValue(forKey: streamKey)
         fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
         cancelForegroundRecoveryMonitor(for: streamID)
         clearReceiverMediaFeedbackState(for: streamID)
+        if hadActiveStream {
+            MirageLogger.client(
+                "event=stream_boundary phase=end side=client media=video stream=\(streamID)"
+            )
+        }
     }
 
     private func handleObservedIncomingMediaStream(
@@ -307,13 +316,19 @@ extension MirageClientService {
 
         switch IncomingMediaStreamKind.classify(label: label) {
         case let .video(streamID):
-            MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
+            MirageLogger.client(
+                "event=stream_boundary phase=start side=client media=video " +
+                    "stream=\(streamID) label=\(label) session=\(sessionID.uuidString)"
+            )
             activeMediaStreams[label] = stream
             refreshActiveStreamTransportBudgetPolicy()
             startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
 
         case let .audio(streamID):
-            MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
+            MirageLogger.client(
+                "event=stream_boundary phase=start side=client media=audio " +
+                    "stream=\(streamID) label=\(label) session=\(sessionID.uuidString)"
+            )
             activeMediaStreams[label] = stream
             await startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
 
@@ -333,14 +348,23 @@ extension MirageClientService {
     }
 
     private func finishVideoStreamReceiveLoop(streamID: StreamID) async {
+        let streamKey = "video/\(streamID)"
+        let hadActiveStream = videoStreamReceiveTasks[streamID] != nil ||
+            videoPacketIngressProcessors[streamID] != nil ||
+            activeMediaStreams[streamKey] != nil
         videoStreamReceiveTasks.removeValue(forKey: streamID)
-        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
+        activeMediaStreams[streamKey]?.clearIncomingBytesBatchHandler()
         videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
         videoIngressTelemetryStore.clear(streamID: streamID)
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
-        activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        activeMediaStreams.removeValue(forKey: streamKey)
         fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
+        if hadActiveStream {
+            MirageLogger.client(
+                "event=stream_boundary phase=end side=client media=video stream=\(streamID)"
+            )
+        }
         if shouldForceLocalTeardownAfterVideoReceiveEnded(streamID: streamID) {
             MirageLogger.client(
                 "Video stream receive loop ended for unreferenced stream \(streamID); forcing local teardown"

@@ -116,6 +116,7 @@ extension MirageHostService {
             hostBufferingPolicy: request.hostBufferingPolicy,
             transportPathKind: request.transportPathKind,
             mediaPathProfile: request.mediaPathProfile,
+            mediaPathDiagnosticSummary: request.mediaPathDiagnosticSummary,
             enteredBitrate: request.enteredBitrate,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,

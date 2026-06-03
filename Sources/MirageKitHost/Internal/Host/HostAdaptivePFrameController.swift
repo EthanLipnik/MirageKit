@@ -126,23 +126,23 @@ struct HostAdaptivePFrameController: Equatable {
             switch latencyMode {
             case .lowestLatency:
                 return ModePolicy(
-                    targetClearMs: 14,
+                    targetClearMs: HostAdaptivePFrameController.freshnessSoftHeadroomMs,
                     staleSampleAgeMs: 500,
-                    passiveStaleFrameAgeMs: 80,
+                    passiveStaleFrameAgeMs: HostAdaptivePFrameController.freshnessPrecutHeadroomMs,
                     startupFrameWireBytesAt60FPS: 64 * 1024
                 )
             case .balanced:
                 return ModePolicy(
-                    targetClearMs: 33,
-                    staleSampleAgeMs: 1_000,
-                    passiveStaleFrameAgeMs: 250,
+                    targetClearMs: HostAdaptivePFrameController.freshnessSoftHeadroomMs,
+                    staleSampleAgeMs: HostAdaptivePFrameController.freshnessHardStaleFrameAgeMs,
+                    passiveStaleFrameAgeMs: HostAdaptivePFrameController.freshnessPrecutHeadroomMs,
                     startupFrameWireBytesAt60FPS: 96 * 1024
                 )
             case .smoothest:
                 return ModePolicy(
-                    targetClearMs: 66,
-                    staleSampleAgeMs: 1_000,
-                    passiveStaleFrameAgeMs: 300,
+                    targetClearMs: HostAdaptivePFrameController.freshnessSoftHeadroomMs,
+                    staleSampleAgeMs: HostAdaptivePFrameController.freshnessHardStaleFrameAgeMs,
+                    passiveStaleFrameAgeMs: HostAdaptivePFrameController.freshnessPrecutHeadroomMs,
                     startupFrameWireBytesAt60FPS: 128 * 1024
                 )
             }
@@ -232,6 +232,9 @@ struct HostAdaptivePFrameController: Equatable {
     private static let failureProbeWindowSeconds: CFAbsoluteTime = 60.0
     private static let passiveFailureProbeWindowSeconds: CFAbsoluteTime = 3.0
     private static let stillFailureProbeBypassSeconds: CFAbsoluteTime = 0.25
+    private static let freshnessPrecutHeadroomMs = 320.0
+    private static let freshnessSoftHeadroomMs = 350.0
+    private static let freshnessHardStaleFrameAgeMs = 500.0
     private static let lowMotionQualityTargetClearMs = 33.0
     private static let lowMotionStillMaximumWireBytes = 192 * 1024
     private static let lowMotionStillBaselineRatio = 4.0
@@ -1157,12 +1160,14 @@ struct HostAdaptivePFrameController: Equatable {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
         )
-        let policy = ModePolicy.policy(
-            for: latencyMode,
+        learnedBytesPerMs = defaultBytesPerMs(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
-        learnedBytesPerMs = Double(max(1, targetFrameWireBytes ?? initialBytes)) / max(1, policy.targetClearMs)
     }
 
     private func startupProbeFrameWireBytes(
@@ -1178,8 +1183,7 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
-        let fpsScale = mediaPathProfile.usesAwdlRadioPolicy ? 1.0 : 60.0 / Double(max(1, currentFrameRate))
-        let startupBytes = Int((Double(policy.startupFrameWireBytesAt60FPS) * fpsScale).rounded(.up))
+        let startupBytes = policy.startupFrameWireBytesAt60FPS
         return clampFrameWireBytes(
             startupBytes,
             input: input,
@@ -1375,6 +1379,9 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
+        guard mediaPathProfile.usesAwdlRadioPolicy else {
+            return Double(max(1, input.currentBitrate)) / 8.0 / 1_000.0
+        }
         let target = currentTargetFrameWireBytes(
             input: input,
             currentFrameRate: currentFrameRate,

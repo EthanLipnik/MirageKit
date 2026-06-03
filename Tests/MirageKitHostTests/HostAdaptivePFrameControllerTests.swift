@@ -73,15 +73,49 @@ struct HostAdaptivePFrameControllerTests {
         #expect(previousBudget > 64 * 1024)
     }
 
-    @Test("One severe receiver delivery sample cuts immediately")
-    func oneSevereReceiverDeliverySampleCutsImmediately() throws {
+    @Test("Non-AWDL startup probe budget does not shrink at 120Hz")
+    func nonAwdlStartupProbeBudgetDoesNotShrinkAt120Hz() throws {
+        var sixtyController = HostAdaptivePFrameController()
+        var highRefreshController = HostAdaptivePFrameController()
+        let requestedBitrate = 76_700_000
+
+        let sixty = try #require(recordDelivery(
+            controller: &sixtyController,
+            currentBitrate: requestedBitrate,
+            requestedBitrate: requestedBitrate,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            wireBytes: 20 * 1024,
+            packetSpanMs: 3,
+            completionGapMs: 3,
+            currentQuality: 0.40,
+            currentFrameRate: 60
+        ))
+        let highRefresh = try #require(recordDelivery(
+            controller: &highRefreshController,
+            currentBitrate: requestedBitrate,
+            requestedBitrate: requestedBitrate,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            wireBytes: 20 * 1024,
+            packetSpanMs: 3,
+            completionGapMs: 3,
+            currentQuality: 0.40,
+            currentFrameRate: 120
+        ))
+
+        #expect(highRefresh.maxWireBytes == sixty.maxWireBytes)
+    }
+
+    @Test("One stale receiver delivery sample cuts immediately")
+    func oneStaleReceiverDeliverySampleCutsImmediately() throws {
         var controller = HostAdaptivePFrameController()
 
         let decision = try #require(recordDelivery(
             controller: &controller,
             wireBytes: 240 * 1024,
-            packetSpanMs: 80,
-            completionGapMs: 80
+            packetSpanMs: 700,
+            completionGapMs: 700
         ))
 
         #expect(decision.reason == .pFrameLatency)
@@ -97,8 +131,8 @@ struct HostAdaptivePFrameControllerTests {
             controller: &controller,
             capacityLearningAllowed: false,
             wireBytes: 240 * 1024,
-            packetSpanMs: 80,
-            completionGapMs: 80
+            packetSpanMs: 700,
+            completionGapMs: 700
         ))
 
         #expect(decision.reason == .pFrameLatency)
@@ -415,16 +449,16 @@ struct HostAdaptivePFrameControllerTests {
             startupCeiling: requestedBitrate,
             minimumFloor: 2_000_000,
             wireBytes: frameBytes(for: requestedBitrate),
-            packetSpanMs: 220,
-            completionGapMs: 220
+            packetSpanMs: 700,
+            completionGapMs: 700
         ))
 
         #expect(decision.maxWireBytes < oldThirtyFivePercentFloorBytes)
         #expect(decision.maxWireBytes >= frameBytes(for: 2_000_000))
     }
 
-    @Test("Mild Most Responsive oversize sends and cuts the next frame")
-    func mildMostResponsiveOversizeSendsAndCutsNextFrame() throws {
+    @Test("Fresh input oversize sends when it fits freshness headroom")
+    func freshInputOversizeSendsWhenItFitsFreshnessHeadroom() throws {
         var controller = HostAdaptivePFrameController()
         let decision = controller.evaluateEncodedFrame(
             byteCount: 180 * 1024,
@@ -448,9 +482,8 @@ struct HostAdaptivePFrameControllerTests {
             now: 10
         )
 
-        #expect(decision.admission == .sendWithQualityDrop)
-        #expect(decision.budgetDecision?.reason == .encodedFrame)
-        #expect((decision.budgetDecision?.quality ?? 1) < 0.60)
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
     }
 
     @Test("Low-motion no-input oversize frame is admitted for quality recovery")
@@ -502,12 +535,12 @@ struct HostAdaptivePFrameControllerTests {
             latencyMode: .lowestLatency,
             now: 10
         )
-        #expect(inputAdmission.admission == .sendWithQualityDrop)
-        #expect(inputAdmission.budgetDecision?.reason == .encodedFrame)
+        #expect(inputAdmission.admission == .send)
+        #expect(inputAdmission.budgetDecision == nil)
     }
 
-    @Test("Severe Most Responsive input oversize preserves the P-frame chain")
-    func severeMostResponsiveInputOversizePreservesPFrameChain() {
+    @Test("Large input oversize sends when it fits freshness headroom")
+    func largeInputOversizeSendsWhenItFitsFreshnessHeadroom() {
         var controller = HostAdaptivePFrameController()
         let decision = controller.evaluateEncodedFrame(
             byteCount: 360 * 1024,
@@ -531,13 +564,12 @@ struct HostAdaptivePFrameControllerTests {
             now: 10
         )
 
-        #expect(decision.admission == .sendWithQualityDrop)
-        #expect(decision.budgetDecision?.reason == .encodedFrame)
-        #expect((decision.budgetDecision?.quality ?? 1) < 0.60)
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
     }
 
-    @Test("All latency modes preserve the P-frame chain for the same oversize")
-    func allLatencyModesPreservePFrameChainForSameOversize() {
+    @Test("All latency modes admit fresh oversize frames that fit headroom")
+    func allLatencyModesAdmitFreshOversizeFramesThatFitHeadroom() {
         for mode in [MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
             var controller = HostAdaptivePFrameController()
             let decision = controller.evaluateEncodedFrame(
@@ -562,14 +594,14 @@ struct HostAdaptivePFrameControllerTests {
                 now: 10
             )
 
-            #expect(decision.admission == .sendWithQualityDrop)
+            #expect(decision.admission == .send)
+            #expect(decision.budgetDecision == nil)
         }
     }
 
-    @Test("Catastrophic MB-scale oversize drops and targets a smaller repair keyframe")
-    func catastrophicMBScaleOversizeDropsAndTargetsSmallerRepairKeyframe() throws {
+    @Test("Catastrophic MB-scale over-headroom frame drops and targets a smaller repair keyframe")
+    func catastrophicMBScaleOverHeadroomFrameDropsAndTargetsSmallerRepairKeyframe() throws {
         let operatingFrameBytes = 20 * 1024 * 1024
-        let requestedFrameBytes = 80 * 1024 * 1024
         let oversizedFrameBytes = 60 * 1024 * 1024
 
         for mode in [MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
@@ -581,9 +613,9 @@ struct HostAdaptivePFrameControllerTests {
                 isKeyframe: false,
                 receiverHealthy: true,
                 senderHealthy: true,
-                currentBitrateBps: bitrate(forFrameBytes: operatingFrameBytes),
-                requestedTargetBitrateBps: bitrate(forFrameBytes: requestedFrameBytes),
-                startupCeilingBps: bitrate(forFrameBytes: requestedFrameBytes),
+                currentBitrateBps: 60_000_000,
+                requestedTargetBitrateBps: 60_000_000,
+                startupCeilingBps: 60_000_000,
                 minimumBitrateFloorBps: 2_000_000,
                 currentFrameRate: 60,
                 maxPayloadSize: 1_200,
@@ -688,8 +720,8 @@ struct HostAdaptivePFrameControllerTests {
             inputActive: true,
             sourceStill: false,
             wireBytes: 48 * 1024,
-            packetSpanMs: 42,
-            completionGapMs: 42,
+            packetSpanMs: 420,
+            completionGapMs: 420,
             currentQuality: 0.35,
             now: 10
         ))
@@ -932,6 +964,7 @@ private func recordDelivery(
     mediaPathProfile: MirageMediaPathProfile = .unknown,
     receiverPlayoutDelayTargetMs: Double? = nil,
     awdlQualityReductionAllowed: Bool = true,
+    currentFrameRate: Int = 60,
     now: CFAbsoluteTime = 10
 ) -> HostFrameBudgetDecision? {
     controller.recordFrameTransportCompletion(
@@ -953,7 +986,7 @@ private func recordDelivery(
         requestedTargetBitrateBps: requestedBitrate,
         startupCeilingBps: startupCeiling,
         minimumBitrateFloorBps: minimumFloor,
-        currentFrameRate: 60,
+        currentFrameRate: currentFrameRate,
         maxPayloadSize: 1_200,
         currentQuality: currentQuality,
         qualityFloor: 0.03,

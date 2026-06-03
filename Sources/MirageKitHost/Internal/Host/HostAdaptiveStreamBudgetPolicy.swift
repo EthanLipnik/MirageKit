@@ -51,6 +51,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     private static let highResolutionManualFloorFraction = 0.60
     private static let awdlStartupReadabilityFrameQuality: Float = 0.28
     private static let awdlStartupReadabilityCapBps = 72_000_000
+    private static let automaticStartupReadabilityFrameQuality: Float = 0.60
     private static let proximityAutomaticStartupReadabilityFrameQuality: Float = 0.65
 
     static func resolve(_ request: Request) -> Decision? {
@@ -142,12 +143,12 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
 
         let minimumFloor = min(
             max(1, maximumCeiling),
-            max(1, pathBudget.minimumFloorBps, manualFloor ?? 0)
+            max(1, pathBudget.minimumFloorBps, manualFloor ?? 0, automaticReadabilityFloor ?? 0)
         )
         let encoderThroughputMinimumFloor = if request.encoderCatchUpQualityAdjustmentEnabled {
             min(
                 max(1, maximumCeiling),
-                max(1, pathBudget.minimumFloorBps)
+                max(1, pathBudget.minimumFloorBps, automaticReadabilityFloor ?? 0)
             )
         } else {
             minimumFloor
@@ -210,21 +211,40 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         maximumCeiling: Int
     ) -> Int? {
         guard request.enteredBitrateBps == nil,
-              request.mediaPathProfile == .proximityWiredLike else {
+              let readabilityFrameQuality = automaticStartupReadabilityFrameQuality(
+                  for: request.mediaPathProfile
+              ) else {
             return nil
         }
         let width = max(2, Int(request.outputSize.width))
         let height = max(2, Int(request.outputSize.height))
         guard let readabilityBitrate = MirageBitrateQualityMapper.targetBitrateBps(
-            forFrameQuality: proximityAutomaticStartupReadabilityFrameQuality,
+            forFrameQuality: readabilityFrameQuality,
             width: width,
             height: height,
             frameRate: request.frameRate,
             maxBitrateBps: maximumCeiling
         ) else {
-            return nil
+            return maximumCeiling
         }
         return min(maximumCeiling, max(1, readabilityBitrate))
+    }
+
+    private static func automaticStartupReadabilityFrameQuality(
+        for mediaPathProfile: MirageMediaPathProfile
+    ) -> Float? {
+        switch mediaPathProfile {
+        case .localWiFi,
+             .wired,
+             .vpnOrOverlay:
+            return Self.automaticStartupReadabilityFrameQuality
+        case .proximityWiredLike:
+            return proximityAutomaticStartupReadabilityFrameQuality
+        case .awdlRadio,
+             .other,
+             .unknown:
+            return nil
+        }
     }
 
     private static func clientMaximumCeiling(

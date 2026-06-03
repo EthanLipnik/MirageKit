@@ -14,8 +14,8 @@ import Testing
 
 @Suite("Host Adaptive Stream Budget Policy")
 struct HostAdaptiveStreamBudgetPolicyTests {
-    @Test("WiFi automatic stream starts at conservative host probe below saturation ceiling")
-    func wifiAutomaticStreamStartsAtConservativeHostProbeBelowSaturationCeiling() {
+    @Test("WiFi automatic stream starts at readability floor below saturation ceiling")
+    func wifiAutomaticStreamStartsAtReadabilityFloorBelowSaturationCeiling() throws {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
             request(
                 requestedBitrateBps: 76_700_000,
@@ -25,14 +25,20 @@ struct HostAdaptiveStreamBudgetPolicyTests {
                 mediaPathProfile: .localWiFi
             )
         )
+        let expectedReadabilityFloor = try automaticReadabilityFloor(
+            outputWidth: 2752,
+            outputHeight: 2064,
+            maxBitrateBps: 180_000_000
+        )
 
-        #expect(decision?.startupBitrateBps == 32_376_730)
+        #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
         #expect(decision?.maximumCeilingBps == 180_000_000)
-        #expect(decision?.minimumBitrateFloorBps == 3_000_000)
+        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
     }
 
     @Test("VPN automatic stream honors selected client ceiling")
-    func vpnAutomaticStreamHonorsSelectedClientCeiling() {
+    func vpnAutomaticStreamHonorsSelectedClientCeiling() throws {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
             request(
                 requestedBitrateBps: 64_000_000,
@@ -43,10 +49,49 @@ struct HostAdaptiveStreamBudgetPolicyTests {
                 transportPathKind: .vpn
             )
         )
+        let expectedReadabilityFloor = try automaticReadabilityFloor(
+            outputWidth: 2752,
+            outputHeight: 2064,
+            maxBitrateBps: 64_000_000
+        )
 
         #expect(decision?.startupBitrateBps == 64_000_000)
         #expect(decision?.maximumCeilingBps == 64_000_000)
-        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
+    }
+
+    @Test("WiFi ProMotion automatic stream starts at readability floor")
+    func wifiProMotionAutomaticStreamStartsAtReadabilityFloor() throws {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 120_000_000,
+                requestedCeilingBps: 443_000_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                frameRate: 120,
+                mediaPathProfile: .localWiFi
+            )
+        )
+        let expectedReadabilityFloor = try automaticReadabilityFloor(
+            outputWidth: 2752,
+            outputHeight: 2064,
+            frameRate: 60,
+            maxBitrateBps: 180_000_000
+        )
+        let highRefreshReadabilityFloor = try automaticReadabilityFloor(
+            outputWidth: 2752,
+            outputHeight: 2064,
+            frameRate: 120,
+            maxBitrateBps: 180_000_000
+        )
+
+        #expect(highRefreshReadabilityFloor == expectedReadabilityFloor)
+        #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
+        #expect((decision?.startupBitrateBps ?? 0) > 36_000_000)
+        #expect(decision?.maximumCeilingBps == 180_000_000)
+        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
     }
 
     @Test("VPN custom stream can ramp beyond automatic ceiling")
@@ -130,7 +175,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
         #expect((decision?.startupBitrateBps ?? 0) > 120_000_000)
         #expect(decision?.maximumCeilingBps == 300_000_000)
-        #expect(decision?.minimumBitrateFloorBps == 12_000_000)
+        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
     }
 
     @Test("High-resolution custom bitrate can keep encoder catch-up pinned to readability floor")
@@ -427,7 +473,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
     }
 
     @Test("Missing client ceiling keeps host-owned recovery ceiling")
-    func missingClientCeilingKeepsHostOwnedRecoveryCeiling() {
+    func missingClientCeilingKeepsHostOwnedRecoveryCeiling() throws {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
             request(
                 requestedBitrateBps: 40_000_000,
@@ -437,26 +483,58 @@ struct HostAdaptiveStreamBudgetPolicyTests {
                 mediaPathProfile: .localWiFi
             )
         )
+        let expectedReadabilityFloor = try automaticReadabilityFloor(
+            outputWidth: 2752,
+            outputHeight: 2064,
+            maxBitrateBps: 180_000_000
+        )
 
-        #expect(decision?.startupBitrateBps == 32_376_730)
+        #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
         #expect(decision?.maximumCeilingBps == 180_000_000)
     }
 
+    @Test("Stream boundary log includes quality cadence and raw policy paths")
+    func streamBoundaryLogIncludesQualityCadenceAndRawPolicyPaths() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 120,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay,
+            mediaPathDiagnosticSummary:
+            "hostPath=wifi/localWiFi clientPath=wifi/localWiFi clientPolicy=vpn/vpnOrOverlay resolved=vpn/vpnOrOverlay"
+        )
+
+        let log = await context.streamBoundaryLog(phase: "start", kind: "desktop", width: 3840, height: 2160)
+
+        #expect(log.contains("event=stream_boundary phase=start"))
+        #expect(log.contains("fpsCap=120"))
+        #expect(log.contains("qualityRefFPS=60"))
+        #expect(log.contains("hostPath=wifi/localWiFi"))
+        #expect(log.contains("clientPath=wifi/localWiFi"))
+        #expect(log.contains("clientPolicy=vpn/vpnOrOverlay"))
+        #expect(log.contains("resolved=vpn/vpnOrOverlay"))
+    }
+
     @Test("Stream context does not treat automatic target bitrate as manual cap")
-    func streamContextDoesNotTreatAutomaticTargetBitrateAsManualCap() async {
+    func streamContextDoesNotTreatAutomaticTargetBitrateAsManualCap() async throws {
         let context = makeContext(
             bitrate: 76_700_000,
             bitrateAdaptationCeiling: 221_500_000,
             transportPathKind: .wifi,
             mediaPathProfile: .localWiFi
         )
+        let expectedReadabilityFloor = try automaticReadabilityFloor(
+            outputWidth: 2752,
+            outputHeight: 2064,
+            maxBitrateBps: 180_000_000
+        )
 
         await context.applyDerivedQuality(for: CGSize(width: 2752, height: 2064), logLabel: nil)
 
         let settings = await context.encoderSettings
-        #expect(settings.bitrate == 32_376_730)
+        #expect(settings.bitrate == expectedReadabilityFloor)
         #expect(await context.bitrateAdaptationCeiling == 180_000_000)
-        #expect(await context.realtimeRuntimeBitrateCeilingBps == 32_376_730)
+        #expect(await context.realtimeRuntimeBitrateCeilingBps == expectedReadabilityFloor)
     }
 
     @Test("Stream context keeps oversized AWDL encoder startup inside sender pacing ceiling")
@@ -722,6 +800,24 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         )
     }
 
+    private func automaticReadabilityFloor(
+        outputWidth: Int,
+        outputHeight: Int,
+        frameRate: Int = 60,
+        frameQuality: Float = 0.60,
+        maxBitrateBps: Int
+    ) throws -> Int {
+        return try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: frameQuality,
+                width: outputWidth,
+                height: outputHeight,
+                frameRate: frameRate,
+                maxBitrateBps: maxBitrateBps
+            )
+        )
+    }
+
     private func makeContext(
         bitrate: Int,
         frameRate: Int = 60,
@@ -729,7 +825,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         bitrateAdaptationCeiling: Int? = nil,
         encoderCatchUpQualityAdjustmentEnabled: Bool = true,
         transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathDiagnosticSummary: String? = nil
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
             targetFrameRate: frameRate,
@@ -747,6 +844,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             latencyMode: .lowestLatency,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,
+            mediaPathDiagnosticSummary: mediaPathDiagnosticSummary,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
         )

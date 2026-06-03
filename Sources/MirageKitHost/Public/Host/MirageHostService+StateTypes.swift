@@ -16,21 +16,29 @@ struct HostStreamMediaPathClientEvidence: Sendable, Equatable {
     let pathKind: MirageNetworkPathKind
     let mediaPathProfile: MirageMediaPathProfile
     let pathSignature: String?
+    let policyPathKind: MirageNetworkPathKind
+    let policyMediaPathProfile: MirageMediaPathProfile
 
     init(
         pathKind: MirageNetworkPathKind?,
         mediaPathProfile: MirageMediaPathProfile?,
-        pathSignature: String?
+        pathSignature: String?,
+        policyPathKind: MirageNetworkPathKind? = nil,
+        policyMediaPathProfile: MirageMediaPathProfile? = nil
     ) {
         self.pathKind = pathKind ?? .unknown
         self.mediaPathProfile = mediaPathProfile ?? .unknown
         self.pathSignature = pathSignature
+        self.policyPathKind = policyPathKind ?? .unknown
+        self.policyMediaPathProfile = policyMediaPathProfile ?? .unknown
     }
 
     init(policy: MirageEffectiveMediaPathPolicy) {
         self.pathKind = policy.clientPathKind
         self.mediaPathProfile = policy.clientMediaPathProfile
         self.pathSignature = policy.clientPathSignature
+        self.policyPathKind = policy.clientPolicyPathKind
+        self.policyMediaPathProfile = policy.clientPolicyMediaPathProfile
     }
 }
 

@@ -12,6 +12,11 @@ import Foundation
 import MirageKit
 
 struct SubmissionSnapshot {
+    /// Generation-aware cursor for presentation progress.
+    ///
+    /// A zero sequence records the current render generation before its first submission.
+    let cursor: MirageRenderCursor
+
     /// Last frame sequence accepted by the presentation layer.
     let sequence: UInt64
 
@@ -20,6 +25,10 @@ struct SubmissionSnapshot {
 
     /// Host-provided presentation timestamp for the submitted frame, when available.
     let remotePresentationTime: CMTime
+
+    func hasSubmittedFrame(after baseline: SubmissionSnapshot) -> Bool {
+        cursor.hasSubmittedFrame && cursor.isAfter(baseline.cursor)
+    }
 }
 
 struct MirageRenderEnqueueResult {

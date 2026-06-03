@@ -379,6 +379,10 @@ public final class MirageClientService {
     public internal(set) var recentControlSessionAttemptSummaries: [MirageClientControlSessionAttemptSummary] = []
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
+    /// App-selected policy path kind used for stream budgeting when route intent should override raw path observation.
+    @ObservationIgnored var streamingPolicyPathKindOverride: MirageNetworkPathKind?
+    /// App-selected policy media profile used for stream budgeting when route intent should override raw path observation.
+    @ObservationIgnored var streamingPolicyMediaPathProfileOverride: MirageMediaPathProfile?
     /// Last successful direct host endpoint remembered per device for Bonjour fallback.
     @ObservationIgnored var rememberedDirectEndpointHostByDeviceID: [UUID: NWEndpoint.Host] = [:]
     /// Number of observed control-session path switches onto AWDL.

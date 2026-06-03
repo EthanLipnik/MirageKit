@@ -15,16 +15,33 @@ import Security
 @MainActor
 public extension MirageHostService {
     var networkDiagnosticsSummaryLines: [String] {
+        let advertisingDiagnostics = loomNode.advertisingDiagnostics
         let directTransports = advertisedPeerAdvertisement.directTransports
             .map { transport in
                 let path = transport.pathKind?.rawValue ?? "unknown"
                 return "\(transport.transportKind.rawValue):\(transport.port):\(path)"
             }
             .joined(separator: ",")
+        let directListenerPorts = advertisingDiagnostics.directListenerPorts
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { "\($0.key.rawValue):\($0.value)" }
+            .joined(separator: ",")
+        let lastBonjourFailure = advertisingDiagnostics.lastBonjourFailureDescription
+            .flatMap { description in
+                if let date = advertisingDiagnostics.lastBonjourFailureAt {
+                    return "\(description) at \(date.ISO8601Format())"
+                }
+                return description
+            } ?? "none"
 
         return [
             "Host Proximity Connect Effective: \(loomNode.configuration.enablePeerToPeer)",
             "Host Bonjour Enabled: \(loomNode.configuration.enableBonjour)",
+            "Host Advertising State: \(advertisingDiagnostics.state.rawValue)",
+            "Host Bonjour Port: \(advertisingDiagnostics.bonjourPort.map(String.init) ?? "none")",
+            "Host Direct Listener Ports: \(directListenerPorts.isEmpty ? "none" : directListenerPorts)",
+            "Host Last Bonjour Failure: \(lastBonjourFailure)",
+            "Host Bonjour Recovery Attempt: \(advertisingDiagnostics.bonjourRecoveryAttempt)",
             "Host Advertised Name: \(serviceName)",
             "Host Advertised Bonjour Host Name: \(advertisedPeerAdvertisement.hostName ?? "none")",
             "Host Direct Transports: \(directTransports.isEmpty ? "none" : directTransports)",

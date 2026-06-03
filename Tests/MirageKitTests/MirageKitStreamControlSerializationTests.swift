@@ -177,7 +177,9 @@ struct MirageKitStreamControlSerializationTests {
             targetFrameRate: 60,
             clientTransportPathKind: .wifi,
             clientMediaPathProfile: .localWiFi,
-            clientPathSignature: pathSignature
+            clientPathSignature: pathSignature,
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay
         )
         let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
         let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
@@ -185,6 +187,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decodedStartStream.clientTransportPathKind == .wifi)
         #expect(decodedStartStream.clientMediaPathProfile == .localWiFi)
         #expect(decodedStartStream.clientPathSignature == pathSignature)
+        #expect(decodedStartStream.clientPolicyPathKind == .vpn)
+        #expect(decodedStartStream.clientPolicyMediaPathProfile == .vpnOrOverlay)
 
         let selectApp = SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
@@ -192,7 +196,9 @@ struct MirageKitStreamControlSerializationTests {
             maxConcurrentVisibleWindows: 2,
             clientTransportPathKind: .awdl,
             clientMediaPathProfile: .awdlRadio,
-            clientPathSignature: pathSignature
+            clientPathSignature: pathSignature,
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay
         )
         let selectAppEnvelope = try ControlMessage(type: .selectApp, content: selectApp)
         let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
@@ -200,6 +206,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decodedSelectApp.clientTransportPathKind == .awdl)
         #expect(decodedSelectApp.clientMediaPathProfile == .awdlRadio)
         #expect(decodedSelectApp.clientPathSignature == pathSignature)
+        #expect(decodedSelectApp.clientPolicyPathKind == .vpn)
+        #expect(decodedSelectApp.clientPolicyMediaPathProfile == .vpnOrOverlay)
 
         let startDesktop = StartDesktopStreamMessage(
             scaleFactor: nil,
@@ -208,7 +216,9 @@ struct MirageKitStreamControlSerializationTests {
             targetFrameRate: 60,
             clientTransportPathKind: .wired,
             clientMediaPathProfile: .wired,
-            clientPathSignature: pathSignature
+            clientPathSignature: pathSignature,
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay
         )
         let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
         let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
@@ -216,6 +226,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decodedStartDesktop.clientTransportPathKind == .wired)
         #expect(decodedStartDesktop.clientMediaPathProfile == .wired)
         #expect(decodedStartDesktop.clientPathSignature == pathSignature)
+        #expect(decodedStartDesktop.clientPolicyPathKind == .vpn)
+        #expect(decodedStartDesktop.clientPolicyMediaPathProfile == .vpnOrOverlay)
 
         let custom = StartCustomStreamMessage(
             kind: "test",
@@ -224,7 +236,9 @@ struct MirageKitStreamControlSerializationTests {
             targetFrameRate: 60,
             clientTransportPathKind: .wifi,
             clientMediaPathProfile: .localWiFi,
-            clientPathSignature: pathSignature
+            clientPathSignature: pathSignature,
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay
         )
         let customEnvelope = try ControlMessage(type: .startCustomStream, content: custom)
         let (decodedCustomEnvelope, _) = try requireParsedControlMessage(from: customEnvelope.serialize())
@@ -232,6 +246,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decodedCustom.clientTransportPathKind == .wifi)
         #expect(decodedCustom.clientMediaPathProfile == .localWiFi)
         #expect(decodedCustom.clientPathSignature == pathSignature)
+        #expect(decodedCustom.clientPolicyPathKind == .vpn)
+        #expect(decodedCustom.clientPolicyMediaPathProfile == .vpnOrOverlay)
     }
 
     @Test("Stream startup requests tolerate old payloads without client path fields")
@@ -244,6 +260,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(oldWindow.clientTransportPathKind == nil)
         #expect(oldWindow.clientMediaPathProfile == nil)
         #expect(oldWindow.clientPathSignature == nil)
+        #expect(oldWindow.clientPolicyPathKind == nil)
+        #expect(oldWindow.clientPolicyMediaPathProfile == nil)
 
         let oldAppPayload = Data(
             """
@@ -254,6 +272,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(oldApp.clientTransportPathKind == nil)
         #expect(oldApp.clientMediaPathProfile == nil)
         #expect(oldApp.clientPathSignature == nil)
+        #expect(oldApp.clientPolicyPathKind == nil)
+        #expect(oldApp.clientPolicyMediaPathProfile == nil)
 
         let oldDesktopPayload = Data(
             """
@@ -265,6 +285,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(oldDesktop.clientTransportPathKind == nil)
         #expect(oldDesktop.clientMediaPathProfile == nil)
         #expect(oldDesktop.clientPathSignature == nil)
+        #expect(oldDesktop.clientPolicyPathKind == nil)
+        #expect(oldDesktop.clientPolicyMediaPathProfile == nil)
 
         let oldCustomPayload = Data(
             """
@@ -276,6 +298,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(oldCustom.clientTransportPathKind == nil)
         #expect(oldCustom.clientMediaPathProfile == nil)
         #expect(oldCustom.clientPathSignature == nil)
+        #expect(oldCustom.clientPolicyPathKind == nil)
+        #expect(oldCustom.clientPolicyMediaPathProfile == nil)
     }
 
     @Test("Desktop stream restart copy preserves client path fields")
@@ -289,6 +313,8 @@ struct MirageKitStreamControlSerializationTests {
             clientTransportPathKind: .wifi,
             clientMediaPathProfile: .localWiFi,
             clientPathSignature: "status=satisfied|kind=wifi|media=localWiFi",
+            clientPolicyPathKind: .vpn,
+            clientPolicyMediaPathProfile: .vpnOrOverlay,
             desktopGeometryContractID: contractID,
             desktopGeometrySceneIdentity: "scene-main",
             desktopGeometryDisplayPixelWidth: 2752,
@@ -303,6 +329,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(copy.clientTransportPathKind == request.clientTransportPathKind)
         #expect(copy.clientMediaPathProfile == request.clientMediaPathProfile)
         #expect(copy.clientPathSignature == request.clientPathSignature)
+        #expect(copy.clientPolicyPathKind == request.clientPolicyPathKind)
+        #expect(copy.clientPolicyMediaPathProfile == request.clientPolicyMediaPathProfile)
         #expect(copy.desktopGeometryContractID == contractID)
         #expect(copy.desktopGeometrySceneIdentity == "scene-main")
         #expect(copy.desktopGeometryDisplayPixelWidth == 2752)

@@ -81,11 +81,11 @@ extension StreamController {
         var allowsExplicitKeyframeRequest: Bool {
             switch self {
             case .decodeErrorThreshold,
+                 .freezeTimeout,
                  .manualRecovery,
                  .startupKeyframeTimeout:
                 true
             case .frameLoss,
-                 .freezeTimeout,
                  .memoryBudget:
                 false
             }
@@ -134,7 +134,7 @@ extension StreamController {
         let id: UInt64
         var state: FreezeRecoveryEpisodeState
         let startedAt: CFAbsoluteTime
-        let baselineSubmittedSequence: UInt64
+        let baselineSubmittedCursor: MirageRenderCursor
         var lastActionTime: CFAbsoluteTime
         var presenterProbeAttempted: Bool
     }

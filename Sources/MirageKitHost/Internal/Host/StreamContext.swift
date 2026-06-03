@@ -212,6 +212,8 @@ actor StreamContext {
     var lastCapturedFrameTime: CFAbsoluteTime = 0
     var latestEncodeStartCaptureAgeMs: Double = 0
     var worstEncodeStartCaptureAgeMs: Double = 0
+    var encoderThroughputHealthyBaselineMs: Double?
+    var encoderThroughputHealthyBaselineKey: String?
     var startupBaseTime: CFAbsoluteTime = 0
     var startupLabel: String = ""
     var startupFirstCaptureLogged = false
@@ -388,6 +390,8 @@ actor StreamContext {
     let transportPathKind: MirageNetworkPathKind
     /// Media behavior profile used for real-time pacing and admission policy.
     let mediaPathProfile: MirageMediaPathProfile
+    /// Raw/client policy/effective path summary captured at stream startup for boundary diagnostics.
+    let mediaPathDiagnosticSummary: String
     /// Video transport contract selected for dependency-coded media packets.
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
@@ -448,6 +452,7 @@ actor StreamContext {
         hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         transportPathKind: MirageNetworkPathKind = .unknown,
         mediaPathProfile: MirageMediaPathProfile? = nil,
+        mediaPathDiagnosticSummary: String? = nil,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -489,6 +494,9 @@ actor StreamContext {
         self.hostBufferingPolicy = effectiveHostBufferingPolicy
         self.transportPathKind = transportPathKind
         self.mediaPathProfile = resolvedMediaPathProfile
+        self.mediaPathDiagnosticSummary = mediaPathDiagnosticSummary ??
+            "hostPath=unknown/unknown clientPath=unknown/unknown clientPolicy=unknown/unknown " +
+            "resolved=\(transportPathKind.rawValue)/\(resolvedMediaPathProfile.rawValue)"
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
