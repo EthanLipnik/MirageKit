@@ -32,6 +32,12 @@ package enum MirageSessionBootstrapRejectionReason: String, Codable {
     case takeoverRequiresTrustedRequester
 }
 
+/// Additional detail for host authorization-policy bootstrap rejections.
+package enum MirageSessionBootstrapAuthorizationFailureReason: String, Codable {
+    /// The client used a remote route, but the host does not currently allow VPN Access.
+    case remoteAccessDisabled
+}
+
 /// Initial client-to-host bootstrap payload sent before normal control traffic begins.
 package struct MirageSessionBootstrapRequest: Codable {
     /// Client protocol version.
@@ -87,6 +93,9 @@ package struct MirageSessionBootstrapResponse: Codable {
     /// Client protocol version observed by the host when rejecting for mismatch.
     package let protocolMismatchClientVersion: Int?
 
+    /// Optional detail for authorization-policy rejection.
+    package let authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason?
+
     /// Creates a bootstrap response for either an accepted or rejected session.
     package init(
         accepted: Bool,
@@ -98,7 +107,8 @@ package struct MirageSessionBootstrapResponse: Codable {
         remoteAccessAllowed: Bool = false,
         rejectionReason: MirageSessionBootstrapRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
-        protocolMismatchClientVersion: Int? = nil
+        protocolMismatchClientVersion: Int? = nil,
+        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil
     ) {
         self.accepted = accepted
         self.hostID = hostID
@@ -110,6 +120,7 @@ package struct MirageSessionBootstrapResponse: Codable {
         self.rejectionReason = rejectionReason
         self.protocolMismatchHostVersion = protocolMismatchHostVersion
         self.protocolMismatchClientVersion = protocolMismatchClientVersion
+        self.authorizationFailureReason = authorizationFailureReason
     }
 }
 

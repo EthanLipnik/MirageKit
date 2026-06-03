@@ -23,6 +23,8 @@ public struct MirageConnectionRejection: Sendable, Equatable, Codable {
         case rejected
         /// Host trust or authentication policy rejected the client.
         case unauthorized
+        /// The client used a remote route, but the host does not currently allow VPN Access.
+        case remoteAccessDisabled
         /// Client requested takeover but is not trusted to take over a busy host.
         case takeoverRequiresTrustedRequester
         /// Local network policy or reachability blocked the control connection.
@@ -67,6 +69,7 @@ public struct MirageConnectionRejection: Sendable, Equatable, Codable {
              .hostUpdateInProgress,
              .rejected,
              .unauthorized,
+             .remoteAccessDisabled,
              .takeoverRequiresTrustedRequester,
              .localNetworkBlocked,
              .malformedBootstrap:
@@ -101,6 +104,8 @@ public struct MirageConnectionRejection: Sendable, Equatable, Codable {
             return "\(hostPrefix)Host update is in progress."
         case .unauthorized:
             return "\(hostPrefix)Host rejected this device. Approve it in Mirage Host on the Mac."
+        case .remoteAccessDisabled:
+            return "\(hostPrefix)VPN Access is turned off on this Mac. Use the same local network or turn on VPN Access in Mirage Host."
         case .takeoverRequiresTrustedRequester:
             return "\(hostPrefix)Host is busy and takeover requires a trusted client."
         case .localNetworkBlocked:

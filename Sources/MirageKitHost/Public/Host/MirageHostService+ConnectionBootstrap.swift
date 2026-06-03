@@ -182,7 +182,8 @@ extension MirageHostService {
 
     /// Creates a rejected bootstrap response for an already accepted control channel.
     func makeRejectedBootstrapResponse(
-        reason: MirageSessionBootstrapRejectionReason
+        reason: MirageSessionBootstrapRejectionReason,
+        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil
     ) -> MirageSessionBootstrapResponse {
         MirageSessionBootstrapResponse(
             accepted: false,
@@ -190,7 +191,8 @@ extension MirageHostService {
             hostName: serviceName,
             mediaEncryptionEnabled: false,
             datagramRegistrationToken: Data(),
-            rejectionReason: reason
+            rejectionReason: reason,
+            authorizationFailureReason: authorizationFailureReason
         )
     }
 

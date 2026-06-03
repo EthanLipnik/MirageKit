@@ -7,6 +7,7 @@
 //  Fast input path handling.
 //
 
+import CoreGraphics
 import Foundation
 import MirageKit
 
@@ -70,6 +71,12 @@ extension MirageHostService {
                 targetState: inputTarget.window.id == 0 ? "desktop_active" : "window_\(inputTarget.window.id)",
                 path: "input_fast"
             )
+            logAppPointerTargetResolutionIfNeeded(
+                streamID: inputMessage.streamID,
+                originalEvent: inputMessage.event,
+                routedEvent: inputTarget.event,
+                window: inputTarget.window
+            )
 
             if AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(inputMessage.event) {
                 dispatchMainWork { [weak self] in
@@ -115,5 +122,80 @@ extension MirageHostService {
         }
     }
 
+}
+
+private extension MirageHostService {
+    nonisolated func logAppPointerTargetResolutionIfNeeded(
+        streamID: StreamID,
+        originalEvent: MirageInputEvent,
+        routedEvent: MirageInputEvent,
+        window: MirageWindow
+    ) {
+        guard window.id != 0,
+              let routedPointer = AppPointerTargetDiagnostic(event: routedEvent) else {
+            return
+        }
+
+        let originalPointer = AppPointerTargetDiagnostic(event: originalEvent)
+        let originalLocationText = originalPointer.map { pointer in
+            " originalLocation=\(Self.formattedNormalizedPoint(pointer.location))"
+        } ?? ""
+        MirageLogger.host(
+            "App pointer target stream=\(streamID) event=\(routedPointer.eventName) " +
+                "window=\(window.id) location=\(Self.formattedNormalizedPoint(routedPointer.location))" +
+                originalLocationText +
+                " frame=\(Self.formattedRect(window.frame)) clickCount=\(routedPointer.clickCount)"
+        )
+    }
+
+    nonisolated static func formattedNormalizedPoint(_ point: CGPoint) -> String {
+        "(\(String(format: "%.3f", point.x)),\(String(format: "%.3f", point.y)))"
+    }
+
+    nonisolated static func formattedRect(_ rect: CGRect) -> String {
+        "(\(Int(rect.origin.x)),\(Int(rect.origin.y)),\(Int(rect.width))x\(Int(rect.height)))"
+    }
+}
+
+private struct AppPointerTargetDiagnostic {
+    let eventName: String
+    let location: CGPoint
+    let clickCount: Int
+
+    init?(event: MirageInputEvent) {
+        switch event {
+        case let .mouseDown(event):
+            self.init(eventName: "mouseDown", event: event)
+        case let .mouseUp(event):
+            self.init(eventName: "mouseUp", event: event)
+        case let .rightMouseDown(event):
+            self.init(eventName: "rightMouseDown", event: event)
+        case let .rightMouseUp(event):
+            self.init(eventName: "rightMouseUp", event: event)
+        case let .otherMouseDown(event):
+            self.init(eventName: "otherMouseDown", event: event)
+        case let .otherMouseUp(event):
+            self.init(eventName: "otherMouseUp", event: event)
+        case let .pointerSampleBatch(batch) where batch.phase == .began || batch.phase == .ended || batch.phase == .cancelled:
+            guard let location = batch.lastLocation else { return nil }
+            self.init(
+                eventName: "pointerSampleBatch.\(batch.phase.rawValue)",
+                location: location,
+                clickCount: batch.clickCount
+            )
+        default:
+            return nil
+        }
+    }
+
+    private init(eventName: String, event: MirageMouseEvent) {
+        self.init(eventName: eventName, location: event.location, clickCount: event.clickCount)
+    }
+
+    private init(eventName: String, location: CGPoint, clickCount: Int) {
+        self.eventName = eventName
+        self.location = location
+        self.clickCount = clickCount
+    }
 }
 #endif

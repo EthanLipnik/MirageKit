@@ -14,16 +14,43 @@ import Testing
 struct OverlayControlSessionRaceTests {
     @Test("Overlay remote route budgets allow slow handshakes")
     func overlayRemoteRouteBudgetsAllowSlowHandshakes() {
+        #expect(OverlayControlSessionRacePolicy.udpPrimaryDelay == .milliseconds(0))
+        #expect(OverlayControlSessionRacePolicy.quicHedgeDelay == .seconds(3))
         #expect(OverlayControlSessionRacePolicy.groupBudget == .seconds(45))
         #expect(OverlayControlSessionRacePolicy.preRemoteHelloIdleTimeout == .seconds(12))
     }
 
-    @Test("UDP hedge launches when QUIC has not reached remote hello")
-    func udpHedgeLaunchesWhenQUICIsOnlyTransportStarting() async {
+    @Test("UDP overlay candidate launches before QUIC")
+    func udpOverlayCandidateLaunchesBeforeQUIC() async {
         let state = OverlayControlSessionRaceState()
-        await state.recordLaunched(.quic)
+        let now = ContinuousClock.now
 
-        #expect(await state.shouldLaunch(.udp))
+        #expect(await state.launchDecision(
+            for: .udp,
+            now: now,
+            earliestLaunch: now
+        ) == .launch)
+        #expect(await state.launchDecision(
+            for: .quic,
+            now: now,
+            earliestLaunch: now + OverlayControlSessionRacePolicy.quicHedgeDelay
+        ) != .launch)
+    }
+
+    @Test("QUIC hedge is suppressed once UDP reaches remote hello")
+    func quicHedgeSuppressesWhenUDPReachesRemoteHello() async {
+        let state = OverlayControlSessionRaceState()
+        await state.recordLaunched(.udp)
+        await state.recordProgress(
+            LoomAuthenticatedSessionBootstrapProgress(phase: .remoteHelloReceived),
+            transportKind: .udp
+        )
+
+        #expect(await state.launchDecision(
+            for: .quic,
+            now: ContinuousClock.now,
+            earliestLaunch: ContinuousClock.now
+        ) != .launch)
     }
 
     @Test("UDP hedge is suppressed once QUIC reaches remote hello")

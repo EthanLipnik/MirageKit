@@ -154,6 +154,17 @@ extension MirageClientService {
         return max(1.0, scale)
     }
 
+    func acceptedDesktopDisplayPixelSize(from started: DesktopStreamStartedMessage) -> CGSize {
+        if let width = started.desktopGeometryDisplayPixelWidth,
+           let height = started.desktopGeometryDisplayPixelHeight,
+           width > 0,
+           height > 0 {
+            return CGSize(width: width, height: height)
+        }
+
+        return CGSize(width: started.width, height: started.height)
+    }
+
     func acceptedDesktopDisplayScaleFactor(
         from started: DesktopStreamStartedMessage,
         displayPixelSize: CGSize,

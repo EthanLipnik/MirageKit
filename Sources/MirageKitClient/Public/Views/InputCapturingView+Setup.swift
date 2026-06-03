@@ -146,6 +146,7 @@ extension InputCapturingView {
     func requestResponderRecovery(
         _ trigger: InputCapturingResponderRecoveryTrigger
     ) {
+        guard inputEnabled else { return }
         responderRecoveryController.requestRecovery(trigger)
     }
 
@@ -156,6 +157,7 @@ extension InputCapturingView {
     func attemptResponderRecovery(
         for target: InputCapturingResponderTarget
     ) -> Bool {
+        guard inputEnabled else { return false }
         switch target {
         case .captureView:
             let didBecomeFirstResponder = becomeFirstResponder()

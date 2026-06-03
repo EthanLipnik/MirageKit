@@ -20,28 +20,11 @@ extension MirageClientService {
             return false
         }
         if let acceptedContractID = started.desktopGeometryContractID {
-            let acceptedDisplayPixelSize: CGSize? = if let width = started.desktopGeometryDisplayPixelWidth,
-                                                       let height = started.desktopGeometryDisplayPixelHeight {
-                CGSize(width: width, height: height)
-            } else {
-                nil
-            }
-            let acceptedEncodedPixelSize: CGSize? = if let width = started.desktopGeometryEncodedPixelWidth,
-                                                       let height = started.desktopGeometryEncodedPixelHeight {
-                CGSize(width: width, height: height)
-            } else {
-                nil
-            }
             let activeTransitionRejectionReason: String? = if let activeTransition = desktopResizeCoordinator.activeTransition,
                                                               activeTransition.streamID == streamID {
                 activeTransition.target.acceptedGeometryRejectionReason(
                     acceptedContractID: acceptedContractID,
-                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity,
-                    acceptedLogicalResolution: started.presentationSize,
-                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
-                    acceptedEncodedPixelSize: acceptedEncodedPixelSize,
-                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
-                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity
                 )
             } else {
                 "activeTransition=\(desktopResizeCoordinator.activeTransition?.transitionID.uuidString ?? "nil")"
@@ -50,12 +33,7 @@ extension MirageClientService {
                                                                 let lastSentTarget = desktopResizeCoordinator.lastSentTarget {
                 lastSentTarget.acceptedGeometryRejectionReason(
                     acceptedContractID: acceptedContractID,
-                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity,
-                    acceptedLogicalResolution: started.presentationSize,
-                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
-                    acceptedEncodedPixelSize: acceptedEncodedPixelSize,
-                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
-                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity
                 )
             } else {
                 "generationContract=unavailable"
@@ -118,20 +96,21 @@ extension MirageClientService {
         }
 
         desktopStreamID = streamID
-        let displaySize = CGSize(width: started.width, height: started.height)
-        desktopStreamResolution = displaySize
+        let encodedSize = CGSize(width: started.width, height: started.height)
+        desktopStreamResolution = encodedSize
         let presentationSize = started.presentationSize
         desktopStreamPresentationResolution = presentationSize
+        let acceptedDisplayPixelSize = acceptedDesktopDisplayPixelSize(from: started)
         desktopStreamDisplayScaleFactor = acceptedDesktopDisplayScaleFactor(
             from: started,
-            displayPixelSize: displaySize,
+            displayPixelSize: acceptedDisplayPixelSize,
             presentationSize: presentationSize
         )
         desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
             logicalResolution: presentationSize,
-            displayPixelSize: displaySize
+            displayPixelSize: acceptedDisplayPixelSize
         )
-        desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedDisplayPixels(displaySize)
+        desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedDisplayPixels(acceptedDisplayPixelSize)
         desktopCaptureSource = started.captureSource
         desktopStreamAllowsClientResize = started.allowsClientResize
         updateObservedFrameRate(started.frameRate, for: streamID)

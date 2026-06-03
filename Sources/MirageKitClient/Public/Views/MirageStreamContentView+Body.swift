@@ -18,264 +18,371 @@ import UIKit
 
 public extension MirageStreamContentView {
     var body: some View {
+        streamContentWithPlatformObservers
+    }
+}
+
+private extension MirageStreamContentView {
+    var streamContentWithReadinessOverlay: some View {
+        streamRootContent
+            .overlay(streamReadinessOverlay, alignment: .center)
+    }
+
+    var streamContentWithSessionObservers: some View {
+        streamContentWithReadinessOverlay
+            .onChange(of: sessionStore.sessionMinSizes[session.id]) {
+                scheduleResizeAcknowledgementHandlingIfNeeded()
+            }
+            .onChange(of: sessionStore.sessionMinSizeUpdateGenerations[session.id]) {
+                scheduleResizeAcknowledgementHandlingIfNeeded()
+            }
+            .onChange(of: appStreamStartAcknowledgement) {
+                scheduleAppStreamStartAcknowledgementHandling()
+            }
+            .onChange(of: awaitingPostResizeFirstFrame) {
+                handleAwaitingPostResizeFirstFrameChanged()
+            }
+            .onChange(of: session.hasPresentedFrame) {
+                handleSessionHasPresentedFrameChanged()
+            }
+            .onChange(of: session.clientRecoveryStatus) {
+                handleClientRecoveryStatusChanged()
+            }
+            .onChange(of: rawPresentationBlurRadius) {
+                handlePresentationBlurRadiusChanged()
+            }
+    }
+
+    var streamContentWithInputAndPresentationObservers: some View {
+        streamContentWithSessionObservers
+            .onChange(of: inputEnabled) {
+                handleInputEnabledChanged()
+            }
+            .onChange(of: localPresentationPauseActive) {
+                handleLocalPresentationPauseChanged()
+            }
+            .onChange(of: maxDrawableSize) {
+                scheduleDesktopResizeForCurrentMetricsChangeIfNeeded()
+            }
+            .onChange(of: useHostResolution) {
+                scheduleDesktopResizeForCurrentMetricsChangeIfNeeded()
+            }
+            .onChange(of: localKeyboardOcclusionActive) {
+                handleLocalKeyboardOcclusionChanged()
+            }
+            .onChange(of: isCurrentStreamActive) {
+                scheduleFocusedInputCorrectionIfNeeded()
+            }
+    }
+
+    var streamContentWithLifecycleObservers: some View {
+        streamContentWithInputAndPresentationObservers
+            .onAppear {
+                handleStreamContentAppear()
+            }
+            .onDisappear {
+                scheduleStreamContentDisappearCleanup()
+            }
+    }
+
+    var streamContentWithKeyboardObservers: some View {
+        #if os(iOS)
+        streamContentWithLifecycleObservers
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+                handleLocalKeyboardFrameChange(notification)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                localKeyboardOcclusionActive = false
+            }
+        #else
+        streamContentWithLifecycleObservers
+        #endif
+    }
+
+    var streamContentWithApplicationLifecycleObservers: some View {
+        #if os(iOS) || os(visionOS)
+        streamContentWithKeyboardObservers
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                handleResizeLifecycleSuspension(event: .willResignActive)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                handleResizeLifecycleSuspension(event: .didEnterBackground)
+            }
+        #else
+        streamContentWithKeyboardObservers
+        #endif
+    }
+
+    var streamContentWithPlatformObservers: some View {
+        #if os(macOS)
+        streamContentWithApplicationLifecycleObservers
+            .background(
+                MirageWindowFocusObserver(
+                    sessionID: session.id,
+                    streamID: session.streamID,
+                    sessionStore: sessionStore,
+                    clientService: clientService,
+                    onWindowWillClose: onWindowWillClose
+                )
+            )
+        #else
+        streamContentWithApplicationLifecycleObservers
+        #endif
+    }
+
+    var streamRootContent: some View {
         ZStack {
             Rectangle()
                 .fill(.black)
                 .mirageStreamIgnoresSafeArea(ignoresSafeArea)
 
-            Group {
-                #if os(iOS) || os(visionOS)
-                MirageStreamViewRepresentable(
-                    streamID: session.streamID,
-                    mediaStreamID: presentationStreamID,
-                    contentRectOverride: presentationContentRectOverride,
-                    onInputEvent: inputEnabled ? { event in
-                        sendInputEvent(event)
-                    } : nil,
-                    onDrawableMetricsChanged: { metrics in
-                        scheduleDrawableMetricsChanged(metrics)
-                    },
-                    onContainerSizeChanged: { size in
-                        scheduleContainerSizeChanged(size)
-                    },
-                    onRefreshRateOverrideChange: { override in
-                        scheduleRefreshRateOverrideChange(override)
-                    },
-                    cursorStore: clientService.cursorStore,
-                    cursorPositionStore: clientService.cursorPositionStore,
-                    desktopSessionID: activeDesktopSessionID,
-                    hasPresentedFrameForActivationRecovery: session.hasPresentedFrame,
-                    onBecomeActive: {
-                        handleForegroundRecovery()
-                    },
-                    onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
-                    onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
-                    directTouchInputMode: directTouchInputMode,
-                    softwareKeyboardVisible: softwareKeyboardVisible,
-                    inputEnabled: inputEnabled,
-                    pencilGestureConfiguration: pencilGestureConfiguration,
-                    clientShortcuts: clientReservedShortcuts,
-                    onClientShortcut: handleReservedShortcut,
-                    actions: actions,
-                    onActionTriggered: onActionTriggered,
-                    onPencilGestureAction: handlePencilGestureAction,
-                    dictationToggleRequestID: dictationToggleRequestID,
-                    onDictationStateChanged: onDictationStateChanged,
-                    onDictationError: onDictationError,
-                    onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
-                    dictationMode: dictationMode,
-                    dictationLocalePreference: dictationLocalePreference,
-                    hideSystemCursor: desktopLocalCursorHidden,
-                    cursorLockEnabled: desktopCursorLockEnabled,
-                    allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
-                    cursorLockCanRecapture: desktopCursorLockCanRecapture,
-                    onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-                    onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-                    syntheticCursorEnabled: syntheticCursorEnabled,
-                    presentationTier: streamPresentationTier,
-                    preferredMaximumRenderFPS: preferredMaximumRenderFPS,
-                    maxDrawableSize: maxDrawableSize,
-                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-                    ignoresSafeArea: ignoresSafeArea
-                )
-                .blur(radius: presentationBlurRadius)
-                .animation(presentationBlurAnimation, value: presentationBlurRadius)
-                #else
-                MirageStreamViewRepresentable(
-                    streamID: session.streamID,
-                    mediaStreamID: presentationStreamID,
-                    contentRectOverride: presentationContentRectOverride,
-                    onInputEvent: { event in
-                        sendInputEvent(event)
-                    },
-                    onDrawableMetricsChanged: { metrics in
-                        scheduleDrawableMetricsChanged(metrics)
-                    },
-                    onContainerSizeChanged: { size in
-                        scheduleContainerSizeChanged(size)
-                    },
-                    onRefreshRateOverrideChange: { override in
-                        scheduleRefreshRateOverrideChange(override)
-                    },
-                    cursorStore: clientService.cursorStore,
-                    cursorPositionStore: clientService.cursorPositionStore,
-                    hostDisplayPointSize: hostDisplayPointSize,
-                    hideSystemCursor: desktopLocalCursorHidden,
-                    cursorLockEnabled: desktopCursorLockEnabled,
-                    allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
-                    cursorLockCanRecapture: desktopCursorLockCanRecapture,
-                    onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-                    onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-                    syntheticCursorEnabled: syntheticCursorEnabled,
-                    inputEnabled: inputEnabled && macOSInputEnabled,
-                    systemShortcutForwardingEnabled: macSystemShortcutForwardingEnabled,
-                    presentationTier: streamPresentationTier,
-                    preferredMaximumRenderFPS: preferredMaximumRenderFPS,
-                    maxDrawableSize: maxDrawableSize,
-                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-                    containerSizingMode: macOSContainerSizingMode,
-                    clientShortcuts: clientReservedShortcuts,
-                    onClientShortcut: handleReservedShortcut,
-                    actions: actions,
-                    onActionTriggered: onActionTriggered
-                )
+            streamPlatformSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .blur(radius: presentationBlurRadius)
-                .animation(presentationBlurAnimation, value: presentationBlurRadius)
-                #endif
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .overlay {
-            if !isReadyForInitialPresentation {
-                Rectangle()
-                    .fill(.black)
-                    .overlay {
-                        VStack(spacing: 16) {
-                            ProgressView()
-                                .controlSize(.large)
-                                .tint(.white)
+    }
 
-                            Text("Connecting to stream...")
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                    }
-                    .allowsHitTesting(false)
-            } else if awaitingPostResizeFirstFrame, session.hasPresentedFrame {
-                ProgressView()
-                    .controlSize(.regular)
-                    .tint(.white)
-                    .allowsHitTesting(false)
-            } else if awaitingPostResizeFirstFrame {
-                Rectangle()
-                    .fill(.black.opacity(0.22))
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.regular)
-                            .tint(.white)
-                    }
-                    .allowsHitTesting(false)
-            }
-        }
-        .onChange(of: sessionStore.sessionMinSizes[session.id]) {
-            guard !isDesktopStream else { return }
-            Task { @MainActor in
-                await Task.yield()
-                do {
-                    try await Task.sleep(for: .milliseconds(1))
-                } catch {
-                    return
-                }
-                handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
-            }
-        }
-        .onChange(of: sessionStore.sessionMinSizeUpdateGenerations[session.id]) {
-            guard !isDesktopStream else { return }
-            Task { @MainActor in
-                await Task.yield()
-                do {
-                    try await Task.sleep(for: .milliseconds(1))
-                } catch {
-                    return
-                }
-                handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
-            }
-        }
-        .onChange(of: appStreamStartAcknowledgement) {
-            Task { @MainActor in
-                await Task.yield()
-                handleAppStreamStartAcknowledgement(
-                    appStreamStartAcknowledgement
-                )
-            }
-        }
-        .onChange(of: awaitingPostResizeFirstFrame) {
-            updatePresentationBlurProgressMonitoring()
-            guard isDesktopStream, !awaitingPostResizeFirstFrame else { return }
-            Task { @MainActor in
-                await Task.yield()
-                clientService.handleDesktopPresentationReady(streamID: session.streamID)
-            }
-        }
-        .onChange(of: session.hasPresentedFrame) {
-            updatePresentationBlurProgressMonitoring()
-            guard isDesktopStream, session.hasPresentedFrame else { return }
-            Task { @MainActor in
-                await Task.yield()
-                clientService.handleDesktopPresentationReady(streamID: session.streamID)
-            }
-        }
-        .onChange(of: session.clientRecoveryStatus) {
-            updateRecoveryBlurDebounceState()
-            updatePresentationBlurProgressMonitoring()
-        }
-        .onChange(of: rawPresentationBlurRadius) {
-            updatePresentationBlurProgressMonitoring()
-        }
-        .onChange(of: maxDrawableSize) {
-            guard isDesktopStream else { return }
-            scheduleDesktopResizeForCurrentMetricsIfNeeded()
-        }
-        .onChange(of: useHostResolution) {
-            guard isDesktopStream else { return }
-            scheduleDesktopResizeForCurrentMetricsIfNeeded()
-        }
-        .onChange(of: localKeyboardOcclusionActive) {
-            guard localKeyboardOcclusionActive else { return }
-            cancelPendingWindowDrivenResizeForLocalPresentation()
-        }
-        .onChange(of: isCurrentStreamActive) {
-            guard isCurrentStreamActive else { return }
-            Task { @MainActor in
-                await Task.yield()
-                focusCurrentStreamForInputIfNeeded()
-            }
-        }
-        .onAppear {
-            updateRecoveryBlurDebounceState()
-            updatePresentationBlurProgressMonitoring()
-            Task { @MainActor in
-                await Task.yield()
-                focusCurrentStreamForInputIfNeeded(force: true)
-            }
-        }
-        .onDisappear {
-            Task { @MainActor in
-                await Task.yield()
-                handleStreamContentDisappear()
-            }
-        }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            handleLocalKeyboardFrameChange(notification)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            localKeyboardOcclusionActive = false
-        }
-        #endif
+    @ViewBuilder
+    var streamPlatformSurface: some View {
         #if os(iOS) || os(visionOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
-            handleResizeLifecycleSuspension(event: .willResignActive)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-            handleResizeLifecycleSuspension(event: .didEnterBackground)
-        }
-        #endif
-        #if os(macOS)
-        .background(
-            MirageWindowFocusObserver(
-                sessionID: session.id,
-                streamID: session.streamID,
-                sessionStore: sessionStore,
-                clientService: clientService,
-                onWindowWillClose: onWindowWillClose
-            )
+        MirageStreamViewRepresentable(
+            streamID: session.streamID,
+            mediaStreamID: presentationStreamID,
+            contentRectOverride: presentationContentRectOverride,
+            onInputEvent: streamInputForwardingEnabled ? { event in
+                sendInputEvent(event)
+            } : nil,
+            onDrawableMetricsChanged: { metrics in
+                scheduleDrawableMetricsChanged(metrics)
+            },
+            onContainerSizeChanged: { size in
+                scheduleContainerSizeChanged(size)
+            },
+            onRefreshRateOverrideChange: { override in
+                scheduleRefreshRateOverrideChange(override)
+            },
+            cursorStore: clientService.cursorStore,
+            cursorPositionStore: clientService.cursorPositionStore,
+            desktopSessionID: activeDesktopSessionID,
+            hasPresentedFrameForActivationRecovery: session.hasPresentedFrame,
+            onBecomeActive: {
+                handleForegroundRecovery()
+            },
+            onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
+            onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
+            directTouchInputMode: directTouchInputMode,
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            inputEnabled: streamInputForwardingEnabled,
+            pencilGestureConfiguration: pencilGestureConfiguration,
+            clientShortcuts: clientReservedShortcuts,
+            onClientShortcut: handleReservedShortcut,
+            actions: actions,
+            onActionTriggered: onActionTriggered,
+            onPencilGestureAction: handlePencilGestureAction,
+            dictationToggleRequestID: dictationToggleRequestID,
+            onDictationStateChanged: onDictationStateChanged,
+            onDictationError: onDictationError,
+            onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
+            dictationMode: dictationMode,
+            dictationLocalePreference: dictationLocalePreference,
+            hideSystemCursor: desktopLocalCursorHidden,
+            cursorLockEnabled: desktopCursorLockEnabled,
+            allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
+            cursorLockCanRecapture: desktopCursorLockCanRecapture,
+            onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+            onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
+            syntheticCursorEnabled: syntheticCursorEnabled,
+            presentationTier: streamPresentationTier,
+            preferredMaximumRenderFPS: preferredMaximumRenderFPS,
+            maxDrawableSize: maxDrawableSize,
+            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+            ignoresSafeArea: ignoresSafeArea
         )
+        .blur(radius: presentationBlurRadius)
+        .animation(presentationBlurAnimation, value: presentationBlurRadius)
+        #else
+        MirageStreamViewRepresentable(
+            streamID: session.streamID,
+            mediaStreamID: presentationStreamID,
+            contentRectOverride: presentationContentRectOverride,
+            onInputEvent: streamInputForwardingEnabled ? { event in
+                sendInputEvent(event)
+            } : nil,
+            onDrawableMetricsChanged: { metrics in
+                scheduleDrawableMetricsChanged(metrics)
+            },
+            onContainerSizeChanged: { size in
+                scheduleContainerSizeChanged(size)
+            },
+            onRefreshRateOverrideChange: { override in
+                scheduleRefreshRateOverrideChange(override)
+            },
+            cursorStore: clientService.cursorStore,
+            cursorPositionStore: clientService.cursorPositionStore,
+            hostDisplayPointSize: hostDisplayPointSize,
+            hideSystemCursor: desktopLocalCursorHidden,
+            cursorLockEnabled: desktopCursorLockEnabled,
+            allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
+            cursorLockCanRecapture: desktopCursorLockCanRecapture,
+            onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+            onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
+            syntheticCursorEnabled: syntheticCursorEnabled,
+            inputEnabled: streamInputForwardingEnabled && macOSInputEnabled,
+            systemShortcutForwardingEnabled: macSystemShortcutForwardingEnabled,
+            presentationTier: streamPresentationTier,
+            preferredMaximumRenderFPS: preferredMaximumRenderFPS,
+            maxDrawableSize: maxDrawableSize,
+            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+            containerSizingMode: macOSContainerSizingMode,
+            clientShortcuts: clientReservedShortcuts,
+            onClientShortcut: handleReservedShortcut,
+            actions: actions,
+            onActionTriggered: onActionTriggered
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .blur(radius: presentationBlurRadius)
+        .animation(presentationBlurAnimation, value: presentationBlurRadius)
         #endif
     }
-}
 
-private extension MirageStreamContentView {
+    @ViewBuilder
+    var streamReadinessOverlay: some View {
+        if !isReadyForInitialPresentation {
+            Rectangle()
+                .fill(.black)
+                .overlay {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.large)
+                            .tint(.white)
+
+                        Text("Connecting to stream...")
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                .allowsHitTesting(false)
+        } else if awaitingPostResizeFirstFrame, session.hasPresentedFrame {
+            ProgressView()
+                .controlSize(.regular)
+                .tint(.white)
+                .allowsHitTesting(false)
+        } else if awaitingPostResizeFirstFrame {
+            Rectangle()
+                .fill(.black.opacity(0.22))
+                .overlay {
+                    ProgressView()
+                        .controlSize(.regular)
+                        .tint(.white)
+                }
+                .allowsHitTesting(false)
+        }
+    }
+
+    func scheduleResizeAcknowledgementHandlingIfNeeded() {
+        guard !isDesktopStream else { return }
+        Task { @MainActor in
+            await Task.yield()
+            do {
+                try await Task.sleep(for: .milliseconds(1))
+            } catch {
+                return
+            }
+            handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
+        }
+    }
+
+    func handleStreamContentAppear() {
+        updateRecoveryBlurDebounceState()
+        updatePresentationBlurProgressMonitoring()
+        if !inputEnabled {
+            cancelInputResumeGate(reason: "appeared_input_disabled")
+        }
+        scheduleInitialInputFocusRecovery()
+    }
+
+    func scheduleAppStreamStartAcknowledgementHandling() {
+        Task { @MainActor in
+            await Task.yield()
+            handleAppStreamStartAcknowledgement(appStreamStartAcknowledgement)
+        }
+    }
+
+    func scheduleDesktopPresentationReadyIfNeeded(requirePresentedFrame: Bool) {
+        guard isDesktopStream else { return }
+        if requirePresentedFrame {
+            guard session.hasPresentedFrame else { return }
+        } else {
+            guard !awaitingPostResizeFirstFrame else { return }
+        }
+
+        Task { @MainActor in
+            await Task.yield()
+            clientService.handleDesktopPresentationReady(streamID: session.streamID)
+        }
+    }
+
+    func handleAwaitingPostResizeFirstFrameChanged() {
+        updatePresentationBlurProgressMonitoring()
+        scheduleDesktopPresentationReadyIfNeeded(requirePresentedFrame: false)
+    }
+
+    func handleSessionHasPresentedFrameChanged() {
+        updatePresentationBlurProgressMonitoring()
+        scheduleDesktopPresentationReadyIfNeeded(requirePresentedFrame: true)
+    }
+
+    func handleLocalPresentationPauseChanged() {
+        if localPresentationPauseActive {
+            cancelPendingWindowDrivenResizeForLocalPresentation()
+        } else {
+            beginInputResumeGateIfNeeded(reason: "local_presentation_resumed", requiresInputEnabled: false)
+            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
+        }
+    }
+
+    func handleLocalKeyboardOcclusionChanged() {
+        if localKeyboardOcclusionActive {
+            cancelPendingWindowDrivenResizeForLocalPresentation()
+        } else {
+            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
+        }
+    }
+
+    func handleClientRecoveryStatusChanged() {
+        updateRecoveryBlurDebounceState()
+        updatePresentationBlurProgressMonitoring()
+    }
+
+    func handlePresentationBlurRadiusChanged() {
+        updatePresentationBlurProgressMonitoring()
+    }
+
+    func scheduleDesktopResizeForCurrentMetricsChangeIfNeeded() {
+        guard isDesktopStream else { return }
+        scheduleDesktopResizeForCurrentMetricsIfNeeded()
+    }
+
+    func scheduleFocusedInputCorrectionIfNeeded() {
+        guard isCurrentStreamActive else { return }
+        Task { @MainActor in
+            await Task.yield()
+            focusCurrentStreamForInputIfNeeded()
+        }
+    }
+
+    func scheduleInitialInputFocusRecovery() {
+        Task { @MainActor in
+            await Task.yield()
+            focusCurrentStreamForInputIfNeeded(force: true)
+        }
+    }
+
+    func scheduleStreamContentDisappearCleanup() {
+        Task { @MainActor in
+            await Task.yield()
+            handleStreamContentDisappear()
+        }
+    }
+
     /// Clears transient resize, focus, and renderer state when the stream view leaves the hierarchy.
     func handleStreamContentDisappear() {
         resizeHoldoffTask?.cancel()
@@ -287,6 +394,7 @@ private extension MirageStreamContentView {
         streamScaleTask = nil
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = nil
+        cancelInputResumeGate(reason: "stream_content_disappeared")
         stopPresentationBlurProgressMonitoring()
         resetRecoveryBlurDebounceState()
         awaitingAppResizeAck = false

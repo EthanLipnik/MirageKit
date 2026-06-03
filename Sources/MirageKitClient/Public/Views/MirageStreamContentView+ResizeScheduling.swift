@@ -33,6 +33,10 @@ extension MirageStreamContentView {
     }
 
     func scheduleDesktopResizeForCurrentMetricsIfNeeded() {
+        scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
+    }
+
+    func scheduleWindowDrivenResizeForCurrentMetricsIfNeeded() {
         let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
             ? latestContainerDisplaySize
             : latestDrawableViewSize
@@ -137,6 +141,10 @@ extension MirageStreamContentView {
                 ? desktopResizeCoordinator.resizeLifecycleState
                 : resizeLifecycleState
             guard lifecycleState == .active else { return }
+            guard !suppressesWindowDrivenResizeForLocalPresentation else {
+                cancelPendingWindowDrivenResizeForLocalPresentation()
+                return
+            }
 
             #if os(visionOS)
             let visionOSDisplaySize = clientService.visionOSFixedPixelCountResolution(for: targetViewSize)

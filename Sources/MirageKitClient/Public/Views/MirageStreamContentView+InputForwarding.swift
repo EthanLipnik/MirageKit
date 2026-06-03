@@ -78,6 +78,16 @@ extension MirageStreamContentView {
             )
             return
         }
+        if shouldSuppressAppPointerEventDuringGeometryTransition(event) {
+            MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                eventClass: event.latencyEventClass,
+                streamID: session.streamID,
+                source: "streamForwarder",
+                reason: "appGeometryTransition",
+                sourceTimestamp: event.timestamp
+            )
+            return
+        }
 
         forwardInputEventToHost(event)
     }
@@ -92,6 +102,15 @@ extension MirageStreamContentView {
             return false
         }
         return true
+    }
+
+    /// Whether app-stream pointer input should wait for current geometry to settle.
+    func shouldSuppressAppPointerEventDuringGeometryTransition(_ event: MirageInputEvent) -> Bool {
+        guard !isDesktopStream, event.isPointerGeometryInput else { return false }
+        return localPresentationPauseActive ||
+            awaitingAppResizeAck ||
+            isResizing ||
+            inputResumeBaselineSubmissionCursor != nil
     }
 
     /// Detects the platform Command-V shortcut that should sync clipboard before paste.

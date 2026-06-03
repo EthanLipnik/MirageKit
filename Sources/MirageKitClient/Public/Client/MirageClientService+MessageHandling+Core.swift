@@ -127,7 +127,10 @@ extension MirageClientService {
     func connectionRejection(from response: MirageSessionBootstrapResponse)
     -> MirageConnectionRejection {
         MirageConnectionRejection(
-            reason: MirageConnectionRejection.Reason(bootstrapRejectionReason: response.rejectionReason),
+            reason: MirageConnectionRejection.Reason(
+                bootstrapRejectionReason: response.rejectionReason,
+                authorizationFailureReason: response.authorizationFailureReason
+            ),
             hostName: response.hostName,
             hostProtocolVersion: response.protocolMismatchHostVersion,
             clientProtocolVersion: response.protocolMismatchClientVersion,
@@ -155,6 +158,9 @@ extension MirageClientService {
         case .hostUpdateInProgress:
             return "Host update is in progress."
         case .unauthorized:
+            if response.authorizationFailureReason == .remoteAccessDisabled {
+                return "VPN Access is turned off on this Mac. Use the same local network or turn on VPN Access in Mirage Host."
+            }
             return "Connection rejected by host authorization policy."
         case .takeoverRequiresTrustedRequester:
             return "Host is busy and takeover requires a trusted client."

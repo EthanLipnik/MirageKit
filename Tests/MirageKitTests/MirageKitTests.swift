@@ -499,6 +499,26 @@ struct MirageKitTests {
         #expect(decoded.remoteAccessAllowed == true)
     }
 
+    @Test("Bootstrap response authorization failure metadata serialization")
+    func bootstrapResponseAuthorizationFailureMetadataSerialization() throws {
+        let response = MirageSessionBootstrapResponse(
+            accepted: false,
+            hostID: UUID(),
+            hostName: "Host",
+            mediaEncryptionEnabled: false,
+            datagramRegistrationToken: Data(),
+            rejectionReason: .unauthorized,
+            authorizationFailureReason: .remoteAccessDisabled
+        )
+
+        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
+
+        #expect(decoded.rejectionReason == .unauthorized)
+        #expect(decoded.authorizationFailureReason == .remoteAccessDisabled)
+    }
+
     @Test("Audio control message serialization")
     func audioControlMessageSerialization() throws {
         let started = AudioStreamStartedMessage(

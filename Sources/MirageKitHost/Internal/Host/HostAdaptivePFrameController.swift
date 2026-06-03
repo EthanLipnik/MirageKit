@@ -242,6 +242,11 @@ struct HostAdaptivePFrameController: Equatable {
     private static let lowMotionStillBaselineRatio = 4.0
     private static let lowMotionStillBaselineSlackBytes = 48 * 1024
     private static let lowMotionStillBaselineMaximumWireBytes = 384 * 1024
+    private static let vpnReadableQualityTarget: Float = 0.60
+    private static let vpnReadableQualityLowerBound: Float = 0.50
+    private static let vpnReadableQualityMaximumTimingScale = 1.45
+    private static let vpnReadableQualityMaximumDeadlineFrames = 3.0
+    private static let vpnReadableQualityMaximumSendDeadlineMs = 60.0
 
     private(set) var latestFeedbackSequence: UInt64 = 0
     private(set) var runtimeCeilingBps: Int?
@@ -411,7 +416,10 @@ struct HostAdaptivePFrameController: Equatable {
             maxPayloadSize: maxPayloadSize
         )
         let packetTarget = packetCountForWireBytes(targetBytes, maxPayloadSize: maxPayloadSize)
-        let sendDeadline = now + 1.0 / Double(max(1, currentFrameRate))
+        let baseSendDeadline = sendDeadline(
+            now: now,
+            currentFrameRate: currentFrameRate
+        )
         let byteRatio = Double(max(0, byteCount)) / Double(max(1, targetBytes))
         let wireRatio = Double(max(0, wireBytes)) / Double(max(1, targetBytes))
         let packetRatio = Double(max(0, packetCount)) / Double(max(1, packetTarget))
@@ -420,12 +428,20 @@ struct HostAdaptivePFrameController: Equatable {
             return HostEncodedFrameAdmissionDecision(
                 admission: .send,
                 budgetDecision: nil,
-                sendDeadline: sendDeadline,
+                sendDeadline: baseSendDeadline,
                 byteRatio: byteRatio,
                 wireRatio: wireRatio,
                 packetRatio: packetRatio
             )
         }
+        let sendDeadline = sendDeadline(
+            now: now,
+            currentFrameRate: currentFrameRate,
+            currentQuality: currentQuality,
+            mediaPathProfile: mediaPathProfile,
+            receiverHealthy: receiverHealthy,
+            senderHealthy: senderHealthy
+        )
 
         let predictedDeliveryMs = predictedDeliveryMs(
             wireBytes: wireBytes,
@@ -442,7 +458,14 @@ struct HostAdaptivePFrameController: Equatable {
             wireBytes: wireBytes,
             packetCount: packetCount
         )
-        let targetClearMs = qualityTargetClearMs(policy: policy, stillEnough: qualityStillEnough)
+        let baseTargetClearMs = qualityTargetClearMs(policy: policy, stillEnough: qualityStillEnough)
+        let targetClearMs = timingTargetClearMs(
+            baseTargetClearMs,
+            currentQuality: currentQuality,
+            mediaPathProfile: mediaPathProfile,
+            receiverHealthy: receiverHealthy,
+            senderHealthy: senderHealthy
+        )
         if predictedDeliveryMs <= targetClearMs ||
             shouldTolerateNearFloorFrame(
                 wireBytes: wireBytes,
@@ -476,7 +499,7 @@ struct HostAdaptivePFrameController: Equatable {
             targetBytes: targetBytes,
             packetTarget: packetTarget,
             predictedDeliveryMs: predictedDeliveryMs,
-            targetClearMs: targetClearMs,
+            targetClearMs: baseTargetClearMs,
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
@@ -694,7 +717,14 @@ struct HostAdaptivePFrameController: Equatable {
             wireBytes: wireBytes,
             packetCount: packetCount
         )
-        let targetClearMs = qualityTargetClearMs(policy: policy, stillEnough: qualityStillEnough)
+        let baseTargetClearMs = qualityTargetClearMs(policy: policy, stillEnough: qualityStillEnough)
+        let targetClearMs = timingTargetClearMs(
+            baseTargetClearMs,
+            currentQuality: currentQuality,
+            mediaPathProfile: mediaPathProfile,
+            receiverHealthy: receiverHealthy,
+            senderHealthy: true
+        )
 
         lastReceiverDeliveryFrameNumber = frameNumber
         lastReceiverDeliveryFeedbackTime = now
@@ -719,7 +749,7 @@ struct HostAdaptivePFrameController: Equatable {
             ) || shouldLearnCleanUpwardCapacity(
                 sampleBytesPerMs: sampleBytesPerMs,
                 deliveryMs: transportDeliveryMs,
-                targetClearMs: targetClearMs,
+                targetClearMs: baseTargetClearMs,
                 receiverHealthy: receiverHealthy
             ) {
                 learnCapacity(
@@ -825,8 +855,8 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
-        let predictedDeliveryAllowsRaise = predictedCurrentMs <= targetClearMs * motionClass.cleanRaiseUtilizationLimit
-        let sampledDeliveryAllowsRaise = transportDeliveryMs <= targetClearMs * motionClass.sampledRaiseUtilizationLimit
+        let predictedDeliveryAllowsRaise = predictedCurrentMs <= baseTargetClearMs * motionClass.cleanRaiseUtilizationLimit
+        let sampledDeliveryAllowsRaise = transportDeliveryMs <= baseTargetClearMs * motionClass.sampledRaiseUtilizationLimit
         guard predictedDeliveryAllowsRaise || sampledDeliveryAllowsRaise else { return nil }
 
         let raisedTarget = motionClass.ramp(from: currentTarget)
@@ -1730,6 +1760,84 @@ struct HostAdaptivePFrameController: Equatable {
 
     private func qualityTargetClearMs(policy: ModePolicy, stillEnough: Bool) -> Double {
         stillEnough ? max(policy.targetClearMs, Self.lowMotionQualityTargetClearMs) : policy.targetClearMs
+    }
+
+    private func timingTargetClearMs(
+        _ baseTargetClearMs: Double,
+        currentQuality: Float,
+        mediaPathProfile: MirageMediaPathProfile,
+        receiverHealthy: Bool,
+        senderHealthy: Bool
+    ) -> Double {
+        baseTargetClearMs * vpnReadableQualityTimingScale(
+            currentQuality: currentQuality,
+            mediaPathProfile: mediaPathProfile,
+            receiverHealthy: receiverHealthy,
+            senderHealthy: senderHealthy
+        )
+    }
+
+    private func sendDeadline(now: CFAbsoluteTime, currentFrameRate: Int) -> CFAbsoluteTime {
+        now + frameInterval(for: currentFrameRate)
+    }
+
+    private func sendDeadline(
+        now: CFAbsoluteTime,
+        currentFrameRate: Int,
+        currentQuality: Float,
+        mediaPathProfile: MirageMediaPathProfile,
+        receiverHealthy: Bool,
+        senderHealthy: Bool
+    ) -> CFAbsoluteTime {
+        let frameInterval = frameInterval(for: currentFrameRate)
+        let timingScale = vpnReadableQualityTimingScale(
+            currentQuality: currentQuality,
+            mediaPathProfile: mediaPathProfile,
+            receiverHealthy: receiverHealthy,
+            senderHealthy: senderHealthy
+        )
+        let timingProgress = max(
+            0.0,
+            min(1.0, (timingScale - 1.0) / max(0.001, Self.vpnReadableQualityMaximumTimingScale - 1.0))
+        )
+        let deadlineFrameScale = 1.0 +
+            (Self.vpnReadableQualityMaximumDeadlineFrames - 1.0) * timingProgress
+        let deadlineSeconds = min(
+            frameInterval * deadlineFrameScale,
+            Self.vpnReadableQualityMaximumSendDeadlineMs / 1_000.0
+        )
+        return now + max(frameInterval, deadlineSeconds)
+    }
+
+    private func frameInterval(for currentFrameRate: Int) -> CFAbsoluteTime {
+        1.0 / Double(max(1, currentFrameRate))
+    }
+
+    private func vpnReadableQualityTimingScale(
+        currentQuality: Float,
+        mediaPathProfile: MirageMediaPathProfile,
+        receiverHealthy: Bool,
+        senderHealthy: Bool
+    ) -> Double {
+        guard mediaPathProfile == .vpnOrOverlay,
+              receiverHealthy,
+              senderHealthy,
+              currentQuality < Self.vpnReadableQualityTarget else {
+            return 1.0
+        }
+        let denominator = max(
+            0.001,
+            Double(Self.vpnReadableQualityTarget - Self.vpnReadableQualityLowerBound)
+        )
+        let progress = max(
+            0.0,
+            min(
+                1.0,
+                Double(Self.vpnReadableQualityTarget - max(currentQuality, Self.vpnReadableQualityLowerBound)) /
+                    denominator
+            )
+        )
+        return 1.0 + (Self.vpnReadableQualityMaximumTimingScale - 1.0) * progress
     }
 
     private func treatsFrameAsStillEnoughForQuality(

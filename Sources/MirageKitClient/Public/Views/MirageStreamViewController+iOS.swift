@@ -81,7 +81,9 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onDictationError = onDictationError
         captureView.onDictationInputLevelChanged = onDictationInputLevelChanged
         captureView.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
-        captureView.requestResponderRecovery(.callbacksConfigured)
+        if captureView.inputEnabled {
+            captureView.requestResponderRecovery(.callbacksConfigured)
+        }
     }
 
     func updateState(_ state: MirageStreamViewControllerState) {
@@ -137,7 +139,11 @@ public final class MirageStreamViewController: UIViewController {
             lastDesktopMediaStreamIDForResponderRecovery = nil
             responderRecoveryTrigger = .streamIdentityUpdated
         }
-        captureView.requestResponderRecovery(responderRecoveryTrigger)
+        if state.inputEnabled {
+            captureView.requestResponderRecovery(responderRecoveryTrigger)
+        } else {
+            captureView.cancelPendingResponderRecovery()
+        }
     }
 
     deinit {

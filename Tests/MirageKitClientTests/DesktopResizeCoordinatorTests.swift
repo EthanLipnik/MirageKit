@@ -110,8 +110,8 @@ struct DesktopResizeCoordinatorTests {
         #expect(startup.isEffectivelySameStreamGeometry(as: firstDrawable))
     }
 
-    @Test("Accepted geometry rejects reused contract with different pixels")
-    func acceptedGeometryRejectsReusedContractWithDifferentPixels() {
+    @Test("Accepted geometry contract accepts host-owned final geometry")
+    func acceptedGeometryContractAcceptsHostOwnedFinalGeometry() {
         let contractID = UUID()
         let target = DesktopResizeCoordinator.RequestGeometry(
             contractID: contractID,
@@ -123,41 +123,23 @@ struct DesktopResizeCoordinatorTests {
             encoderMaxWidth: 2360,
             encoderMaxHeight: 1640
         )
-        let geometry = MirageStreamGeometry.resolve(
-            logicalSize: target.logicalResolution,
-            displayScaleFactor: target.displayScaleFactor,
-            requestedStreamScale: target.requestedStreamScale,
-            encoderMaxWidth: target.encoderMaxWidth,
-            encoderMaxHeight: target.encoderMaxHeight
-        )
 
         #expect(target.acceptedGeometryRejectionReason(
             acceptedContractID: contractID,
-            acceptedSceneIdentity: "scene-a",
-            acceptedLogicalResolution: target.logicalResolution,
-            acceptedDisplayPixelSize: geometry.displayPixelSize,
-            acceptedEncodedPixelSize: geometry.encodedPixelSize,
-            acceptedDisplayScaleFactor: 2.0,
-            acceptedRefreshTargetHz: 45
+            acceptedSceneIdentity: "scene-a"
+        ) == nil)
+        #expect(target.startupAcceptanceRejectionReason(
+            acceptedContractID: contractID,
+            acceptedSceneIdentity: "scene-a"
         ) == nil)
         #expect(target.acceptedGeometryRejectionReason(
-            acceptedContractID: contractID,
-            acceptedSceneIdentity: "scene-a",
-            acceptedLogicalResolution: target.logicalResolution,
-            acceptedDisplayPixelSize: CGSize(width: 2048, height: 1536),
-            acceptedEncodedPixelSize: geometry.encodedPixelSize,
-            acceptedDisplayScaleFactor: 2.0,
-            acceptedRefreshTargetHz: 45
-        )?.contains("displayPixels=") == true)
+            acceptedContractID: UUID(),
+            acceptedSceneIdentity: "scene-a"
+        )?.contains("geometryContract=") == true)
         #expect(target.acceptedGeometryRejectionReason(
             acceptedContractID: contractID,
-            acceptedSceneIdentity: "scene-a",
-            acceptedLogicalResolution: target.logicalResolution,
-            acceptedDisplayPixelSize: geometry.displayPixelSize,
-            acceptedEncodedPixelSize: CGSize(width: 2048, height: 1536),
-            acceptedDisplayScaleFactor: 2.0,
-            acceptedRefreshTargetHz: 45
-        )?.contains("encodedPixels=") == true)
+            acceptedSceneIdentity: "scene-b"
+        )?.contains("scene=") == true)
     }
 
     @Test("Accepts only the matching active transition")

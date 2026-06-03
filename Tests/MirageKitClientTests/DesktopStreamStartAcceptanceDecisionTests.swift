@@ -182,8 +182,8 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
-    @Test("Desktop resize commit with reused contract ID but wrong pixels is ignored")
-    func desktopResizeCommitWithReusedContractIDButWrongPixelsIsIgnored() async throws {
+    @Test("Desktop resize commit with matching contract ID accepts host-owned pixels")
+    func desktopResizeCommitWithMatchingContractIDAcceptsHostOwnedPixels() async throws {
         let service = MirageClientService()
         let streamID: StreamID = 19
         let initialResolution = CGSize(width: 1984, height: 2192)
@@ -193,19 +193,14 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             contractID: activeContractID,
             sceneIdentity: "scene-a",
             refreshTargetHz: 45,
-            logicalResolution: CGSize(width: 1512, height: 982),
+            logicalResolution: CGSize(width: 1024, height: 768),
             displayScaleFactor: 2.0,
             requestedStreamScale: 1.0,
-            encoderMaxWidth: 2360,
-            encoderMaxHeight: 1640
+            encoderMaxWidth: 2048,
+            encoderMaxHeight: 1536
         )
-        let geometry = MirageStreamGeometry.resolve(
-            logicalSize: target.logicalResolution,
-            displayScaleFactor: target.displayScaleFactor,
-            requestedStreamScale: target.requestedStreamScale,
-            encoderMaxWidth: target.encoderMaxWidth,
-            encoderMaxHeight: target.encoderMaxHeight
-        )
+        let hostDisplayPixelSize = CGSize(width: 1536, height: 1152)
+        let hostEncodedPixelSize = CGSize(width: 1280, height: 960)
         service.desktopStreamID = streamID
         service.desktopSessionID = UUID()
         service.desktopStreamResolution = initialResolution
@@ -222,11 +217,11 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let staleStarted = DesktopStreamStartedMessage(
+        let started = DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: service.desktopSessionID!,
-            width: Int(geometry.displayPixelSize.width),
-            height: Int(geometry.displayPixelSize.height),
+            width: Int(hostEncodedPixelSize.width),
+            height: Int(hostEncodedPixelSize.height),
             frameRate: 45,
             codec: .hevc,
             displayCount: 1,
@@ -235,25 +230,26 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             transitionID: activeTransitionID,
             transitionPhase: .resize,
             transitionOutcome: .resized,
-            acceptedDisplayScaleFactor: 2.0,
+            acceptedDisplayScaleFactor: nil,
             presentationWidth: Int(target.logicalResolution.width),
             presentationHeight: Int(target.logicalResolution.height),
             desktopGeometryContractID: activeContractID,
             desktopGeometrySceneIdentity: "scene-a",
-            desktopGeometryDisplayPixelWidth: 2048,
-            desktopGeometryDisplayPixelHeight: 1536,
-            desktopGeometryEncodedPixelWidth: Int(geometry.encodedPixelSize.width),
-            desktopGeometryEncodedPixelHeight: Int(geometry.encodedPixelSize.height),
+            desktopGeometryDisplayPixelWidth: Int(hostDisplayPixelSize.width),
+            desktopGeometryDisplayPixelHeight: Int(hostDisplayPixelSize.height),
+            desktopGeometryEncodedPixelWidth: Int(hostEncodedPixelSize.width),
+            desktopGeometryEncodedPixelHeight: Int(hostEncodedPixelSize.height),
             desktopGeometryRefreshTargetHz: 45
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: staleStarted))
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
 
-        #expect(service.desktopStreamResolution == initialResolution)
-        #expect(service.desktopDimensionTokenByStream[streamID] == 4)
-        #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
-        #expect(service.desktopResizeCoordinator.activeTransition?.target.contractID == activeContractID)
-        #expect(callbackCount == 0)
+        #expect(service.desktopStreamResolution == hostEncodedPixelSize)
+        #expect(service.desktopStreamPresentationResolution == target.logicalResolution)
+        #expect(abs((service.desktopStreamDisplayScaleFactor ?? 0) - 1.5) < 0.001)
+        #expect(service.desktopDimensionTokenByStream[streamID] == 5)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(callbackCount == 1)
 
         if let controller = service.controllersByStream[streamID] {
             await controller.stop()
@@ -888,17 +884,20 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
-    @Test("Desktop startup geometry contract rejects accepted size mismatch")
-    func desktopStartupGeometryContractRejectsAcceptedSizeMismatch() async throws {
+    @Test("Desktop startup geometry contract accepts host-owned final geometry")
+    func desktopStartupGeometryContractAcceptsHostOwnedFinalGeometry() async throws {
         let service = MirageClientService()
         let streamID: StreamID = 34
         let contractID = UUID()
+        let desktopSessionID = UUID()
+        let hostDisplayPixelSize = CGSize(width: 1248, height: 2720)
+        let hostDisplayScaleFactor: CGFloat = 2.971
         let startupTarget = DesktopResizeCoordinator.RequestGeometry(
             contractID: contractID,
             sceneIdentity: "scene-a",
             refreshTargetHz: 60,
-            logicalResolution: CGSize(width: 1024, height: 768),
-            displayScaleFactor: 2.0,
+            logicalResolution: CGSize(width: 420, height: 912),
+            displayScaleFactor: 3.0,
             requestedStreamScale: 1.0,
             encoderMaxWidth: nil,
             encoderMaxHeight: nil
@@ -913,34 +912,41 @@ struct DesktopStreamStartAcceptanceDecisionTests {
 
         let started = DesktopStreamStartedMessage(
             streamID: streamID,
-            desktopSessionID: UUID(),
-            width: 2048,
-            height: 1536,
+            desktopSessionID: desktopSessionID,
+            width: Int(hostDisplayPixelSize.width),
+            height: Int(hostDisplayPixelSize.height),
             frameRate: 60,
             codec: .hevc,
             displayCount: 1,
             dimensionToken: 1,
             acceptedMediaMaxPacketSize: 1400,
             transitionPhase: .startup,
-            acceptedDisplayScaleFactor: 2.0,
-            presentationWidth: 1024,
-            presentationHeight: 768,
+            acceptedDisplayScaleFactor: hostDisplayScaleFactor,
+            presentationWidth: Int(startupTarget.logicalResolution.width),
+            presentationHeight: Int(startupTarget.logicalResolution.height),
             desktopGeometryContractID: contractID,
             desktopGeometrySceneIdentity: "scene-a",
-            desktopGeometryDisplayPixelWidth: 2048,
-            desktopGeometryDisplayPixelHeight: 1536,
-            desktopGeometryEncodedPixelWidth: 1536,
-            desktopGeometryEncodedPixelHeight: 1152,
+            desktopGeometryDisplayPixelWidth: Int(hostDisplayPixelSize.width),
+            desktopGeometryDisplayPixelHeight: Int(hostDisplayPixelSize.height),
+            desktopGeometryEncodedPixelWidth: Int(hostDisplayPixelSize.width),
+            desktopGeometryEncodedPixelHeight: Int(hostDisplayPixelSize.height),
             desktopGeometryRefreshTargetHz: 60
         )
 
         await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
 
-        #expect(service.desktopStreamID == nil)
-        #expect(service.desktopSessionID == nil)
-        #expect(service.desktopStreamRequestStartTime > 0)
+        #expect(service.desktopStreamID == streamID)
+        #expect(service.desktopSessionID == desktopSessionID)
+        #expect(service.desktopStreamResolution == hostDisplayPixelSize)
+        #expect(service.desktopStreamPresentationResolution == startupTarget.logicalResolution)
+        #expect(abs((service.desktopStreamDisplayScaleFactor ?? 0) - hostDisplayScaleFactor) < 0.001)
+        #expect(service.desktopStreamRequestStartTime == 0)
         #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
-        #expect(callbackCount == 0)
+        #expect(callbackCount == 1)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
     }
 
     @MainActor

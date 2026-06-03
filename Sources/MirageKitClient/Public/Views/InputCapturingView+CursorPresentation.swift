@@ -66,7 +66,7 @@ extension InputCapturingView {
             virtualCursorTapGesture.isEnabled = true
             virtualCursorRightTapGesture.isEnabled = true
             virtualCursorLongPressGesture.isEnabled = true
-            virtualDragActive = false
+            releaseActivePointerButtonsIfNeeded(reason: "locked_trackpad_mode_enabled")
             stopVirtualCursorDeceleration()
             lastCursorPosition = lockedCursorPosition
             setVirtualCursorVisible(false)
@@ -84,7 +84,7 @@ extension InputCapturingView {
             virtualCursorTapGesture.isEnabled = false
             virtualCursorRightTapGesture.isEnabled = false
             virtualCursorLongPressGesture.isEnabled = false
-            virtualDragActive = false
+            releaseActivePointerButtonsIfNeeded(reason: "cursor_lock_enabled")
             stopVirtualCursorDeceleration()
             setVirtualCursorVisible(false)
         } else {
@@ -119,7 +119,7 @@ extension InputCapturingView {
                 virtualCursorTapGesture.isEnabled = false
                 virtualCursorRightTapGesture.isEnabled = false
                 virtualCursorLongPressGesture.isEnabled = false
-                virtualDragActive = false
+                releaseActivePointerButtonsIfNeeded(reason: "direct_touch_mode_enabled")
                 stopVirtualCursorDeceleration()
                 setVirtualCursorVisible(false)
             }
@@ -171,6 +171,7 @@ extension InputCapturingView {
             }
             setLockedCursorVisible(lockedCursorVisible)
         } else {
+            releaseActivePointerButtonsIfNeeded(reason: "cursor_lock_disabled")
             updateMouseInputHandler()
             hoverGesture.isEnabled = true
             lockedPointerPanGesture.isEnabled = false
@@ -328,7 +329,7 @@ extension InputCapturingView {
     }
 
     func sendTrackpadMovementEvent(modifiers: MirageModifierFlags) {
-        let location = if virtualDragActive {
+        let location = if virtualPointerButtonDown {
             trackpadCursorActionPosition()
         } else {
             trackpadCursorPosition()
@@ -339,7 +340,7 @@ extension InputCapturingView {
             modifiers: modifiers
         )
 
-        if virtualDragActive {
+        if virtualPointerButtonDown {
             onInputEvent?(.mouseDragged(mouseEvent))
         } else {
             onInputEvent?(.mouseMoved(mouseEvent))

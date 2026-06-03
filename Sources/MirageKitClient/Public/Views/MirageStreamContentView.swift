@@ -67,6 +67,8 @@ public struct MirageStreamContentView: View {
     public let onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
     /// Whether the platform stream view should own input focus and forward local input.
     public let inputEnabled: Bool
+    /// Whether local UI currently owns presentation and should suppress stream resize negotiation.
+    public let localPresentationPauseActive: Bool
     /// Direct-touch translation mode for touch-capable clients.
     public let directTouchInputMode: MirageDirectTouchInputMode
     /// Whether the software keyboard should currently be visible.
@@ -132,6 +134,10 @@ public struct MirageStreamContentView: View {
     @State var presentationBlurProgressSuppressed = false
     @State var recoveryBlurTrackedStatus: MirageStreamClientRecoveryStatus = .idle
     @State var recoveryBlurStatusBecameActiveAt: CFAbsoluteTime?
+    @State var inputResumeBaselineSubmissionCursor: MirageRenderCursor?
+    @State var inputResumeBaselineSubmissionSequence: UInt64 = 0
+    @State var inputResumeGateTask: Task<Void, Never>?
+    @State var inputResumeGateGeneration: UInt64 = 0
     @State var latestContainerDisplaySize: CGSize = .zero
     @State var latestDrawableViewSize: CGSize = .zero
     @State var latestDrawableScaleFactor: CGFloat?
@@ -178,6 +184,7 @@ public struct MirageStreamContentView: View {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         inputEnabled: Bool = true,
+        localPresentationPauseActive: Bool = false,
         directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice,
         softwareKeyboardVisible: Bool = false,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
@@ -214,6 +221,7 @@ public struct MirageStreamContentView: View {
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         self.inputEnabled = inputEnabled
+        self.localPresentationPauseActive = localPresentationPauseActive
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilGestureConfiguration = pencilGestureConfiguration
@@ -299,7 +307,8 @@ extension MirageStreamContentView {
 
     /// Whether local presentation state should temporarily prevent window-size driven resize requests.
     var suppressesWindowDrivenResizeForLocalPresentation: Bool {
-        (isDesktopStream && (useHostResolution || clientService.desktopCaptureSource == .mainDisplayFallback)) ||
+        localPresentationPauseActive ||
+            (isDesktopStream && (useHostResolution || clientService.desktopCaptureSource == .mainDisplayFallback)) ||
             (keyboardAvoidanceEnabled && (softwareKeyboardVisible || localKeyboardOcclusionActive))
     }
 
@@ -372,6 +381,11 @@ extension MirageStreamContentView {
 // MARK: - Stream State
 
 extension MirageStreamContentView {
+    /// Effective input gate after local modal ownership and post-resume frame fencing.
+    var streamInputForwardingEnabled: Bool {
+        inputEnabled && inputResumeBaselineSubmissionCursor == nil
+    }
+
     /// Whether this rendered session still belongs to the client's active stream set.
     var isCurrentStreamActive: Bool {
         if clientService.desktopStreamID == session.streamID || clientService.desktopStreamID == session.mediaStreamID {
@@ -388,6 +402,7 @@ extension MirageStreamContentView {
 
     /// Whether input from this view can be sent over the active host connection.
     var canSendInputToHost: Bool {
+        guard streamInputForwardingEnabled else { return false }
         guard case .connected = clientService.connectionState else { return false }
         return isCurrentStreamActive
     }
@@ -408,6 +423,7 @@ extension MirageStreamContentView {
     }
 
     func focusCurrentStreamForInputIfNeeded(force: Bool = false) {
+        guard streamInputForwardingEnabled else { return }
         guard force || sessionStore.focusedSessionID != session.id else { return }
         sessionStore.setFocusedSession(session.id)
         clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
@@ -595,6 +611,81 @@ extension MirageStreamContentView {
         recoveryBlurStatusBecameActiveAt = nil
     }
 
+    func handleInputEnabledChanged() {
+        if inputEnabled {
+            beginInputResumeGateIfNeeded(reason: "input_enabled", requiresInputEnabled: true)
+        } else {
+            cancelInputResumeGate(reason: "input_disabled")
+        }
+    }
+
+    func beginInputResumeGateIfNeeded(reason: String, requiresInputEnabled: Bool = true) {
+        if requiresInputEnabled {
+            guard inputEnabled else { return }
+        }
+        guard inputResumeBaselineSubmissionCursor == nil else { return }
+
+        let baseline = latestPresentationSubmissionSnapshot
+        inputResumeBaselineSubmissionCursor = baseline.cursor
+        inputResumeBaselineSubmissionSequence = baseline.sequence
+        inputResumeGateGeneration &+= 1
+        let gateGeneration = inputResumeGateGeneration
+        let baselineCursor = baseline.cursor
+        let baselineSequence = baseline.sequence
+
+        MirageLogger.client(
+            "Input resume for stream \(session.streamID) waiting for new presented frame " +
+                "(\(reason), baseline=\(baselineSequence))"
+        )
+
+        inputResumeGateTask?.cancel()
+        inputResumeGateTask = Task { @MainActor in
+            let deadline = ContinuousClock.now + Self.inputResumeFrameWaitTimeout
+            while !Task.isCancelled {
+                let latestCursor = latestPresentationSubmissionSnapshot.cursor
+                if latestCursor.hasSubmittedFrame && latestCursor.isAfter(baselineCursor) {
+                    finishInputResumeGate(generation: gateGeneration, reason: "presented_frame")
+                    return
+                }
+
+                if ContinuousClock.now >= deadline {
+                    finishInputResumeGate(generation: gateGeneration, reason: "timeout")
+                    return
+                }
+
+                do {
+                    try await Task.sleep(for: Self.inputResumeFrameWaitPollInterval)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    func finishInputResumeGate(generation: UInt64, reason: String) {
+        guard inputResumeGateGeneration == generation else { return }
+        let baselineSequence = inputResumeBaselineSubmissionSequence
+        inputResumeGateTask?.cancel()
+        inputResumeGateTask = nil
+        inputResumeBaselineSubmissionCursor = nil
+        inputResumeBaselineSubmissionSequence = 0
+        MirageLogger.client(
+            "Input resume for stream \(session.streamID) released (\(reason), baseline=\(baselineSequence), " +
+                "latest=\(latestPresentationSubmissionSnapshot.sequence))"
+        )
+        focusCurrentStreamForInputIfNeeded(force: true)
+    }
+
+    func cancelInputResumeGate(reason: String) {
+        guard inputResumeGateTask != nil || inputResumeBaselineSubmissionCursor != nil else { return }
+        inputResumeGateGeneration &+= 1
+        inputResumeGateTask?.cancel()
+        inputResumeGateTask = nil
+        inputResumeBaselineSubmissionCursor = nil
+        inputResumeBaselineSubmissionSequence = 0
+        MirageLogger.client("Input resume gate cancelled for stream \(session.streamID) (\(reason))")
+    }
+
     static func nextPresentationBlurProgressSuppression(
         baselineSubmissionSequence: UInt64,
         latestSubmissionSequence: UInt64,
@@ -642,6 +733,8 @@ extension MirageStreamContentView {
 
 private extension MirageStreamContentView {
     static let presentationBlurProgressPollInterval: Duration = .milliseconds(100)
+    static let inputResumeFrameWaitPollInterval: Duration = .milliseconds(16)
+    static let inputResumeFrameWaitTimeout: Duration = .seconds(3)
 }
 
 // MARK: - Resize Acknowledgements

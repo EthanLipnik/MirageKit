@@ -16,6 +16,7 @@
 - Do not add third-party dependencies without explicit approval.
 - When releasing MirageKit, make the git tag match `MirageKit.version` exactly.
 - Never increase inflight for low latency mode.
+- ScreenCaptureKit capture cadence is dynamic: observed SCK FPS can fall below the requested rate when frames are stale or unchanged. Do not treat sub-target SCK cadence alone as host incapacity; correlate it with staleness, damage, encoder admission, transport pressure, and presentation metrics.
 - In Network.framework, enabling peer-to-peer transport also allows AWDL paths over wired USB-C links when the system exposes them that way; account for that when reasoning about path selection and diagnostics.
 - Comments and README text should be static descriptions of current behavior.
 

@@ -120,6 +120,9 @@ public class InputCapturingView: UIView {
     public var streamID: StreamID? {
         didSet {
             if oldValue != streamID {
+                releaseActivePointerButtonsIfNeeded(reason: "stream_rebound")
+                stopVirtualCursorDeceleration()
+                stopTouchScrollDeceleration()
                 stopAllKeyRepeats()
                 resetPointerSuppressionState(reason: "stream_rebound")
             }
@@ -400,6 +403,7 @@ public class InputCapturingView: UIView {
     var virtualCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var virtualCursorVelocity: CGPoint = .zero
     var virtualCursorDecelerationLink: CADisplayLink?
+    var virtualPointerButtonDown: Bool = false
     var virtualDragActive: Bool = false
     var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var lockedCursorTargetPosition: CGPoint = .init(x: 0.5, y: 0.5)
@@ -454,9 +458,14 @@ public class InputCapturingView: UIView {
     public var inputEnabled: Bool = true {
         didSet {
             guard inputEnabled != oldValue else { return }
+            isUserInteractionEnabled = inputEnabled
             if inputEnabled {
                 requestResponderRecovery(.focusChanged)
             } else {
+                releaseActivePointerButtonsIfNeeded(reason: "input_disabled")
+                stopVirtualCursorDeceleration()
+                stopTouchScrollDeceleration()
+                resetPointerSuppressionState(reason: "input_disabled")
                 clearSoftwareKeyboardState()
                 if isFirstResponder {
                     _ = resignFirstResponder()

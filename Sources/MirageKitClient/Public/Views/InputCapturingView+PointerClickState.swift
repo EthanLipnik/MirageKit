@@ -77,7 +77,7 @@ extension InputCapturingView {
         if lockedPointerButtonDown {
             return lockedCursorActionPosition()
         }
-        if virtualDragActive {
+        if virtualPointerButtonDown || virtualDragActive {
             return trackpadCursorActionPosition()
         }
         if longPressButtonDown || directLongPressButtonDown || directDoubleTapDragButtonDown || directTwoFingerDragButtonDown {
@@ -101,6 +101,7 @@ extension InputCapturingView {
             directDoubleTapDragButtonDown ||
             directTwoFingerDragButtonDown ||
             lockedPointerButtonDown ||
+            virtualPointerButtonDown ||
             virtualDragActive ||
             pencilButtonDown
         guard shouldReleasePrimaryButton else { return }
@@ -137,6 +138,7 @@ extension InputCapturingView {
         directTwoFingerDragButtonDown = false
         lockedPointerButtonDown = false
         lockedPointerDraggedSinceDown = false
+        virtualPointerButtonDown = false
         virtualDragActive = false
         pencilButtonDown = false
         longPressCancelledForMultiTouch = false
@@ -159,9 +161,20 @@ extension InputCapturingView {
         suppressEscapeKeyUpForCursorUnlock = false
         lockedPointerDraggedSinceDown = false
         lockedPointerLastHoverLocation = nil
+        virtualPointerButtonDown = false
+        virtualDragActive = false
 
         guard hadSuppressedGesture else { return }
         MirageLogger.client("Cleared suppressed pointer gesture state (\(reason))")
+    }
+
+    func logVirtualTrackpadPointerEvent(_ event: String, location: CGPoint, clickCount: Int) {
+        let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+        MirageLogger.client(
+            "Virtual trackpad \(event) stream=\(streamIDText) " +
+                "location=(\(String(format: "%.3f", location.x)),\(String(format: "%.3f", location.y))) " +
+                "clickCount=\(clickCount)"
+        )
     }
 
     func clickDistanceInPoints(from source: CGPoint, to target: CGPoint) -> CGFloat {

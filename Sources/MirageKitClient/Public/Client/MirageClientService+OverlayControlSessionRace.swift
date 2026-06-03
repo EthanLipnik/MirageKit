@@ -32,7 +32,8 @@ enum OverlayControlSessionLaunchDecision: Equatable, Sendable {
 }
 
 struct OverlayControlSessionRacePolicy {
-    static let udpHedgeDelay: Duration = .seconds(3)
+    static let udpPrimaryDelay: Duration = .milliseconds(0)
+    static let quicHedgeDelay: Duration = .seconds(3)
     static let tcpHedgeDelay: Duration = .seconds(8)
     static let groupBudget: Duration = .seconds(45)
     static let preTransportReadyTimeout: Duration = .seconds(6)
@@ -41,9 +42,9 @@ struct OverlayControlSessionRacePolicy {
     static func launchDelay(for transportKind: LoomTransportKind) -> Duration {
         switch transportKind {
         case .quic:
-            .milliseconds(0)
+            quicHedgeDelay
         case .udp:
-            udpHedgeDelay
+            udpPrimaryDelay
         case .tcp:
             tcpHedgeDelay
         }
@@ -98,6 +99,12 @@ actor OverlayControlSessionRaceState {
         }
         switch transportKind {
         case .quic:
+            if now < earliestLaunch {
+                return .wait(reason: "waiting for UDP primary window before QUIC hedge")
+            }
+            if candidates[.udp]?.phase.hasReachedRemoteHelloOrLater == true {
+                return .suppress(reason: "overlay QUIC suppressed; UDP reached remote hello or trust")
+            }
             return .launch
         case .udp:
             return udpLaunchDecision(now: now, earliestLaunch: earliestLaunch)

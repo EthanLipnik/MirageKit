@@ -31,7 +31,15 @@ package extension MirageClientService.ProtocolMismatchInfo.Reason {
 
 package extension MirageConnectionRejection.Reason {
     /// Maps host bootstrap rejection reasons into terminal connection-rejection state.
-    init(bootstrapRejectionReason reason: MirageSessionBootstrapRejectionReason?) {
+    init(
+        bootstrapRejectionReason reason: MirageSessionBootstrapRejectionReason?,
+        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil
+    ) {
+        if authorizationFailureReason == .remoteAccessDisabled {
+            self = .remoteAccessDisabled
+            return
+        }
+
         switch reason {
         case .protocolVersionMismatch:
             self = .protocolVersionMismatch

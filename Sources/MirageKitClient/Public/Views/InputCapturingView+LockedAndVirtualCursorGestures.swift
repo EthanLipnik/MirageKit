@@ -97,7 +97,10 @@ extension InputCapturingView {
             let eventModifiers = modifiers(from: gesture)
             sendTrackpadMovementEvent(modifiers: eventModifiers)
         case .ended:
-            if !virtualDragActive { startVirtualCursorDeceleration(with: gesture.velocity(in: self)) }
+            if !virtualPointerButtonDown { startVirtualCursorDeceleration(with: gesture.velocity(in: self)) }
+        case .cancelled,
+             .failed:
+            stopVirtualCursorDeceleration()
         default:
             break
         }
@@ -123,24 +126,37 @@ extension InputCapturingView {
 
         switch gesture.state {
         case .began:
+            guard !virtualPointerButtonDown else { return }
+            virtualPointerButtonDown = true
             virtualDragActive = true
             resetPrimaryClickTracking()
+            let location = trackpadCursorActionPosition()
             let mouseEvent = MirageMouseEvent(
                 button: .left,
-                location: trackpadCursorActionPosition(),
+                location: location,
                 clickCount: 1,
                 modifiers: eventModifiers
             )
+            logVirtualTrackpadPointerEvent("long_press_down", location: location, clickCount: 1)
             onInputEvent?(.mouseDown(mouseEvent))
         case .cancelled,
-             .ended:
+             .ended,
+             .failed:
+            guard virtualPointerButtonDown else { return }
+            let location = trackpadCursorActionPosition()
             let mouseEvent = MirageMouseEvent(
                 button: .left,
-                location: trackpadCursorActionPosition(),
+                location: location,
                 clickCount: 1,
                 modifiers: eventModifiers
             )
+            logVirtualTrackpadPointerEvent(
+                gesture.state == .ended ? "long_press_up" : "long_press_cancel",
+                location: location,
+                clickCount: 1
+            )
             onInputEvent?(.mouseUp(mouseEvent))
+            virtualPointerButtonDown = false
             virtualDragActive = false
         default:
             break
@@ -168,7 +184,9 @@ extension InputCapturingView {
             modifiers: eventModifiers
         )
 
+        logVirtualTrackpadPointerEvent("tap_down", location: location, clickCount: clickCount)
         onInputEvent?(.mouseDown(mouseEvent))
+        logVirtualTrackpadPointerEvent("tap_up", location: location, clickCount: clickCount)
         onInputEvent?(.mouseUp(mouseEvent))
         commitPrimaryClick(at: location, timestamp: now, clickCount: clickCount)
     }
@@ -194,7 +212,9 @@ extension InputCapturingView {
             modifiers: eventModifiers
         )
 
+        logVirtualTrackpadPointerEvent("right_tap_down", location: location, clickCount: clickCount)
         onInputEvent?(.rightMouseDown(mouseEvent))
+        logVirtualTrackpadPointerEvent("right_tap_up", location: location, clickCount: clickCount)
         onInputEvent?(.rightMouseUp(mouseEvent))
         commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
     }

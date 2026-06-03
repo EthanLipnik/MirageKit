@@ -31,7 +31,7 @@ public enum MirageKit {
     /// Bonjour service type used for peer discovery on the local network.
     public static let serviceType = "_mirage._tcp"
 
-    /// UDP port used for overlay reachability probes.
+    /// TCP port used for overlay reachability probes.
     public static let overlayProbePort: UInt16 = 9852
 
     /// Preferred TCP listener port used for direct Mirage sessions.

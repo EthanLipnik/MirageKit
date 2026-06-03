@@ -113,6 +113,7 @@ extension InputCapturingView {
         isDragging = false
         clearSoftwareKeyboardState()
         stopDictation()
+        stopVirtualCursorDeceleration()
         stopTouchScrollDeceleration()
     }
 
@@ -227,10 +228,14 @@ extension InputCapturingView {
         super.didMoveToWindow()
         reportContainerSizeIfChanged(force: true)
         if window != nil {
+            releaseActivePointerButtonsIfNeeded(reason: "did_move_to_window")
             resetPointerSuppressionState(reason: "did_move_to_window")
             requestResponderRecovery(.didMoveToWindow)
             applyPendingApplicationActivationHandlingIfPossible()
         } else {
+            releaseActivePointerButtonsIfNeeded(reason: "did_move_from_window")
+            stopVirtualCursorDeceleration()
+            stopTouchScrollDeceleration()
             cancelPendingResponderRecovery()
         }
         updateMouseInputHandler()
@@ -260,6 +265,9 @@ extension InputCapturingView {
     override public func resignFirstResponder() -> Bool {
         // Clear all modifier and key repeat state when losing focus
         stopAllKeyRepeats()
+        releaseActivePointerButtonsIfNeeded(reason: "resign_first_responder")
+        stopVirtualCursorDeceleration()
+        stopTouchScrollDeceleration()
         resetAllModifiers()
         resetPrimaryClickTracking()
         resetSecondaryClickTracking()

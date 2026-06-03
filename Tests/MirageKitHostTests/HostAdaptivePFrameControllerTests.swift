@@ -599,6 +599,116 @@ struct HostAdaptivePFrameControllerTests {
         }
     }
 
+    @Test("VPN low-readability encoded frames get deadline slack before quality cuts")
+    func vpnLowReadabilityEncodedFramesGetDeadlineSlackBeforeQualityCuts() throws {
+        let mildlyLateBytes = 100 * 1024
+        let frameInterval = 1.0 / 60.0
+
+        var highQualityController = HostAdaptivePFrameController()
+        let highQualityDecision = highQualityController.evaluateEncodedFrame(
+            byteCount: mildlyLateBytes,
+            wireBytes: mildlyLateBytes,
+            packetCount: packetCount(forWireBytes: mildlyLateBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 2_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.70,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .vpnOrOverlay,
+            now: 10
+        )
+        let highQualityBudget = try #require(highQualityDecision.budgetDecision)
+
+        #expect(highQualityDecision.admission == .sendWithQualityDrop)
+        #expect(highQualityBudget.reason == .encodedFrame)
+        #expect(abs(highQualityDecision.sendDeadline - (10 + frameInterval)) < 0.0001)
+
+        var lowQualityController = HostAdaptivePFrameController()
+        let lowQualityDecision = lowQualityController.evaluateEncodedFrame(
+            byteCount: mildlyLateBytes,
+            wireBytes: mildlyLateBytes,
+            packetCount: packetCount(forWireBytes: mildlyLateBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 2_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.55,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .vpnOrOverlay,
+            now: 10
+        )
+
+        #expect(lowQualityDecision.admission == .send)
+        #expect(lowQualityDecision.budgetDecision == nil)
+        #expect(lowQualityDecision.sendDeadline > 10 + frameInterval)
+        #expect(lowQualityDecision.sendDeadline <= 10 + 0.060)
+    }
+
+    @Test("VPN low-readability timing slack still cuts severe pressure")
+    func vpnLowReadabilityTimingSlackStillCutsSeverePressure() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 2_000_000,
+            requestedBitrate: 60_000_000,
+            startupCeiling: 60_000_000,
+            minimumFloor: 2_000_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 700,
+            completionGapMs: 700,
+            currentQuality: 0.50,
+            mediaPathProfile: .vpnOrOverlay
+        ))
+
+        #expect(decision.reason == .pFrameLatency)
+        #expect(decision.state == .pressured || decision.state == .severe)
+        #expect(decision.quality < 0.50)
+    }
+
+    @Test("Low-readability timing slack is scoped to VPN")
+    func lowReadabilityTimingSlackIsScopedToVPN() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 2_000_000,
+            requestedBitrate: 60_000_000,
+            startupCeiling: 60_000_000,
+            minimumFloor: 2_000_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 100 * 1024,
+            packetSpanMs: 400,
+            completionGapMs: 400,
+            currentQuality: 0.55,
+            mediaPathProfile: .localWiFi
+        ))
+
+        #expect(decision.reason == .pFrameLatency)
+    }
+
     @Test("Catastrophic MB-scale over-headroom frame drops and targets a smaller repair keyframe")
     func catastrophicMBScaleOverHeadroomFrameDropsAndTargetsSmallerRepairKeyframe() throws {
         let operatingFrameBytes = 20 * 1024 * 1024

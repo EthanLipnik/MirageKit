@@ -132,7 +132,12 @@ extension MirageHostService {
                 do {
                     bootstrapPhase = "approval-rejection-control-channel"
                     let controlChannel = try await MirageControlChannel.accept(from: session)
-                    let rejection = makeRejectedBootstrapResponse(reason: .unauthorized)
+                    let authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? =
+                        origin == .remote ? .remoteAccessDisabled : nil
+                    let rejection = makeRejectedBootstrapResponse(
+                        reason: .unauthorized,
+                        authorizationFailureReason: authorizationFailureReason
+                    )
                     do {
                         try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
                     } catch {

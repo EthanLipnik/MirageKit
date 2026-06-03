@@ -112,21 +112,11 @@ final class DesktopResizeCoordinator {
 
         func startupAcceptanceRejectionReason(
             acceptedContractID: UUID,
-            acceptedSceneIdentity: String?,
-            acceptedLogicalResolution: CGSize,
-            acceptedDisplayPixelSize: CGSize?,
-            acceptedEncodedPixelSize: CGSize?,
-            acceptedDisplayScaleFactor: CGFloat?,
-            acceptedRefreshTargetHz: Int?
+            acceptedSceneIdentity: String?
         ) -> String? {
             acceptedGeometryRejectionReason(
                 acceptedContractID: acceptedContractID,
-                acceptedSceneIdentity: acceptedSceneIdentity,
-                acceptedLogicalResolution: acceptedLogicalResolution,
-                acceptedDisplayPixelSize: acceptedDisplayPixelSize,
-                acceptedEncodedPixelSize: acceptedEncodedPixelSize,
-                acceptedDisplayScaleFactor: acceptedDisplayScaleFactor,
-                acceptedRefreshTargetHz: acceptedRefreshTargetHz
+                acceptedSceneIdentity: acceptedSceneIdentity
             )
         }
 
@@ -160,13 +150,9 @@ final class DesktopResizeCoordinator {
 
         func acceptedGeometryRejectionReason(
             acceptedContractID: UUID,
-            acceptedSceneIdentity: String?,
-            acceptedLogicalResolution: CGSize,
-            acceptedDisplayPixelSize: CGSize?,
-            acceptedEncodedPixelSize: CGSize?,
-            acceptedDisplayScaleFactor: CGFloat?,
-            acceptedRefreshTargetHz: Int?
+            acceptedSceneIdentity: String?
         ) -> String? {
+            // A geometry contract proves the response belongs to this request; the host owns the final geometry.
             guard acceptedContractID == contractID else {
                 return "geometryContract=\(acceptedContractID.uuidString) expected=\(contractID.uuidString)"
             }
@@ -175,35 +161,6 @@ final class DesktopResizeCoordinator {
                 : nil
             guard normalizedAcceptedSceneIdentity == sceneIdentity else {
                 return "scene=\(normalizedAcceptedSceneIdentity ?? "nil") expected=\(sceneIdentity ?? "nil")"
-            }
-            guard Self.approximatelyEqual(logicalResolution.width, acceptedLogicalResolution.width),
-                  Self.approximatelyEqual(logicalResolution.height, acceptedLogicalResolution.height) else {
-                return "logical=\(Int(acceptedLogicalResolution.width))x\(Int(acceptedLogicalResolution.height)) " +
-                    "expected=\(Int(logicalResolution.width))x\(Int(logicalResolution.height))"
-            }
-            guard let acceptedDisplayScaleFactor,
-                  Self.approximatelyEqual(displayScaleFactor, acceptedDisplayScaleFactor) else {
-                let acceptedScaleText = acceptedDisplayScaleFactor.map { String(format: "%.3f", $0) } ?? "nil"
-                return "scale=\(acceptedScaleText) expected=\(String(format: "%.3f", displayScaleFactor))"
-            }
-            guard let acceptedDisplayPixelSize else {
-                return "displayPixels=nil expected=\(Int(resolvedGeometry.displayPixelSize.width))x\(Int(resolvedGeometry.displayPixelSize.height))"
-            }
-            guard Self.pixelSizesEqual(resolvedGeometry.displayPixelSize, acceptedDisplayPixelSize) else {
-                return "displayPixels=\(Int(acceptedDisplayPixelSize.width))x\(Int(acceptedDisplayPixelSize.height)) " +
-                    "expected=\(Int(resolvedGeometry.displayPixelSize.width))x\(Int(resolvedGeometry.displayPixelSize.height))"
-            }
-            guard let acceptedEncodedPixelSize else {
-                return "encodedPixels=nil expected=\(Int(resolvedGeometry.encodedPixelSize.width))x\(Int(resolvedGeometry.encodedPixelSize.height))"
-            }
-            guard Self.pixelSizesEqual(resolvedGeometry.encodedPixelSize, acceptedEncodedPixelSize) else {
-                return "encodedPixels=\(Int(acceptedEncodedPixelSize.width))x\(Int(acceptedEncodedPixelSize.height)) " +
-                    "expected=\(Int(resolvedGeometry.encodedPixelSize.width))x\(Int(resolvedGeometry.encodedPixelSize.height))"
-            }
-            if let refreshTargetHz {
-                guard acceptedRefreshTargetHz == refreshTargetHz else {
-                    return "refresh=\(acceptedRefreshTargetHz.map(String.init) ?? "nil") expected=\(refreshTargetHz)"
-                }
             }
             return nil
         }

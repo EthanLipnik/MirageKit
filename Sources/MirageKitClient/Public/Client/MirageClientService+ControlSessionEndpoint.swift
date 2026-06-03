@@ -883,65 +883,34 @@ extension MirageClientService {
     }
 
     static func isOverlayCandidateHost(_ host: NWEndpoint.Host) -> Bool {
-        if isOverlayAddress(host) {
-            return true
+        switch MirageEndpointClassifier.classify(host) {
+        case .tailscaleIPv4, .tailscaleIPv6, .tailscaleMagicDNS:
+            true
+        case .privateLAN, .bonjour, .publicIPv6, .unknown:
+            false
         }
-        guard case let .name(value, _) = host else { return false }
-        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized.hasSuffix(".ts.net") || normalized.contains(".ts.")
     }
 
     static func isPublicIPv6Candidate(_ host: NWEndpoint.Host) -> Bool {
-        guard case .ipv6 = host else { return false }
-        return !isLinkLocalIPv6Address(host) && !isOverlayAddress(host)
+        MirageEndpointClassifier.classify(host) == .publicIPv6
     }
 
     static func isLocalControlCandidateHost(_ host: NWEndpoint.Host) -> Bool {
-        switch host {
-        case let .ipv4(addr):
-            let raw = addr.rawValue
-            guard raw.count >= 4 else { return false }
-            let first = raw[raw.startIndex]
-            let second = raw[raw.startIndex.advanced(by: 1)]
-            if first == 10 { return true }
-            if first == 192, second == 168 { return true }
-            if first == 172, (16 ... 31).contains(second) { return true }
-            if first == 169, second == 254 { return true }
-            return false
-        case let .ipv6(addr):
-            let raw = addr.rawValue
-            guard raw.count >= 1 else { return false }
-            let first = raw[raw.startIndex]
-            return first == 0xFC || first == 0xFD || isLinkLocalIPv6Address(host)
-        case let .name(value, _):
-            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !normalized.isEmpty else { return false }
-            return normalized.hasSuffix(".local") || !normalized.contains(".")
-        default:
-            return false
+        switch MirageEndpointClassifier.classify(host) {
+        case .privateLAN, .bonjour:
+            true
+        case .tailscaleIPv4, .tailscaleIPv6, .tailscaleMagicDNS, .publicIPv6, .unknown:
+            false
         }
     }
 
     /// Returns `true` when the host is an overlay/VPN address (e.g. Tailscale CGNAT).
     static func isOverlayAddress(_ host: NWEndpoint.Host) -> Bool {
-        switch host {
-        case let .ipv4(addr):
-            // Tailscale uses 100.64.0.0/10 (CGNAT range).
-            let raw = addr.rawValue
-            guard raw.count >= 4 else { return false }
-            return raw[raw.startIndex] == 100 && (raw[raw.startIndex.advanced(by: 1)] & 0xC0) == 64
-        case let .ipv6(addr):
-            // Tailscale IPv6: fd7a:115c:a1e0::/48
-            let raw = addr.rawValue
-            guard raw.count >= 6 else { return false }
-            return raw[raw.startIndex] == 0xFD
-                && raw[raw.startIndex.advanced(by: 1)] == 0x7A
-                && raw[raw.startIndex.advanced(by: 2)] == 0x11
-                && raw[raw.startIndex.advanced(by: 3)] == 0x5C
-                && raw[raw.startIndex.advanced(by: 4)] == 0xA1
-                && raw[raw.startIndex.advanced(by: 5)] == 0xE0
-        default:
-            return false
+        switch MirageEndpointClassifier.classify(host) {
+        case .tailscaleIPv4, .tailscaleIPv6:
+            true
+        case .tailscaleMagicDNS, .privateLAN, .bonjour, .publicIPv6, .unknown:
+            false
         }
     }
 

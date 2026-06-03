@@ -54,26 +54,9 @@ extension MirageClientService {
                     )
                     return
                 }
-                let acceptedDisplayPixelSize: CGSize? = if let width = started.desktopGeometryDisplayPixelWidth,
-                                                            let height = started.desktopGeometryDisplayPixelHeight {
-                    CGSize(width: width, height: height)
-                } else {
-                    nil
-                }
-                let acceptedEncodedPixelSize: CGSize? = if let width = started.desktopGeometryEncodedPixelWidth,
-                                                            let height = started.desktopGeometryEncodedPixelHeight {
-                    CGSize(width: width, height: height)
-                } else {
-                    nil
-                }
                 if let rejectionReason = expectedTarget.startupAcceptanceRejectionReason(
                     acceptedContractID: acceptedContractID,
-                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity,
-                    acceptedLogicalResolution: started.presentationSize,
-                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
-                    acceptedEncodedPixelSize: acceptedEncodedPixelSize,
-                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
-                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
+                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity
                 ) {
                     MirageLogger.client(
                         "Ignoring stale desktopStreamStarted for stream \(streamID): \(rejectionReason)"
@@ -190,20 +173,21 @@ extension MirageClientService {
             }
             desktopStreamID = streamID
             desktopSessionID = receivedDesktopSessionID
-            let displaySize = CGSize(width: started.width, height: started.height)
-            desktopStreamResolution = displaySize
+            let encodedSize = CGSize(width: started.width, height: started.height)
+            desktopStreamResolution = encodedSize
             let presentationSize = started.presentationSize
             desktopStreamPresentationResolution = presentationSize
+            let acceptedDisplayPixelSize = acceptedDesktopDisplayPixelSize(from: started)
             desktopStreamDisplayScaleFactor = acceptedDesktopDisplayScaleFactor(
                 from: started,
-                displayPixelSize: displaySize,
+                displayPixelSize: acceptedDisplayPixelSize,
                 presentationSize: presentationSize
             )
             desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
                 logicalResolution: presentationSize,
-                displayPixelSize: displaySize
+                displayPixelSize: acceptedDisplayPixelSize
             )
-            desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedDisplayPixels(displaySize)
+            desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedDisplayPixels(acceptedDisplayPixelSize)
             desktopCaptureSource = started.captureSource
             desktopStreamAllowsClientResize = started.allowsClientResize
             if let generation = started.desktopPresentationGeneration {

@@ -84,6 +84,31 @@ struct ClientSoftwareUpdateHandlingTests {
     }
 
     @MainActor
+    @Test("Remote access disabled bootstrap rejection maps to VPN Access message")
+    func remoteAccessDisabledBootstrapRejectionMapsToVPNAccessMessage() {
+        let service = MirageClientService()
+        let response = MirageSessionBootstrapResponse(
+            accepted: false,
+            hostID: UUID(),
+            hostName: "Host",
+            mediaEncryptionEnabled: false,
+            datagramRegistrationToken: Data(),
+            rejectionReason: .unauthorized,
+            authorizationFailureReason: .remoteAccessDisabled
+        )
+
+        let rejection = service.connectionRejection(from: response)
+
+        #expect(rejection.reason == .remoteAccessDisabled)
+        #expect(rejection.isTerminal)
+        #expect(rejection.userFacingMessage.contains("VPN Access is turned off"))
+        #expect(
+            service.bootstrapRejectionDescription(for: response, mismatchInfo: nil)
+                .contains("VPN Access is turned off")
+        )
+    }
+
+    @MainActor
     @Test("Host update bootstrap rejection maps to update-in-progress message")
     func hostUpdateBootstrapRejectionMapsToUpdateInProgressMessage() {
         let service = MirageClientService()
