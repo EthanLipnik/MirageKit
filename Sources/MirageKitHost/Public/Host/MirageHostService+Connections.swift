@@ -22,7 +22,7 @@ extension MirageHostService {
             deviceName: serviceName,
             deviceType: .mac,
             advertisement: advertisedPeerAdvertisement,
-            supportedFeatures: MiragePeerAdvertisementMetadata.sessionSupportedFeatures
+            supportedFeatures: LoomSessionHelloRequest.defaultFeatures
         )
     }
 
@@ -250,8 +250,7 @@ extension MirageHostService {
                 client: client,
                 controlChannel: controlChannel,
                 transferEngine: LoomTransferEngine(session: session),
-                pathSnapshot: pathSnapshot,
-                negotiatedFeatures: Set(context.negotiatedFeatures)
+                pathSnapshot: pathSnapshot
             )
             connectedClients.append(client)
             clientsBySessionID[sessionID] = clientContext

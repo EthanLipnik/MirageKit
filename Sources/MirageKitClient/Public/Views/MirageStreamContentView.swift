@@ -745,6 +745,11 @@ extension MirageStreamContentView {
             clientService.appStreamStartAcknowledgementByStreamID[session.mediaStreamID]
     }
 
+    var appWindowResizeResult: AppWindowResizeResultMessage? {
+        clientService.appWindowResizeResultByStreamID[session.streamID] ??
+            clientService.appWindowResizeResultByStreamID[session.mediaStreamID]
+    }
+
     func handleAppStreamStartAcknowledgement(
         _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
     ) {
@@ -768,6 +773,14 @@ extension MirageStreamContentView {
             acknowledgement,
             comparedTo: appResizeBaselineAcknowledgement
         ) else { return }
+        finishAppResizeAwaitingAck()
+    }
+
+    func handleAppWindowResizeResult(_ result: AppWindowResizeResultMessage?) {
+        guard !isDesktopStream else { return }
+        guard awaitingAppResizeAck else { return }
+        guard let result else { return }
+        guard result.streamID == session.streamID || result.mediaStreamID == session.mediaStreamID else { return }
         finishAppResizeAwaitingAck()
     }
 }

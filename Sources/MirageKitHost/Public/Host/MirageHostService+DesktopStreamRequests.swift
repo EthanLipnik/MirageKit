@@ -30,13 +30,11 @@ func shouldRejectAwdlDesktopStartupWithoutGeometryContract(
     usesHostResolution: Bool,
     transportPathKind: MirageNetworkPathKind,
     mediaPathProfile: MirageMediaPathProfile,
-    supportsDesktopGeometryContract: Bool,
     desktopGeometryContractID: UUID?
 ) -> Bool {
     let hasAwdlEvidence = transportPathKind == .awdl || mediaPathProfile.usesAwdlRadioPolicy
     return !usesHostResolution &&
         hasAwdlEvidence &&
-        supportsDesktopGeometryContract &&
         desktopGeometryContractID == nil
 }
 
@@ -106,7 +104,6 @@ extension MirageHostService {
                 usesHostResolution: usesHostResolution,
                 transportPathKind: mediaPathPolicy.transportPathKind,
                 mediaPathProfile: mediaPathPolicy.mediaPathProfile,
-                supportsDesktopGeometryContract: clientContext.supportsDesktopGeometryContract,
                 desktopGeometryContractID: request.desktopGeometryContractID
             ) {
                 throw MirageError.protocolError(

@@ -104,6 +104,18 @@ extension MirageHostService {
         case failed(DesktopResizeRequestState)
     }
 
+    /// App stream request accepted while the host is locked and waiting for the interactive session.
+    struct PendingLockedAppStreamIntent {
+        let request: SelectAppMessage
+        let clientSessionID: UUID
+        let clientID: UUID
+        let createdAt: Date
+        var placeholderDesktopStreamID: StreamID?
+        var placeholderDesktopSessionID: UUID?
+        var ownsPlaceholderDesktopStream: Bool
+        var isResuming: Bool
+    }
+
     /// Replacement window cooldown after an app window closes during streaming.
     struct PendingAppWindowReplacement {
         let streamID: StreamID

@@ -364,6 +364,15 @@ package enum MirageDesktopCaptureSource: String, Codable {
     case mainDisplayFallback
 }
 
+/// Client presentation role for a desktop stream.
+package enum MirageDesktopPresentationRole: String, Codable {
+    /// A normal user-requested desktop stream.
+    case desktop
+
+    /// A temporary desktop stream shown while an app stream waits for the host session to unlock.
+    case appStreamPlaceholder
+}
+
 /// Host-to-client confirmation that desktop streaming has started or resized.
 package struct DesktopStreamStartedMessage: Codable {
     /// Stream ID for the desktop stream.
@@ -444,6 +453,18 @@ package struct DesktopStreamStartedMessage: Codable {
     /// Host-accepted refresh target for the geometry contract.
     package var desktopGeometryRefreshTargetHz: Int?
 
+    /// Client presentation role for this desktop stream.
+    package var presentationRole: MirageDesktopPresentationRole?
+
+    /// App session associated with an app-stream placeholder.
+    package var associatedAppSessionID: UUID?
+
+    /// App startup request associated with an app-stream placeholder.
+    package var associatedAppStartupRequestID: UUID?
+
+    /// App bundle associated with an app-stream placeholder.
+    package var associatedBundleIdentifier: String?
+
     /// Client presentation size, falling back to capture size when not sent separately.
     package var presentationSize: CGSize {
         CGSize(
@@ -495,7 +516,11 @@ package struct DesktopStreamStartedMessage: Codable {
         desktopGeometryDisplayPixelHeight: Int? = nil,
         desktopGeometryEncodedPixelWidth: Int? = nil,
         desktopGeometryEncodedPixelHeight: Int? = nil,
-        desktopGeometryRefreshTargetHz: Int? = nil
+        desktopGeometryRefreshTargetHz: Int? = nil,
+        presentationRole: MirageDesktopPresentationRole? = nil,
+        associatedAppSessionID: UUID? = nil,
+        associatedAppStartupRequestID: UUID? = nil,
+        associatedBundleIdentifier: String? = nil
     ) {
         self.streamID = streamID
         self.desktopSessionID = desktopSessionID
@@ -523,6 +548,10 @@ package struct DesktopStreamStartedMessage: Codable {
         self.desktopGeometryEncodedPixelWidth = desktopGeometryEncodedPixelWidth
         self.desktopGeometryEncodedPixelHeight = desktopGeometryEncodedPixelHeight
         self.desktopGeometryRefreshTargetHz = desktopGeometryRefreshTargetHz
+        self.presentationRole = presentationRole
+        self.associatedAppSessionID = associatedAppSessionID
+        self.associatedAppStartupRequestID = associatedAppStartupRequestID
+        self.associatedBundleIdentifier = associatedBundleIdentifier
     }
 }
 

@@ -127,7 +127,6 @@ extension MirageClientService {
         connectedHostIdentityKeyID = nil
         connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
-        negotiatedSessionFeatures = []
         setMediaSecurityContext(nil)
         receiveBuffer = Data()
         stopHeartbeat()
@@ -207,6 +206,9 @@ extension MirageClientService {
         desktopDimensionTokenByStream.removeAll()
         appDimensionTokenByStream.removeAll()
         appStreamStartAcknowledgementByStreamID.removeAll()
+        appWindowResizeResultByStreamID.removeAll()
+        appStreamPlaceholderDesktopStreamID = nil
+        appStreamPlaceholderAppSessionID = nil
         appAtlasLayoutsByMediaStreamID.removeAll()
         fastPathState.clearAllStartupPacketPending()
         fastPathState.clearDiagnostics()

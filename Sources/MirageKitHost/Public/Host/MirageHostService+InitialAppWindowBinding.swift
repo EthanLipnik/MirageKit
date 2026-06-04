@@ -21,7 +21,7 @@ extension MirageHostService {
         clientContext: ClientContext,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
-        startupBitratePerVisibleWindow: Int?,
+        startupAtlasBitrateBudget: Int?,
         mediaMaxPacketSize: Int
     ) async -> InitialAppWindowStartAttemptResult {
         var failureNotes: [String] = []
@@ -129,7 +129,7 @@ extension MirageHostService {
                     clientContext: clientContext,
                     selectRequest: selectRequest,
                     targetFrameRate: targetFrameRate,
-                    requestedBitrateOverride: startupBitratePerVisibleWindow,
+                    requestedBitrateOverride: startupAtlasBitrateBudget,
                     mediaMaxPacketSize: mediaMaxPacketSize
                 )
                 let succeededWindowIDs = Set([

@@ -64,6 +64,7 @@ package enum ControlMessageType: UInt8, Codable {
     case appWindowCloseAlertActionRequest = 0x8A
     case appWindowCloseAlertActionResult = 0x8B
     case appWindowSwapResult = 0x8C
+    case appWindowResizeResult = 0x8D
     case appTerminated = 0x8E
     case streamPolicyUpdate = 0x8F // Host -> Client: Per-stream runtime tier/fps/bitrate/recovery policy
 

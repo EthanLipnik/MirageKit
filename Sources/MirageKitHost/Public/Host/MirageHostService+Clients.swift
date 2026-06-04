@@ -138,6 +138,7 @@ extension MirageHostService {
             hostSoftwareUpdateStatusRequestTask?.cancel()
             hostSoftwareUpdateStatusRequestTask = nil
         }
+        removePendingLockedAppStreamIntents(clientID: client.id)
         clearPendingAppWindowCloseAlertTokens(forClientID: client.id)
 
         await cancelQualityTest(for: client.id, reason: "client disconnected")

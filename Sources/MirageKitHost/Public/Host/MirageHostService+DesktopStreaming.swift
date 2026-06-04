@@ -53,7 +53,11 @@ func startDesktopStream(
     startupRequestID: UUID,
     desktopGeometryContractID: UUID? = nil,
     desktopGeometrySceneIdentity: String? = nil,
-    desktopGeometryRefreshTargetHz: Int? = nil
+    desktopGeometryRefreshTargetHz: Int? = nil,
+    presentationRole: MirageDesktopPresentationRole? = nil,
+    associatedAppSessionID: UUID? = nil,
+    associatedAppStartupRequestID: UUID? = nil,
+    associatedBundleIdentifier: String? = nil
 )
 async throws {
     var virtualDisplaySetupGuardToken: UUID?
@@ -344,7 +348,11 @@ async throws {
             acceptedDisplayScaleFactor: acceptedDisplayScaleFactor,
             desktopGeometryContractID: desktopGeometryContractID,
             desktopGeometrySceneIdentity: desktopGeometrySceneIdentity,
-            desktopGeometryRefreshTargetHz: acceptedDesktopGeometryRefreshTargetHz
+            desktopGeometryRefreshTargetHz: acceptedDesktopGeometryRefreshTargetHz,
+            presentationRole: presentationRole,
+            associatedAppSessionID: associatedAppSessionID,
+            associatedAppStartupRequestID: associatedAppStartupRequestID,
+            associatedBundleIdentifier: associatedBundleIdentifier
         ),
         logDesktopStartStep: logDesktopStartStep
     )

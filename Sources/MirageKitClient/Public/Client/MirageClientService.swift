@@ -89,6 +89,11 @@ public final class MirageClientService {
     var appDimensionTokenByStream: [StreamID: UInt16] = [:]
     /// Last app/window stream-start acknowledgement per stream.
     var appStreamStartAcknowledgementByStreamID: [StreamID: StreamStartAcknowledgement] = [:]
+    /// Last terminal app-window resize result per stream.
+    var appWindowResizeResultByStreamID: [StreamID: AppWindowResizeResultMessage] = [:]
+    /// Desktop stream currently acting as a locked-host app-stream placeholder.
+    var appStreamPlaceholderDesktopStreamID: StreamID?
+    var appStreamPlaceholderAppSessionID: UUID?
 
     /// Stream scale for post-capture downscaling
     /// 1.0 = native resolution, lower values reduce encoded size
@@ -350,13 +355,6 @@ public final class MirageClientService {
     var isProcessingReceivedData = false
     var hasCompletedBootstrap = false
     var mediaSecurityContext: MirageMediaSecurityContext?
-    var negotiatedSessionFeatures: Set<String> = []
-
-    var supportsDesktopGeometryContract: Bool {
-        MiragePeerAdvertisementMetadata.supportsDesktopGeometryContract(
-            negotiatedFeatures: negotiatedSessionFeatures
-        )
-    }
 
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?

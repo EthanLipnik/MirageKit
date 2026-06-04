@@ -294,8 +294,28 @@ extension MirageClientService {
     func handleStreamFirstFramePresented(streamID: StreamID) {
         let wasAwaitingPostResizeFrame = sessionStore.isAwaitingPostResizeFirstFrame(for: streamID)
         sessionStore.markFirstFramePresented(for: streamID)
+        stopAppStreamPlaceholderDesktopIfNeeded(afterPresentedStreamID: streamID)
         guard wasAwaitingPostResizeFrame else { return }
         finishPostResizeTransitionWait(streamID: streamID, reason: "presented-frame")
+    }
+
+    private func stopAppStreamPlaceholderDesktopIfNeeded(afterPresentedStreamID streamID: StreamID) {
+        guard let placeholderStreamID = appStreamPlaceholderDesktopStreamID,
+              streamID != placeholderStreamID else {
+            return
+        }
+        let isAppStream = sessionStore.sessionByMediaStreamID(streamID) != nil ||
+            sessionStore.sessionByStreamID(streamID).map { $0.mediaStreamID != $0.streamID } == true
+        guard isAppStream else { return }
+        appStreamPlaceholderDesktopStreamID = nil
+        appStreamPlaceholderAppSessionID = nil
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.stopDesktopStream()
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Failed to stop app-stream placeholder desktop: ")
+            }
+        }
     }
 
     func schedulePostResizeTransitionTimeoutIfNeeded(streamID: StreamID) {

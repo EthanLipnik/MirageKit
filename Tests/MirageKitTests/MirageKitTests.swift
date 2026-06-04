@@ -54,16 +54,6 @@ struct MirageKitTests {
         #expect(miragePreferredMediaMaxPacketSize(for: .wired) == mirageDirectLocalMaxPacketSize)
     }
 
-    @Test("Mirage session features include desktop geometry contract")
-    func mirageSessionFeaturesIncludeDesktopGeometryContract() {
-        let features = Set(MiragePeerAdvertisementMetadata.sessionSupportedFeatures)
-
-        #expect(features.contains(MiragePeerAdvertisementMetadata.desktopGeometryContractFeature))
-        for feature in LoomSessionHelloRequest.defaultFeatures {
-            #expect(features.contains(feature))
-        }
-    }
-
     @Test("Background lease payload requires mode")
     func backgroundLeasePayloadRequiresMode() {
         let leaseID = UUID(uuidString: "AC5DC09D-FA66-48BB-89C9-5EC4702CB6A0")!
@@ -140,7 +130,7 @@ struct MirageKitTests {
 
         let deserialized = FrameHeader.deserialize(from: data)
         #expect(deserialized != nil)
-        #expect(deserialized?.version == 260603)
+        #expect(deserialized?.version == 260604)
         #expect(deserialized?.version == MirageKit.protocolVersion)
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
@@ -163,7 +153,7 @@ struct MirageKitTests {
         #expect(deserialized.type == .sessionBootstrapRequest)
 
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
-        #expect(MirageKit.protocolVersion == 260603)
+        #expect(MirageKit.protocolVersion == 260604)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }
@@ -363,6 +353,34 @@ struct MirageKitTests {
         #expect(decodedPayload.allowsClientResize == false)
         #expect(decodedPayload.acceptedDisplayScaleFactor == 1.72)
         #expect(decodedPayload.presentationSize == CGSize(width: 2732, height: 1537))
+    }
+
+    @Test("Desktop-stream started serializes app placeholder metadata")
+    func desktopStreamStartedSerializesAppPlaceholderMetadata() throws {
+        let appSessionID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000A11"))
+        let startupRequestID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000A12"))
+        let payload = DesktopStreamStartedMessage(
+            streamID: 73,
+            desktopSessionID: UUID(),
+            width: 2732,
+            height: 2048,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            presentationRole: .appStreamPlaceholder,
+            associatedAppSessionID: appSessionID,
+            associatedAppStartupRequestID: startupRequestID,
+            associatedBundleIdentifier: "com.apple.mail"
+        )
+
+        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+
+        #expect(decodedPayload.presentationRole == .appStreamPlaceholder)
+        #expect(decodedPayload.associatedAppSessionID == appSessionID)
+        #expect(decodedPayload.associatedAppStartupRequestID == startupRequestID)
+        #expect(decodedPayload.associatedBundleIdentifier == "com.apple.mail")
     }
 
     @Test("Desktop stream stop messages serialize desktop session identifiers")

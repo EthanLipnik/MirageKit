@@ -12,6 +12,12 @@ import MirageKit
 #if os(macOS)
 import ApplicationServices
 
+struct WindowAccessibilityResizeResult {
+    let outcome: MirageAppWindowResizeResultOutcome
+    let observedFrame: CGRect?
+    let reason: String
+}
+
 extension WindowSpaceManager {
     /// Brings the window to the foreground using CGS first, then Accessibility as a fallback.
     func raiseWindow(_ windowID: WindowID, axWindow: AXUIElement?) -> Bool {
@@ -79,11 +85,25 @@ extension WindowSpaceManager {
         to size: CGSize
     )
     async -> Bool {
+        let result = await resizeWindowWithAccessibilityResult(windowID, to: size)
+        return result.outcome == .applied || result.outcome == .noChange
+    }
+
+    /// Convenience: resize a window by resolving its AX element internally.
+    func resizeWindowWithAccessibilityResult(
+        _ windowID: WindowID,
+        to size: CGSize
+    )
+    async -> WindowAccessibilityResizeResult {
         guard let axWindow = resolveAXWindow(for: windowID) else {
             MirageLogger.debug(.host, "Cannot resize window \(windowID): no AXUIElement")
-            return false
+            return WindowAccessibilityResizeResult(
+                outcome: .failed,
+                observedFrame: windowInfo(for: windowID)?.frame,
+                reason: "noAXWindow"
+            )
         }
-        return await resizeWindowViaAccessibility(windowID, to: size, axElement: axWindow)
+        return await resizeWindowViaAccessibilityWithResult(windowID, to: size, axElement: axWindow)
     }
 
     /// Resizes a window using Accessibility size attributes.
@@ -96,21 +116,68 @@ extension WindowSpaceManager {
         axElement: AXUIElement? = nil
     )
     async -> Bool {
+        let result = await resizeWindowViaAccessibilityWithResult(
+            windowID,
+            to: size,
+            axElement: axElement
+        )
+        return result.outcome == .applied || result.outcome == .noChange
+    }
+
+    /// Resizes a window using Accessibility size attributes and returns a structured terminal result.
+    func resizeWindowViaAccessibilityWithResult(
+        _ windowID: WindowID,
+        to size: CGSize,
+        axElement: AXUIElement? = nil
+    )
+    async -> WindowAccessibilityResizeResult {
         guard let element = axElement else {
             MirageLogger.debug(.host, "No AXUIElement provided for window \(windowID)")
-            return false
+            return WindowAccessibilityResizeResult(
+                outcome: .failed,
+                observedFrame: windowInfo(for: windowID)?.frame,
+                reason: "missingAXElement"
+            )
+        }
+
+        let tolerance: CGFloat = 3
+        let beforeFrame = resolvedWindowFrame(windowID, axWindow: element)
+        if let beforeFrame,
+           abs(beforeFrame.width - size.width) <= tolerance,
+           abs(beforeFrame.height - size.height) <= tolerance {
+            return WindowAccessibilityResizeResult(
+                outcome: .noChange,
+                observedFrame: beforeFrame,
+                reason: "alreadyAtRequestedSize"
+            )
+        }
+
+        guard isAXAttributeSettable(element, attribute: kAXSizeAttribute as CFString) else {
+            MirageLogger.debug(.host, "Cannot resize window \(windowID): AX size attribute is not settable")
+            return WindowAccessibilityResizeResult(
+                outcome: .notResizable,
+                observedFrame: beforeFrame,
+                reason: "sizeAttributeNotSettable"
+            )
         }
 
         var mutableSize = size
         let sizeValue = AXValueCreate(.cgSize, &mutableSize)
-        let result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
+        var result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
+        if result == .cannotComplete {
+            _ = raiseWindow(windowID, axWindow: element)
+            result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
+        }
 
         guard result == .success else {
             MirageLogger.debug(.host, "Failed to resize window \(windowID) via Accessibility: \(result)")
-            return false
+            return WindowAccessibilityResizeResult(
+                outcome: .failed,
+                observedFrame: resolvedWindowFrame(windowID, axWindow: element) ?? beforeFrame,
+                reason: "setAttributeFailed:\(result.rawValue)"
+            )
         }
 
-        let tolerance: CGFloat = 3
         let maxAttempts = 6
         for attempt in 1 ... maxAttempts {
             let compositorFrame = windowInfo(for: windowID)?.frame
@@ -134,28 +201,42 @@ extension WindowSpaceManager {
                 MirageLogger.host(
                     "Resized window \(windowID) to \(size) via Accessibility (compositor=\(observedCompositor), ax=\(observedAX), attempt \(attempt))"
                 )
-                return true
+                return WindowAccessibilityResizeResult(
+                    outcome: .applied,
+                    observedFrame: compositorFrame ?? axFrame,
+                    reason: "applied"
+                )
             }
             if attempt < maxAttempts {
                 do {
                     try await Task.sleep(for: .milliseconds(20))
                 } catch {
-                    return false
+                    return WindowAccessibilityResizeResult(
+                        outcome: .failed,
+                        observedFrame: compositorFrame ?? axFrame ?? beforeFrame,
+                        reason: "cancelled"
+                    )
                 }
             }
         }
 
-        let observedCompositorSizeText = if let compositorFrame = windowInfo(for: windowID)?.frame {
-            "\(compositorFrame.size)"
+        let observedCompositorFrame = windowInfo(for: windowID)?.frame
+        let observedAXFrame = axWindowFrame(element)
+        let observedCompositorSizeText = if let observedCompositorFrame {
+            "\(observedCompositorFrame.size)"
         } else {
             "unknown"
         }
-        let observedAXSizeText = axWindowFrame(element).map { "\($0.size)" } ?? "unknown"
+        let observedAXSizeText = observedAXFrame.map { "\($0.size)" } ?? "unknown"
         MirageLogger.debug(
             .host,
             "Accessibility resize for window \(windowID) did not converge to \(size); compositor=\(observedCompositorSizeText), ax=\(observedAXSizeText)"
         )
-        return false
+        return WindowAccessibilityResizeResult(
+            outcome: .failed,
+            observedFrame: observedCompositorFrame ?? observedAXFrame ?? beforeFrame,
+            reason: "didNotConverge"
+        )
     }
 }
 

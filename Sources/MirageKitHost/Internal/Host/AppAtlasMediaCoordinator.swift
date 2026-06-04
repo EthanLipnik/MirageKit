@@ -94,6 +94,25 @@ actor AppAtlasMediaCoordinator {
         logicalWindowsByWindowID.values.map(\.streamID).sorted()
     }
 
+    /// Applies the latest app-start quality contract to the shared atlas media stream.
+    func updateQualityContract(
+        bitrate: Int?,
+        bitrateAdaptationCeiling: Int?,
+        runtimeQualityAdjustmentEnabled: Bool?,
+        encoderCatchUpQualityAdjustmentEnabled: Bool?
+    ) async throws {
+        await context.updateQualityAdjustmentPolicy(
+            runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
+            encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled
+        )
+        try await context.updateEncoderSettings(
+            colorDepth: nil,
+            bitrate: bitrate,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            updateRequestedTargetBitrate: bitrate != nil
+        )
+    }
+
     /// Adds a logical window to the atlas and starts its capture.
     func addWindow(
         streamID: StreamID,

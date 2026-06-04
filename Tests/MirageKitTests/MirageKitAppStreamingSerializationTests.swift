@@ -16,6 +16,8 @@ struct MirageKitAppStreamingSerializationTests {
         let request = SelectAppMessage(
             bundleIdentifier: "com.apple.mail",
             targetFrameRate: 60,
+            enteredBitrate: 600_000_000,
+            allowEncoderCatchUpQualityAdjustment: true,
             maxConcurrentVisibleWindows: 8,
             bitrateAllocationPolicy: .splitEvenly
         )
@@ -24,7 +26,9 @@ struct MirageKitAppStreamingSerializationTests {
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.bundleIdentifier == "com.apple.mail")
         #expect(decoded.maxConcurrentVisibleWindows == 8)
-        #expect(decoded.bitrateAllocationPolicy == .splitEvenly)
+        #expect(decoded.bitrateAllocationPolicy == MirageAppStreamBitrateAllocationPolicy.splitEvenly)
+        #expect(decoded.enteredBitrate == 600_000_000)
+        #expect(decoded.allowEncoderCatchUpQualityAdjustment == true)
     }
 
     @Test("App list request supports icon reset and priority ordering")
@@ -251,5 +255,38 @@ struct MirageKitAppStreamingSerializationTests {
         #expect(decoded.acceptedPacketSize == 1180)
         #expect(decoded.layout == layout)
         #expect(decoded.startupAttemptID == startupAttemptID)
+    }
+
+    @Test("App window resize result serializes terminal outcome")
+    func appWindowResizeResultSerialization() throws {
+        let result = AppWindowResizeResultMessage(
+            streamID: 141,
+            mediaStreamID: 41,
+            windowID: 9001,
+            outcome: .notResizable,
+            requestedWidth: 1600,
+            requestedHeight: 1000,
+            observedWidth: 1440,
+            observedHeight: 900,
+            minWidth: 800,
+            minHeight: 600,
+            reason: "sizeAttributeNotSettable"
+        )
+
+        let envelope = try ControlMessage(type: .appWindowResizeResult, content: result)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(AppWindowResizeResultMessage.self)
+
+        #expect(decoded.streamID == 141)
+        #expect(decoded.mediaStreamID == 41)
+        #expect(decoded.windowID == 9001)
+        #expect(decoded.outcome == .notResizable)
+        #expect(decoded.requestedWidth == 1600)
+        #expect(decoded.requestedHeight == 1000)
+        #expect(decoded.observedWidth == 1440)
+        #expect(decoded.observedHeight == 900)
+        #expect(decoded.minWidth == 800)
+        #expect(decoded.minHeight == 600)
+        #expect(decoded.reason == "sizeAttributeNotSettable")
     }
 }

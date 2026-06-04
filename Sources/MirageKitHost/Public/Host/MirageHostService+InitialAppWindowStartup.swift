@@ -188,23 +188,8 @@ extension MirageHostService {
                 }
         )
         let overflowBindings = Array(bindingPlan.resolvedBindings.dropFirst(visibleSlotLimit))
-        var startupBitratePerVisibleWindow: Int?
-        if !visibleBindings.isEmpty {
-            let visibleCount = max(1, visibleBindings.count)
-            let perStreamBitrateCap = Self.appStreamPerStreamBitrateCap(visibleStreamCount: visibleCount)
-            let sharedBudgetBps = await appStreamManager.sharedBitrateBudget(bundleIdentifier: app.bundleIdentifier)
-                ?? resolvedAppSessionBitrateBudget(requestedBitrate: selectRequest.bitrate)
-            if let sharedBudgetBps {
-                let perVisibleBitrate = max(1_000_000, sharedBudgetBps / visibleCount)
-                startupBitratePerVisibleWindow = min(perVisibleBitrate, perStreamBitrateCap)
-            } else {
-                if let requestedBitrate = selectRequest.bitrate {
-                    startupBitratePerVisibleWindow = min(max(1_000_000, requestedBitrate), perStreamBitrateCap)
-                } else {
-                    startupBitratePerVisibleWindow = perStreamBitrateCap == Int.max ? nil : perStreamBitrateCap
-                }
-            }
-        }
+        let startupAtlasBitrateBudget = await appStreamManager.sharedBitrateBudget(bundleIdentifier: app.bundleIdentifier)
+            ?? resolvedAppSessionBitrateBudget(requestedBitrate: selectRequest.bitrate)
         if !overflowBindings.isEmpty {
             for binding in overflowBindings {
                 let resolved = binding.resolvedWindow
@@ -258,7 +243,7 @@ extension MirageHostService {
                         clientContext: clientContext,
                         selectRequest: selectRequest,
                         targetFrameRate: targetFrameRate,
-                        startupBitratePerVisibleWindow: startupBitratePerVisibleWindow,
+                        startupAtlasBitrateBudget: startupAtlasBitrateBudget,
                         mediaMaxPacketSize: mediaMaxPacketSize
                     )
                 }

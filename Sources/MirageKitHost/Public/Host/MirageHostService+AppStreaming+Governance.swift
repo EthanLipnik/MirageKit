@@ -21,14 +21,6 @@ extension MirageHostService {
     /// Lower bound used when normalizing an app session's shared bitrate budget.
     nonisolated static let minimumSharedBitrateBudgetBps = 1_000_000
 
-    /// Per-stream cap applied when multiple visible app streams share the session budget.
-    nonisolated static let appStreamMultiWindowBitrateCapBps = 120_000_000
-
-    /// Returns the maximum bitrate a single visible stream may use for a session size.
-    nonisolated static func appStreamPerStreamBitrateCap(visibleStreamCount: Int) -> Int {
-        visibleStreamCount > 1 ? appStreamMultiWindowBitrateCapBps : Int.max
-    }
-
     /// Resolves the shared app-session bitrate budget from a request or host default.
     func resolvedAppSessionBitrateBudget(requestedBitrate: Int?) -> Int? {
         let sourceBitrate = requestedBitrate ??
@@ -187,13 +179,11 @@ extension MirageHostService {
         }
 
         let activeTargetFPS = await resolvedActiveTargetFPS(for: visibleStreamIDs)
-        let resolvedBudget = session.bitrateBudgetBps ??
-            resolvedAppSessionBitrateBudget(requestedBitrate: nil)
 
         let snapshot = await appStreamRuntimeOrchestrator.makeRuntimePolicySnapshot(
             bundleIdentifier: bundleIdentifier,
             visibleStreamIDs: visibleStreamIDs,
-            bitrateBudgetBps: resolvedBudget,
+            bitrateBudgetBps: nil,
             activeTargetFPS: activeTargetFPS
         )
         scheduleAppStreamPolicyTransition(

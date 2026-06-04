@@ -54,7 +54,11 @@ extension MirageHostService {
             desktopGeometryDisplayPixelHeight: Int(startedDisplayResolution.height.rounded()),
             desktopGeometryEncodedPixelWidth: Int(encodedDimensions.width),
             desktopGeometryEncodedPixelHeight: Int(encodedDimensions.height),
-            desktopGeometryRefreshTargetHz: notification.desktopGeometryRefreshTargetHz ?? streamStart.targetFrameRate
+            desktopGeometryRefreshTargetHz: notification.desktopGeometryRefreshTargetHz ?? streamStart.targetFrameRate,
+            presentationRole: notification.presentationRole,
+            associatedAppSessionID: notification.associatedAppSessionID,
+            associatedAppStartupRequestID: notification.associatedAppStartupRequestID,
+            associatedBundleIdentifier: notification.associatedBundleIdentifier
         )
 
         do {

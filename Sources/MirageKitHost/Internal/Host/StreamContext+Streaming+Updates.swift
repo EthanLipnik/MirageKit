@@ -14,6 +14,18 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
+    func updateQualityAdjustmentPolicy(
+        runtimeQualityAdjustmentEnabled: Bool?,
+        encoderCatchUpQualityAdjustmentEnabled: Bool?
+    ) {
+        if let runtimeQualityAdjustmentEnabled {
+            self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
+        }
+        if let encoderCatchUpQualityAdjustmentEnabled {
+            self.encoderCatchUpQualityAdjustmentEnabled = encoderCatchUpQualityAdjustmentEnabled
+        }
+    }
+
     func applyRealtimeBudgetBitrate(
         _ bitrate: Int,
         ceilingBitrateBps: Int?,

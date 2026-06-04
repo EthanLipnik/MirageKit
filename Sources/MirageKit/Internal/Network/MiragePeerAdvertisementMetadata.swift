@@ -26,22 +26,6 @@ package enum MiragePeerAdvertisementMetadata {
     private static let maxFrameRateKey = "mirage.max-frame-rate"
     private static let wifiSubnetSignaturesKey = "mirage.net.wifi"
     private static let wiredSubnetSignaturesKey = "mirage.net.wired"
-    package static let desktopGeometryContractFeature = "mirage.desktop-geometry-contract.v1"
-
-    package static var sessionSupportedFeatures: [String] {
-        Array(
-            Set(
-                LoomSessionHelloRequest.defaultFeatures + [
-                    desktopGeometryContractFeature,
-                ]
-            )
-        )
-        .sorted()
-    }
-
-    package static func supportsDesktopGeometryContract(negotiatedFeatures: Set<String>) -> Bool {
-        negotiatedFeatures.contains(desktopGeometryContractFeature)
-    }
 
     package struct AdvertisedLocalNetworkContext: Sendable, Equatable {
         package let wifiSubnetSignatures: [String]

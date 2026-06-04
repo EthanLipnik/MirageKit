@@ -75,6 +75,11 @@ extension MirageHostService {
             throw MirageError.protocolError("Client is disconnecting")
         }
         if let existing = appAtlasCoordinatorsByClientID[clientID] {
+            try await retuneAppAtlasCoordinator(
+                existing,
+                selectRequest: selectRequest,
+                requestedBitrate: requestedBitrate
+            )
             return existing
         }
 
@@ -89,10 +94,20 @@ extension MirageHostService {
                     throw error
                 }
                 if let existing = appAtlasCoordinatorsByClientID[clientID] {
+                    try await retuneAppAtlasCoordinator(
+                        existing,
+                        selectRequest: selectRequest,
+                        requestedBitrate: requestedBitrate
+                    )
                     return existing
                 }
             }
             if let existing = appAtlasCoordinatorsByClientID[clientID] {
+                try await retuneAppAtlasCoordinator(
+                    existing,
+                    selectRequest: selectRequest,
+                    requestedBitrate: requestedBitrate
+                )
                 return existing
             }
             guard !disconnectingClientIDs.contains(clientID) else {
@@ -106,6 +121,11 @@ extension MirageHostService {
         }
 
         if let existing = appAtlasCoordinatorsByClientID[clientID] {
+            try await retuneAppAtlasCoordinator(
+                existing,
+                selectRequest: selectRequest,
+                requestedBitrate: requestedBitrate
+            )
             return existing
         }
         guard !disconnectingClientIDs.contains(clientID) else {
@@ -164,6 +184,7 @@ extension MirageHostService {
             maxPacketSize: mediaMaxPacketSize,
             mediaSecurityContext: nil,
             runtimeQualityAdjustmentEnabled: selectRequest.allowRuntimeQualityAdjustment ?? true,
+            encoderCatchUpQualityAdjustmentEnabled: selectRequest.allowEncoderCatchUpQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: selectRequest.lowLatencyHighResolutionCompressionBoost ?? false,
             disableResolutionCap: true,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
@@ -173,6 +194,7 @@ extension MirageHostService {
             transportPathKind: mediaPathPolicy.transportPathKind,
             mediaPathProfile: mediaPathPolicy.mediaPathProfile,
             mediaPathDiagnosticSummary: mediaPathPolicy.diagnosticSummary,
+            enteredBitrate: selectRequest.enteredBitrate,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight
@@ -290,6 +312,19 @@ extension MirageHostService {
         appAtlasCoordinatorsByClientID[clientContext.client.id] = coordinator
         retainMediaPathClientEvidence = true
         return coordinator
+    }
+
+    private func retuneAppAtlasCoordinator(
+        _ coordinator: AppAtlasMediaCoordinator,
+        selectRequest: SelectAppMessage,
+        requestedBitrate: Int?
+    ) async throws {
+        try await coordinator.updateQualityContract(
+            bitrate: requestedBitrate ?? selectRequest.bitrate,
+            bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
+            runtimeQualityAdjustmentEnabled: selectRequest.allowRuntimeQualityAdjustment,
+            encoderCatchUpQualityAdjustmentEnabled: selectRequest.allowEncoderCatchUpQualityAdjustment
+        )
     }
 }
 #endif

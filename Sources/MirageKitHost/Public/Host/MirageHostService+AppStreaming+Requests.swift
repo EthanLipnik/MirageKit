@@ -70,13 +70,45 @@ extension MirageHostService {
             )
             let maxVisibleSlots = max(1, min(Self.appStreamMaxVisibleSlots, request.maxConcurrentVisibleWindows))
             let sharedBitrateBudget = resolvedAppSessionBitrateBudget(requestedBitrate: request.bitrate)
-            let bitrateAllocationPolicy = request.bitrateAllocationPolicy ?? .prioritizeActiveWindow
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Host buffering policy: \(hostBufferingPolicy.rawValue)")
             MirageLogger
                 .host(
-                    "App stream slot cap: \(maxVisibleSlots), shared bitrate budget: \(sharedBitrateBudget.map { "\($0) bps" } ?? "none"), allocationPolicy: \(bitrateAllocationPolicy.rawValue)"
+                    "App stream slot cap: \(maxVisibleSlots), shared atlas bitrate budget: \(sharedBitrateBudget.map { "\($0) bps" } ?? "none")"
                 )
+
+            await refreshSessionStateIfNeeded()
+            guard sessionState != .unavailable else {
+                MirageLogger.host("Rejecting app stream while session is unavailable")
+                await sendSessionState(to: clientContext)
+                sendAppSelectionError(
+                    to: clientContext,
+                    code: .appStreamStartupFailed,
+                    message: "The host session is unavailable.",
+                    bundleIdentifier: request.bundleIdentifier
+                )
+                return
+            }
+            if sessionState.requiresCredentials {
+                do {
+                    try await acceptLockedAppStreamIntent(
+                        request: request,
+                        clientContext: clientContext,
+                        targetFrameRate: targetFrameRate,
+                        mediaPathPolicy: mediaPathPolicy,
+                        mediaMaxPacketSize: acceptedMediaMaxPacketSize
+                    )
+                } catch {
+                    MirageLogger.error(.host, error: error, message: "Failed to start locked app placeholder: ")
+                    sendAppSelectionError(
+                        to: clientContext,
+                        code: .appStreamStartupFailed,
+                        message: Self.appStreamStartupFailureMessage(appName: request.bundleIdentifier),
+                        bundleIdentifier: request.bundleIdentifier
+                    )
+                }
+                return
+            }
 
             let apps = await appStreamManager.installedApps(includeIcons: false)
             guard let app = apps
@@ -114,8 +146,7 @@ extension MirageHostService {
                 requestedDisplayResolution: requestedDisplayResolution,
                 requestedClientScaleFactor: request.scaleFactor,
                 maxVisibleSlots: maxVisibleSlots,
-                bitrateBudgetBps: sharedBitrateBudget,
-                bitrateAllocationPolicy: bitrateAllocationPolicy
+                bitrateBudgetBps: sharedBitrateBudget
             ) != nil else {
                 MirageLogger.host("Failed to start app session for \(app.name)")
                 sendAppSelectionError(
@@ -222,6 +253,18 @@ extension MirageHostService {
 
     /// Cancels a partially-started app session and releases any streams it already opened.
     func cancelStartingAppSession(appSessionID: UUID) async {
+        if let pendingIntent = removePendingLockedAppStreamIntent(appSessionID: appSessionID) {
+            MirageLogger.host("Cancelled pending locked app stream \(appSessionID.uuidString)")
+            let placeholderStillReferenced = pendingLockedAppStreamIntentsByAppSessionID.values.contains {
+                $0.placeholderDesktopStreamID == pendingIntent.placeholderDesktopStreamID
+            }
+            if pendingIntent.ownsPlaceholderDesktopStream,
+               pendingIntent.placeholderDesktopStreamID == desktopStreamID,
+               !placeholderStillReferenced {
+                await stopDesktopStream(reason: .clientRequested)
+            }
+            return
+        }
         guard let session = await appStreamManager.session(appSessionID: appSessionID) else { return }
         guard session.state == .starting || session.state == .streaming else { return }
         MirageLogger.host("Cancelling starting app session \(appSessionID.uuidString) for \(session.appName)")
@@ -233,6 +276,190 @@ extension MirageHostService {
         await appStreamManager.endSession(appSessionID: appSessionID)
         await restoreStageManagerAfterAppStreamingIfNeeded()
         await endPendingAppStreamLightsOutSetup()
+    }
+
+    private func acceptLockedAppStreamIntent(
+        request: SelectAppMessage,
+        clientContext: ClientContext,
+        targetFrameRate: Int,
+        mediaPathPolicy: MirageEffectiveMediaPathPolicy,
+        mediaMaxPacketSize: Int
+    ) async throws {
+        let appSessionID = request.appSessionID
+        if pendingLockedAppStreamIntentsByAppSessionID[appSessionID] == nil {
+            pendingLockedAppStreamIntentOrder.append(appSessionID)
+        }
+        pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = PendingLockedAppStreamIntent(
+            request: request,
+            clientSessionID: clientContext.sessionID,
+            clientID: clientContext.client.id,
+            createdAt: Date(),
+            placeholderDesktopStreamID: desktopStreamID,
+            placeholderDesktopSessionID: desktopSessionID,
+            ownsPlaceholderDesktopStream: false,
+            isResuming: false
+        )
+
+        guard desktopStreamID == nil else {
+            try await sendLockedAppPlaceholderAnnouncementForActiveDesktop(
+                request: request,
+                clientContext: clientContext
+            )
+            MirageLogger.host(
+                "Accepted locked app stream \(request.bundleIdentifier); reusing desktop placeholder stream \(desktopStreamID.map(String.init) ?? "nil")"
+            )
+            return
+        }
+
+        guard let displayWidth = request.displayWidth,
+              let displayHeight = request.displayHeight else {
+            throw MirageError.protocolError("Locked app placeholder requires display size")
+        }
+
+        do {
+            try await startDesktopStream(
+                to: clientContext,
+                displayResolution: CGSize(width: displayWidth, height: displayHeight),
+                clientScaleFactor: request.scaleFactor,
+                mode: .secondary,
+                cursorPresentation: .simulatedCursor,
+                keyFrameInterval: request.keyFrameInterval,
+                colorDepth: request.colorDepth,
+                captureQueueDepth: request.captureQueueDepth,
+                enteredBitrate: request.enteredBitrate,
+                bitrate: request.bitrate,
+                latencyMode: request.latencyMode ?? .lowestLatency,
+                hostBufferingPolicy: request.resolvedHostBufferingPolicy,
+                allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
+                allowEncoderCatchUpQualityAdjustment: request.allowEncoderCatchUpQualityAdjustment,
+                lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost ?? false,
+                disableResolutionCap: request.disableResolutionCap ?? false,
+                streamScale: nil,
+                audioConfiguration: request.audioConfiguration ?? audioConfigurationByClientID[clientContext.client.id] ?? .default,
+                targetFrameRate: targetFrameRate,
+                bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+                encoderMaxWidth: request.encoderMaxWidth,
+                encoderMaxHeight: request.encoderMaxHeight,
+                mediaMaxPacketSize: mediaMaxPacketSize,
+                mediaPathPolicy: mediaPathPolicy,
+                upscalingMode: request.upscalingMode,
+                codec: request.codec,
+                startupRequestID: request.startupRequestID,
+                presentationRole: .appStreamPlaceholder,
+                associatedAppSessionID: request.appSessionID,
+                associatedAppStartupRequestID: request.startupRequestID,
+                associatedBundleIdentifier: request.bundleIdentifier
+            )
+            if var stored = pendingLockedAppStreamIntentsByAppSessionID[appSessionID] {
+                stored.placeholderDesktopStreamID = desktopStreamID
+                stored.placeholderDesktopSessionID = desktopSessionID
+                stored.ownsPlaceholderDesktopStream = true
+                pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = stored
+            }
+            MirageLogger.host(
+                "Accepted locked app stream \(request.bundleIdentifier); started desktop placeholder stream \(desktopStreamID.map(String.init) ?? "nil")"
+            )
+        } catch {
+            _ = removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+            throw error
+        }
+    }
+
+    private func sendLockedAppPlaceholderAnnouncementForActiveDesktop(
+        request: SelectAppMessage,
+        clientContext: ClientContext
+    ) async throws {
+        guard let streamID = desktopStreamID,
+              let desktopSessionID,
+              let desktopContext = desktopStreamContext else {
+            throw MirageError.protocolError("Missing active desktop stream for locked app placeholder")
+        }
+        let streamStart = await desktopContext.streamStartSnapshot
+        let displayPixelResolution = desktopCurrentGeometryDisplayPixelResolution ?? CGSize(
+            width: streamStart.encodedDimensions.width,
+            height: streamStart.encodedDimensions.height
+        )
+        let presentationResolution = desktopCurrentGeometryPresentationResolution ?? displayPixelResolution
+        desktopPresentationGeneration &+= 1
+        let message = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: Int(displayPixelResolution.width.rounded()),
+            height: Int(displayPixelResolution.height.rounded()),
+            frameRate: streamStart.targetFrameRate,
+            codec: streamStart.codec,
+            displayCount: 1,
+            dimensionToken: streamStart.dimensionToken,
+            acceptedMediaMaxPacketSize: streamStart.mediaMaxPacketSize,
+            transitionPhase: .startup,
+            desktopPresentationGeneration: desktopPresentationGeneration,
+            captureSource: desktopCaptureSource,
+            allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+            acceptedDisplayScaleFactor: desktopCurrentGeometryDisplayScaleFactor ?? desktopRequestedScaleFactor,
+            presentationWidth: Int(presentationResolution.width.rounded()),
+            presentationHeight: Int(presentationResolution.height.rounded()),
+            desktopGeometryContractID: desktopCurrentGeometryContractID,
+            desktopGeometrySceneIdentity: desktopCurrentGeometrySceneIdentity,
+            desktopGeometryDisplayPixelWidth: Int(displayPixelResolution.width.rounded()),
+            desktopGeometryDisplayPixelHeight: Int(displayPixelResolution.height.rounded()),
+            desktopGeometryEncodedPixelWidth: Int(streamStart.encodedDimensions.width),
+            desktopGeometryEncodedPixelHeight: Int(streamStart.encodedDimensions.height),
+            desktopGeometryRefreshTargetHz: desktopCurrentGeometryRefreshTargetHz ?? streamStart.targetFrameRate,
+            presentationRole: .appStreamPlaceholder,
+            associatedAppSessionID: request.appSessionID,
+            associatedAppStartupRequestID: request.startupRequestID,
+            associatedBundleIdentifier: request.bundleIdentifier
+        )
+        try await clientContext.send(.desktopStreamStarted, content: message)
+    }
+
+    func removePendingLockedAppStreamIntent(
+        appSessionID: UUID
+    ) -> PendingLockedAppStreamIntent? {
+        let removed = pendingLockedAppStreamIntentsByAppSessionID.removeValue(forKey: appSessionID)
+        pendingLockedAppStreamIntentOrder.removeAll { $0 == appSessionID }
+        return removed
+    }
+
+    func removePendingLockedAppStreamIntents(clientID: UUID) {
+        let appSessionIDs = pendingLockedAppStreamIntentsByAppSessionID
+            .filter { $0.value.clientID == clientID }
+            .map(\.key)
+        for appSessionID in appSessionIDs {
+            _ = removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+        }
+    }
+
+    func resumePendingLockedAppStreamIntentsIfNeeded() async {
+        guard sessionState == .ready else { return }
+        let orderedIDs = pendingLockedAppStreamIntentOrder
+        for appSessionID in orderedIDs {
+            guard var intent = pendingLockedAppStreamIntentsByAppSessionID[appSessionID],
+                  !intent.isResuming else {
+                continue
+            }
+            guard let clientContext = findClientContext(sessionID: intent.clientSessionID),
+                  clientContext.client.id == intent.clientID,
+                  !disconnectingClientIDs.contains(intent.clientID) else {
+                _ = removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+                continue
+            }
+            intent.isResuming = true
+            pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = intent
+            _ = removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+            do {
+                let message = try ControlMessage(type: .selectApp, content: intent.request)
+                await handleSelectApp(message, from: clientContext)
+            } catch {
+                MirageLogger.error(.host, error: error, message: "Failed to resume locked app stream intent: ")
+                sendAppSelectionError(
+                    to: clientContext,
+                    code: .appStreamStartupFailed,
+                    message: Self.appStreamStartupFailureMessage(appName: intent.request.bundleIdentifier),
+                    bundleIdentifier: intent.request.bundleIdentifier
+                )
+            }
+        }
     }
 }
 

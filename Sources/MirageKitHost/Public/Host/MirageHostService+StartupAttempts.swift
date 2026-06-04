@@ -65,19 +65,12 @@ extension MirageHostService {
             )
             return
         }
-        let requiresDesktopGeometryContract = pending.kind == .desktop &&
-            findClientContext(sessionID: pending.sessionID)?.supportsDesktopGeometryContract == true
         switch streamReadyDesktopGeometryAcceptanceDecision(
             expected: pending.desktopGeometryContract,
-            acknowledged: desktopGeometryContract,
-            requiresAcknowledgedContract: requiresDesktopGeometryContract
+            acknowledged: desktopGeometryContract
         ) {
         case .acceptMatchedContract, .acceptNoExpectedContract:
             break
-        case .acceptLegacyAck:
-            MirageLogger.host(
-                "Accepting legacy desktop streamReady ack without geometry contract for stream \(streamID)"
-            )
         case .rejectMismatchedContract:
             MirageLogger.host(
                 "Ignoring desktop streamReady ack for stream \(streamID): geometry contract mismatch"
@@ -199,20 +192,16 @@ extension MirageHostService {
 
 enum StreamReadyDesktopGeometryAcceptanceDecision: Equatable {
     case acceptNoExpectedContract
-    case acceptLegacyAck
     case acceptMatchedContract
     case rejectMismatchedContract
 }
 
 func streamReadyDesktopGeometryAcceptanceDecision(
     expected: StreamReadyDesktopGeometryContract?,
-    acknowledged: StreamReadyDesktopGeometryContract?,
-    requiresAcknowledgedContract: Bool = false
+    acknowledged: StreamReadyDesktopGeometryContract?
 ) -> StreamReadyDesktopGeometryAcceptanceDecision {
     guard let expected else { return .acceptNoExpectedContract }
-    guard let acknowledged else {
-        return requiresAcknowledgedContract ? .rejectMismatchedContract : .acceptLegacyAck
-    }
+    guard let acknowledged else { return .rejectMismatchedContract }
     return acknowledged == expected ? .acceptMatchedContract : .rejectMismatchedContract
 }
 #endif

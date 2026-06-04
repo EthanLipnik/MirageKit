@@ -208,8 +208,10 @@ extension MirageHostService {
             return
         }
 
-        guard clientContextOwnsStream(request.streamID, clientContext: clientContext),
-              let context = streamsByID[request.streamID] else {
+        guard let resolvedStream = await ownedStreamContext(
+            for: request.streamID,
+            clientContext: clientContext
+        ) else {
             MirageLogger.host(
                 "Keyframe request rejected for stream \(request.streamID) from \(clientContext.client.name): no owned stream"
             )
@@ -222,10 +224,11 @@ extension MirageHostService {
             clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
             return
         }
-        let ack = await context.requestKeyframe(recoveryCause: request.recoveryCause)
+        let ack = await resolvedStream.context.requestKeyframe(recoveryCause: request.recoveryCause)
         MirageLogger.host(
             "Keyframe request for stream \(request.streamID) from \(clientContext.client.name) " +
-                "cause=\(request.recoveryCause.rawValue) accepted=\(ack.accepted) state=\(ack.state.rawValue)"
+                "resolvedStream=\(resolvedStream.streamID) cause=\(request.recoveryCause.rawValue) " +
+                "accepted=\(ack.accepted) state=\(ack.state.rawValue)"
         )
         clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
     }
@@ -239,19 +242,58 @@ extension MirageHostService {
             return
         }
 
-        guard clientContextOwnsStream(feedback.streamID, clientContext: clientContext),
-              let context = streamsByID[feedback.streamID] else {
+        guard let resolvedStream = await ownedStreamContext(
+            for: feedback.streamID,
+            clientContext: clientContext
+        ) else {
             return
         }
-        await context.applyReceiverMediaFeedback(feedback)
-        if audioSourceStreamByClientID[clientContext.client.id] == feedback.streamID {
+        await resolvedStream.context.applyReceiverMediaFeedback(feedback)
+        if audioSourceStreamByClientID[clientContext.client.id] == resolvedStream.streamID {
             await audioPipelinesByClientID[clientContext.client.id]?.recordReceiverMediaFeedback(feedback)
         }
+    }
+
+    private func ownedStreamContext(
+        for streamID: StreamID,
+        clientContext: ClientContext
+    ) async -> (streamID: StreamID, context: StreamContext)? {
+        if clientContextOwnsStream(streamID, clientContext: clientContext),
+           let context = streamsByID[streamID] {
+            return (streamID, context)
+        }
+        guard let mediaStreamID = await appAtlasMediaStreamID(
+            for: streamID,
+            clientContext: clientContext
+        ), let context = streamsByID[mediaStreamID] else {
+            return nil
+        }
+        return (mediaStreamID, context)
+    }
+
+    private func appAtlasMediaStreamID(
+        for streamID: StreamID,
+        clientContext: ClientContext
+    ) async -> StreamID? {
+        if let coordinator = appAtlasCoordinatorsByClientID[clientContext.client.id],
+           coordinator.mediaStreamID == streamID {
+            return streamID
+        }
+        guard let logicalSession = activeSessionByStreamID[streamID],
+              logicalSession.client.id == clientContext.client.id,
+              let appSession = await appStreamManager.sessionForStreamID(streamID) else {
+            return nil
+        }
+        return appSession.windowStreams.values.first { $0.streamID == streamID }?.mediaStreamID
     }
 
     private func clientContextOwnsStream(_ streamID: StreamID, clientContext: ClientContext) -> Bool {
         if let session = activeSessionByStreamID[streamID] {
             return session.client.id == clientContext.client.id
+        }
+        if let coordinator = appAtlasCoordinatorsByClientID[clientContext.client.id],
+           coordinator.mediaStreamID == streamID {
+            return true
         }
         if streamID == desktopStreamID {
             return desktopStreamClientContext?.client.id == clientContext.client.id

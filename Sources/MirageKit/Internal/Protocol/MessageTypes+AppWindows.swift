@@ -144,6 +144,84 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
     }
 }
 
+/// Terminal outcome for a host-side app-window resize request.
+public enum MirageAppWindowResizeResultOutcome: String, Codable, Sendable, Equatable {
+    /// The host applied the requested size.
+    case applied
+
+    /// The host found the window cannot currently be resized.
+    case notResizable
+
+    /// The requested size already matched the host-observed size.
+    case noChange
+
+    /// The host attempted to resize but could not complete it.
+    case failed
+}
+
+/// Host-to-client result for an app-window resize request.
+public struct AppWindowResizeResultMessage: Codable, Sendable, Equatable {
+    /// Logical app stream targeted by the resize request.
+    public let streamID: StreamID
+
+    /// Physical media stream carrying the logical app stream.
+    public let mediaStreamID: StreamID
+
+    /// Host window targeted by the resize request.
+    public let windowID: WindowID
+
+    /// Terminal resize outcome.
+    public let outcome: MirageAppWindowResizeResultOutcome
+
+    /// Requested logical width in points.
+    public let requestedWidth: Int
+
+    /// Requested logical height in points.
+    public let requestedHeight: Int
+
+    /// Host-observed logical width in points after the request.
+    public let observedWidth: Int?
+
+    /// Host-observed logical height in points after the request.
+    public let observedHeight: Int?
+
+    /// Minimum accepted logical width in points, when known.
+    public let minWidth: Int?
+
+    /// Minimum accepted logical height in points, when known.
+    public let minHeight: Int?
+
+    /// Host diagnostic reason suitable for logs.
+    public let reason: String?
+
+    /// Creates an app-window resize result payload.
+    package init(
+        streamID: StreamID,
+        mediaStreamID: StreamID,
+        windowID: WindowID,
+        outcome: MirageAppWindowResizeResultOutcome,
+        requestedWidth: Int,
+        requestedHeight: Int,
+        observedWidth: Int? = nil,
+        observedHeight: Int? = nil,
+        minWidth: Int? = nil,
+        minHeight: Int? = nil,
+        reason: String? = nil
+    ) {
+        self.streamID = streamID
+        self.mediaStreamID = mediaStreamID
+        self.windowID = windowID
+        self.outcome = outcome
+        self.requestedWidth = requestedWidth
+        self.requestedHeight = requestedHeight
+        self.observedWidth = observedWidth
+        self.observedHeight = observedHeight
+        self.minWidth = minWidth
+        self.minHeight = minHeight
+        self.reason = reason
+    }
+}
+
 /// Client-to-host request to replace the window shown in an app-stream slot.
 package struct AppWindowSwapRequestMessage: Codable {
     /// Bundle identifier for the app session.

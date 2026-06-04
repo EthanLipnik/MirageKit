@@ -18,9 +18,11 @@ extension MirageClientService {
             let streamID = started.streamID
             let receivedDesktopSessionID = started.desktopSessionID
             let requestStartPending = desktopStreamRequestStartTime > 0
+            let isAppStreamPlaceholder = started.presentationRole == .appStreamPlaceholder
             MirageLogger.client(
                 "Desktop stream started: stream=\(streamID), \(started.width)x\(started.height) " +
-                    "contract=\(started.desktopGeometryContractID?.uuidString ?? "nil")"
+                    "contract=\(started.desktopGeometryContractID?.uuidString ?? "nil") " +
+                    "role=\(started.presentationRole?.rawValue ?? "desktop")"
             )
             if pendingLocalDesktopStopStreamID == streamID,
                pendingLocalDesktopStopSessionID == receivedDesktopSessionID {
@@ -35,7 +37,7 @@ extension MirageClientService {
                 )
                 return
             }
-            if desktopStreamID == nil, desktopSessionID == nil, !requestStartPending {
+            if desktopStreamID == nil, desktopSessionID == nil, !requestStartPending, !isAppStreamPlaceholder {
                 MirageLogger.client(
                     "Ignoring orphaned desktopStreamStarted for stream \(streamID), session=\(receivedDesktopSessionID.uuidString)"
                 )
@@ -68,35 +70,15 @@ extension MirageClientService {
                 }
             } else if requestStartPending,
                       currentMediaPathUsesAwdlRadioPolicy,
-                      let expectedTarget = desktopResizeCoordinator.lastSentTarget {
-                if supportsDesktopGeometryContract {
-                    MirageLogger.client(
-                        "Ignoring non-contract AWDL desktopStreamStarted for stream \(streamID): " +
-                            "negotiated desktop geometry contracts require host acknowledgement"
-                    )
-                    await resendPendingDesktopStartAfterGeometryContractRejection(
-                        reason: "missing negotiated desktop geometry contract"
-                    )
-                    return
-                }
-                let acceptedDisplayPixelSize = CGSize(width: started.width, height: started.height)
-                if let rejectionReason = expectedTarget.legacyStartupAcceptanceRejectionReason(
-                    acceptedLogicalResolution: started.presentationSize,
-                    acceptedDisplayPixelSize: acceptedDisplayPixelSize,
-                    acceptedDisplayScaleFactor: started.acceptedDisplayScaleFactor,
-                    acceptedRefreshTargetHz: started.desktopGeometryRefreshTargetHz
-                ) {
-                    MirageLogger.client(
-                        "Ignoring non-contract AWDL desktopStreamStarted for stream \(streamID): " +
-                            "\(rejectionReason)"
-                    )
-                    await resendPendingDesktopStartAfterGeometryContractRejection(reason: rejectionReason)
-                    return
-                }
+                      desktopResizeCoordinator.lastSentTarget != nil {
                 MirageLogger.client(
-                    "Accepted non-contract AWDL desktopStreamStarted for stream \(streamID) " +
-                        "because accepted geometry matched the pending contract"
+                    "Ignoring non-contract AWDL desktopStreamStarted for stream \(streamID): " +
+                        "desktop geometry contract required"
                 )
+                await resendPendingDesktopStartAfterGeometryContractRejection(
+                    reason: "missing desktop geometry contract"
+                )
+                return
             }
             let startupAttemptID = started.startupAttemptID
             guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
@@ -173,6 +155,14 @@ extension MirageClientService {
             }
             desktopStreamID = streamID
             desktopSessionID = receivedDesktopSessionID
+            if isAppStreamPlaceholder {
+                desktopStreamMode = .secondary
+                streamingAppBundleID = started.associatedBundleIdentifier
+                appStreamStartTimeoutTask?.cancel()
+                appStreamStartTimeoutTask = nil
+                appStreamPlaceholderDesktopStreamID = streamID
+                appStreamPlaceholderAppSessionID = started.associatedAppSessionID
+            }
             let encodedSize = CGSize(width: started.width, height: started.height)
             desktopStreamResolution = encodedSize
             let presentationSize = started.presentationSize
@@ -229,6 +219,11 @@ extension MirageClientService {
                 streamStartupFirstPacketReceived.remove(streamID)
                 fastPathState.markStartupPacketPending(streamID)
                 desktopStreamRequestStartTime = 0
+            } else if isAppStreamPlaceholder {
+                streamStartupBaseTimes[streamID] = CFAbsoluteTimeGetCurrent()
+                streamStartupFirstRegistrationSent.remove(streamID)
+                streamStartupFirstPacketReceived.remove(streamID)
+                fastPathState.markStartupPacketPending(streamID)
             }
             registerStartupAttempt(startupAttemptID, for: streamID)
 
@@ -344,6 +339,10 @@ extension MirageClientService {
             MirageLogger.client("Desktop stream stopped: stream=\(streamID), reason=\(stopped.reason)")
 
             retiredDesktopSessionIDs.insert(stopped.desktopSessionID)
+            if appStreamPlaceholderDesktopStreamID == streamID {
+                appStreamPlaceholderDesktopStreamID = nil
+                appStreamPlaceholderAppSessionID = nil
+            }
             desktopStreamID = nil
             desktopSessionID = nil
             desktopStreamResolution = nil

@@ -411,7 +411,9 @@ extension MirageClientService {
             return false
         }
 
-        let recoveryCause = sessionStore.sessionByStreamID(streamID)?.clientRecoveryCause ?? .none
+        let recoveryCause = sessionStore.sessionByStreamID(streamID)?.clientRecoveryCause ??
+            sessionStore.sessionByMediaStreamID(streamID)?.clientRecoveryCause ??
+            .none
         let mediaRecoveryCause = MirageMediaFeedbackRecoveryCause(recoveryCause)
         let request = KeyframeRequestMessage(
             streamID: streamID,

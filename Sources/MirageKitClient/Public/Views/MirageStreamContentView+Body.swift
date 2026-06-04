@@ -39,6 +39,9 @@ private extension MirageStreamContentView {
             .onChange(of: appStreamStartAcknowledgement) {
                 scheduleAppStreamStartAcknowledgementHandling()
             }
+            .onChange(of: appWindowResizeResult) {
+                handleAppWindowResizeResult(appWindowResizeResult)
+            }
             .onChange(of: awaitingPostResizeFirstFrame) {
                 handleAwaitingPostResizeFirstFrameChanged()
             }

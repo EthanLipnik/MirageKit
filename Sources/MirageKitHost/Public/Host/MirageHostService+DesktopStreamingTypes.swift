@@ -120,6 +120,46 @@ extension MirageHostService {
         let desktopGeometryContractID: UUID?
         let desktopGeometrySceneIdentity: String?
         let desktopGeometryRefreshTargetHz: Int?
+        let presentationRole: MirageDesktopPresentationRole?
+        let associatedAppSessionID: UUID?
+        let associatedAppStartupRequestID: UUID?
+        let associatedBundleIdentifier: String?
+
+        init(
+            streamID: StreamID,
+            desktopSessionID: UUID,
+            activeClientContext: ClientContext,
+            streamContext: StreamContext,
+            captureResolution: CGSize,
+            captureSource: MirageDesktopCaptureSource,
+            allowsClientResize: Bool,
+            presentationResolution: CGSize,
+            acceptedDisplayScaleFactor: CGFloat?,
+            desktopGeometryContractID: UUID?,
+            desktopGeometrySceneIdentity: String?,
+            desktopGeometryRefreshTargetHz: Int?,
+            presentationRole: MirageDesktopPresentationRole? = nil,
+            associatedAppSessionID: UUID? = nil,
+            associatedAppStartupRequestID: UUID? = nil,
+            associatedBundleIdentifier: String? = nil
+        ) {
+            self.streamID = streamID
+            self.desktopSessionID = desktopSessionID
+            self.activeClientContext = activeClientContext
+            self.streamContext = streamContext
+            self.captureResolution = captureResolution
+            self.captureSource = captureSource
+            self.allowsClientResize = allowsClientResize
+            self.presentationResolution = presentationResolution
+            self.acceptedDisplayScaleFactor = acceptedDisplayScaleFactor
+            self.desktopGeometryContractID = desktopGeometryContractID
+            self.desktopGeometrySceneIdentity = desktopGeometrySceneIdentity
+            self.desktopGeometryRefreshTargetHz = desktopGeometryRefreshTargetHz
+            self.presentationRole = presentationRole
+            self.associatedAppSessionID = associatedAppSessionID
+            self.associatedAppStartupRequestID = associatedAppStartupRequestID
+            self.associatedBundleIdentifier = associatedBundleIdentifier
+        }
     }
 
     struct DesktopStreamActivation {

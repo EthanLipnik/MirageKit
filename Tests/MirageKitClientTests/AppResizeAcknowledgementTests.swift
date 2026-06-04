@@ -81,6 +81,53 @@ struct AppResizeAcknowledgementTests {
     }
 
     @MainActor
+    @Test("App resize result clears resize wait through media stream")
+    func appResizeResultClearsResizeWaitThroughMediaStream() throws {
+        let store = MirageClientSessionStore()
+        let service = MirageClientService()
+        let sessionID = store.createSession(
+            streamID: 121,
+            mediaStreamID: 120,
+            window: MirageWindow(
+                id: 12101,
+                title: "Logical App Window",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            minSize: nil
+        )
+        let session = try #require(store.session(for: sessionID))
+        let view = MirageStreamContentView(
+            session: session,
+            sessionStore: store,
+            clientService: service
+        )
+
+        view.beginAppResizeAwaitingAck()
+        let result = AppWindowResizeResultMessage(
+            streamID: 121,
+            mediaStreamID: 120,
+            windowID: 12101,
+            outcome: .failed,
+            requestedWidth: 900,
+            requestedHeight: 700,
+            observedWidth: 640,
+            observedHeight: 480,
+            minWidth: nil,
+            minHeight: nil,
+            reason: "setAttributeFailed"
+        )
+
+        view.handleAppWindowResizeResult(result)
+
+        #expect(!view.awaitingAppResizeAck)
+        #expect(!view.isResizing)
+    }
+
+    @MainActor
     @Test("App resize ack ignores stale stream-start echoes")
     func ignoresStaleStreamStartEchoes() {
         let baseline = MirageClientService.StreamStartAcknowledgement(

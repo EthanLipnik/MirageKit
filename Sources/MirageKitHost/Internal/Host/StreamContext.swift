@@ -398,11 +398,11 @@ actor StreamContext {
     /// Client-requested stream scale.
     var requestedStreamScale: CGFloat
     /// When false, runtime quality adjustments remain fixed at derived baseline quality.
-    let runtimeQualityAdjustmentEnabled: Bool
+    var runtimeQualityAdjustmentEnabled: Bool
     /// Whether the client supplied an adaptive ceiling before host startup budgeting normalized it.
     let clientRequestedBitrateAdaptationCeiling: Bool
     /// When true, encoder overload may temporarily lower quality below the manual readability floor.
-    let encoderCatchUpQualityAdjustmentEnabled: Bool
+    var encoderCatchUpQualityAdjustmentEnabled: Bool
     /// When true, lowest-latency high-resolution streams use stronger compression.
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     /// When true, bypasses the host-side encoded-dimension cap.

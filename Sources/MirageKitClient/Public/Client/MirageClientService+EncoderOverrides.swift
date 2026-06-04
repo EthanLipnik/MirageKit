@@ -93,6 +93,9 @@ extension MirageClientService {
             request.bitrate = bitrate
             MirageLogger.client("Requesting bitrate: \(mirageFormattedMegabitRate(bitrate))")
         }
+        if let enteredBitrate = overrides.enteredBitrate, enteredBitrate > 0 {
+            request.enteredBitrate = enteredBitrate
+        }
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
@@ -106,6 +109,13 @@ extension MirageClientService {
             MirageLogger
                 .client(
                     "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
+                )
+        }
+        if let allowEncoderCatchUpQualityAdjustment = overrides.allowEncoderCatchUpQualityAdjustment {
+            request.allowEncoderCatchUpQualityAdjustment = allowEncoderCatchUpQualityAdjustment
+            MirageLogger
+                .client(
+                    "Requesting encoder catch-up quality adjustment: \(allowEncoderCatchUpQualityAdjustment ? "enabled" : "disabled")"
                 )
         }
         if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {

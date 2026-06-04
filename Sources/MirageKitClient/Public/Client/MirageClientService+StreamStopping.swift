@@ -232,6 +232,7 @@ public extension MirageClientService {
         clearStartupAttempt(for: streamID)
         appDimensionTokenByStream.removeValue(forKey: streamID)
         appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
+        appWindowResizeResultByStreamID.removeValue(forKey: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupFirstRegistrationSent.remove(streamID)
         streamStartupFirstPacketReceived.remove(streamID)

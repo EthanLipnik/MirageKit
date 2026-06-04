@@ -7,6 +7,7 @@
 //  App-centric streaming message handling.
 //
 
+import CoreGraphics
 import Foundation
 import MirageKit
 
@@ -127,6 +128,40 @@ extension MirageClientService {
             onAppWindowInventoryUpdate?(inventory)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app window inventory: ")
+        }
+    }
+
+    /// Applies a terminal host-side app-window resize result.
+    func handleAppWindowResizeResult(_ message: ControlMessage) {
+        do {
+            let result = try message.decode(AppWindowResizeResultMessage.self)
+            appWindowResizeResultByStreamID[result.streamID] = result
+            appWindowResizeResultByStreamID[result.mediaStreamID] = result
+            if let minWidth = result.minWidth, let minHeight = result.minHeight, minWidth > 0, minHeight > 0 {
+                let minSize = CGSize(width: minWidth, height: minHeight)
+                sessionStore.updateMinimumSize(for: result.streamID, minSize: minSize)
+                onStreamMinimumSizeUpdate?(result.streamID, minSize)
+            }
+            if let observedWidth = result.observedWidth,
+               let observedHeight = result.observedHeight,
+               observedWidth > 0,
+               observedHeight > 0 {
+                let acknowledgement = StreamStartAcknowledgement(
+                    width: observedWidth,
+                    height: observedHeight,
+                    dimensionToken: appDimensionTokenByStream[result.mediaStreamID] ??
+                        appDimensionTokenByStream[result.streamID]
+                )
+                appStreamStartAcknowledgementByStreamID[result.streamID] = acknowledgement
+                appStreamStartAcknowledgementByStreamID[result.mediaStreamID] = acknowledgement
+            }
+            MirageLogger.client(
+                "App-window resize result stream=\(result.streamID) media=\(result.mediaStreamID) " +
+                    "outcome=\(result.outcome.rawValue) requested=\(result.requestedWidth)x\(result.requestedHeight) " +
+                    "observed=\(result.observedWidth.map(String.init) ?? "nil")x\(result.observedHeight.map(String.init) ?? "nil")"
+            )
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app-window resize result: ")
         }
     }
 

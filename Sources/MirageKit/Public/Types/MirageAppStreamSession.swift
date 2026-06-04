@@ -39,7 +39,7 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
 
     /// Total bitrate budget shared across visible window slots.
     package var bitrateBudgetBps: Int?
-    /// Policy describing how shared bitrate budget is distributed among visible windows.
+    /// Legacy compatibility field; app atlas bitrate is governed as one client-wide budget.
     package var bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy
 
     /// Current state of the session.
@@ -98,7 +98,7 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         self.requestedClientScaleFactor = requestedClientScaleFactor
         self.maxVisibleSlots = max(1, maxVisibleSlots)
         self.bitrateBudgetBps = bitrateBudgetBps
-        self.bitrateAllocationPolicy = bitrateAllocationPolicy
+        self.bitrateAllocationPolicy = .splitEvenly
         self.state = state
         self.windowStreams = windowStreams
         self.hiddenWindows = hiddenWindows

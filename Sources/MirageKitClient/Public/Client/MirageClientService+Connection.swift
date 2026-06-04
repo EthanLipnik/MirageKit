@@ -44,7 +44,7 @@ public extension MirageClientService {
             deviceName: deviceName,
             deviceType: deviceType,
             advertisement: advertisement,
-            supportedFeatures: MiragePeerAdvertisementMetadata.sessionSupportedFeatures,
+            supportedFeatures: LoomSessionHelloRequest.defaultFeatures,
             iCloudUserID: iCloudUserID
         )
     }
@@ -106,7 +106,6 @@ public extension MirageClientService {
         connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
-        negotiatedSessionFeatures = []
         setMediaSecurityContext(nil)
         authorizationState = .verifyingTrust
         hasCompletedBootstrap = false
@@ -214,7 +213,6 @@ public extension MirageClientService {
         connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
-        negotiatedSessionFeatures = []
         setMediaSecurityContext(nil)
         authorizationState = .verifyingTrust
         hasCompletedBootstrap = false

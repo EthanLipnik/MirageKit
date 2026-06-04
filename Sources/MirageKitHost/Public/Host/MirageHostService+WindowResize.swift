@@ -288,6 +288,14 @@ extension MirageHostService {
                     .host,
                     "Ignoring display resolution change for passive app stream \(streamID)"
                 )
+            await sendAppWindowResizeResult(
+                streamID: streamID,
+                requestedSize: newResolution,
+                appSession: appSession,
+                outcome: .failed,
+                observedFrame: activeSessionByStreamID[streamID]?.window.frame,
+                reason: "passiveStream"
+            )
             return
         }
 
@@ -328,16 +336,27 @@ extension MirageHostService {
             width: max(1, newResolution.width),
             height: max(1, newResolution.height)
         )
-        let resized = await WindowSpaceManager.shared.resizeWindow(session.window.id, to: targetSize)
-        guard resized else {
+        let resizeResult = await WindowSpaceManager.shared.resizeWindowWithAccessibilityResult(
+            session.window.id,
+            to: targetSize
+        )
+        guard resizeResult.outcome == .applied || resizeResult.outcome == .noChange else {
             MirageLogger.host(
                 "App-atlas logical resize did not apply for stream \(streamID): " +
-                    "\(Int(targetSize.width))x\(Int(targetSize.height)) pts"
+                    "\(Int(targetSize.width))x\(Int(targetSize.height)) pts reason=\(resizeResult.reason)"
+            )
+            await sendAppWindowResizeResult(
+                streamID: streamID,
+                requestedSize: targetSize,
+                appSession: appSession,
+                outcome: resizeResult.outcome,
+                observedFrame: resizeResult.observedFrame ?? currentWindowFrame(for: session.window.id),
+                reason: resizeResult.reason
             )
             return
         }
 
-        let latestFrame = currentWindowFrame(for: session.window.id) ?? CGRect(
+        let latestFrame = resizeResult.observedFrame ?? currentWindowFrame(for: session.window.id) ?? CGRect(
             origin: session.window.frame.origin,
             size: targetSize
         )
@@ -380,6 +399,48 @@ extension MirageHostService {
             "Applied app-atlas logical resize for stream \(streamID): " +
                 "\(Int(targetSize.width))x\(Int(targetSize.height)) pts"
         )
+        await sendAppWindowResizeResult(
+            streamID: streamID,
+            requestedSize: targetSize,
+            appSession: appSession,
+            outcome: resizeResult.outcome,
+            observedFrame: latestFrame,
+            reason: resizeResult.reason
+        )
+    }
+
+    private func sendAppWindowResizeResult(
+        streamID: StreamID,
+        requestedSize: CGSize,
+        appSession: MirageAppStreamSession,
+        outcome: MirageAppWindowResizeResultOutcome,
+        observedFrame: CGRect?,
+        reason: String?
+    ) async {
+        guard let clientContext = findClientContext(clientID: appSession.clientID),
+              let session = activeSessionByStreamID[streamID] else {
+            return
+        }
+        let windowInfo = appSession.windowStreams[session.window.id]
+        let minSize = await resolvedMinimumSize(for: session.window)
+        let result = AppWindowResizeResultMessage(
+            streamID: streamID,
+            mediaStreamID: windowInfo?.mediaStreamID ?? streamID,
+            windowID: session.window.id,
+            outcome: outcome,
+            requestedWidth: Int(max(1, requestedSize.width.rounded())),
+            requestedHeight: Int(max(1, requestedSize.height.rounded())),
+            observedWidth: observedFrame.map { Int(max(1, $0.width.rounded())) },
+            observedHeight: observedFrame.map { Int(max(1, $0.height.rounded())) },
+            minWidth: Int(max(1, minSize.width.rounded())),
+            minHeight: Int(max(1, minSize.height.rounded())),
+            reason: reason
+        )
+        do {
+            try await clientContext.send(.appWindowResizeResult, content: result)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to send app-window resize result: ")
+        }
     }
 }
 

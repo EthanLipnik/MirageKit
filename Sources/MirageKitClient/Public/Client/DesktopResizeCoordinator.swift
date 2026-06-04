@@ -120,34 +120,6 @@ final class DesktopResizeCoordinator {
             )
         }
 
-        func legacyStartupAcceptanceRejectionReason(
-            acceptedLogicalResolution: CGSize,
-            acceptedDisplayPixelSize: CGSize,
-            acceptedDisplayScaleFactor: CGFloat?,
-            acceptedRefreshTargetHz: Int?
-        ) -> String? {
-            guard Self.approximatelyEqual(logicalResolution.width, acceptedLogicalResolution.width),
-                  Self.approximatelyEqual(logicalResolution.height, acceptedLogicalResolution.height) else {
-                return "logical=\(Int(acceptedLogicalResolution.width))x\(Int(acceptedLogicalResolution.height)) " +
-                    "expected=\(Int(logicalResolution.width))x\(Int(logicalResolution.height))"
-            }
-            if let acceptedDisplayScaleFactor,
-               !Self.approximatelyEqual(displayScaleFactor, acceptedDisplayScaleFactor) {
-                return "scale=\(String(format: "%.3f", acceptedDisplayScaleFactor)) " +
-                    "expected=\(String(format: "%.3f", displayScaleFactor))"
-            }
-            guard Self.pixelSizesEqual(resolvedGeometry.displayPixelSize, acceptedDisplayPixelSize) else {
-                return "displayPixels=\(Int(acceptedDisplayPixelSize.width))x\(Int(acceptedDisplayPixelSize.height)) " +
-                    "expected=\(Int(resolvedGeometry.displayPixelSize.width))x\(Int(resolvedGeometry.displayPixelSize.height))"
-            }
-            if let refreshTargetHz, let acceptedRefreshTargetHz {
-                guard acceptedRefreshTargetHz == refreshTargetHz else {
-                    return "refresh=\(acceptedRefreshTargetHz) expected=\(refreshTargetHz)"
-                }
-            }
-            return nil
-        }
-
         func acceptedGeometryRejectionReason(
             acceptedContractID: UUID,
             acceptedSceneIdentity: String?

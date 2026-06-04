@@ -308,6 +308,10 @@ public final class MirageHostService {
     var appAtlasCoordinatorsByClientID: [UUID: AppAtlasMediaCoordinator] = [:]
     /// Client IDs currently creating an app-atlas coordinator.
     var appAtlasCoordinatorCreationClientIDs: Set<UUID> = []
+    /// App stream requests accepted while the host session is locked.
+    var pendingLockedAppStreamIntentsByAppSessionID: [UUID: PendingLockedAppStreamIntent] = [:]
+    /// Pending locked app-stream app-session IDs in resume order.
+    var pendingLockedAppStreamIntentOrder: [UUID] = []
     /// Host window IDs reserved by app-stream startup before activation.
     var appStreamStartupReservedWindowIDs: Set<WindowID> = []
     /// Maximum time a stream startup attempt may wait for registration.

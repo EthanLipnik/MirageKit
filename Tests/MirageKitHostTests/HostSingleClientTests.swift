@@ -19,7 +19,7 @@ struct HostSingleClientTests {
     @MainActor
     func boundDirectTransportPortsStayInHostAdvertisement() {
         let baseAdvertisement = LoomPeerAdvertisement(
-            protocolVersion: 260603,
+            protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: UUID(),
             identityKeyID: "identity-key",
             deviceType: .mac,

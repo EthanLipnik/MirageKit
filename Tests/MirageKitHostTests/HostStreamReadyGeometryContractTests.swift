@@ -13,8 +13,8 @@ import Testing
 
 @Suite("Host Stream Ready Geometry Contract")
 struct HostStreamReadyGeometryContractTests {
-    @Test("Desktop stream ready geometry accepts legacy and matching contracts")
-    func desktopStreamReadyGeometryAcceptsLegacyAndMatchingContracts() throws {
+    @Test("Desktop stream ready geometry requires matching contracts")
+    func desktopStreamReadyGeometryRequiresMatchingContracts() throws {
         let expected = try makeContract(width: 2752)
 
         #expect(
@@ -27,13 +27,6 @@ struct HostStreamReadyGeometryContractTests {
             streamReadyDesktopGeometryAcceptanceDecision(
                 expected: expected,
                 acknowledged: nil
-            ) == .acceptLegacyAck
-        )
-        #expect(
-            streamReadyDesktopGeometryAcceptanceDecision(
-                expected: expected,
-                acknowledged: nil,
-                requiresAcknowledgedContract: true
             ) == .rejectMismatchedContract
         )
         #expect(
@@ -57,14 +50,13 @@ struct HostStreamReadyGeometryContractTests {
         )
     }
 
-    @Test("AWDL desktop startup requires negotiated geometry contract before host side effects")
-    func awdlDesktopStartupRequiresNegotiatedGeometryContractBeforeHostSideEffects() {
+    @Test("AWDL desktop startup requires geometry contract before host side effects")
+    func awdlDesktopStartupRequiresGeometryContractBeforeHostSideEffects() {
         #expect(
             shouldRejectAwdlDesktopStartupWithoutGeometryContract(
                 usesHostResolution: false,
                 transportPathKind: .awdl,
                 mediaPathProfile: .awdlRadio,
-                supportsDesktopGeometryContract: true,
                 desktopGeometryContractID: nil
             )
         )
@@ -73,7 +65,6 @@ struct HostStreamReadyGeometryContractTests {
                 usesHostResolution: false,
                 transportPathKind: .awdl,
                 mediaPathProfile: .awdlRadio,
-                supportsDesktopGeometryContract: true,
                 desktopGeometryContractID: UUID()
             )
         )
@@ -82,7 +73,6 @@ struct HostStreamReadyGeometryContractTests {
                 usesHostResolution: false,
                 transportPathKind: .awdl,
                 mediaPathProfile: .localWiFi,
-                supportsDesktopGeometryContract: true,
                 desktopGeometryContractID: nil
             )
         )
@@ -91,16 +81,6 @@ struct HostStreamReadyGeometryContractTests {
                 usesHostResolution: true,
                 transportPathKind: .awdl,
                 mediaPathProfile: .awdlRadio,
-                supportsDesktopGeometryContract: true,
-                desktopGeometryContractID: nil
-            )
-        )
-        #expect(
-            !shouldRejectAwdlDesktopStartupWithoutGeometryContract(
-                usesHostResolution: false,
-                transportPathKind: .awdl,
-                mediaPathProfile: .awdlRadio,
-                supportsDesktopGeometryContract: false,
                 desktopGeometryContractID: nil
             )
         )
@@ -109,7 +89,6 @@ struct HostStreamReadyGeometryContractTests {
                 usesHostResolution: false,
                 transportPathKind: .wifi,
                 mediaPathProfile: .localWiFi,
-                supportsDesktopGeometryContract: true,
                 desktopGeometryContractID: nil
             )
         )

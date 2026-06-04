@@ -136,7 +136,7 @@ public extension MirageClientService {
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - audioConfiguration: Optional per-stream audio overrides.
     ///   - maxConcurrentVisibleWindows: Maximum visible app-window slots allowed for this session.
-    ///   - bitrateAllocationPolicy: Shared app-stream bitrate allocation mode.
+    ///   - bitrateAllocationPolicy: Legacy app-stream bitrate allocation mode. New clients should pass `nil`.
     func selectApp(
         bundleIdentifier: String,
         scaleFactor: CGFloat? = nil,
@@ -145,7 +145,7 @@ public extension MirageClientService {
         encoderOverrides: MirageEncoderOverrides? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
-        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow,
+        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil,
         sizePreset: MirageDisplaySizePreset? = nil
     )
     async throws {
@@ -176,6 +176,7 @@ public extension MirageClientService {
             keyFrameInterval: nil,
             colorDepth: nil,
             bitrate: nil,
+            enteredBitrate: nil,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
             bitrateAllocationPolicy: bitrateAllocationPolicy,
@@ -195,22 +196,11 @@ public extension MirageClientService {
             disableResolutionCap: encoderRequest.disableResolutionCap == true
         )
         resolutionScale = geometry.resolvedStreamScale
-        let scaledBitrate: Int?
-        if encoderRequest.bitrateAdaptationCeiling != nil {
-            scaledBitrate = encoderRequest.bitrate
-        } else if let bitrate = encoderRequest.bitrate, bitrate > 0 {
-            let baselinePixels = 2560.0 * 1440.0
-            let scaleFactor = min(
-                max(
-                    Double(geometry.displayPixelSize.width) * Double(geometry.displayPixelSize.height) / baselinePixels,
-                    1.0
-                ),
-                2.0
-            )
-            scaledBitrate = Int(Double(bitrate) * scaleFactor)
-        } else {
-            scaledBitrate = nil
-        }
+        let bitrateSemantics = MirageAppBitrateRequestSemantics.resolve(
+            enteredBitrateBps: encoderRequest.enteredBitrate,
+            requestedTargetBitrateBps: encoderRequest.bitrate,
+            bitrateAdaptationCeilingBps: encoderRequest.bitrateAdaptationCeiling
+        )
         var request = SelectAppMessage(
             startupRequestID: encoderRequest.startupRequestID,
             appSessionID: encoderRequest.appSessionID,
@@ -222,10 +212,12 @@ public extension MirageClientService {
             keyFrameInterval: encoderRequest.keyFrameInterval,
             captureQueueDepth: encoderRequest.captureQueueDepth,
             colorDepth: encoderRequest.colorDepth,
-            bitrate: scaledBitrate,
+            bitrate: bitrateSemantics.requestedTargetBitrateBps,
+            enteredBitrate: bitrateSemantics.enteredBitrateBps,
             latencyMode: encoderRequest.latencyMode,
             hostBufferingPolicy: encoderRequest.hostBufferingPolicy,
             allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
+            allowEncoderCatchUpQualityAdjustment: encoderRequest.allowEncoderCatchUpQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost:
                 effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
                     encoderRequest.lowLatencyHighResolutionCompressionBoost
@@ -248,7 +240,7 @@ public extension MirageClientService {
                 )
             }
         }
-        request.bitrateAdaptationCeiling = encoderRequest.bitrateAdaptationCeiling
+        request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight
         request.upscalingMode = encoderRequest.upscalingMode
@@ -282,6 +274,12 @@ public extension MirageClientService {
                 "\(Int(geometry.logicalSize.width))x\(Int(geometry.logicalSize.height)) pts, " +
                 "\(Int(geometry.displayPixelSize.width))x\(Int(geometry.displayPixelSize.height)) px, " +
                 "encode \(Int(geometry.encodedPixelSize.width))x\(Int(geometry.encodedPixelSize.height)) px"
+        )
+        let enteredBitrateText = request.enteredBitrate.map(mirageFormattedMegabitRate) ?? "n/a"
+        let requestedBitrateText = request.bitrate.map(mirageFormattedMegabitRate) ?? "auto"
+        let ceilingText = request.bitrateAdaptationCeiling.map(mirageFormattedMegabitRate) ?? "none"
+        MirageLogger.client(
+            "App bitrate contract requested: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText)"
         )
     }
 

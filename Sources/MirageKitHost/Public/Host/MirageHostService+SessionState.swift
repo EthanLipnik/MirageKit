@@ -55,6 +55,7 @@ extension MirageHostService {
                 await sendWindowList(to: clientContext)
             }
             await syncAppListRequestDeferralForInteractiveWorkload()
+            await resumePendingLockedAppStreamIntentsIfNeeded()
         }
 
         syncSharedClipboardState()

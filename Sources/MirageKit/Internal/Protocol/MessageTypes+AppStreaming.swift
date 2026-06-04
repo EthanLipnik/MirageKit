@@ -158,6 +158,9 @@ package struct SelectAppMessage: Codable {
     /// Client-requested target bitrate in bits per second.
     package var bitrate: Int?
 
+    /// Client-entered bitrate budget before any geometry policy.
+    package var enteredBitrate: Int?
+
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
 
@@ -166,6 +169,9 @@ package struct SelectAppMessage: Codable {
 
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
+
+    /// Client-requested quality reduction when host encoding falls behind.
+    package var allowEncoderCatchUpQualityAdjustment: Bool?
 
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
@@ -231,9 +237,11 @@ package struct SelectAppMessage: Codable {
         captureQueueDepth: Int? = nil,
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
+        enteredBitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
+        allowEncoderCatchUpQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -259,9 +267,11 @@ package struct SelectAppMessage: Codable {
         self.captureQueueDepth = captureQueueDepth
         self.colorDepth = colorDepth
         self.bitrate = bitrate
+        self.enteredBitrate = enteredBitrate
         self.latencyMode = latencyMode
         self.hostBufferingPolicy = hostBufferingPolicy
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+        self.allowEncoderCatchUpQualityAdjustment = allowEncoderCatchUpQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
         self.audioConfiguration = audioConfiguration

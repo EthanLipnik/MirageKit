@@ -30,8 +30,7 @@ extension AppStreamManager {
     ///   - requestedDisplayResolution: Requested logical display resolution in points.
     ///   - requestedClientScaleFactor: Optional client scale-factor override.
     ///   - maxVisibleSlots: Maximum concurrent visible windows for this session.
-    ///   - bitrateBudgetBps: Shared bitrate budget for visible slots.
-    ///   - bitrateAllocationPolicy: Shared bitrate allocation policy across visible slots.
+    ///   - bitrateBudgetBps: Client-wide app atlas bitrate budget.
     /// - Returns: The created session, or nil if app is not available.
     func startAppSession(
         id: UUID = UUID(),
@@ -43,8 +42,7 @@ extension AppStreamManager {
         requestedDisplayResolution: CGSize,
         requestedClientScaleFactor: CGFloat?,
         maxVisibleSlots: Int,
-        bitrateBudgetBps: Int?,
-        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow
+        bitrateBudgetBps: Int?
     ) -> MirageAppStreamSession? {
         let key = appSessionKey(for: bundleIdentifier)
 
@@ -64,14 +62,13 @@ extension AppStreamManager {
             requestedClientScaleFactor: requestedClientScaleFactor,
             maxVisibleSlots: max(1, maxVisibleSlots),
             bitrateBudgetBps: bitrateBudgetBps,
-            bitrateAllocationPolicy: bitrateAllocationPolicy,
             state: .starting
         )
 
         sessions[key] = session
         startupFailureStateByBundleID.removeValue(forKey: key)
         logger.info(
-            "Started app session: \(appName) -> \(clientName), maxVisibleSlots=\(session.maxVisibleSlots), bitrateBudget=\(session.bitrateBudgetBps ?? 0), allocationPolicy=\(session.bitrateAllocationPolicy.rawValue)"
+            "Started app session: \(appName) -> \(clientName), maxVisibleSlots=\(session.maxVisibleSlots), atlasBitrateBudget=\(session.bitrateBudgetBps ?? 0)"
         )
 
         startMonitoringIfNeeded()
