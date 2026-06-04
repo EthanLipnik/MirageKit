@@ -26,6 +26,17 @@ extension MirageClientService {
     /// Point-in-time client diagnostics emitted with Loom reports.
     var diagnosticsContextSnapshot: LoomDiagnosticsContext {
         let primaryStreamID = desktopStreamID ?? activeStreams.first?.id
+        let primaryAppStream = primaryStreamID.flatMap { primaryStreamID in
+            activeStreams.first { stream in
+                stream.id == primaryStreamID || stream.mediaStreamID == primaryStreamID
+            }
+        }
+        let primaryLogicalAcknowledgement = primaryAppStream.flatMap {
+            appStreamStartAcknowledgementByStreamID[$0.id]
+        }
+        let primaryMediaAcknowledgement = primaryAppStream.flatMap {
+            appStreamStartAcknowledgementByStreamID[$0.mediaStreamID]
+        }
         let primarySnapshot = primaryStreamID.flatMap { metricsStore.snapshot(for: $0) }
         let processPhysicalFootprintBytes = Self.processPhysicalFootprintBytes
         let selectedControlAttempt = recentControlSessionAttemptSummaries.reversed().first { summary in
@@ -59,6 +70,14 @@ extension MirageClientService {
             "client.control.selectedRouteTier": selectedControlAttempt.map { .string($0.routeTier) } ?? .null,
             "client.control.selectedEndpointSource": selectedControlAttempt.map { .string($0.endpointSource) } ?? .null,
             "client.primaryStreamID": primaryStreamID.map { .int(Int($0)) } ?? .null,
+            "client.primaryAppStream.logicalStreamID": primaryAppStream.map { .int(Int($0.id)) } ?? .null,
+            "client.primaryAppStream.mediaStreamID": primaryAppStream.map { .int(Int($0.mediaStreamID)) } ?? .null,
+            "client.primaryAppStream.logicalAcknowledgement": diagnosticsAcknowledgementSize(
+                primaryLogicalAcknowledgement
+            ),
+            "client.primaryAppStream.mediaAcknowledgement": diagnosticsAcknowledgementSize(
+                primaryMediaAcknowledgement
+            ),
             "client.primaryStream.decoderOutputPixelFormat": primarySnapshot?.clientDecoderOutputPixelFormat.map(LoomDiagnosticsValue.string) ?? .null,
             "client.primaryStream.decoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
                 primarySnapshot?.clientUsingHardwareDecoder
@@ -155,6 +174,14 @@ extension MirageClientService {
     func diagnosticsHardwareAccelerationState(_ enabled: Bool?) -> LoomDiagnosticsValue {
         guard let enabled else { return .string("unknown") }
         return .string(enabled ? "active" : "software_fallback")
+    }
+
+    func diagnosticsAcknowledgementSize(
+        _ acknowledgement: StreamStartAcknowledgement?
+    ) -> LoomDiagnosticsValue {
+        guard let acknowledgement else { return .null }
+        let token = acknowledgement.dimensionToken.map(String.init) ?? "nil"
+        return .string("\(acknowledgement.width)x\(acknowledgement.height) token=\(token)")
     }
 
     /// Current process physical footprint, when Darwin task info is available.

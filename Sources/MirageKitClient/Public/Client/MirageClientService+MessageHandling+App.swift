@@ -136,7 +136,6 @@ extension MirageClientService {
         do {
             let result = try message.decode(AppWindowResizeResultMessage.self)
             appWindowResizeResultByStreamID[result.streamID] = result
-            appWindowResizeResultByStreamID[result.mediaStreamID] = result
             if let minWidth = result.minWidth, let minHeight = result.minHeight, minWidth > 0, minHeight > 0 {
                 let minSize = CGSize(width: minWidth, height: minHeight)
                 sessionStore.updateMinimumSize(for: result.streamID, minSize: minSize)
@@ -153,7 +152,6 @@ extension MirageClientService {
                         appDimensionTokenByStream[result.streamID]
                 )
                 appStreamStartAcknowledgementByStreamID[result.streamID] = acknowledgement
-                appStreamStartAcknowledgementByStreamID[result.mediaStreamID] = acknowledgement
             }
             MirageLogger.client(
                 "App-window resize result stream=\(result.streamID) media=\(result.mediaStreamID) " +

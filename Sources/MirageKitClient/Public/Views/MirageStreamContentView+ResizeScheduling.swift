@@ -165,7 +165,7 @@ extension MirageStreamContentView {
                 if streamPresentationTier == .passiveSnapshot {
                     displayResolutionTask?.cancel()
                     displayResolutionTask = nil
-                    pendingDisplayResolutionDispatchTarget = .zero
+                    appResizeDispatchState.cancel()
                     if awaitingAppResizeAck {
                         finishAppResizeAwaitingAck()
                     } else if isResizing {
@@ -179,10 +179,6 @@ extension MirageStreamContentView {
                 streamScaleTask?.cancel()
                 streamScaleTask = nil
                 lastSentEncodedPixelSize = .zero
-                guard lastSentDisplayResolution != baseDisplaySize else {
-                    if isResizing, !awaitingAppResizeAck { isResizing = false }
-                    return
-                }
                 enqueueImmediateAppDisplayResolutionChange(baseDisplaySize)
                 return
             }
@@ -218,42 +214,60 @@ extension MirageStreamContentView {
 
     func enqueueImmediateAppDisplayResolutionChange(_ targetDisplaySize: CGSize) {
         guard targetDisplaySize.width > 0, targetDisplaySize.height > 0 else { return }
-        guard pendingDisplayResolutionDispatchTarget != targetDisplaySize || displayResolutionTask == nil else { return }
+        appResizeDispatchState.enqueue(targetDisplaySize)
+        scheduleAppDisplayResolutionDispatchIfNeeded()
+    }
 
-        pendingDisplayResolutionDispatchTarget = targetDisplaySize
+    func scheduleAppDisplayResolutionDispatchIfNeeded() {
         guard displayResolutionTask == nil else { return }
+        guard !appResizeDispatchState.hasInFlightResize else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard let delay = appResizeDispatchState.dispatchDelay(now: now) else { return }
 
         displayResolutionTask = Task { @MainActor [clientService] in
             defer {
                 displayResolutionTask = nil
-                if pendingDisplayResolutionDispatchTarget == .zero, isResizing, !awaitingAppResizeAck {
-                    isResizing = false
+            }
+
+            if delay > 0 {
+                do {
+                    try await Task.sleep(for: .milliseconds(Int((delay * 1000).rounded(.up))))
+                } catch {
+                    return
                 }
             }
 
-            while !Task.isCancelled {
-                let dispatchedTarget = pendingDisplayResolutionDispatchTarget
-                pendingDisplayResolutionDispatchTarget = .zero
-                guard dispatchedTarget.width > 0, dispatchedTarget.height > 0 else { break }
+            guard !Task.isCancelled else { return }
+            guard !suppressesWindowDrivenResizeForLocalPresentation,
+                  streamPresentationTier != .passiveSnapshot else {
+                cancelPendingWindowDrivenResizeForLocalPresentation()
+                return
+            }
 
-                guard lastSentDisplayResolution != dispatchedTarget else {
-                    if pendingDisplayResolutionDispatchTarget == .zero { break }
-                    continue
+            guard let dispatchedTarget = appResizeDispatchState.beginNextDispatch(
+                now: CFAbsoluteTimeGetCurrent()
+            ) else {
+                if isResizing, !awaitingAppResizeAck { isResizing = false }
+                return
+            }
+
+            beginAppResizeAwaitingAck()
+            do {
+                try await clientService.sendDisplayResolutionChange(
+                    streamID: session.streamID,
+                    newResolution: dispatchedTarget
+                )
+                MirageLogger.client(
+                    "App resize dispatched stream=\(session.streamID) target=\(Int(dispatchedTarget.width))x\(Int(dispatchedTarget.height)) " +
+                        appResizeDispatchState.diagnosticSummary
+                )
+            } catch {
+                appResizeDispatchState.completeCurrentAsSendFailed(now: CFAbsoluteTimeGetCurrent())
+                finishAppResizeAwaitingAck()
+                Task { @MainActor in
+                    await Task.yield()
+                    scheduleAppDisplayResolutionDispatchIfNeeded()
                 }
-
-                lastSentDisplayResolution = dispatchedTarget
-                beginAppResizeAwaitingAck()
-                do {
-                    try await clientService.sendDisplayResolutionChange(
-                        streamID: session.streamID,
-                        newResolution: dispatchedTarget
-                    )
-                } catch {
-                    finishAppResizeAwaitingAck()
-                }
-
-                if pendingDisplayResolutionDispatchTarget == .zero { break }
-                await Task.yield()
             }
         }
     }
@@ -262,6 +276,7 @@ extension MirageStreamContentView {
         appResizeBaselineAcknowledgement = appStreamStartAcknowledgement
         awaitingAppResizeAck = true
         isResizing = true
+        onAppResizeWaitingChanged?(true)
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = Task { @MainActor in
             do {
@@ -270,7 +285,13 @@ extension MirageStreamContentView {
                 return
             }
             guard awaitingAppResizeAck else { return }
+            appResizeDispatchState.completeCurrentAsTimedOut(now: CFAbsoluteTimeGetCurrent())
+            MirageLogger.client(
+                "App resize ack timed out stream=\(session.streamID) " +
+                    appResizeDispatchState.diagnosticSummary
+            )
             finishAppResizeAwaitingAck()
+            scheduleAppDisplayResolutionDispatchIfNeeded()
         }
     }
 
@@ -280,6 +301,7 @@ extension MirageStreamContentView {
         awaitingAppResizeAck = false
         appResizeBaselineAcknowledgement = nil
         if isResizing { isResizing = false }
+        onAppResizeWaitingChanged?(false)
     }
 
     func cancelPendingWindowDrivenResizeForLocalPresentation() {
@@ -290,7 +312,7 @@ extension MirageStreamContentView {
 
         displayResolutionTask?.cancel()
         displayResolutionTask = nil
-        pendingDisplayResolutionDispatchTarget = .zero
+        appResizeDispatchState.cancel()
         streamScaleTask?.cancel()
         streamScaleTask = nil
         if awaitingAppResizeAck {

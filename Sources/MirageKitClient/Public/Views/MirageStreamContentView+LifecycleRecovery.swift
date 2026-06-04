@@ -70,11 +70,14 @@ extension MirageStreamContentView {
         resizeHoldoffTask = nil
         displayResolutionTask?.cancel()
         displayResolutionTask = nil
-        pendingDisplayResolutionDispatchTarget = .zero
+        appResizeDispatchState.cancel()
         streamScaleTask?.cancel()
         streamScaleTask = nil
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = nil
+        if awaitingAppResizeAck {
+            onAppResizeWaitingChanged?(false)
+        }
         awaitingAppResizeAck = false
         appResizeBaselineAcknowledgement = nil
         latestContainerDisplaySize = .zero

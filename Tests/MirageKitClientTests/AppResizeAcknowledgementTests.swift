@@ -81,8 +81,43 @@ struct AppResizeAcknowledgementTests {
     }
 
     @MainActor
-    @Test("App resize result clears resize wait through media stream")
-    func appResizeResultClearsResizeWaitThroughMediaStream() throws {
+    @Test("App resize result updates logical state without overwriting media dimensions")
+    func resizeResultDoesNotOverwriteMediaDimensions() throws {
+        let service = MirageClientService()
+        let mediaAcknowledgement = MirageClientService.StreamStartAcknowledgement(
+            width: 2320,
+            height: 1792,
+            dimensionToken: 12
+        )
+        service.appStreamStartAcknowledgementByStreamID[200] = mediaAcknowledgement
+        service.appDimensionTokenByStream[200] = 12
+        let result = AppWindowResizeResultMessage(
+            streamID: 201,
+            mediaStreamID: 200,
+            windowID: 20101,
+            outcome: .applied,
+            requestedWidth: 1156,
+            requestedHeight: 892,
+            observedWidth: 1156,
+            observedHeight: 892,
+            minWidth: nil,
+            minHeight: nil,
+            reason: nil
+        )
+
+        service.handleAppWindowResizeResult(try ControlMessage(type: .appWindowResizeResult, content: result))
+
+        #expect(service.appStreamStartAcknowledgementByStreamID[200] == mediaAcknowledgement)
+        #expect(service.appStreamStartAcknowledgementByStreamID[201]?.width == 1156)
+        #expect(service.appStreamStartAcknowledgementByStreamID[201]?.height == 892)
+        #expect(service.appStreamStartAcknowledgementByStreamID[201]?.dimensionToken == 12)
+        #expect(service.appWindowResizeResultByStreamID[201] == result)
+        #expect(service.appWindowResizeResultByStreamID[200] == nil)
+    }
+
+    @MainActor
+    @Test("App resize result clears resize wait")
+    func appResizeResultClearsResizeWait() throws {
         let store = MirageClientSessionStore()
         let service = MirageClientService()
         let sessionID = store.createSession(
@@ -106,6 +141,8 @@ struct AppResizeAcknowledgementTests {
             clientService: service
         )
 
+        view.appResizeDispatchState.enqueue(CGSize(width: 900, height: 700))
+        _ = view.appResizeDispatchState.beginNextDispatch(now: 0)
         view.beginAppResizeAwaitingAck()
         let result = AppWindowResizeResultMessage(
             streamID: 121,

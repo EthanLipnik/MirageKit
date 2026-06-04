@@ -105,6 +105,8 @@ public struct MirageStreamContentView: View {
     public let maxDrawableSize: CGSize?
     /// Handler invoked before the native stream window closes.
     public let onWindowWillClose: (() -> Void)?
+    /// Handler invoked when an app-stream resize acknowledgement wait starts or clears.
+    public let onAppResizeWaitingChanged: ((Bool) -> Void)?
     /// Whether the embedded platform renderer should extend through safe areas.
     public let ignoresSafeArea: Bool
 
@@ -121,9 +123,7 @@ public struct MirageStreamContentView: View {
     #endif
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @State var displayResolutionTask: Task<Void, Never>?
-    @State var pendingDisplayResolutionDispatchTarget: CGSize = .zero
-    /// Tracks the last requested client display resolution, not the host's encoded output size.
-    @State var lastSentDisplayResolution: CGSize = .zero
+    @State var appResizeDispatchState = AppWindowResizeDispatchState()
     @State var streamScaleTask: Task<Void, Never>?
     @State var lastSentEncodedPixelSize: CGSize = .zero
     @State var awaitingAppResizeAck: Bool = false
@@ -167,6 +167,7 @@ public struct MirageStreamContentView: View {
     ///   - dictationLocalePreference: Dictation language selection.
     ///   - macSystemShortcutForwardingEnabled: Whether macOS should use Input Monitoring backed shortcut forwarding.
     ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
+    ///   - onAppResizeWaitingChanged: Optional app resize wait state callback.
     public init(
         session: MirageStreamSessionState,
         sessionStore: MirageClientSessionStore,
@@ -203,6 +204,7 @@ public struct MirageStreamContentView: View {
         keyboardAvoidanceEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,
+        onAppResizeWaitingChanged: ((Bool) -> Void)? = nil,
         ignoresSafeArea: Bool = true
     ) {
         self.session = session
@@ -240,6 +242,7 @@ public struct MirageStreamContentView: View {
         self.keyboardAvoidanceEnabled = keyboardAvoidanceEnabled
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
+        self.onAppResizeWaitingChanged = onAppResizeWaitingChanged
         self.ignoresSafeArea = ignoresSafeArea
     }
 }
@@ -746,8 +749,7 @@ extension MirageStreamContentView {
     }
 
     var appWindowResizeResult: AppWindowResizeResultMessage? {
-        clientService.appWindowResizeResultByStreamID[session.streamID] ??
-            clientService.appWindowResizeResultByStreamID[session.mediaStreamID]
+        clientService.appWindowResizeResultByStreamID[session.streamID]
     }
 
     func handleAppStreamStartAcknowledgement(
@@ -773,14 +775,28 @@ extension MirageStreamContentView {
             acknowledgement,
             comparedTo: appResizeBaselineAcknowledgement
         ) else { return }
+        appResizeDispatchState.completeCurrentAsAcknowledged(now: CFAbsoluteTimeGetCurrent())
         finishAppResizeAwaitingAck()
+        scheduleAppDisplayResolutionDispatchIfNeeded()
     }
 
     func handleAppWindowResizeResult(_ result: AppWindowResizeResultMessage?) {
         guard !isDesktopStream else { return }
         guard awaitingAppResizeAck else { return }
         guard let result else { return }
-        guard result.streamID == session.streamID || result.mediaStreamID == session.mediaStreamID else { return }
+        guard result.streamID == session.streamID else { return }
+        let completedCurrentTarget = appResizeDispatchState.complete(
+            result: result,
+            now: CFAbsoluteTimeGetCurrent()
+        )
+        guard completedCurrentTarget || !appResizeDispatchState.hasInFlightResize else {
+            MirageLogger.client(
+                "Ignoring stale app resize result stream=\(session.streamID) requested=\(result.requestedWidth)x\(result.requestedHeight) " +
+                    appResizeDispatchState.diagnosticSummary
+            )
+            return
+        }
         finishAppResizeAwaitingAck()
+        scheduleAppDisplayResolutionDispatchIfNeeded()
     }
 }

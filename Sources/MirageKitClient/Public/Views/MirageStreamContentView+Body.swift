@@ -392,7 +392,7 @@ private extension MirageStreamContentView {
         resizeHoldoffTask = nil
         displayResolutionTask?.cancel()
         displayResolutionTask = nil
-        pendingDisplayResolutionDispatchTarget = .zero
+        appResizeDispatchState.cancel()
         streamScaleTask?.cancel()
         streamScaleTask = nil
         appResizeAckTimeoutTask?.cancel()
@@ -400,6 +400,9 @@ private extension MirageStreamContentView {
         cancelInputResumeGate(reason: "stream_content_disappeared")
         stopPresentationBlurProgressMonitoring()
         resetRecoveryBlurDebounceState()
+        if awaitingAppResizeAck {
+            onAppResizeWaitingChanged?(false)
+        }
         awaitingAppResizeAck = false
         appResizeBaselineAcknowledgement = nil
         latestContainerDisplaySize = .zero
