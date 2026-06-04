@@ -261,6 +261,7 @@ extension MirageHostService {
             singleClientSessionID = sessionID
             streamRegistry.registerInputSession(sessionID, clientID: client.id)
 
+            startSessionRefreshLoopIfNeeded()
             await sendSessionState(to: clientContext)
             await activateDeferredAudioIfNeeded(clientID: client.id)
             startMediaPathObserver(clientContext: clientContext)

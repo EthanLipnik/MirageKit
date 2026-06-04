@@ -277,6 +277,13 @@ extension MirageHostService {
             return
         }
 
+        if await handleLockedAppLoginDisplayResolutionChange(
+            streamID: streamID,
+            requestedSize: newResolution
+        ) {
+            return
+        }
+
         if let appSession = await appStreamManager.sessionForStreamID(streamID),
            let isActive = await appStreamManager.streamActivity(
                bundleIdentifier: appSession.bundleIdentifier,

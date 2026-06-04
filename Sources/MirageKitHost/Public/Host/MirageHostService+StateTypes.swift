@@ -110,9 +110,7 @@ extension MirageHostService {
         let clientSessionID: UUID
         let clientID: UUID
         let createdAt: Date
-        var placeholderDesktopStreamID: StreamID?
-        var placeholderDesktopSessionID: UUID?
-        var ownsPlaceholderDesktopStream: Bool
+        var loginStreamID: StreamID?
         var isResuming: Bool
     }
 

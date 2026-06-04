@@ -17,7 +17,8 @@ extension MirageHostService {
     func ensureSharedAppStreamMirroring(
         preset: MirageDisplaySizePreset,
         refreshRate: Int,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageColorSpace,
+        mirrorPhysicalDisplays: Bool = true
     )
     async throws -> SharedVirtualDisplayManager.DisplaySnapshot {
         var virtualDisplaySetupGuardToken: UUID?
@@ -41,11 +42,17 @@ extension MirageHostService {
             refreshRate: refreshRate,
             colorSpace: colorSpace
         )
-        _ = await setupDisplayMirroring(
-            targetDisplayID: snapshot.displayID,
-            expectedPixelResolution: snapshot.resolution,
-            requiresResidualMirageDisplaysClear: false
-        )
+        if mirrorPhysicalDisplays {
+            _ = await setupDisplayMirroring(
+                targetDisplayID: snapshot.displayID,
+                expectedPixelResolution: snapshot.resolution,
+                requiresResidualMirageDisplaysClear: false
+            )
+        } else {
+            MirageLogger.host(
+                "Shared app-stream display \(snapshot.displayID) acquired without physical display mirroring"
+            )
+        }
         if let token = virtualDisplaySetupGuardToken {
             await completeVirtualDisplaySetupGuard(
                 token,

@@ -88,7 +88,8 @@ extension MirageClientService {
         runtimeWorkloadSafetyMemoryPressureCount += 1
         runtimeWorkloadSafetyLastMemoryPressureTime = now
 
-        let streamIDs = activeInteractiveStreamIDs
+        let streamIDs = activeRuntimeQualityMediaStreamIDs
+        let presentationStreamIDs = activePresentationStreamIDs
         var trimmedStreamCount = 0
 
         for streamID in streamIDs {
@@ -97,11 +98,11 @@ extension MirageClientService {
                 trimmedStreamCount += 1
             }
         }
-        MirageAppAtlasRenderFanout.shared.trimForMemoryPressure(streamIDs: Set(streamIDs))
+        MirageAppAtlasRenderFanout.shared.trimForMemoryPressure(streamIDs: Set(presentationStreamIDs))
 
         #if os(iOS) || os(visionOS)
         if repeatedPressure {
-            for streamID in streamIDs {
+            for streamID in presentationStreamIDs {
                 MirageSampleBufferView.clearDisplayedImages(for: streamID)
             }
         }
@@ -125,14 +126,15 @@ extension MirageClientService {
 
         let downshiftedStreamCount = repeatedPressure ?
             await applyRuntimeWorkloadSafetyScaleDownshift(
-                streamIDs: streamIDs,
+                streamIDs: activeRuntimeScalableStreamIDs,
                 targetFrameRate: targetFrameRate
             ) :
             0
 
         let fallbackText = targetFrameRate.map { "\($0)fps" } ?? "none"
         MirageLogger.client(
-            "Handled client memory pressure: activeStreams=\(streamIDs.count), " +
+            "Handled client memory pressure: activeMediaStreams=\(streamIDs.count), " +
+                "presentationStreams=\(presentationStreamIDs.count), " +
                 "trimmedStreams=\(trimmedStreamCount), repeated=\(repeatedPressure), " +
                 "fallback=\(fallbackText), downshiftedStreams=\(downshiftedStreamCount)"
         )
@@ -159,7 +161,11 @@ extension MirageClientService {
             MirageRenderModePolicy.normalizedTargetFPS(targetFrameRate)
         )
         let now = CFAbsoluteTimeGetCurrent()
-        let streamIDs = triggerStreamID.map { [$0] } ?? activeInteractiveStreamIDs
+        let streamIDs: [StreamID] = if let triggerStreamID {
+            [runtimeQualityMediaStreamID(for: triggerStreamID) ?? triggerStreamID]
+        } else {
+            activeRuntimeQualityMediaStreamIDs
+        }
         var appliedCount = 0
         var failedCount = 0
         for streamID in streamIDs {
@@ -211,10 +217,12 @@ extension MirageClientService {
             }
         }
 
-        let triggerText = triggerStreamID.map { " stream=\($0)" } ?? ""
+        let triggerText = triggerStreamID.map { " requestedStream=\($0)" } ?? ""
+        let mediaStreamText = streamIDs.map(String.init).joined(separator: ",")
         MirageLogger.client(
             "Runtime workload safety cap active: \(normalizedTarget)fps reason=\(reason.rawValue)" +
-                "\(triggerText) updatedStreams=\(appliedCount) failedStreams=\(failedCount)"
+                "\(triggerText) mediaStreams=[\(mediaStreamText)] " +
+                "updatedStreams=\(appliedCount) failedStreams=\(failedCount)"
         )
     }
 
@@ -225,7 +233,14 @@ extension MirageClientService {
     )
     async -> Int {
         var downshiftedCount = 0
+        let scalableStreamIDs = Set(activeRuntimeScalableStreamIDs)
         for streamID in streamIDs {
+            guard scalableStreamIDs.contains(streamID) else {
+                MirageLogger.client(
+                    "Skipping runtime workload scale downshift for non-scalable media stream \(streamID)"
+                )
+                continue
+            }
             let currentScale = runtimeWorkloadSafetyScaleByStream[streamID] ?? resolutionScale
             guard let nextScale = Self.runtimeWorkloadSafetyNextScaleDownshift(currentScale: currentScale) else {
                 continue
@@ -264,11 +279,14 @@ extension MirageClientService {
     }
 
     func clearRuntimeWorkloadSafetyState(for streamID: StreamID) {
-        runtimeWorkloadSafetyStallTimesByStream.removeValue(forKey: streamID)
-        runtimeWorkloadSafetyFrameRateCapsByStream.removeValue(forKey: streamID)
-        runtimeWorkloadSafetyRestoreFrameRatesByStream.removeValue(forKey: streamID)
-        runtimeWorkloadSafetyScaleByStream.removeValue(forKey: streamID)
-        runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeValue(forKey: streamID)?.cancel()
+        let streamIDs = Set([streamID, runtimeQualityMediaStreamID(for: streamID)].compactMap(\.self))
+        for streamID in streamIDs {
+            runtimeWorkloadSafetyStallTimesByStream.removeValue(forKey: streamID)
+            runtimeWorkloadSafetyFrameRateCapsByStream.removeValue(forKey: streamID)
+            runtimeWorkloadSafetyRestoreFrameRatesByStream.removeValue(forKey: streamID)
+            runtimeWorkloadSafetyScaleByStream.removeValue(forKey: streamID)
+            runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeValue(forKey: streamID)?.cancel()
+        }
     }
 
     func runtimeWorkloadSafetyFrameRateCap(for streamID: StreamID) -> Int? {
@@ -317,7 +335,7 @@ extension MirageClientService {
         guard let restoreFrameRate = runtimeWorkloadSafetyRestoreFrameRatesByStream.removeValue(forKey: streamID) else {
             return
         }
-        guard activeInteractiveStreamIDs.contains(streamID) else { return }
+        guard activeRuntimeQualityMediaStreamIDs.contains(streamID) else { return }
         if let cap {
             guard restoreFrameRate > cap.frameRate else { return }
         }

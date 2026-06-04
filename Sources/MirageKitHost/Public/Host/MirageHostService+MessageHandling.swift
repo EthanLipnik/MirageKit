@@ -42,8 +42,8 @@ extension MirageHostService {
             .streamReady: .message { [weak self] message in
                 await self?.handleStreamReadyMessage(message)
             },
-            .streamEncoderSettingsChange: .message { [weak self] message in
-                await self?.handleStreamEncoderSettingsChangeMessage(message)
+            .streamEncoderSettingsChange: .messageAndClient { [weak self] message, clientContext in
+                await self?.handleStreamEncoderSettingsChangeMessage(message, from: clientContext)
             },
             .receiverMediaFeedback: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleReceiverMediaFeedbackMessage(message, from: clientContext)
@@ -254,7 +254,7 @@ extension MirageHostService {
         }
     }
 
-    private func ownedStreamContext(
+    func ownedStreamContext(
         for streamID: StreamID,
         clientContext: ClientContext
     ) async -> (streamID: StreamID, context: StreamContext)? {

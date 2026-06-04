@@ -178,13 +178,26 @@ extension MirageHostService {
             )
         }
 
+        let usesSharedAppAtlas = visibleStreamIDs.contains { streamID in
+            guard let windowInfo = session.windowStreams.values.first(where: { $0.streamID == streamID }) else {
+                return false
+            }
+            return windowInfo.mediaStreamID != streamID && streamsByID[streamID] == nil
+        }
+        let policyBitrateBudgetBps = usesSharedAppAtlas ? nil : session.bitrateBudgetBps
         let activeTargetFPS = await resolvedActiveTargetFPS(for: visibleStreamIDs)
 
         let snapshot = await appStreamRuntimeOrchestrator.makeRuntimePolicySnapshot(
             bundleIdentifier: bundleIdentifier,
             visibleStreamIDs: visibleStreamIDs,
-            bitrateBudgetBps: nil,
+            bitrateBudgetBps: policyBitrateBudgetBps,
             activeTargetFPS: activeTargetFPS
+        )
+        MirageLogger.host(
+            "Recomputed app stream policy bundle=\(bundleIdentifier) mode=" +
+                "\(usesSharedAppAtlas ? "shared-atlas" : "dedicated-streams") " +
+                "reason=\(reason) visibleStreams=[\(visibleStreamIDs.map(String.init).joined(separator: ","))] " +
+                "budget=\(policyBitrateBudgetBps.map(String.init) ?? "presentation-only")"
         )
         scheduleAppStreamPolicyTransition(
             bundleIdentifier: bundleIdentifier,
@@ -201,11 +214,10 @@ extension MirageHostService {
                 streamID: policy.streamID,
                 isActive: isActive
             )
-            if let bitrate = policy.targetBitrateBps {
+            if !usesSharedAppAtlas, let bitrate = policy.targetBitrateBps {
                 appliedTargets[policy.streamID] = bitrate
             }
 
-            guard let context = streamsByID[policy.streamID] else { continue }
             if isActive {
                 if usesDedicatedDisplay {
                     ensureWindowVisibleFrameMonitor(streamID: policy.streamID)
@@ -220,6 +232,11 @@ extension MirageHostService {
                 }
                 pendingWindowResizeResolutionByStreamID.removeValue(forKey: policy.streamID)
                 windowResizeRequestCounterByStreamID.removeValue(forKey: policy.streamID)
+            }
+
+            guard !usesSharedAppAtlas,
+                  let context = streamsByID[policy.streamID] else {
+                continue
             }
 
             await streamPolicyApplier.apply(

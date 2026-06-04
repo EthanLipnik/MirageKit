@@ -81,7 +81,7 @@ extension MirageHostService {
     }
 
     /// Applies partial encoder-setting updates sent by the client for an active stream.
-    func handleStreamEncoderSettingsChangeMessage(_ message: ControlMessage) async {
+    func handleStreamEncoderSettingsChangeMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
         do {
             let request = try message.decode(StreamEncoderSettingsChangeMessage.self)
             MirageLogger
@@ -92,7 +92,7 @@ extension MirageHostService {
                         "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged"), " +
                         "fps=\(request.targetFrameRate.map(String.init) ?? "unchanged")"
                 )
-            await handleStreamEncoderSettingsChange(request)
+            await handleStreamEncoderSettingsChange(request, from: clientContext)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle streamEncoderSettingsChange: ")
         }

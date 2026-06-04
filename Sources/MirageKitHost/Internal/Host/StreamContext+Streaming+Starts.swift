@@ -109,6 +109,86 @@ extension StreamContext {
         MirageLogger.stream(streamBoundaryLog(phase: "start", kind: "desktop", width: width, height: height))
         MirageLogger.stream("Started desktop display stream \(streamID) at \(width)x\(height)")
     }
+
+    func startAppStreamDisplayCapture(
+        displayWrapper: SCDisplayWrapper,
+        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
+        onSendError: (@Sendable (Error) -> Void)? = nil
+    )
+    async throws {
+        guard !isRunning else { return }
+        isRunning = true
+        useVirtualDisplay = true
+        captureFrameRateOverride = currentFrameRate
+        captureFrameRate = currentFrameRate
+
+        isAppStream = true
+        applicationProcessID = 0
+        appStreamBundleIdentifier = nil
+        trafficLightMaskGeometryCache = nil
+        lastTrafficLightMaskLogTime = 0
+        virtualDisplayContext = mirroredDisplaySnapshot
+
+        await setupPacketSender(
+            sendPacketWithMetadata: sendPacketWithMetadata,
+            onSendError: onSendError
+        )
+
+        let captureResolution = mirroredDisplaySnapshot.resolution
+        baseCaptureSize = captureResolution
+        streamScale = 1.0
+        let outputSize = captureResolution
+        currentCaptureSize = outputSize
+        currentEncodedSize = outputSize
+        let fullOutputRect = CGRect(origin: .zero, size: outputSize)
+        let captureSourceRect = CGRect(
+            x: 0,
+            y: 0,
+            width: max(1, CGFloat(displayWrapper.display.width)),
+            height: max(1, CGFloat(displayWrapper.display.height))
+        )
+        let captureDestinationRect = Self.fixedCanvasDestinationRect(
+            sourceRect: captureSourceRect,
+            outputSize: outputSize
+        )
+        let usesFullOutputRect = captureDestinationRect.equalTo(fullOutputRect)
+        currentContentRect = usesFullOutputRect ? fullOutputRect : captureDestinationRect
+        captureMode = .display
+        updateQueueLimits()
+        await applyDerivedQuality(for: outputSize, logLabel: "App-stream display init")
+        let width = max(1, Int(outputSize.width.rounded()))
+        let height = max(1, Int(outputSize.height.rounded()))
+        MirageLogger.stream(
+            "App-stream display encoding at \(width)x\(height) " +
+                "(latency=\(latencyMode.displayName), queue=\(maxQueuedBytes / 1024)KB)"
+        )
+
+        try await createAndPreheatEncoder(streamKind: .appAtlas, width: width, height: height)
+        let pinnedRect = currentContentRect
+        await startEncoderWithSharedCallback(pinnedContentRect: pinnedRect, logPrefix: "App-stream display frame")
+
+        let captureEngine = try await setupAndStartCaptureEngine(usesDisplayRefreshCadence: true)
+        try await captureEngine.startDisplayCapture(
+            display: displayWrapper.display,
+            resolution: outputSize,
+            destinationRect: usesFullOutputRect ? nil : captureDestinationRect,
+            excludedWindows: [],
+            showsCursor: false,
+            onFrame: { [weak self] frame in
+                self?.enqueueCapturedFrame(frame)
+            },
+            onAudio: onCapturedAudioBuffer,
+            audioChannelCount: requestedAudioChannelCount
+        )
+        await refreshCaptureCadence()
+
+        MirageLogger.stream(streamBoundaryLog(phase: "start", kind: "app-stream-display", width: width, height: height))
+        MirageLogger.stream(
+            "Started app-stream display stream \(streamID) capturing display \(displayWrapper.display.displayID) " +
+                "into shared display geometry \(mirroredDisplaySnapshot.displayID)"
+        )
+    }
 }
 
 #endif

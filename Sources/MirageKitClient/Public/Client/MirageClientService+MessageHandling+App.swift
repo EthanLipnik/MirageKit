@@ -189,11 +189,14 @@ extension MirageClientService {
     }
 
     /// Reports that a window left an app stream and forwards the host removal reason.
-    func handleWindowRemovedFromStream(_ message: ControlMessage) {
+    func handleWindowRemovedFromStream(_ message: ControlMessage) async {
         do {
             let removed = try message.decode(WindowRemovedFromStreamMessage.self)
             MirageLogger.client("Window removed from stream: \(removed.windowID), reason=\(removed.reason.rawValue)")
             onWindowRemovedFromStream?(removed)
+            if let streamID = removed.streamID {
+                await forceStopWindowStreamLocally(streamID: streamID)
+            }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode window removed: ")
         }

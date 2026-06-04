@@ -102,22 +102,42 @@ extension MirageHostService {
     }
 
     /// Applies client-requested encoder setting changes for an active stream.
-    func handleStreamEncoderSettingsChange(_ request: StreamEncoderSettingsChangeMessage) async {
-        guard let context = streamsByID[request.streamID] else {
+    func handleStreamEncoderSettingsChange(
+        _ request: StreamEncoderSettingsChangeMessage,
+        from clientContext: ClientContext? = nil
+    ) async {
+        let resolvedStream: (streamID: StreamID, context: StreamContext)? = if let clientContext {
+            await ownedStreamContext(for: request.streamID, clientContext: clientContext)
+        } else if let context = streamsByID[request.streamID] {
+            (request.streamID, context)
+        } else {
+            nil
+        }
+
+        guard let resolvedStream else {
             MirageLogger.debug(.host, "No stream found for encoder settings update: \(request.streamID)")
             return
         }
-        let isHostResolutionDesktopStream = request.streamID == desktopStreamID && desktopUsesHostResolution
+        let resolvedStreamID = resolvedStream.streamID
+        let context = resolvedStream.context
+        let isHostResolutionDesktopStream = resolvedStreamID == desktopStreamID && desktopUsesHostResolution
+        let isAppAtlasMediaStream = isAppAtlasMediaStreamID(resolvedStreamID)
 
         let hasColorDepthChange = request.colorDepth != nil
         let hasBitrateChange = request.bitrate != nil
         let hasBitrateCeilingChange = request.bitrateAdaptationCeiling != nil
-        let hasScaleChange = request.streamScale != nil && !isHostResolutionDesktopStream
+        let hasScaleChange = request.streamScale != nil && !isHostResolutionDesktopStream && !isAppAtlasMediaStream
         let hasFrameRateChange = request.targetFrameRate != nil
-        let shouldBroadcastStreamUpdate = hasColorDepthChange || hasScaleChange || hasFrameRateChange
+        let shouldBroadcastStreamUpdate = !isAppAtlasMediaStream &&
+            (hasColorDepthChange || hasScaleChange || hasFrameRateChange)
 
         let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
         do {
+            if request.streamID != resolvedStreamID {
+                MirageLogger.host(
+                    "Resolved encoder settings stream \(request.streamID) to media stream \(resolvedStreamID)"
+                )
+            }
             if hasColorDepthChange || hasBitrateChange || hasBitrateCeilingChange {
                 try await context.updateEncoderSettings(
                     colorDepth: request.colorDepth,
@@ -131,6 +151,11 @@ extension MirageHostService {
                     MirageLogger.host(
                         "Ignoring encoder settings streamScale for host-resolution desktop stream \(request.streamID): \(streamScale)"
                     )
+                } else if isAppAtlasMediaStream {
+                    MirageLogger.host(
+                        "Ignoring encoder settings streamScale for app-atlas media stream \(resolvedStreamID) " +
+                            "requested by stream \(request.streamID): \(streamScale)"
+                    )
                 } else {
                     try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
                 }
@@ -139,13 +164,22 @@ extension MirageHostService {
                 try await context.updateFrameRate(targetFrameRate)
             }
             if shouldBroadcastStreamUpdate {
-                await sendStreamScaleUpdate(streamID: request.streamID)
+                await sendStreamScaleUpdate(streamID: resolvedStreamID)
+            } else if isAppAtlasMediaStream {
+                MirageLogger.host(
+                    "Encoder settings update applied to app-atlas media stream \(resolvedStreamID) " +
+                        "from requested stream \(request.streamID) without stream resize notification"
+                )
             } else {
                 MirageLogger.host("Encoder settings update applied without stream resize notification (bitrate only)")
             }
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to apply encoder settings update: ")
         }
+    }
+
+    private func isAppAtlasMediaStreamID(_ streamID: StreamID) -> Bool {
+        appAtlasCoordinatorsByClientID.values.contains { $0.mediaStreamID == streamID }
     }
 
     /// Applies the client's desktop cursor presentation preference to the active desktop stream.

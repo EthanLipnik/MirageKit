@@ -64,6 +64,19 @@ struct LoopbackControlPair {
     let client: LoomAuthenticatedSession
     let server: LoomAuthenticatedSession
 
+    func startAuthenticatedSessions() async throws {
+        async let clientContext = client.start(
+            localHello: clientHello,
+            identityManager: clientIdentityManager
+        )
+        async let serverContext = server.start(
+            localHello: serverHello,
+            identityManager: serverIdentityManager,
+            trustProvider: serverTrustProvider
+        )
+        _ = try await (clientContext, serverContext)
+    }
+
     func stop() async {
         listener.cancel()
         await client.cancel()
