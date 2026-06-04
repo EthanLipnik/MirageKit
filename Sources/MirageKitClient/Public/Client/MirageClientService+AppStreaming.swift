@@ -136,7 +136,6 @@ public extension MirageClientService {
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - audioConfiguration: Optional per-stream audio overrides.
     ///   - maxConcurrentVisibleWindows: Maximum visible app-window slots allowed for this session.
-    ///   - bitrateAllocationPolicy: Legacy app-stream bitrate allocation mode. New clients should pass `nil`.
     func selectApp(
         bundleIdentifier: String,
         scaleFactor: CGFloat? = nil,
@@ -145,7 +144,6 @@ public extension MirageClientService {
         encoderOverrides: MirageEncoderOverrides? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
-        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil,
         sizePreset: MirageDisplaySizePreset? = nil
     )
     async throws {
@@ -179,7 +177,6 @@ public extension MirageClientService {
             enteredBitrate: nil,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
-            bitrateAllocationPolicy: bitrateAllocationPolicy,
             sizePreset: sizePreset,
             mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize
         )
@@ -225,7 +222,6 @@ public extension MirageClientService {
             disableResolutionCap: encoderRequest.disableResolutionCap,
             audioConfiguration: encoderRequest.audioConfiguration,
             maxConcurrentVisibleWindows: encoderRequest.maxConcurrentVisibleWindows,
-            bitrateAllocationPolicy: encoderRequest.bitrateAllocationPolicy,
             sizePreset: encoderRequest.sizePreset,
             mediaMaxPacketSize: encoderRequest.mediaMaxPacketSize
         )

@@ -218,9 +218,6 @@ package struct SelectAppMessage: Codable {
     /// Maximum concurrent visible app windows requested by the client tier policy.
     package let maxConcurrentVisibleWindows: Int
 
-    /// Client-requested shared bitrate allocation policy for multi-window app streaming.
-    package let bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy?
-
     /// Client-requested virtual display size preset for app streaming.
     package var sizePreset: MirageDisplaySizePreset?
 
@@ -246,7 +243,6 @@ package struct SelectAppMessage: Codable {
         disableResolutionCap: Bool? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
-        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil,
         sizePreset: MirageDisplaySizePreset? = nil,
         mediaMaxPacketSize: Int? = nil,
         clientTransportPathKind: MirageNetworkPathKind? = nil,
@@ -276,7 +272,6 @@ package struct SelectAppMessage: Codable {
         self.disableResolutionCap = disableResolutionCap
         self.audioConfiguration = audioConfiguration
         self.maxConcurrentVisibleWindows = max(1, maxConcurrentVisibleWindows)
-        self.bitrateAllocationPolicy = bitrateAllocationPolicy
         self.sizePreset = sizePreset
         self.mediaMaxPacketSize = mediaMaxPacketSize
         self.clientTransportPathKind = clientTransportPathKind

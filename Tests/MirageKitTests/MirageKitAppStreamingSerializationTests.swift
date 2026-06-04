@@ -18,15 +18,13 @@ struct MirageKitAppStreamingSerializationTests {
             targetFrameRate: 60,
             enteredBitrate: 600_000_000,
             allowEncoderCatchUpQualityAdjustment: true,
-            maxConcurrentVisibleWindows: 8,
-            bitrateAllocationPolicy: .splitEvenly
+            maxConcurrentVisibleWindows: 8
         )
         let envelope = try ControlMessage(type: .selectApp, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.bundleIdentifier == "com.apple.mail")
         #expect(decoded.maxConcurrentVisibleWindows == 8)
-        #expect(decoded.bitrateAllocationPolicy == MirageAppStreamBitrateAllocationPolicy.splitEvenly)
         #expect(decoded.enteredBitrate == 600_000_000)
         #expect(decoded.allowEncoderCatchUpQualityAdjustment == true)
     }

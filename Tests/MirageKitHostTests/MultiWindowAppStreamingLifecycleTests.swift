@@ -70,6 +70,7 @@ extension MultiWindowAppStreamingStabilizationTests {
             maxVisibleSlots: 1,
             bitrateBudgetBps: nil
         )
+        await host.appStreamManager.stopMonitoring()
         await host.appStreamManager.markSessionStreaming(bundleID)
         _ = await host.appStreamManager.addWindowToSession(
             bundleIdentifier: bundleID,
