@@ -300,17 +300,30 @@ package struct MirageSharedClipboardState {
         nowMs: Int64 = MirageSharedClipboard.currentTimestampMs()
     ) -> MirageSharedClipboardLocalSend? {
         guard isActive else { return nil }
-        guard item.representation.kind != .unsupported,
-              item.payload != nil else {
+        if lastObservedChangeCount == changeCount {
             lastObservedChangeCount = changeCount
-            latestAutomaticLocalFingerprint = nil
             return nil
         }
+
         let fingerprint = MirageSharedClipboard.contentFingerprint(for: item)
-        if lastObservedChangeCount == changeCount || latestAutomaticLocalFingerprint == fingerprint {
+        guard item.payload != nil else {
+            lastObservedChangeCount = changeCount
+            let orderingToken = mintLocalOrderingToken()
+            latestOrderingToken = orderingToken
+            suppressLocalSendUntilChangeCount = nil
+            latestRemoteClipboardObservedAtMs = nil
+            latestAutomaticLocalFingerprint = nil
+            return MirageSharedClipboardLocalSend(
+                item: item,
+                orderingToken: orderingToken
+            )
+        }
+
+        if latestAutomaticLocalFingerprint == fingerprint {
             lastObservedChangeCount = changeCount
             return nil
         }
+
         guard let localSend = prepareLocalSend(
             currentItem: item,
             changeCount: changeCount,

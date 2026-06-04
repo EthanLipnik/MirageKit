@@ -23,7 +23,7 @@ public typealias StreamSessionID = UUID
 /// Public entry point for MirageKit-wide constants and shared service configuration.
 public enum MirageKit {
     /// MirageKit package version exposed to hosts, clients, and diagnostics.
-    public static let version = "1.1.1"
+    public static let version = "1.1.6"
 
     /// Current Mirage wire protocol version required by both hosts and clients, encoded as YYMMDD.
     public static let protocolVersion: UInt32 = mirageProtocolVersion

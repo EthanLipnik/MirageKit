@@ -356,8 +356,8 @@ struct SharedClipboardTests {
         #expect(changed?.text == "different")
     }
 
-    @Test("Automatic shared clipboard ignores unsupported local contents")
-    func automaticSharedClipboardIgnoresUnsupportedLocalContents() {
+    @Test("Automatic shared clipboard declares unsupported local contents")
+    func automaticSharedClipboardDeclaresUnsupportedLocalContents() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 0)
 
@@ -370,7 +370,8 @@ struct SharedClipboardTests {
             changeCount: 2
         )
 
-        #expect(unsupported == nil)
+        #expect(unsupported?.item.representation.kind == .unsupported)
+        #expect(unsupported?.item.payload == nil)
         #expect(changed?.text == "supported")
     }
 
