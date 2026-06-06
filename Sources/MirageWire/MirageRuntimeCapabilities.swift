@@ -104,6 +104,9 @@ public struct MirageMediaPacketFamily: RawRepresentable, Hashable, Comparable, C
 
     /// Current full-frame media packets with the fixed video/audio header layouts.
     public static let fixedHeaderFullFrame = MirageMediaPacketFamily("fixed-header-full-frame")
+
+    /// Hard-cutover Mosaic media packets keyed by tile-plan and media-unit indexes.
+    public static let mosaicMediaUnit = MirageMediaPacketFamily("mosaic-media-unit")
 }
 
 /// Input feature advertised in runtime capabilities.
@@ -263,6 +266,34 @@ public struct MirageRuntimeCapabilities: Equatable, Codable, Sendable {
         fullFrameBaseline(codecs: Set(MirageMedia.MirageVideoCodec.allCases))
     }
 
+    /// Builds the Mosaic hard-cutover capability snapshot.
+    public static func mosaicCutover(codecs: Set<MirageMedia.MirageVideoCodec>) -> MirageRuntimeCapabilities {
+        MirageRuntimeCapabilities(
+            protocolVersions: [.currentControl],
+            controlFeatures: [
+                .sessionBootstrap,
+                .mediaEncryptionPolicy,
+                .streamLifecycle,
+                .appStreaming,
+                .audioStreaming,
+                .sharedClipboard,
+                .hostMetadata,
+                .softwareUpdate,
+                .remoteAccessAuthorization,
+            ],
+            mediaPacketFamilies: [.mosaicMediaUnit],
+            mediaTopologies: [.mosaic],
+            codecs: codecs,
+            inputFeatures: [.pointer, .keyboard, .stylus, .hostSystemAction, .priorityInput],
+            diagnosticsFeatures: [.streamMetrics, .mediaFeedback, .supportLogs]
+        )
+    }
+
+    /// Mosaic hard-cutover capabilities used by the current host/client runtime.
+    public static var currentMosaicCutover: MirageRuntimeCapabilities {
+        mosaicCutover(codecs: Set(MirageMedia.MirageVideoCodec.allCases))
+    }
+
     /// Returns the intersection of locally and remotely advertised capabilities.
     public func negotiated(with remote: MirageRuntimeCapabilities) -> MirageRuntimeCapabilities {
         MirageRuntimeCapabilities(
@@ -279,7 +310,7 @@ public struct MirageRuntimeCapabilities: Equatable, Codable, Sendable {
     /// Returns the first mutually supported media packet family in preference order.
     public func preferredMediaPacketFamily(
         matching remote: MirageRuntimeCapabilities,
-        preferredOrder: [MirageMediaPacketFamily] = [.fixedHeaderFullFrame]
+        preferredOrder: [MirageMediaPacketFamily] = [.mosaicMediaUnit, .fixedHeaderFullFrame]
     ) -> MirageMediaPacketFamily? {
         let negotiatedFamilies = mediaPacketFamilies.intersection(remote.mediaPacketFamilies)
         return preferredOrder.first { negotiatedFamilies.contains($0) }
@@ -290,7 +321,7 @@ public struct MirageRuntimeCapabilities: Equatable, Codable, Sendable {
         matching remote: MirageRuntimeCapabilities?,
         requiredTopology: MirageMediaTopologyKind = .singleUnit,
         requiredControlFeatures: Set<MirageControlFeature> = [.sessionBootstrap, .streamLifecycle],
-        preferredOrder: [MirageMediaPacketFamily] = [.fixedHeaderFullFrame]
+        preferredOrder: [MirageMediaPacketFamily] = [.mosaicMediaUnit, .fixedHeaderFullFrame]
     ) -> MirageMediaPacketFamily? {
         guard supportsCurrentControlProtocol,
               requiredControlFeatures.isSubset(of: controlFeatures),

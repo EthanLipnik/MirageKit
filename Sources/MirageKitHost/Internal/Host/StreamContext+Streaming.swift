@@ -133,7 +133,8 @@ extension StreamContext {
                         pinnedContentRect: pinnedContentRect,
                         logPrefix: logPrefix,
                         callbackSequencer: callbackSequencer,
-                        baseFrameFlagsSnapshot: baseFrameFlagsSnapshot
+                        baseFrameFlagsSnapshot: baseFrameFlagsSnapshot,
+                        mosaicMediaUnit: nil
                     )
                     finishFrame()
                 }
@@ -150,7 +151,8 @@ extension StreamContext {
         pinnedContentRect: CGRect?,
         logPrefix: String,
         callbackSequencer: StreamEncodingCallbackSequencer,
-        baseFrameFlagsSnapshot: MirageWire.FrameFlags
+        baseFrameFlagsSnapshot: MirageWire.FrameFlags,
+        mosaicMediaUnit: StreamContextMosaicMediaUnitWorkItem?
     ) async {
         guard let packetSender else { return }
         guard shouldEncodeFrames else {
@@ -242,6 +244,8 @@ extension StreamContext {
         let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
         let dimToken = dimensionToken
         let currentEpoch = epoch
+        let mosaicMediaUnitMetadata = mosaicMediaUnit?.senderMetadata(unitFrameNumber: reservation.frameNumber) ??
+            mosaicMediaUnitMetadata(frameNumber: reservation.frameNumber)
 
         let generation = packetSender.currentGeneration
         if isKeyframe {
@@ -278,9 +282,62 @@ extension StreamContext {
             ),
             targetFrameRate: currentFrameRate,
             pacingOverride: pacingOverride,
-            usesAwdlRealtimeQueuePolicy: mediaPathProfile.usesAwdlRadioPolicy
+            usesAwdlRealtimeQueuePolicy: mediaPathProfile.usesAwdlRadioPolicy,
+            mosaicMediaUnitMetadata: mosaicMediaUnitMetadata
         )
         packetSender.enqueue(workItem)
+    }
+
+    func startMosaicUnitEncoders(
+        _ preparedUnits: [StreamContextMosaicCodecUnitEncoderPool.PreparedUnit],
+        baseFrameFlagsSnapshot: MirageWire.FrameFlags
+    ) async {
+        let callbackSequencer = mosaicEncodingCallbackSequencer
+        for preparedUnit in preparedUnits {
+            await preparedUnit.encoder.startEncoding(
+                onEncodedFrame: { [weak self, unit = preparedUnit.workItem] encodedData, isKeyframe, presentationTime, finishFrame in
+                    Task(priority: .userInitiated) {
+                        guard let self else {
+                            finishFrame()
+                            return
+                        }
+                        await self.handleEncodedFrameForStreaming(
+                            encodedData: encodedData,
+                            isKeyframe: isKeyframe,
+                            presentationTime: presentationTime,
+                            pinnedContentRect: unit.sourceCGRect,
+                            logPrefix: "Mosaic unit",
+                            callbackSequencer: callbackSequencer,
+                            baseFrameFlagsSnapshot: baseFrameFlagsSnapshot,
+                            mosaicMediaUnit: unit
+                        )
+                        finishFrame()
+                    }
+                },
+                onFrameComplete: { [weak self] in
+                    Task(priority: .userInitiated) { await self?.finishEncoding() }
+                }
+            )
+        }
+    }
+
+    private func mosaicMediaUnitMetadata(frameNumber: UInt32) -> StreamPacketSender.MosaicMediaUnitMetadata? {
+        guard streamKind == .desktop,
+              let plan = latestMosaicTilePlan else {
+            return nil
+        }
+        let summary = latestMosaicDirtyTileSummary
+        var versionValues: [UInt32] = []
+        if let summary {
+            versionValues.append(contentsOf: summary.updatedTileVersions.values)
+            versionValues.append(contentsOf: summary.reusedTileVersions.values)
+        }
+        let tileVersion = versionValues.max() ?? frameNumber
+        return StreamPacketSender.MosaicMediaUnitMetadata(
+            tilePlanEpoch: plan.epoch,
+            mediaEpoch: summary?.frameNumber ?? frameNumber,
+            tileVersion: tileVersion
+        )
     }
 
     private func awdlHardSendDeadline(

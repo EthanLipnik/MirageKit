@@ -112,6 +112,19 @@ struct MirageRuntimeCapabilitiesTests {
         #expect(local.selectedMediaPacketFamilyForSend(matching: missingStreamLifecycle) == nil)
     }
 
+    @Test("Current Mosaic cutover selects media-unit packet family")
+    func currentMosaicCutoverSelectsMediaUnitPacketFamily() {
+        let local = MirageRuntimeCapabilities.currentMosaicCutover
+        let remote = MirageRuntimeCapabilities.currentMosaicCutover
+
+        #expect(local.mediaPacketFamilies == [.mosaicMediaUnit])
+        #expect(local.mediaTopologies == [.mosaic])
+        #expect(local.selectedMediaPacketFamilyForSend(
+            matching: remote,
+            requiredTopology: .mosaic
+        ) == .mosaicMediaUnit)
+    }
+
     @Test("Bootstrap capabilities preserve legacy payload compatibility")
     func bootstrapCapabilitiesPreserveLegacyPayloadCompatibility() throws {
         let legacyRequest = Data(

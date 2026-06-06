@@ -13,6 +13,7 @@ import MirageKit
 import Foundation
 import Testing
 import MirageCore
+import MirageMedia
 
 @Suite("Recovery Reason Mapping")
 struct RecoveryReasonMappingTests {

@@ -150,6 +150,32 @@ package enum MirageMediaSecurity {
         )
     }
 
+    package static func encryptMosaicVideoPayload(
+        _ plaintext: UnsafeRawBufferPointer,
+        header: MirageWire.MirageMosaicPacketHeader,
+        key: MirageMediaPacketKey,
+        direction: MirageMediaDirection
+    ) throws -> Data {
+        try seal(
+            plaintext,
+            key: key.symmetricKey,
+            nonce: mosaicVideoNonce(for: header, direction: direction)
+        )
+    }
+
+    package static func decryptMosaicVideoPayload<Payload: DataProtocol>(
+        _ wirePayload: Payload,
+        header: MirageWire.MirageMosaicPacketHeader,
+        key: MirageMediaPacketKey,
+        direction: MirageMediaDirection
+    ) throws -> Data {
+        try open(
+            wirePayload,
+            key: key.symmetricKey,
+            nonce: mosaicVideoNonce(for: header, direction: direction)
+        )
+    }
+
     package static func encryptAudioPayload(
         _ plaintext: UnsafeRawBufferPointer,
         header: MirageWire.AudioPacketHeader,
@@ -202,6 +228,21 @@ package enum MirageMediaSecurity {
         nonce[3] = 0
         writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
         writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
+        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
+        return Data(nonce)
+    }
+
+    package static func mosaicVideoNonceInputBytes(
+        for header: MirageWire.MirageMosaicPacketHeader,
+        direction: MirageMediaDirection
+    ) -> Data {
+        var nonce = [UInt8](repeating: 0, count: 12)
+        nonce[0] = 1
+        nonce[1] = direction.rawValue
+        nonce[2] = 3
+        nonce[3] = UInt8(truncatingIfNeeded: header.tilePlanEpoch ^ header.mediaEpoch)
+        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
+        writeUInt32LittleEndian(header.packetSequence, into: &nonce, at: 6)
         writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
         return Data(nonce)
     }
@@ -287,6 +328,13 @@ package enum MirageMediaSecurity {
         direction: MirageMediaDirection
     ) throws -> AES.GCM.Nonce {
         try nonceFromBytes(audioNonceInputBytes(for: header, direction: direction))
+    }
+
+    private static func mosaicVideoNonce(
+        for header: MirageWire.MirageMosaicPacketHeader,
+        direction: MirageMediaDirection
+    ) throws -> AES.GCM.Nonce {
+        try nonceFromBytes(mosaicVideoNonceInputBytes(for: header, direction: direction))
     }
 
     private static func nonceFromBytes<Bytes: DataProtocol>(_ bytes: Bytes) throws -> AES.GCM.Nonce {

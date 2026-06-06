@@ -65,7 +65,7 @@ public extension MirageClientService {
             protocolVersion: protocolVersionOverride ?? Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
             requestTakeoverIfBusy: requestTakeoverIfBusy,
-            clientCapabilities: .currentFullFrameBaseline
+            clientCapabilities: .currentMosaicCutover
         )
     }
 

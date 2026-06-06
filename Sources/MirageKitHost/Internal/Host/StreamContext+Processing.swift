@@ -51,6 +51,7 @@ extension StreamContext {
         lastCapturedFrame = frame
         if frame.info.isIdleFrame { idleSkippedCount += 1 }
         if !frame.info.isIdleFrame { lastNonIdleCapturedFrameTime = now }
+        updateMosaicDirtyTileState(frame: frame, now: now)
         updateIdleQualityProbeAdmissionHint(now: now)
         if startupBaseTime > 0, !startupFirstCaptureLogged {
             startupFirstCaptureLogged = true
@@ -391,6 +392,40 @@ extension StreamContext {
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
             await applyTrafficLightCloneStampIfNeeded(frame: frame)
 
+            if streamKind == .desktop,
+               !latestMosaicMediaUnitWorkItems.isEmpty {
+                do {
+                    encodeAttemptIntervalCount += 1
+                    let encodeStartTime = CFAbsoluteTimeGetCurrent()
+                    recordEncodeStartCaptureAge(frame: frame, encodeStartTime: encodeStartTime)
+                    logEncodeStageIfNeeded(
+                        frame: frame,
+                        encodeStartTime: encodeStartTime,
+                        drainDropped: drainResult.droppedBeforeDelivery,
+                        queueBytes: queueBytes,
+                        forceKeyframe: forceKeyframe
+                    )
+                    if startupBaseTime > 0, !startupFirstEncodeLogged {
+                        startupFirstEncodeLogged = true
+                        logStartupEvent("first encode attempt")
+                    }
+                    if try await encodeMosaicMediaUnits(
+                        from: frame,
+                        forceKeyframe: forceKeyframe,
+                        isIdleFrame: isIdleFrame,
+                        encodeStartTime: encodeStartTime
+                    ) {
+                        await logStreamStatsIfNeeded()
+                        continue
+                    }
+                } catch {
+                    encodeErrorIntervalCount += 1
+                    droppedFrameCount += 1
+                    MirageLogger.error(.stream, error: error, message: "Mosaic encode error: ")
+                    continue
+                }
+            }
+
             do {
                 guard let encoder else { continue }
                 encodeAttemptIntervalCount += 1
@@ -469,6 +504,91 @@ extension StreamContext {
         }
     }
 
+    private func encodeMosaicMediaUnits(
+        from frame: CapturedFrame,
+        forceKeyframe: Bool,
+        isIdleFrame: Bool,
+        encodeStartTime: CFAbsoluteTime
+    ) async throws -> Bool {
+        let units = latestMosaicMediaUnitWorkItems
+        guard !units.isEmpty else { return false }
+        let preparedUnits = try await mosaicCodecUnitEncoderPool.synchronize(
+            units: units,
+            configuration: encoderConfig,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            inFlightLimit: maxInFlightFrames,
+            maximizePowerEfficiencyEnabled: encoderLowPowerEnabled,
+            factory: videoEncoderFactoryBackend
+        )
+        guard !preparedUnits.isEmpty else { return false }
+
+        await startMosaicUnitEncoders(
+            preparedUnits,
+            baseFrameFlagsSnapshot: baseFrameFlags
+        )
+
+        if forceKeyframe, pendingKeyframeRequiresFlush {
+            pendingKeyframeRequiresFlush = false
+            if pendingKeyframeRequiresReset {
+                pendingKeyframeRequiresReset = false
+                await packetSender?.resetQueue(reason: "mosaic keyframe request")
+            } else {
+                await packetSender?.bumpGeneration(reason: "mosaic keyframe request")
+            }
+            for preparedUnit in preparedUnits {
+                await preparedUnit.encoder.flush()
+            }
+        }
+
+        var acceptedCount = 0
+        for preparedUnit in preparedUnits {
+            guard let croppedFrame = mosaicMediaUnitCropper.croppedFrame(
+                from: frame,
+                unit: preparedUnit.workItem
+            ) else {
+                encodeRejectedIntervalCount += 1
+                droppedFrameCount += 1
+                continue
+            }
+
+            let shouldForceUnitKeyframe = forceKeyframe || preparedUnit.workItem.dependencyVersion == nil
+            if shouldForceUnitKeyframe {
+                await preparedUnit.encoder.prepareForKeyframe(
+                    quality: pendingEmergencyKeyframeQuality ?? keyframeQuality
+                )
+            }
+
+            if inFlightCount == 0 { lastEncodeActivityTime = encodeStartTime }
+            inFlightCount += 1
+            encoderInFlightCountSnapshot = inFlightCount
+            if shouldForceUnitKeyframe { isKeyframeEncoding = true }
+
+            let result = try await preparedUnit.encoder.encodeFrame(
+                croppedFrame,
+                forceKeyframe: shouldForceUnitKeyframe
+            )
+            switch result {
+            case .accepted:
+                acceptedCount += 1
+                encodeAcceptedIntervalCount += 1
+                encodedFrameCount += 1
+                if isIdleFrame { idleEncodedCount += 1 }
+            case let .skipped(reason):
+                inFlightCount -= 1
+                encoderInFlightCountSnapshot = inFlightCount
+                if inFlightCount == 0 {
+                    lastEncodeActivityTime = 0
+                    if shouldForceUnitKeyframe { isKeyframeEncoding = false }
+                }
+                encodeRejectedIntervalCount += 1
+                droppedFrameCount += 1
+                recordEncoderSkip(reason)
+            }
+        }
+        return acceptedCount > 0
+    }
+
     func finishEncoding() async {
         guard inFlightCount > 0 else { return }
         inFlightCount -= 1
@@ -527,6 +647,90 @@ extension StreamContext {
             )
         }
         return true
+    }
+
+    private func updateMosaicDirtyTileState(frame: CapturedFrame, now: CFAbsoluteTime) {
+        let logicalSize = mosaicLogicalSize(for: frame)
+        guard !logicalSize.isEmpty else { return }
+        let frameNumber = UInt32(truncatingIfNeeded: captureIngressIntervalCount)
+        let semanticSnapshot = mosaicSemanticSnapshotCache.snapshot(
+            logicalSize: logicalSize,
+            captureBounds: mosaicSemanticCaptureBounds(for: frame, logicalSize: logicalSize)
+        )
+        guard let result = mosaicDirtyTileTracker.record(StreamContextMosaicDirtyTileFrame(
+            logicalSize: logicalSize,
+            codec: encoderConfig.codec,
+            isIdleFrame: frame.info.isIdleFrame,
+            frameNumber: frameNumber,
+            semanticCandidates: semanticSnapshot.candidates,
+            isTransientSystemState: semanticSnapshot.isTransientSystemState
+        )) else {
+            return
+        }
+        latestMosaicTilePlan = result.plan
+        latestMosaicDirtyTileSummary = result.classification.summary
+        latestMosaicMediaUnitWorkItems = mosaicMediaUnitPlanner.plannedUnits(
+            plan: result.plan,
+            summary: result.classification.summary
+        )
+        logMosaicDirtyTileStateIfNeeded(result, frame: frame, now: now)
+    }
+
+    private func mosaicLogicalSize(for frame: CapturedFrame) -> MiragePixelSize {
+        let frameSize = CGSize(
+            width: CVPixelBufferGetWidth(frame.pixelBuffer),
+            height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        )
+        if frameSize.width > 0, frameSize.height > 0 {
+            return MiragePixelSize(rounded: frameSize)
+        }
+        return MiragePixelSize(rounded: currentEncodedSize)
+    }
+
+    private func mosaicSemanticCaptureBounds(
+        for frame: CapturedFrame,
+        logicalSize: MiragePixelSize
+    ) -> CGRect {
+        if let virtualDisplayContext {
+            let visibleBounds = virtualDisplayVisibleBounds.standardized
+            if !visibleBounds.isEmpty { return visibleBounds }
+            let displayBounds = CGDisplayBounds(virtualDisplayContext.displayID).standardized
+            if !displayBounds.isEmpty { return displayBounds }
+        }
+        let contentRect = frame.info.contentRect.standardized
+        if !contentRect.isEmpty { return contentRect }
+        return CGRect(
+            x: 0,
+            y: 0,
+            width: CGFloat(logicalSize.width),
+            height: CGFloat(logicalSize.height)
+        )
+    }
+
+    private func logMosaicDirtyTileStateIfNeeded(
+        _ result: StreamContextMosaicDirtyTileTrackingResult,
+        frame: CapturedFrame,
+        now: CFAbsoluteTime
+    ) {
+        guard MirageSteadyStateDiagnostics.isEnabled,
+              MirageLogger.isEnabled(.metrics),
+              now - lastMosaicDirtyTileLogTime >= 1.0 else {
+            return
+        }
+        lastMosaicDirtyTileLogTime = now
+        let dirtyTileIDs = result.classification.summary.dirtyTileIDs
+            .prefix(6)
+            .map(\.rawValue)
+            .joined(separator: ",")
+        let dirtyText = frame.info.dirtyPercentage.formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.metrics(
+            "Mosaic dirty state stream \(streamID): " +
+                "plan=\(result.plan.kind.rawValue) epoch=\(result.plan.epoch) " +
+                "dirtyTiles=\(result.dirtyTileCount)/\(result.tileCount) " +
+                "mediaUnits=\(latestMosaicMediaUnitWorkItems.count) " +
+                "captureDirty=\(dirtyText)% idle=\(frame.info.isIdleFrame) " +
+                "sample=[\(dirtyTileIDs)]"
+        )
     }
 }
 #endif

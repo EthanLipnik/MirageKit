@@ -26,9 +26,10 @@ extension StreamPacketSender {
     func fragmentAndSendPackets(_ item: WorkItem, accountedBytes: Int) async {
         let fragmentStartTime = CFAbsoluteTimeGetCurrent()
 
-        let maxPayload = maxPayloadSize
+        let usesMosaicMediaUnitHeader = usesMosaicMediaUnitHeader(for: item)
+        let maxPayload = maximumPayloadSize(usesMosaicMediaUnitHeader: usesMosaicMediaUnitHeader)
         let frameByteCount = max(0, item.frameByteCount)
-        let effectiveFECBlockSize = item.fecBlockSize
+        let effectiveFECBlockSize = usesMosaicMediaUnitHeader ? 0 : item.fecBlockSize
         let fragmentPlan = Self.fragmentPlan(
             frameByteCount: frameByteCount,
             maxPayload: maxPayload,
@@ -160,6 +161,27 @@ extension StreamPacketSender {
         return flags
     }
 
+    private func mosaicFragmentFlags(index: Int, context: FragmentSendContext) -> MirageWire.MirageMosaicPacketFlags {
+        let frameFlags = fragmentFlags(index: index, context: context)
+        var flags = MirageWire.MirageMosaicPacketFlags.atomicGroup
+        if frameFlags.contains(.keyframe) { flags.insert(.keyframe) }
+        if frameFlags.contains(.endOfFrame) { flags.insert(.endOfUnit) }
+        if frameFlags.contains(.parameterSet) { flags.insert(.parameterSet) }
+        if frameFlags.contains(.discontinuity) { flags.insert(.discontinuity) }
+        if frameFlags.contains(.priority) { flags.insert(.priority) }
+        return flags
+    }
+
+    private nonisolated func usesMosaicMediaUnitHeader(for item: WorkItem) -> Bool {
+        item.additionalFlags.contains(.desktopStream)
+    }
+
+    private nonisolated func maximumPayloadSize(usesMosaicMediaUnitHeader: Bool) -> Int {
+        guard usesMosaicMediaUnitHeader else { return maxPayloadSize }
+        let headerOverheadDelta = max(0, MirageWire.mirageMosaicHeaderSize - MirageWire.mirageHeaderSize)
+        return max(1, maxPayloadSize - headerOverheadDelta)
+    }
+
     /// Runs pacing before submitting a fragment.
     private func paceFragmentSend(
         packetBytes: Int,
@@ -184,6 +206,15 @@ extension StreamPacketSender {
         context: FragmentSendContext,
         progress: FragmentSendProgress
     ) async -> FragmentSendOutcome {
+        if usesMosaicMediaUnitHeader(for: context.item) {
+            return await sendMosaicDataFragment(
+                fragmentIndex: fragmentIndex,
+                sequenceNumber: sequenceNumber,
+                context: context,
+                progress: progress
+            )
+        }
+
         let item = context.item
         let start = fragmentIndex * context.maxPayload
         let end = min(start + context.maxPayload, context.frameByteCount)
@@ -285,6 +316,161 @@ extension StreamPacketSender {
             isKeyframe: item.isKeyframe,
             fragmentIndex: fragmentIndex,
             flags: baseFlags
+        ) {
+            Data(packet)
+        } else {
+            nil
+        }
+
+        await sendTransportPacket(
+            packet,
+            packetBuffer: packetBuffer,
+            accountedPayloadBytes: fragmentSize,
+            metadata: transportMetadata(
+                item: item,
+                fragmentIndex: fragmentIndex,
+                fragmentCount: context.fragmentPlan.totalFragmentCount,
+                isParity: false
+            ),
+            context: context
+        )
+        if let duplicatePacket {
+            guard let duplicatePacingResult = await paceFragmentSend(
+                packetBytes: duplicatePacket.count,
+                context: context,
+                progress: progress
+            ) else {
+                return .stopped
+            }
+            combinedPacingSample = PacketPacingSleepSample(
+                totalMs: combinedPacingSample.totalMs + duplicatePacingResult.sleepSample.totalMs,
+                maxMs: max(combinedPacingSample.maxMs, duplicatePacingResult.sleepSample.maxMs)
+            )
+            sendUnreliableDuplicatePacket(
+                duplicatePacket,
+                metadata: transportMetadata(
+                    item: item,
+                    fragmentIndex: fragmentIndex,
+                    fragmentCount: context.fragmentPlan.totalFragmentCount,
+                    isParity: false
+                ),
+                context: context
+            )
+        }
+        return .submitted(accountedPayloadBytes: fragmentSize, sleepSample: combinedPacingSample)
+    }
+
+    /// Builds, optionally encrypts, paces, and submits one Mosaic media-unit data fragment.
+    private func sendMosaicDataFragment(
+        fragmentIndex: Int,
+        sequenceNumber: UInt32,
+        context: FragmentSendContext,
+        progress: FragmentSendProgress
+    ) async -> FragmentSendOutcome {
+        let item = context.item
+        let start = fragmentIndex * context.maxPayload
+        let end = min(start + context.maxPayload, context.frameByteCount)
+        let fragmentSize = end - start
+        guard fragmentSize > 0 else {
+            context.transportCompletionTracker.recordDrop()
+            return .skipped
+        }
+
+        var payloadFlags = mosaicFragmentFlags(index: fragmentIndex, context: context)
+        if mediaSecurityKey != nil { payloadFlags.insert(.encryptedPayload) }
+        let checksum: UInt32 = mediaSecurityKey == nil ? item.encodedData.withUnsafeBytes { frameBytes in
+            MirageWire.CRC32.calculate(UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]))
+        } : 0
+        let mosaicMetadata = item.mosaicMediaUnitMetadata
+        let header = MirageWire.MirageMosaicPacketHeader(
+            flags: payloadFlags,
+            streamID: item.streamID,
+            packetSequence: sequenceNumber,
+            timestamp: context.timestamp,
+            tilePlanEpoch: mosaicMetadata?.tilePlanEpoch ?? UInt32(item.epoch),
+            mediaEpoch: mosaicMetadata?.mediaEpoch ?? UInt32(item.dimensionToken),
+            mediaUnitIndex: mosaicMetadata?.mediaUnitIndex ?? 0,
+            tileIndex: mosaicMetadata?.tileIndex ?? 0,
+            transportGroupIndex: mosaicMetadata?.transportGroupIndex ?? 0,
+            presentationGroupIndex: mosaicMetadata?.presentationGroupIndex ?? 0,
+            unitFrameNumber: item.frameNumber,
+            tileVersion: mosaicMetadata?.tileVersion ?? item.frameNumber,
+            dependencyVersion: mosaicMetadata?.dependencyVersion ??
+                (item.isKeyframe ? item.frameNumber : latestKeyframeFrameNumber),
+            fragmentIndex: UInt16(fragmentIndex),
+            fragmentCount: UInt16(context.fragmentPlan.totalFragmentCount),
+            fecBlockSize: 0,
+            payloadLength: UInt32(fragmentSize),
+            unitByteCount: UInt32(context.frameByteCount),
+            checksum: checksum
+        )
+
+        let wirePayload: Data?
+        if let mediaSecurityKey {
+            do {
+                wirePayload = try item.encodedData.withUnsafeBytes { frameBytes in
+                    try MirageMediaSecurity.encryptMosaicVideoPayload(
+                        UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]),
+                        header: header,
+                        key: mediaSecurityKey,
+                        direction: .hostToClient
+                    )
+                }
+            } catch {
+                MirageLogger.error(
+                    .stream,
+                    "Failed to encrypt Mosaic video packet for stream \(item.streamID) frame \(item.frameNumber) seq \(sequenceNumber): \(error)"
+                )
+                context.transportCompletionTracker.recordDrop()
+                return .skipped
+            }
+        } else {
+            wirePayload = nil
+        }
+
+        let packetPayloadLength = wirePayload?.count ?? fragmentSize
+        let packetLength = MirageWire.mirageMosaicHeaderSize + packetPayloadLength
+        guard let pacingResult = await paceFragmentSend(
+            packetBytes: packetLength,
+            context: context,
+            progress: progress
+        ) else {
+            return .stopped
+        }
+        var combinedPacingSample = pacingResult.sleepSample
+
+        let packetBuffer = packetBufferPool.acquire()
+        packetBuffer.prepare(length: packetLength)
+        packetBuffer.withMutableBytes { packetBytes in
+            guard packetBytes.count >= packetLength,
+                  let baseAddress = packetBytes.baseAddress else {
+                return
+            }
+            let serializedHeader = header.serialize()
+            serializedHeader.withUnsafeBytes { headerBytes in
+                guard let headerBase = headerBytes.baseAddress else { return }
+                baseAddress.copyMemory(from: headerBase, byteCount: serializedHeader.count)
+            }
+            if let wirePayload {
+                copyPayload(wirePayload, to: baseAddress, headerSize: MirageWire.mirageMosaicHeaderSize)
+            } else {
+                item.encodedData.withUnsafeBytes { frameBytes in
+                    let fragmentBytes = UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end])
+                    guard let fragmentBase = fragmentBytes.baseAddress else { return }
+                    baseAddress.advanced(by: MirageWire.mirageMosaicHeaderSize).copyMemory(
+                        from: fragmentBase,
+                        byteCount: fragmentSize
+                    )
+                }
+            }
+        }
+
+        let packet = packetBuffer.finalize(length: packetLength)
+        let duplicatePacket: Data? = if Self.shouldDuplicateParameterSetPacket(
+            isEnabled: duplicatesParameterSetPackets,
+            isKeyframe: item.isKeyframe,
+            fragmentIndex: fragmentIndex,
+            flags: fragmentFlags(index: fragmentIndex, context: context)
         ) {
             Data(packet)
         } else {
@@ -521,7 +707,10 @@ extension StreamPacketSender {
             fragmentCount: fragmentCount,
             isKeyframe: item.isKeyframe,
             isParity: isParity,
-            isRecovery: !item.isKeyframe && !isParity && item.fecBlockSize > 1,
+            isRecovery: !item.isKeyframe &&
+                !isParity &&
+                !usesMosaicMediaUnitHeader(for: item) &&
+                item.fecBlockSize > 1,
             sendDeadline: transportSendDeadline(for: item)
         )
     }
@@ -557,9 +746,18 @@ extension StreamPacketSender {
 
     /// Copies packet payload bytes immediately after the fixed Mirage frame header.
     private nonisolated func copyPayload(_ payload: Data, to baseAddress: UnsafeMutableRawPointer) {
+        copyPayload(payload, to: baseAddress, headerSize: MirageWire.mirageHeaderSize)
+    }
+
+    /// Copies packet payload bytes immediately after the selected Mirage media header.
+    private nonisolated func copyPayload(
+        _ payload: Data,
+        to baseAddress: UnsafeMutableRawPointer,
+        headerSize: Int
+    ) {
         payload.withUnsafeBytes { payloadBytes in
             guard let payloadBase = payloadBytes.baseAddress else { return }
-            baseAddress.advanced(by: MirageWire.mirageHeaderSize).copyMemory(
+            baseAddress.advanced(by: headerSize).copyMemory(
                 from: payloadBase,
                 byteCount: payload.count
             )

@@ -100,7 +100,9 @@ actor StreamPacketSender {
         self.onDependencyFrameDropped = onDependencyFrameDropped
         self.onFrameTransportCompleted = onFrameTransportCompleted
         packetBufferPool = PacketBufferPool(
-            capacity: MirageWire.mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
+            capacity: max(MirageWire.mirageHeaderSize, MirageWire.mirageMosaicHeaderSize) +
+                maxPayloadSize +
+                MirageMediaSecurity.authTagLength
         )
     }
 }

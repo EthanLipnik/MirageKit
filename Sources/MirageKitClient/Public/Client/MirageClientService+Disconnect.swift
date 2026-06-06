@@ -218,6 +218,8 @@ extension MirageClientService {
         appStreamPlaceholderDesktopStreamID = nil
         appStreamPlaceholderAppSessionID = nil
         appAtlasLayoutsByMediaStreamID.removeAll()
+        mosaicTilePlansByStreamID.removeAll()
+        mosaicEpochSummariesByStreamID.removeAll()
         fastPathState.clearAllStartupPacketPending()
         fastPathState.clearDiagnostics()
         for task in startupRegistrationRetryTasks.values {

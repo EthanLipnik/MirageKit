@@ -383,6 +383,16 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     }
 
     private static func isRecoveryPacket(_ data: Data) -> Bool {
+        if data.count >= MirageWire.mirageMosaicHeaderSize,
+           let header = MirageWire.MirageMosaicPacketHeader.deserialize(from: data) {
+            return header.flags.contains(.keyframe) ||
+                header.flags.contains(.parameterSet) ||
+                header.flags.contains(.discontinuity) ||
+                header.flags.contains(.priority) ||
+                header.flags.contains(.fecParity) ||
+                header.fecBlockSize > 1
+        }
+
         guard data.count >= MirageWire.mirageHeaderSize, let header = MirageWire.FrameHeader.deserialize(from: data) else {
             return false
         }
