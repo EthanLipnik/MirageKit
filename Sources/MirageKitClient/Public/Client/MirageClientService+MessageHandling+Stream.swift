@@ -177,6 +177,14 @@ extension MirageClientService {
             return
         }
         updateObservedFrameRate(metrics.targetFrameRate, for: metrics.streamID)
+        if let mosaicTilePlan = metrics.mosaicTilePlan {
+            mosaicTilePlansByStreamID[metrics.streamID] = mosaicTilePlan
+            fastPathState.setMosaicTilePlan(mosaicTilePlan, for: metrics.streamID)
+            processBufferedMosaicUnitsIfNeeded(streamID: metrics.streamID)
+        }
+        if let mosaicEpochSummary = metrics.mosaicEpochSummary {
+            mosaicEpochSummariesByStreamID[metrics.streamID] = mosaicEpochSummary
+        }
         if let controller = controllersByStream[metrics.streamID] {
             let requestedLatencyMode = renderLatencyModeByStream[metrics.streamID]
             let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode

@@ -93,6 +93,11 @@ public final class MirageClientService {
     /// Desktop stream mode (mirrored vs secondary display)
     public internal(set) var desktopStreamMode: MirageMedia.MirageDesktopStreamMode?
 
+    /// Latest host-planned Mosaic tile plan per media stream.
+    public internal(set) var mosaicTilePlansByStreamID: [StreamID: MirageMedia.MirageMosaicTilePlan] = [:]
+    /// Latest host Mosaic dirty/reuse summary per media stream.
+    public internal(set) var mosaicEpochSummariesByStreamID: [StreamID: MirageMedia.MirageMosaicEpochSummary] = [:]
+
     /// Effective desktop cursor presentation for the active or pending desktop stream.
     public internal(set) var desktopCursorPresentation: MirageWire.MirageDesktopCursorPresentation?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.

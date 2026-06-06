@@ -150,6 +150,13 @@ extension StreamContext {
         lastCapturedFrame = nil
         cachedStartupFrame = nil
         lastCapturedFrameTime = 0
+        mosaicDirtyTileTracker.reset()
+        mosaicMediaUnitCropper.reset()
+        mosaicSemanticSnapshotCache.reset()
+        Task { await mosaicCodecUnitEncoderPool.stopAll() }
+        latestMosaicDirtyTileSummary = nil
+        latestMosaicTilePlan = nil
+        latestMosaicMediaUnitWorkItems.removeAll(keepingCapacity: false)
         freshnessBurstActive = false
         startupFrameCachingEnabled = false
     }

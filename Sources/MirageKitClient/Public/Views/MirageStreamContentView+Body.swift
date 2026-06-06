@@ -155,6 +155,14 @@ private extension MirageStreamContentView {
             streamPlatformSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.bottom, localPresentationKeyboardBottomInset)
+                .overlay {
+                    if isDesktopStream && showMosaicTileDebugOverlay {
+                        MirageMosaicTileDebugOverlay(
+                            tilePlan: clientService.mosaicTilePlansByStreamID[presentationStreamID]
+                                ?? clientService.mosaicTilePlansByStreamID[session.streamID]
+                        )
+                    }
+                }
         }
     }
 

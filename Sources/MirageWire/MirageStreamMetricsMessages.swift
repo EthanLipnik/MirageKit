@@ -223,6 +223,8 @@ package struct StreamMetricsMessage: Codable {
     package let packetPacerFrameMaxSleepMs: Int?
     package let mediaMaxPacketSize: Int?
     package let mediaSendProfile: String?
+    package let mosaicTilePlan: MirageMosaicTilePlan?
+    package let mosaicEpochSummary: MirageMosaicEpochSummary?
     package let stalePacketDrops: UInt64?
     package let senderLocalDeadlineDrops: UInt64?
     package let generationAbortDrops: UInt64?
@@ -363,6 +365,8 @@ package struct StreamMetricsMessage: Codable {
         packetPacerFrameMaxSleepMs: Int? = nil,
         mediaMaxPacketSize: Int? = nil,
         mediaSendProfile: String? = nil,
+        mosaicTilePlan: MirageMosaicTilePlan? = nil,
+        mosaicEpochSummary: MirageMosaicEpochSummary? = nil,
         stalePacketDrops: UInt64? = nil,
         senderLocalDeadlineDrops: UInt64? = nil,
         generationAbortDrops: UInt64? = nil,
@@ -502,6 +506,8 @@ package struct StreamMetricsMessage: Codable {
         self.packetPacerFrameMaxSleepMs = packetPacerFrameMaxSleepMs
         self.mediaMaxPacketSize = mediaMaxPacketSize
         self.mediaSendProfile = mediaSendProfile
+        self.mosaicTilePlan = mosaicTilePlan
+        self.mosaicEpochSummary = mosaicEpochSummary
         self.stalePacketDrops = stalePacketDrops
         self.senderLocalDeadlineDrops = senderLocalDeadlineDrops
         self.generationAbortDrops = generationAbortDrops

@@ -77,6 +77,52 @@ struct MirageMediaTopologyTests {
         #expect(json.contains("\"singleUnit\""))
         #expect(json.contains("\"primary\""))
         #expect(json.contains("\"ap4h\""))
-        #expect(MirageMediaTopologyKind.allCases == [.singleUnit, .atlas, .multiUnit, .replay])
+        #expect(MirageMediaTopologyKind.allCases == [.singleUnit, .atlas, .multiUnit, .mosaic, .replay])
+    }
+
+    @Test("Fixed-grid Mosaic tile plan maps to topology-aware codec units")
+    func fixedGridMosaicTilePlanMapsToTopologyAwareCodecUnits() {
+        let plan = MirageMosaicTilePlan.fixedGrid(
+            logicalSize: MiragePixelSize(width: 6000, height: 3376),
+            columns: 3,
+            rows: 3,
+            codec: .hevc
+        )
+
+        #expect(plan.kind == .fixedGrid)
+        #expect(plan.tiles.count == 9)
+        #expect(plan.codecUnits.count == 9)
+        #expect(plan.tiles[0].sourceRect == MiragePixelRect(x: 0, y: 0, width: 2000, height: 1125))
+        #expect(plan.tiles[8].sourceRect == MiragePixelRect(x: 4000, y: 2250, width: 2000, height: 1126))
+        #expect(plan.tiles.allSatisfy { $0.semanticClass == .gridFallback })
+
+        let topology = plan.mediaTopology
+        #expect(topology.id == plan.id)
+        #expect(topology.kind == .mosaic)
+        #expect(topology.logicalSize == MiragePixelSize(width: 6000, height: 3376))
+        #expect(topology.units.count == plan.codecUnits.count)
+        #expect(topology.units[4].id == MirageMediaUnitID(rawValue: "grid-4"))
+        #expect(!topology.representsSingleUnitFullFrame)
+    }
+
+    @Test("Semantic Mosaic descriptors keep group and text metadata")
+    func semanticMosaicDescriptorsKeepGroupAndTextMetadata() {
+        let scrollTileID = MirageMosaicTileID(rawValue: "focused-scroll")
+        let groupID = MirageMosaicPresentationGroupID(rawValue: "active-scroll-group")
+        let tile = MirageMosaicTileDescriptor(
+            id: scrollTileID,
+            sourceRect: MiragePixelRect(x: 120, y: 96, width: 2400, height: 1600),
+            presentationRect: MiragePixelRect(x: 120, y: 96, width: 2400, height: 1600),
+            semanticClass: .scrollView,
+            priority: .focusedContent,
+            codecStrategy: .verticalColumns,
+            presentationGroupID: groupID,
+            commitPolicy: .atomic
+        )
+
+        #expect(tile.textSensitive)
+        #expect(tile.presentationGroupID == groupID)
+        #expect(tile.commitPolicy == .atomic)
+        #expect(tile.codecStrategy == .verticalColumns)
     }
 }

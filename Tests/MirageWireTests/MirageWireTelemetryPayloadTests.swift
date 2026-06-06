@@ -61,6 +61,53 @@ struct MirageWireTelemetryPayloadTests {
         #expect(decoded.tenBitDisplayP3Validated == false)
     }
 
+    @Test("Stream metrics Mosaic payload round-trips in wire target")
+    func streamMetricsMosaicPayloadRoundTripsInWireTarget() throws {
+        let topologyID = MirageMediaTopologyID(
+            rawValue: try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000F1E0"))
+        )
+        let tilePlan = MirageMosaicTilePlan.fixedGrid(
+            id: topologyID,
+            epoch: 12,
+            logicalSize: MiragePixelSize(width: 1920, height: 1080),
+            columns: 2,
+            rows: 2,
+            codec: .hevc
+        )
+        let dirtyTileID = MirageMosaicTileID(rawValue: "grid-1")
+        let reusedTileID = MirageMosaicTileID(rawValue: "grid-0")
+        let epochSummary = MirageMosaicEpochSummary(
+            tilePlanID: topologyID,
+            tilePlanEpoch: 12,
+            frameNumber: 89,
+            dirtyTileIDs: [dirtyTileID],
+            reusedTileVersions: [reusedTileID: 4],
+            updatedTileVersions: [dirtyTileID: 7]
+        )
+        let message = MirageWire.StreamMetricsMessage(
+            streamID: 52,
+            encodedFPS: 59,
+            idleEncodedFPS: 1,
+            droppedFrames: 0,
+            activeQuality: 0.82,
+            targetFrameRate: 60,
+            mosaicTilePlan: tilePlan,
+            mosaicEpochSummary: epochSummary
+        )
+
+        let envelope = try parsedControlMessage(
+            from: MirageWire.ControlMessage(type: .streamMetricsUpdate, content: message).serialize()
+        ).message
+        let decoded = try envelope.decode(MirageWire.StreamMetricsMessage.self)
+
+        #expect(decoded.mosaicTilePlan == tilePlan)
+        #expect(decoded.mosaicTilePlan?.kind == .fixedGrid)
+        #expect(decoded.mosaicTilePlan?.tiles.count == 4)
+        #expect(decoded.mosaicEpochSummary == epochSummary)
+        #expect(decoded.mosaicEpochSummary?.dirtyTileIDs == [dirtyTileID])
+        #expect(decoded.mosaicEpochSummary?.updatedTileVersions[dirtyTileID] == 7)
+    }
+
     @Test("Receiver media feedback payload round-trips in wire target")
     func receiverMediaFeedbackPayloadRoundTripsInWireTarget() throws {
         let timingSamples = (0 ..< 140).map {

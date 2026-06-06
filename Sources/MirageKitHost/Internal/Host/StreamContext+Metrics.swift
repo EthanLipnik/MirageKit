@@ -196,6 +196,8 @@ extension StreamContext {
                 packetPacerFrameMaxSleepMs: packetTelemetry?.packetPacerFrameMaxSleepMs,
                 mediaMaxPacketSize: mediaMaxPacketSize,
                 mediaSendProfile: mediaSendProfileRawValue,
+                mosaicTilePlan: latestMosaicTilePlan,
+                mosaicEpochSummary: latestMosaicDirtyTileSummary,
                 stalePacketDrops: packetTelemetry?.stalePacketDrops,
                 senderLocalDeadlineDrops: packetTelemetry?.senderLocalDeadlineDrops,
                 generationAbortDrops: packetTelemetry?.generationAbortDrops,

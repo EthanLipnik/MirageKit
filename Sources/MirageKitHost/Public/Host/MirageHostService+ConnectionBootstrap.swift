@@ -86,7 +86,7 @@ extension MirageHostService {
         autoTrustGranted: Bool
     ) async throws -> (response: MirageWire.MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
         let hostName = serviceName
-        let hostCapabilities = MirageRuntimeCapabilities.currentFullFrameBaseline
+        let hostCapabilities = MirageRuntimeCapabilities.currentMosaicCutover
 
         guard request.protocolVersion == Int(MirageKit.controlProtocolVersion) else {
             return (
@@ -105,7 +105,8 @@ extension MirageHostService {
         }
 
         guard hostCapabilities.selectedMediaPacketFamilyForSend(
-            matching: request.clientCapabilities
+            matching: request.clientCapabilities,
+            requiredTopology: .mosaic
         ) != nil else {
             return (
                 MirageWire.MirageSessionBootstrapResponse(

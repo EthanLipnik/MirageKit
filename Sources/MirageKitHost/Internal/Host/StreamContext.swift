@@ -119,6 +119,16 @@ actor StreamContext {
     var lastCapturedFrame: CapturedFrame?
     var lastNonIdleCapturedFrameTime: CFAbsoluteTime = 0
     var cachedStartupFrame: CapturedFrame?
+    var mosaicDirtyTileTracker = StreamContextMosaicDirtyTileTracker()
+    let mosaicMediaUnitPlanner = StreamContextMosaicMediaUnitPlanner()
+    let mosaicMediaUnitCropper = StreamContextMosaicMediaUnitCropper()
+    let mosaicCodecUnitEncoderPool = StreamContextMosaicCodecUnitEncoderPool()
+    let mosaicEncodingCallbackSequencer = StreamEncodingCallbackSequencer()
+    let mosaicSemanticSnapshotCache = StreamContextMosaicSemanticSnapshotCache()
+    var latestMosaicDirtyTileSummary: MirageMosaicEpochSummary?
+    var latestMosaicTilePlan: MirageMosaicTilePlan?
+    var latestMosaicMediaUnitWorkItems: [StreamContextMosaicMediaUnitWorkItem] = []
+    var lastMosaicDirtyTileLogTime: CFAbsoluteTime = 0
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (MirageWire.StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?

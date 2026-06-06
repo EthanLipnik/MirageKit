@@ -14,12 +14,17 @@ import MirageKit
 import MirageKitClientPresentation
 import MirageMedia
 import MirageWire
+import CoreGraphics
 import Foundation
 
 final class MirageClientFastPathState: @unchecked Sendable {
     struct VideoPacketContext {
         let consumedStartupPending: Bool
         let reassembler: FrameReassembler?
+        let mosaicReassembler: StreamControllerMosaicMediaUnitReassembler
+        let mosaicPipeline: StreamControllerMosaicClientPipeline
+        let mosaicTilePlan: MirageMosaicTilePlan?
+        let mosaicContentRect: CGRect
         let mediaPacketKey: MirageMediaPacketKey?
     }
 
@@ -35,6 +40,11 @@ final class MirageClientFastPathState: @unchecked Sendable {
         var activeStreamIDs: Set<StreamID> = []
         var startupPacketPending: Set<StreamID> = []
         var reassemblersByStream: [StreamID: FrameReassembler] = [:]
+        var mosaicReassemblersByStream: [StreamID: StreamControllerMosaicMediaUnitReassembler] = [:]
+        var mosaicPipelinesByStream: [StreamID: StreamControllerMosaicClientPipeline] = [:]
+        var mosaicTilePlansByStream: [StreamID: MirageMosaicTilePlan] = [:]
+        var mosaicContentRectsByStream: [StreamID: CGRect] = [:]
+        var bufferedMosaicUnitsByStream: [StreamID: [StreamControllerMosaicMediaUnitReassembler.CompletedUnit]] = [:]
         var bufferedEarlyVideoPacketByStream: [StreamID: Data] = [:]
         var observedMediaStreamLabels: Set<String> = []
         var firstVideoPacketRejectionReasonByStream: [StreamID: IncomingVideoPacketRejectionReason] = [:]
@@ -65,16 +75,85 @@ final class MirageClientFastPathState: @unchecked Sendable {
         withLock { state in
             guard state.activeStreamIDs.contains(streamID) else { return nil }
             let consumedStartupPending = state.startupPacketPending.remove(streamID) != nil
+            let mosaicReassembler: StreamControllerMosaicMediaUnitReassembler
+            if let existingReassembler = state.mosaicReassemblersByStream[streamID] {
+                mosaicReassembler = existingReassembler
+            } else {
+                mosaicReassembler = StreamControllerMosaicMediaUnitReassembler(streamID: streamID)
+                state.mosaicReassemblersByStream[streamID] = mosaicReassembler
+            }
+            let mosaicPipeline: StreamControllerMosaicClientPipeline
+            if let existingPipeline = state.mosaicPipelinesByStream[streamID] {
+                mosaicPipeline = existingPipeline
+            } else {
+                mosaicPipeline = StreamControllerMosaicClientPipeline(streamID: streamID)
+                state.mosaicPipelinesByStream[streamID] = mosaicPipeline
+            }
             return VideoPacketContext(
                 consumedStartupPending: consumedStartupPending,
                 reassembler: state.reassemblersByStream[streamID],
+                mosaicReassembler: mosaicReassembler,
+                mosaicPipeline: mosaicPipeline,
+                mosaicTilePlan: state.mosaicTilePlansByStream[streamID],
+                mosaicContentRect: state.mosaicContentRectsByStream[streamID] ?? .zero,
                 mediaPacketKey: state.mediaSecurityPacketKey
             )
         }
     }
 
     func setReassemblerSnapshot(_ snapshot: [StreamID: FrameReassembler]) {
-        withLock { $0.reassemblersByStream = snapshot }
+        withLock { state in
+            state.reassemblersByStream = snapshot
+            state.mosaicReassemblersByStream = state.mosaicReassemblersByStream.filter {
+                snapshot.keys.contains($0.key)
+            }
+            state.mosaicPipelinesByStream = state.mosaicPipelinesByStream.filter {
+                snapshot.keys.contains($0.key)
+            }
+            state.mosaicTilePlansByStream = state.mosaicTilePlansByStream.filter {
+                snapshot.keys.contains($0.key)
+            }
+            state.mosaicContentRectsByStream = state.mosaicContentRectsByStream.filter {
+                snapshot.keys.contains($0.key)
+            }
+            state.bufferedMosaicUnitsByStream = state.bufferedMosaicUnitsByStream.filter {
+                snapshot.keys.contains($0.key)
+            }
+        }
+    }
+
+    func setMosaicTilePlan(_ plan: MirageMosaicTilePlan, for streamID: StreamID) {
+        withLock { $0.mosaicTilePlansByStream[streamID] = plan }
+    }
+
+    func setMosaicContentRect(_ contentRect: CGRect, for streamID: StreamID) {
+        withLock { $0.mosaicContentRectsByStream[streamID] = contentRect }
+    }
+
+    func bufferMosaicUnit(
+        _ unit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit,
+        for streamID: StreamID
+    ) -> Bool {
+        withLock { state in
+            guard state.activeStreamIDs.contains(streamID) else { return false }
+            var units = state.bufferedMosaicUnitsByStream[streamID] ?? []
+            guard units.count < 8 else { return false }
+            units.append(unit)
+            state.bufferedMosaicUnitsByStream[streamID] = units
+            return true
+        }
+    }
+
+    func takeBufferedMosaicUnits(for streamID: StreamID) -> [StreamControllerMosaicMediaUnitReassembler.CompletedUnit] {
+        withLock { $0.bufferedMosaicUnitsByStream.removeValue(forKey: streamID) ?? [] }
+    }
+
+    func bufferedMosaicUnitCount(for streamID: StreamID) -> Int {
+        withLock { $0.bufferedMosaicUnitsByStream[streamID]?.count ?? 0 }
+    }
+
+    func clearBufferedMosaicUnits(for streamID: StreamID) {
+        withLock { _ = $0.bufferedMosaicUnitsByStream.removeValue(forKey: streamID) }
     }
 
     func bufferEarlyVideoPacket(_ data: Data, for streamID: StreamID) -> Bool {
@@ -167,6 +246,7 @@ final class MirageClientFastPathState: @unchecked Sendable {
             state.observedMediaStreamLabels.removeAll()
             state.firstVideoPacketRejectionReasonByStream.removeAll()
             state.bufferedEarlyVideoPacketByStream.removeAll()
+            state.bufferedMosaicUnitsByStream.removeAll()
         }
     }
 

@@ -16,8 +16,8 @@ import MirageWire
 
 @Suite("Stream Packet Sender Full-Frame Packetization")
 struct StreamPacketSenderFullFramePacketizationTests {
-    @Test("Current generation full-frame packetization keeps legacy header contract")
-    func currentGenerationFullFramePacketizationKeepsLegacyHeaderContract() async throws {
+    @Test("Current generation non-desktop packetization keeps legacy header contract")
+    func currentGenerationNonDesktopPacketizationKeepsLegacyHeaderContract() async throws {
         let payload = Data([0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99])
         let maxPayloadSize = 4
         let contentRect = CGRect(x: 12, y: 24, width: 640, height: 360)
@@ -41,7 +41,7 @@ struct StreamPacketSenderFullFramePacketizationTests {
             streamID: 73,
             frameNumber: 99,
             sequenceNumberStart: 700,
-            additionalFlags: [.desktopStream, .discontinuity],
+            additionalFlags: [.discontinuity],
             dimensionToken: 17,
             epoch: 5,
             fecBlockSize: 0,
@@ -68,7 +68,7 @@ struct StreamPacketSenderFullFramePacketizationTests {
             contentRect: contentRect,
             expectedSequence: 700,
             expectedFragmentIndex: 0,
-            expectedFlags: [.desktopStream, .discontinuity, .keyframe, .parameterSet]
+            expectedFlags: [.discontinuity, .keyframe, .parameterSet]
         )
         try assertFullFramePacket(
             packets[1],
@@ -77,7 +77,7 @@ struct StreamPacketSenderFullFramePacketizationTests {
             contentRect: contentRect,
             expectedSequence: 701,
             expectedFragmentIndex: 1,
-            expectedFlags: [.desktopStream, .keyframe]
+            expectedFlags: [.keyframe]
         )
         try assertFullFramePacket(
             packets[2],
@@ -86,16 +86,16 @@ struct StreamPacketSenderFullFramePacketizationTests {
             contentRect: contentRect,
             expectedSequence: 702,
             expectedFragmentIndex: 2,
-            expectedFlags: [.desktopStream, .keyframe, .endOfFrame]
+            expectedFlags: [.keyframe, .endOfFrame]
         )
 
         await sender.stop()
     }
 
-    @Test("Encrypted FEC full-frame packetization keeps decryptable current-generation packets")
-    func encryptedFECFullFramePacketizationKeepsDecryptableCurrentGenerationPackets() async throws {
+    @Test("Encrypted desktop packetization emits decryptable Mosaic media-unit packets")
+    func encryptedDesktopPacketizationEmitsDecryptableMosaicMediaUnitPackets() async throws {
         let payload = Data([0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xA9])
-        let maxPayloadSize = 4
+        let maxPayloadSize = 8
         let fecBlockSize = 2
         let mediaSecurityContext = makeSecurityContext()
         let mediaSecurityKey = MirageMediaPacketKey(context: mediaSecurityContext)
@@ -128,63 +128,79 @@ struct StreamPacketSenderFullFramePacketizationTests {
             logPrefix: "test",
             generation: generation,
             encodedAt: CFAbsoluteTimeGetCurrent(),
-            pacingOverride: nil
+            pacingOverride: nil,
+            mosaicMediaUnitMetadata: StreamPacketSender.MosaicMediaUnitMetadata(
+                tilePlanEpoch: 12,
+                mediaEpoch: 89,
+                mediaUnitIndex: 2,
+                tileIndex: 3,
+                transportGroupIndex: 4,
+                presentationGroupIndex: 5,
+                tileVersion: 7,
+                dependencyVersion: 4
+            )
         ))
 
-        let packets = try await waitForFullFramePackets(captured, expectedCount: 5)
+        let packets = try await waitForFullFramePackets(captured, expectedCount: 3)
         try await waitForStreamPacketQueuedBytesToDrain(sender)
-        guard packets.count == 5 else {
-            Issue.record("Expected 5 encrypted FEC full-frame packets, captured \(packets.count)")
+        guard packets.count == 3 else {
+            Issue.record("Expected 3 encrypted Mosaic media-unit packets, captured \(packets.count)")
             await sender.stop()
             return
         }
 
-        #expect(packets.map { $0.metadata.fragmentIndex } == [0, 1, 3, 2, 4])
+        #expect(packets.map { $0.metadata.fragmentIndex } == [0, 1, 2])
+        let mosaicMaxPayloadSize = max(
+            1,
+            maxPayloadSize - max(0, MirageWire.mirageMosaicHeaderSize - MirageWire.mirageHeaderSize)
+        )
         for (sendIndex, packet) in packets.enumerated() {
-            let header = try #require(MirageWire.FrameHeader.deserialize(from: packet.packet))
+            let header = try #require(MirageWire.MirageMosaicPacketHeader.deserialize(from: packet.packet))
             let fragmentIndex = Int(header.fragmentIndex)
-            let expectedPlaintext = expectedFullFramePlaintext(
-                fragmentIndex: fragmentIndex,
-                payload: payload,
-                maxPayloadSize: maxPayloadSize,
-                fecBlockSize: fecBlockSize
-            )
-            let wirePayload = Data(packet.packet.dropFirst(MirageWire.mirageHeaderSize))
-            let decryptedPayload = try MirageMediaSecurity.decryptVideoPayload(
+            let start = fragmentIndex * mosaicMaxPayloadSize
+            let end = min(payload.count, start + mosaicMaxPayloadSize)
+            let expectedPlaintext = Data(payload[start ..< end])
+            let wirePayload = Data(packet.packet.dropFirst(MirageWire.mirageMosaicHeaderSize))
+            let decryptedPayload = try MirageMediaSecurity.decryptMosaicVideoPayload(
                 wirePayload,
                 header: header,
                 key: mediaSecurityKey,
                 direction: .hostToClient
             )
 
-            #expect(header.magic == MirageWire.mirageProtocolMagic)
+            #expect(header.magic == MirageWire.mirageMosaicMediaMagic)
             #expect(header.version == MirageKit.mediaPacketProtocolVersion)
-            #expect(header.flags.contains(.desktopStream))
             #expect(header.flags.contains(.encryptedPayload))
             #expect(header.streamID == 74)
-            #expect(header.sequenceNumber == UInt32(800 + sendIndex))
+            #expect(header.packetSequence == UInt32(800 + sendIndex))
             #expect(header.timestamp == 3_000_000_000)
-            #expect(header.frameNumber == 100)
-            #expect(header.fragmentCount == 5)
-            #expect(header.fecBlockSize == UInt8(fecBlockSize))
+            #expect(header.tilePlanEpoch == 12)
+            #expect(header.mediaEpoch == 89)
+            #expect(header.mediaUnitIndex == 2)
+            #expect(header.tileIndex == 3)
+            #expect(header.transportGroupIndex == 4)
+            #expect(header.presentationGroupIndex == 5)
+            #expect(header.unitFrameNumber == 100)
+            #expect(header.tileVersion == 7)
+            #expect(header.dependencyVersion == 4)
+            #expect(header.fragmentCount == 3)
+            #expect(header.fecBlockSize == 0)
             #expect(header.payloadLength == UInt32(expectedPlaintext.count))
-            #expect(header.frameByteCount == UInt32(payload.count))
+            #expect(header.unitByteCount == UInt32(payload.count))
             #expect(header.checksum == 0)
-            #expect(header.dimensionToken == 18)
-            #expect(header.epoch == 6)
             #expect(wirePayload.count == expectedPlaintext.count + MirageMediaSecurity.authTagLength)
             #expect(decryptedPayload == expectedPlaintext)
 
-            let isParity = fragmentIndex >= 3
-            #expect(header.flags.contains(.fecParity) == isParity)
-            #expect(header.flags.contains(.endOfFrame) == (fragmentIndex == 4))
+            #expect(!header.flags.contains(.fecParity))
+            #expect(header.flags.contains(.endOfUnit) == (fragmentIndex == 2))
+            #expect(header.flags.contains(.atomicGroup))
             #expect(packet.metadata.streamID == 74)
             #expect(packet.metadata.frameNumber == 100)
             #expect(packet.metadata.fragmentIndex == fragmentIndex)
-            #expect(packet.metadata.fragmentCount == 5)
+            #expect(packet.metadata.fragmentCount == 3)
             #expect(!packet.metadata.isKeyframe)
-            #expect(packet.metadata.isParity == isParity)
-            #expect(packet.metadata.isRecovery == !isParity)
+            #expect(!packet.metadata.isParity)
+            #expect(!packet.metadata.isRecovery)
         }
 
         await sender.stop()

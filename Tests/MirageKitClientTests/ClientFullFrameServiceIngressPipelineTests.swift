@@ -81,6 +81,30 @@ struct ClientFullFrameServiceIngressPipelineTests {
 
         #expect(serviceFrame == pipelineFrame)
     }
+
+    @Test("Service ingress buffers encrypted Mosaic media-unit packets until tile plan")
+    func serviceIngressBuffersEncryptedMosaicMediaUnitPacketsUntilTilePlan() async throws {
+        let payload = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07])
+        let contentRect = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let context = MirageMediaSecurityContext(
+            sessionKey: Data((0 ..< MirageMediaSecurity.sessionKeyLength).map { UInt8(truncatingIfNeeded: $0) })
+        )
+        let packets = try makeEncryptedMosaicPackets(
+            payload: payload,
+            streamID: 122,
+            mediaSecurityContext: context
+        )
+
+        let result = await deliverMosaicThroughServiceIngress(
+            packets,
+            streamID: 122,
+            contentRect: contentRect,
+            mediaSecurityContext: context
+        )
+
+        #expect(result.deliveredFrame == nil)
+        #expect(result.bufferedMosaicUnitCount == 1)
+    }
 }
 
 private struct DeliveredFullFrame: Equatable, Sendable {
@@ -159,6 +183,48 @@ private func deliverThroughServiceIngress(
     service.processIncomingVideoData(packet, expectedStreamID: streamID)
 
     return try #require(delivered.frame)
+}
+
+private func deliverMosaicThroughServiceIngress(
+    _ packets: [Data],
+    streamID: StreamID,
+    contentRect: CGRect,
+    mediaSecurityContext: MirageMediaSecurityContext? = nil
+) async -> (deliveredFrame: DeliveredFullFrame?, bufferedMosaicUnitCount: Int) {
+    let service = await MainActor.run {
+        let service = MirageClientService(deviceName: "Mosaic Ingress Test")
+        service.fastPathState.addActiveStreamID(streamID)
+        service.fastPathState.setMosaicContentRect(contentRect, for: streamID)
+        if let mediaSecurityContext {
+            service.setMediaSecurityContext(mediaSecurityContext)
+        }
+        return service
+    }
+    let reassembler = FrameReassembler(streamID: streamID, maxPayloadSize: 1200)
+    let delivered = LockedDeliveredFullFrame()
+    reassembler.setFrameHandler { streamID, data, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, release in
+        delivered.record(
+            streamID: streamID,
+            data: data,
+            isKeyframe: isKeyframe,
+            frameNumber: frameNumber,
+            timestamp: timestamp,
+            epoch: epoch,
+            dimensionToken: dimensionToken,
+            contentRect: contentRect
+        )
+        release()
+    }
+    service.fastPathState.setReassemblerSnapshot([streamID: reassembler])
+    service.fastPathState.setMosaicContentRect(contentRect, for: streamID)
+    for packet in packets {
+        service.processIncomingVideoData(packet, expectedStreamID: streamID)
+    }
+
+    return (
+        deliveredFrame: delivered.frame,
+        bufferedMosaicUnitCount: service.fastPathState.bufferedMosaicUnitCount(for: streamID)
+    )
 }
 
 private func deliverThroughFullFramePipeline(
@@ -264,5 +330,45 @@ private func makeHeader(
         dimensionToken: dimensionToken,
         epoch: epoch
     )
+}
+
+private func makeEncryptedMosaicPackets(
+    payload: Data,
+    streamID: StreamID,
+    mediaSecurityContext: MirageMediaSecurityContext
+) throws -> [Data] {
+    let packetKey = MirageMediaPacketKey(context: mediaSecurityContext)
+    return try MirageMosaicMediaUnitPacketizer.packetize(MirageMosaicMediaUnitPacketizerInput(
+        streamID: streamID,
+        packetSequenceStart: 300,
+        timestamp: 42_000_000,
+        tilePlanEpoch: 7,
+        mediaEpoch: 9,
+        mediaUnitIndex: 0,
+        tileIndex: 0,
+        transportGroupIndex: 0,
+        presentationGroupIndex: 0,
+        unitFrameNumber: 42,
+        tileVersion: 42,
+        dependencyVersion: 42,
+        isKeyframe: true,
+        isAtomicGroup: true,
+        payload: payload,
+        maximumPayloadBytes: 4
+    )).map { packet in
+        var header = try #require(MirageWire.MirageMosaicPacketHeader.deserialize(from: packet))
+        let plaintextPayload = Data(packet.dropFirst(MirageWire.mirageMosaicHeaderSize))
+        header.flags.insert(.encryptedPayload)
+        header.checksum = 0
+        let encryptedPayload = try plaintextPayload.withUnsafeBytes {
+            try MirageMediaSecurity.encryptMosaicVideoPayload(
+                $0,
+                header: header,
+                key: packetKey,
+                direction: .hostToClient
+            )
+        }
+        return header.serialize() + encryptedPayload
+    }
 }
 #endif

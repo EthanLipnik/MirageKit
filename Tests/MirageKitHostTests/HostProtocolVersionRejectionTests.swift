@@ -108,7 +108,8 @@ struct HostProtocolVersionRejectionTests {
         )
 
         #expect(!result.response.accepted)
-        #expect(result.response.hostCapabilities?.mediaPacketFamilies == [.fixedHeaderFullFrame])
+        #expect(result.response.hostCapabilities?.mediaPacketFamilies == [.mosaicMediaUnit])
+        #expect(result.response.hostCapabilities?.mediaTopologies == [.mosaic])
         #expect(result.response.rejectionReason == .protocolVersionMismatch)
         #expect(result.response.protocolMismatchHostVersion == Int(MirageKit.controlProtocolVersion))
         #expect(result.response.protocolMismatchClientVersion == Int(MirageKit.controlProtocolVersion))

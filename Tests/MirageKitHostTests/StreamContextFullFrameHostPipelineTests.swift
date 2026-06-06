@@ -97,7 +97,7 @@ struct StreamContextFullFrameHostPipelineTests {
         let captured = Locked<[CapturedHostPipelinePacket]>([])
         let context = makeContext(
             streamID: 89,
-            maxPacketSize: MirageWire.mirageHeaderSize + MirageMediaSecurity.authTagLength + 4,
+            maxPacketSize: MirageWire.mirageMosaicHeaderSize + MirageMediaSecurity.authTagLength + 4,
             additionalFrameFlags: [.desktopStream]
         )
         let encoder = VideoEncoder(
@@ -132,32 +132,29 @@ struct StreamContextFullFrameHostPipelineTests {
         try await waitForStreamPacketQueuedBytesToDrain(try #require(await context.packetSender))
         await context.stop()
 
-        try assertHostPipelinePacket(
+        try assertHostPipelineMosaicPacket(
             packets[0],
             payload: payload,
             payloadRange: 0 ..< 4,
-            contentRect: contentRect,
             expectedSequence: 0,
             expectedFragmentIndex: 0,
-            expectedFlags: [.desktopStream, .keyframe, .parameterSet]
+            expectedFlags: MirageWire.MirageMosaicPacketFlags([.keyframe, .parameterSet, .atomicGroup])
         )
-        try assertHostPipelinePacket(
+        try assertHostPipelineMosaicPacket(
             packets[1],
             payload: payload,
             payloadRange: 4 ..< 8,
-            contentRect: contentRect,
             expectedSequence: 1,
             expectedFragmentIndex: 1,
-            expectedFlags: [.desktopStream, .keyframe]
+            expectedFlags: MirageWire.MirageMosaicPacketFlags([.keyframe, .atomicGroup])
         )
-        try assertHostPipelinePacket(
+        try assertHostPipelineMosaicPacket(
             packets[2],
             payload: payload,
             payloadRange: 8 ..< 10,
-            contentRect: contentRect,
             expectedSequence: 2,
             expectedFragmentIndex: 2,
-            expectedFlags: [.desktopStream, .keyframe, .endOfFrame]
+            expectedFlags: MirageWire.MirageMosaicPacketFlags([.keyframe, .endOfUnit, .atomicGroup])
         )
     }
 
@@ -391,6 +388,51 @@ private func assertHostPipelinePacket(
     #expect(header.contentRect == contentRect)
     #expect(header.dimensionToken == 23)
     #expect(header.epoch == 4)
+    #expect(header.flags == expectedFlags)
+    #expect(!header.flags.contains(.fecParity))
+    #expect(!header.flags.contains(.encryptedPayload))
+
+    #expect(packet.metadata.streamID == 89)
+    #expect(packet.metadata.frameNumber == 0)
+    #expect(packet.metadata.fragmentIndex == expectedFragmentIndex)
+    #expect(packet.metadata.fragmentCount == 3)
+    #expect(packet.metadata.isKeyframe)
+    #expect(!packet.metadata.isParity)
+    #expect(!packet.metadata.isRecovery)
+}
+
+private func assertHostPipelineMosaicPacket(
+    _ packet: CapturedHostPipelinePacket,
+    payload: Data,
+    payloadRange: Range<Int>,
+    expectedSequence: UInt32,
+    expectedFragmentIndex: Int,
+    expectedFlags: MirageWire.MirageMosaicPacketFlags
+) throws {
+    let header = try #require(MirageWire.MirageMosaicPacketHeader.deserialize(from: packet.packet))
+    let expectedPayload = Data(payload[payloadRange])
+    let wirePayload = Data(packet.packet.dropFirst(MirageWire.mirageMosaicHeaderSize))
+
+    #expect(packet.packet.count == MirageWire.mirageMosaicHeaderSize + expectedPayload.count)
+    #expect(wirePayload == expectedPayload)
+    #expect(header.magic == MirageWire.mirageMosaicMediaMagic)
+    #expect(header.version == MirageKit.mediaPacketProtocolVersion)
+    #expect(header.streamID == 89)
+    #expect(header.packetSequence == expectedSequence)
+    #expect(header.timestamp == 4_000_000_000)
+    #expect(header.tilePlanEpoch == 4)
+    #expect(header.mediaEpoch == 23)
+    #expect(header.mediaUnitIndex == 0)
+    #expect(header.tileIndex == 0)
+    #expect(header.transportGroupIndex == 0)
+    #expect(header.presentationGroupIndex == 0)
+    #expect(header.unitFrameNumber == 0)
+    #expect(header.fragmentIndex == UInt16(expectedFragmentIndex))
+    #expect(header.fragmentCount == 3)
+    #expect(header.fecBlockSize == 0)
+    #expect(header.payloadLength == UInt32(expectedPayload.count))
+    #expect(header.unitByteCount == UInt32(payload.count))
+    #expect(header.checksum == MirageWire.CRC32.calculate(expectedPayload))
     #expect(header.flags == expectedFlags)
     #expect(!header.flags.contains(.fecParity))
     #expect(!header.flags.contains(.encryptedPayload))

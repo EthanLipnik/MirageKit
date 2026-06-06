@@ -35,6 +35,11 @@ public struct MirageStreamContentView: View {
     /// UserDefaults key for whether local keyboard appearance avoids covering stream content.
     public static let keyboardAvoidanceDefaultsKey = "keyboardAvoidanceEnabled"
 
+    /// UserDefaults key for drawing Mosaic tile-plan boundaries over desktop streams.
+    public static let mosaicTileDebugOverlayDefaultsKey = "MirageDebug.ShowMosaicTilePlan"
+
+    @AppStorage(Self.mosaicTileDebugOverlayDefaultsKey) var showMosaicTileDebugOverlay = false
+
     /// Maximum wait for host acknowledgement after app-window resize dispatch.
     static let appResizeAckTimeout: Duration = .seconds(3)
 

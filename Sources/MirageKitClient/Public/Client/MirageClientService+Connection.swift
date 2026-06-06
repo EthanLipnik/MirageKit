@@ -71,7 +71,7 @@ public extension MirageClientService {
             hostOwnedRuntimeSupport: true,
             adaptiveFeedbackClassesSupported: MirageAdaptiveGovernorProtocol.feedbackClasses,
             adaptiveLegacyFallbackMode: MirageAdaptiveGovernorProtocol.legacyFallbackMode,
-            clientCapabilities: .currentFullFrameBaseline
+            clientCapabilities: .currentMosaicCutover
         )
     }
 

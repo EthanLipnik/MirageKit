@@ -130,10 +130,24 @@ extension MirageClientService {
 
     /// Process a single video packet received from a Loom stream.
     nonisolated func processIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
-        guard data.count >= MirageWire.mirageHeaderSize, let header = MirageWire.FrameHeader.deserialize(from: data) else {
+        if data.count >= MirageWire.mirageMosaicHeaderSize,
+           let header = MirageWire.MirageMosaicPacketHeader.deserialize(from: data) {
+            processIncomingMosaicVideoData(data, header: header, expectedStreamID: expectedStreamID)
             return
         }
 
+        guard data.count >= MirageWire.mirageHeaderSize,
+              let header = MirageWire.FrameHeader.deserialize(from: data) else {
+            return
+        }
+        processIncomingFullFrameVideoData(data, header: header, expectedStreamID: expectedStreamID)
+    }
+
+    private nonisolated func processIncomingFullFrameVideoData(
+        _ data: Data,
+        header: MirageWire.FrameHeader,
+        expectedStreamID: StreamID
+    ) {
         let streamID = header.streamID
         guard streamID == expectedStreamID else {
             logFirstVideoPacketRejectionIfNeeded(
@@ -210,6 +224,142 @@ extension MirageClientService {
         reassembler.processPacket(payload, header: header)
     }
 
+    private nonisolated func processIncomingMosaicVideoData(
+        _ data: Data,
+        header: MirageWire.MirageMosaicPacketHeader,
+        expectedStreamID: StreamID
+    ) {
+        let streamID = header.streamID
+        guard streamID == expectedStreamID else {
+            logFirstVideoPacketRejectionIfNeeded(
+                .streamIDMismatch,
+                expectedStreamID: expectedStreamID,
+                actualStreamID: streamID
+            )
+            return
+        }
+
+        fastPathState.noteInboundMediaActivity()
+
+        guard let packetContext = fastPathState.videoPacketContext(for: streamID) else {
+            if fastPathState.bufferEarlyVideoPacket(data, for: streamID) {
+                MirageLogger.client(
+                    "Media stream \(streamID) buffered early startup Mosaic video packet bytes=\(data.count)"
+                )
+            }
+            logFirstVideoPacketRejectionIfNeeded(.packetContextMissing, expectedStreamID: streamID)
+            return
+        }
+
+        if packetContext.consumedStartupPending {
+            MirageLogger.client(
+                "Media stream \(streamID) consumed startup-pending on first Mosaic packet bytes=\(data.count)"
+            )
+            Task { @MainActor in
+                self.logStartupFirstPacketIfNeeded(streamID: streamID)
+                self.cancelStartupRegistrationRetry(streamID: streamID)
+            }
+        }
+
+        let wirePayload = data.dropFirst(MirageWire.mirageMosaicHeaderSize)
+        let expectedWireLength =
+            header.flags.contains(.encryptedPayload)
+            ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
+            : Int(header.payloadLength)
+        guard wirePayload.count == expectedWireLength else {
+            logFirstVideoPacketRejectionIfNeeded(.invalidWireLength, expectedStreamID: streamID)
+            return
+        }
+
+        let payload: Data
+        if header.flags.contains(.encryptedPayload) {
+            guard let mediaPacketKey = packetContext.mediaPacketKey else {
+                logFirstVideoPacketRejectionIfNeeded(.decryptFailure, expectedStreamID: streamID)
+                return
+            }
+            do {
+                payload = try MirageMediaSecurity.decryptMosaicVideoPayload(
+                    wirePayload,
+                    header: header,
+                    key: mediaPacketKey,
+                    direction: .hostToClient
+                )
+            } catch {
+                logFirstVideoPacketRejectionIfNeeded(.decryptFailure, expectedStreamID: streamID)
+                return
+            }
+            guard payload.count == Int(header.payloadLength) else {
+                logFirstVideoPacketRejectionIfNeeded(.decryptFailure, expectedStreamID: streamID)
+                return
+            }
+        } else {
+            payload = Data(wirePayload)
+        }
+
+        var plaintextHeader = header
+        plaintextHeader.flags.remove(.encryptedPayload)
+        plaintextHeader.payloadLength = UInt32(payload.count)
+        plaintextHeader.checksum = MirageWire.CRC32.calculate(payload)
+        let plaintextPacket = plaintextHeader.serialize() + payload
+        guard let completedUnit = packetContext.mosaicReassembler.processPacket(plaintextPacket) else {
+            return
+        }
+        processCompletedMosaicUnit(
+            completedUnit,
+            packetContext: packetContext,
+            streamID: streamID,
+            allowBuffering: true
+        )
+    }
+
+    nonisolated func processBufferedMosaicUnitsIfNeeded(streamID: StreamID) {
+        let units = fastPathState.takeBufferedMosaicUnits(for: streamID)
+        guard !units.isEmpty,
+              let packetContext = fastPathState.videoPacketContext(for: streamID) else {
+            return
+        }
+        for unit in units {
+            processCompletedMosaicUnit(
+                unit,
+                packetContext: packetContext,
+                streamID: streamID,
+                allowBuffering: false
+            )
+        }
+    }
+
+    private nonisolated func processCompletedMosaicUnit(
+        _ completedUnit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit,
+        packetContext: MirageClientFastPathState.VideoPacketContext,
+        streamID: StreamID,
+        allowBuffering: Bool
+    ) {
+        if let mosaicTilePlan = packetContext.mosaicTilePlan,
+           mosaicTilePlan.epoch == completedUnit.tilePlanEpoch {
+            Task {
+                let didSubmit = await packetContext.mosaicPipeline.process(
+                    completedUnit,
+                    plan: mosaicTilePlan
+                )
+                guard didSubmit else { return }
+                await MainActor.run {
+                    self.sessionStore.markFirstFrameDecoded(for: streamID)
+                }
+            }
+            return
+        }
+
+        guard allowBuffering,
+              packetContext.mosaicTilePlan == nil,
+              fastPathState.bufferMosaicUnit(completedUnit, for: streamID) else {
+            return
+        }
+        MirageLogger.client(
+            "Media stream \(streamID) buffered Mosaic media unit pending tile plan " +
+                "epoch=\(completedUnit.tilePlanEpoch) unit=\(completedUnit.mediaUnitIndex)"
+        )
+    }
+
     private nonisolated func logFirstVideoPacketRejectionIfNeeded(
         _ reason: IncomingVideoPacketRejectionReason,
         expectedStreamID: StreamID,
@@ -267,6 +417,7 @@ extension MirageClientService {
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: streamKey)
         fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
+        fastPathState.clearBufferedMosaicUnits(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
         cancelForegroundRecoveryMonitor(for: streamID)
         clearReceiverMediaFeedbackState(for: streamID)
@@ -326,6 +477,7 @@ extension MirageClientService {
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: streamKey)
         fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
+        fastPathState.clearBufferedMosaicUnits(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
         if hadActiveStream {
             MirageLogger.client(

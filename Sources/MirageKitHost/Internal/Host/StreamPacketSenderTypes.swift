@@ -237,6 +237,37 @@ extension StreamPacketSender {
     }
 
     /// Encoded frame work item queued for packetization and transport submission.
+    struct MosaicMediaUnitMetadata: Equatable, Sendable {
+        let tilePlanEpoch: UInt32
+        let mediaEpoch: UInt32
+        let mediaUnitIndex: UInt16
+        let tileIndex: UInt16
+        let transportGroupIndex: UInt16
+        let presentationGroupIndex: UInt16
+        let tileVersion: UInt32
+        let dependencyVersion: UInt32?
+
+        init(
+            tilePlanEpoch: UInt32,
+            mediaEpoch: UInt32,
+            mediaUnitIndex: UInt16 = 0,
+            tileIndex: UInt16 = 0,
+            transportGroupIndex: UInt16 = 0,
+            presentationGroupIndex: UInt16 = 0,
+            tileVersion: UInt32,
+            dependencyVersion: UInt32? = nil
+        ) {
+            self.tilePlanEpoch = tilePlanEpoch
+            self.mediaEpoch = mediaEpoch
+            self.mediaUnitIndex = mediaUnitIndex
+            self.tileIndex = tileIndex
+            self.transportGroupIndex = transportGroupIndex
+            self.presentationGroupIndex = presentationGroupIndex
+            self.tileVersion = tileVersion
+            self.dependencyVersion = dependencyVersion
+        }
+    }
+
     struct WorkItem: Sendable {
         let encodedData: Data
         let frameByteCount: Int
@@ -260,6 +291,7 @@ extension StreamPacketSender {
         let pacingOverride: PacingOverride?
         let usesAwdlRealtimeQueuePolicy: Bool
         let deliveryMode: HostFrameDeliveryMode
+        let mosaicMediaUnitMetadata: MosaicMediaUnitMetadata?
 
         init(
             encodedData: Data,
@@ -283,7 +315,8 @@ extension StreamPacketSender {
             targetFrameRate: Int = 60,
             pacingOverride: PacingOverride?,
             usesAwdlRealtimeQueuePolicy: Bool = false,
-            deliveryMode: HostFrameDeliveryMode = .realtime
+            deliveryMode: HostFrameDeliveryMode = .realtime,
+            mosaicMediaUnitMetadata: MosaicMediaUnitMetadata? = nil
         ) {
             let resolvedTargetFrameRate = max(1, targetFrameRate)
             self.encodedData = encodedData
@@ -308,6 +341,7 @@ extension StreamPacketSender {
             self.pacingOverride = pacingOverride
             self.usesAwdlRealtimeQueuePolicy = usesAwdlRealtimeQueuePolicy
             self.deliveryMode = deliveryMode
+            self.mosaicMediaUnitMetadata = mosaicMediaUnitMetadata
         }
     }
 

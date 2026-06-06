@@ -421,6 +421,8 @@ extension MirageClientService {
             renderLatencyModeByStream.removeValue(forKey: streamID)
             mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
             activeStreamCodecs.removeValue(forKey: streamID)
+            mosaicTilePlansByStreamID.removeValue(forKey: streamID)
+            mosaicEpochSummariesByStreamID.removeValue(forKey: streamID)
             let controller = controllersByStream.removeValue(forKey: streamID)
 
             Task {

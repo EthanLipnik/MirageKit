@@ -251,6 +251,8 @@ public extension MirageClientService {
         appDimensionTokenByStream.removeValue(forKey: streamID)
         appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
         appWindowResizeResultByStreamID.removeValue(forKey: streamID)
+        mosaicTilePlansByStreamID.removeValue(forKey: streamID)
+        mosaicEpochSummariesByStreamID.removeValue(forKey: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupFirstRegistrationSent.remove(streamID)
         streamStartupFirstPacketReceived.remove(streamID)
@@ -398,6 +400,8 @@ public extension MirageClientService {
         pendingDesktopRequestedLatencyMode = nil
         mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
         activeStreamCodecs.removeValue(forKey: streamID)
+        mosaicTilePlansByStreamID.removeValue(forKey: streamID)
+        mosaicEpochSummariesByStreamID.removeValue(forKey: streamID)
 
         if let controller = controllersByStream.removeValue(forKey: streamID) {
             await controller.stop()

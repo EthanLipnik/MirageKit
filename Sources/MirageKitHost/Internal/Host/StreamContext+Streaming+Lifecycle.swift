@@ -267,6 +267,7 @@ extension StreamContext {
         packetSender = nil
 
         await encoder?.stopEncoding()
+        await mosaicCodecUnitEncoderPool.stopAll()
 
         encoder = nil
         trafficLightMaskGeometryCache = nil

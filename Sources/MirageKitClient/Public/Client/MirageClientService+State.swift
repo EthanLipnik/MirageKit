@@ -7,6 +7,7 @@ import MirageKit
 import MirageKitClientPresentation
 import MirageMedia
 import MirageWire
+import CoreGraphics
 //
 //  MirageClientService+State.swift
 //  MirageKit
@@ -91,6 +92,12 @@ extension MirageClientService {
             snapshot[streamID] = controller.reassembler
         }
         fastPathState.setReassemblerSnapshot(snapshot)
+        if let desktopStreamID, let desktopStreamResolution {
+            fastPathState.setMosaicContentRect(
+                CGRect(origin: .zero, size: desktopStreamResolution),
+                for: desktopStreamID
+            )
+        }
     }
 
     private static func deDuplicatedStreamIDs(_ streamIDs: [StreamID]) -> [StreamID] {

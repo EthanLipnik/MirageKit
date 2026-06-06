@@ -72,6 +72,7 @@ public enum MirageMediaTopologyKind: String, CaseIterable, Codable, Sendable {
     case singleUnit
     case atlas
     case multiUnit
+    case mosaic
     case replay
 }
 
