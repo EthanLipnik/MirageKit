@@ -10,7 +10,7 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
-    func handleDirectTouchBegan(at rawLocation: CGPoint) {
+    func handleDirectTouchScrollBegan(at rawLocation: CGPoint) {
         requestResponderRecovery(.interaction)
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
 

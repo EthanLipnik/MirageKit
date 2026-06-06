@@ -170,6 +170,38 @@ struct RecoveryReasonMappingTests {
         }
     }
 
+    @Test("Client foreground resume restores emergency visual quality before keyframe")
+    func clientForegroundResumeRestoresEmergencyVisualQualityBeforeKeyframe() async {
+        let context = makeContext(
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                maxFrameBytes: 64 * 1024,
+                maxWireBytes: 64 * 1024,
+                maxPacketCount: 64,
+                quality: 0.04,
+                qualityCeiling: 0.04,
+                keyframeQuality: 0.04,
+                sendDeadline: now + 1,
+                state: .severe,
+                reason: .clientRecovery
+            ),
+            now: now
+        )
+        #expect(await context.activeQuality == 0.04)
+
+        await context.pauseForClientBackground()
+        await context.resumeAfterClientForeground()
+
+        #expect(await context.activeQuality > 0.04)
+        #expect(await context.keyframeQuality > 0.04)
+        #expect(await context.pendingKeyframeReason == "Client foreground resume")
+    }
+
     @Test("Constrained path keeps in-flight keyframe instead of queueing another")
     func constrainedPathKeepsInFlightKeyframe() async {
         let context = makeContext(transportPathKind: .awdl)
@@ -216,7 +248,10 @@ struct RecoveryReasonMappingTests {
         #expect(await context.dependencyRecoveryRetryNecessary == false)
     }
 
-    private func makeContext(transportPathKind: MirageNetworkPathKind = .unknown) -> StreamContext {
+    private func makeContext(
+        transportPathKind: MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMediaPathProfile? = nil
+    ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
@@ -230,7 +265,8 @@ struct RecoveryReasonMappingTests {
             windowID: 9,
             encoderConfig: encoderConfig,
             streamScale: 1.0,
-            transportPathKind: transportPathKind
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
         )
     }
 }

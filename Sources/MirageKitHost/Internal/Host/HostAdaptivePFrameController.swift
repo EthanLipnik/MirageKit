@@ -99,6 +99,14 @@ struct HostAdaptivePFrameController: Equatable {
         let requestedBitrate: Int
         let maximumCeiling: Int
         let floor: Int
+        let usesOptimizedVPNProfile: Bool
+    }
+
+    private struct VPNReadableQualityTimingPolicy: Equatable {
+        let target: Float
+        let lowerBound: Float
+        let maximumTimingScale: Double
+        let maximumSendDeadlineMs: Double
     }
 
     private struct ModePolicy: Equatable {
@@ -247,6 +255,17 @@ struct HostAdaptivePFrameController: Equatable {
     private static let vpnReadableQualityMaximumTimingScale = 1.45
     private static let vpnReadableQualityMaximumDeadlineFrames = 3.0
     private static let vpnReadableQualityMaximumSendDeadlineMs = 60.0
+    private static let optimizedVPNReadableQualityTarget: Float = 0.75
+    private static let optimizedVPNReadableQualityLowerBound: Float = 0.55
+    private static let optimizedVPNReadableQualityMaximumTimingScale = 1.75
+    private static let optimizedVPNReadableQualityMaximumSendDeadlineMs = 80.0
+    private static let optimizedVPNTransientRuntimeQualityCeilingFloor: Float = 0.50
+    private static let optimizedVPNSevereRuntimeQualityCeilingFloor: Float = 0.40
+    private static let optimizedVPNProfileStartupBitratesBps: Set<Int> = [
+        24_000_000,
+        30_000_000,
+        36_000_000,
+    ]
 
     private(set) var latestFeedbackSequence: UInt64 = 0
     private(set) var runtimeCeilingBps: Int?
@@ -324,6 +343,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         initializeIfNeeded(
@@ -360,6 +380,7 @@ struct HostAdaptivePFrameController: Equatable {
             qualityFloor: qualityFloor,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
         qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.50)
@@ -395,6 +416,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         initializeIfNeeded(
@@ -438,6 +460,7 @@ struct HostAdaptivePFrameController: Equatable {
             now: now,
             currentFrameRate: currentFrameRate,
             currentQuality: currentQuality,
+            input: input,
             mediaPathProfile: mediaPathProfile,
             receiverHealthy: receiverHealthy,
             senderHealthy: senderHealthy
@@ -462,6 +485,7 @@ struct HostAdaptivePFrameController: Equatable {
         let targetClearMs = timingTargetClearMs(
             baseTargetClearMs,
             currentQuality: currentQuality,
+            input: input,
             mediaPathProfile: mediaPathProfile,
             receiverHealthy: receiverHealthy,
             senderHealthy: senderHealthy
@@ -547,6 +571,7 @@ struct HostAdaptivePFrameController: Equatable {
                 maxPayloadSize: maxPayloadSize,
                 steadyQualityCeiling: steadyQualityCeiling,
                 latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
                 now: now
             )
             qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.50)
@@ -613,6 +638,7 @@ struct HostAdaptivePFrameController: Equatable {
             maxPayloadSize: maxPayloadSize,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
         qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
@@ -670,6 +696,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         initializeIfNeeded(
@@ -721,6 +748,7 @@ struct HostAdaptivePFrameController: Equatable {
         let targetClearMs = timingTargetClearMs(
             baseTargetClearMs,
             currentQuality: currentQuality,
+            input: input,
             mediaPathProfile: mediaPathProfile,
             receiverHealthy: receiverHealthy,
             senderHealthy: true
@@ -838,6 +866,7 @@ struct HostAdaptivePFrameController: Equatable {
                 maxPayloadSize: maxPayloadSize,
                 steadyQualityCeiling: steadyQualityCeiling,
                 latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
                 now: now
             )
         }
@@ -887,6 +916,7 @@ struct HostAdaptivePFrameController: Equatable {
             maxPayloadSize: maxPayloadSize,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
     }
@@ -919,6 +949,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         initializeIfNeeded(
@@ -940,6 +971,7 @@ struct HostAdaptivePFrameController: Equatable {
             qualityFloor: qualityFloor,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
     }
@@ -972,6 +1004,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         initializeIfNeeded(
@@ -995,6 +1028,7 @@ struct HostAdaptivePFrameController: Equatable {
             qualityFloor: qualityFloor,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
     }
@@ -1028,6 +1062,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         initializeIfNeeded(
@@ -1052,6 +1087,7 @@ struct HostAdaptivePFrameController: Equatable {
             qualityFloor: qualityFloor,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
     }
@@ -1086,6 +1122,7 @@ struct HostAdaptivePFrameController: Equatable {
             requestedTargetBitrateBps: requestedTargetBitrateBps,
             startupCeilingBps: startupCeilingBps,
             minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
             mediaPathProfile: mediaPathProfile
         )
         let frameRateScale = mediaPathProfile.usesAwdlRadioPolicy ? 1.0 : Double(oldRate) / Double(newRate)
@@ -1139,6 +1176,7 @@ struct HostAdaptivePFrameController: Equatable {
         qualityFloor: Float,
         steadyQualityCeiling: Float,
         latencyMode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision {
         let currentTarget = currentTargetFrameWireBytes(
@@ -1166,6 +1204,7 @@ struct HostAdaptivePFrameController: Equatable {
             maxPayloadSize: maxPayloadSize,
             steadyQualityCeiling: steadyQualityCeiling,
             latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
             now: now
         )
     }
@@ -1180,6 +1219,7 @@ struct HostAdaptivePFrameController: Equatable {
         maxPayloadSize: Int,
         steadyQualityCeiling: Float,
         latencyMode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision {
         let targetBytes = currentTargetFrameWireBytes(
@@ -1202,9 +1242,14 @@ struct HostAdaptivePFrameController: Equatable {
             0.0,
             min(steadyQualityCeiling, keyframeQuality ?? max(boundedQuality, boundedQuality * 1.25))
         )
-        let runtimeQualityCeiling = state == .observing
-            ? steadyQualityCeiling
-            : max(0.02, min(steadyQualityCeiling, boundedQuality * 1.08))
+        let runtimeQualityCeiling = runtimeQualityCeiling(
+            state: state,
+            reason: reason,
+            boundedQuality: boundedQuality,
+            steadyQualityCeiling: steadyQualityCeiling,
+            input: input,
+            mediaPathProfile: mediaPathProfile
+        )
         return HostFrameBudgetDecision(
             targetBitrateBps: targetBitrate,
             maxFrameBytes: targetBytes,
@@ -1217,6 +1262,39 @@ struct HostAdaptivePFrameController: Equatable {
             state: state,
             reason: reason
         )
+    }
+
+    private func runtimeQualityCeiling(
+        state: PressureState,
+        reason: Reason,
+        boundedQuality: Float,
+        steadyQualityCeiling: Float,
+        input: BudgetInput,
+        mediaPathProfile: MirageMediaPathProfile
+    ) -> Float {
+        guard state != .observing else { return steadyQualityCeiling }
+        let pressureCeiling = max(0.02, min(steadyQualityCeiling, boundedQuality * 1.08))
+        guard mediaPathProfile == .vpnOrOverlay,
+              input.usesOptimizedVPNProfile else {
+            return pressureCeiling
+        }
+        let floor = optimizedVPNRuntimeQualityCeilingFloor(state: state, reason: reason)
+        return min(steadyQualityCeiling, max(pressureCeiling, floor))
+    }
+
+    private func optimizedVPNRuntimeQualityCeilingFloor(
+        state: PressureState,
+        reason: Reason
+    ) -> Float {
+        switch (state, reason) {
+        case (.severe, .receiverLoss),
+             (.severe, .clientRecovery),
+             (.severe, .receiverFreshness),
+             (.recovery, _):
+            Self.optimizedVPNSevereRuntimeQualityCeilingFloor
+        default:
+            Self.optimizedVPNTransientRuntimeQualityCeilingFloor
+        }
     }
 
     private mutating func initializeIfNeeded(
@@ -1286,6 +1364,7 @@ struct HostAdaptivePFrameController: Equatable {
         requestedTargetBitrateBps: Int?,
         startupCeilingBps: Int?,
         minimumBitrateFloorBps: Int,
+        currentFrameRate: Int,
         mediaPathProfile: MirageMediaPathProfile = .unknown
     ) -> BudgetInput {
         let requested = max(1, requestedTargetBitrateBps ?? currentBitrateBps ?? startupCeilingBps ?? minimumBitrateFloorBps)
@@ -1307,8 +1386,30 @@ struct HostAdaptivePFrameController: Equatable {
             currentBitrate: currentBitrate,
             requestedBitrate: requestedBitrate,
             maximumCeiling: ceiling,
-            floor: floor
+            floor: floor,
+            usesOptimizedVPNProfile: Self.usesOptimizedVPNProfile(
+                mediaPathProfile: mediaPathProfile,
+                currentFrameRate: currentFrameRate,
+                requestedBitrateBps: requested,
+                startupCeilingBps: startupCeilingBps
+            )
         )
+    }
+
+    private static func usesOptimizedVPNProfile(
+        mediaPathProfile: MirageMediaPathProfile,
+        currentFrameRate: Int,
+        requestedBitrateBps: Int,
+        startupCeilingBps: Int?
+    ) -> Bool {
+        guard mediaPathProfile == .vpnOrOverlay,
+              currentFrameRate == 30,
+              optimizedVPNProfileStartupBitratesBps.contains(requestedBitrateBps),
+              let startupCeilingBps,
+              startupCeilingBps >= requestedBitrateBps else {
+            return false
+        }
+        return true
     }
 
     private mutating func setTargetFrameWireBytes(
@@ -1765,12 +1866,14 @@ struct HostAdaptivePFrameController: Equatable {
     private func timingTargetClearMs(
         _ baseTargetClearMs: Double,
         currentQuality: Float,
+        input: BudgetInput,
         mediaPathProfile: MirageMediaPathProfile,
         receiverHealthy: Bool,
         senderHealthy: Bool
     ) -> Double {
         baseTargetClearMs * vpnReadableQualityTimingScale(
             currentQuality: currentQuality,
+            input: input,
             mediaPathProfile: mediaPathProfile,
             receiverHealthy: receiverHealthy,
             senderHealthy: senderHealthy
@@ -1785,26 +1888,32 @@ struct HostAdaptivePFrameController: Equatable {
         now: CFAbsoluteTime,
         currentFrameRate: Int,
         currentQuality: Float,
+        input: BudgetInput,
         mediaPathProfile: MirageMediaPathProfile,
         receiverHealthy: Bool,
         senderHealthy: Bool
     ) -> CFAbsoluteTime {
         let frameInterval = frameInterval(for: currentFrameRate)
+        let timingPolicy = vpnReadableQualityTimingPolicy(
+            mediaPathProfile: mediaPathProfile,
+            usesOptimizedVPNProfile: input.usesOptimizedVPNProfile
+        )
         let timingScale = vpnReadableQualityTimingScale(
             currentQuality: currentQuality,
+            input: input,
             mediaPathProfile: mediaPathProfile,
             receiverHealthy: receiverHealthy,
             senderHealthy: senderHealthy
         )
         let timingProgress = max(
             0.0,
-            min(1.0, (timingScale - 1.0) / max(0.001, Self.vpnReadableQualityMaximumTimingScale - 1.0))
+            min(1.0, (timingScale - 1.0) / max(0.001, timingPolicy.maximumTimingScale - 1.0))
         )
         let deadlineFrameScale = 1.0 +
             (Self.vpnReadableQualityMaximumDeadlineFrames - 1.0) * timingProgress
         let deadlineSeconds = min(
             frameInterval * deadlineFrameScale,
-            Self.vpnReadableQualityMaximumSendDeadlineMs / 1_000.0
+            timingPolicy.maximumSendDeadlineMs / 1_000.0
         )
         return now + max(frameInterval, deadlineSeconds)
     }
@@ -1815,29 +1924,55 @@ struct HostAdaptivePFrameController: Equatable {
 
     private func vpnReadableQualityTimingScale(
         currentQuality: Float,
+        input: BudgetInput,
         mediaPathProfile: MirageMediaPathProfile,
         receiverHealthy: Bool,
         senderHealthy: Bool
     ) -> Double {
+        let timingPolicy = vpnReadableQualityTimingPolicy(
+            mediaPathProfile: mediaPathProfile,
+            usesOptimizedVPNProfile: input.usesOptimizedVPNProfile
+        )
         guard mediaPathProfile == .vpnOrOverlay,
               receiverHealthy,
               senderHealthy,
-              currentQuality < Self.vpnReadableQualityTarget else {
+              currentQuality < timingPolicy.target else {
             return 1.0
         }
         let denominator = max(
             0.001,
-            Double(Self.vpnReadableQualityTarget - Self.vpnReadableQualityLowerBound)
+            Double(timingPolicy.target - timingPolicy.lowerBound)
         )
         let progress = max(
             0.0,
             min(
                 1.0,
-                Double(Self.vpnReadableQualityTarget - max(currentQuality, Self.vpnReadableQualityLowerBound)) /
+                Double(timingPolicy.target - max(currentQuality, timingPolicy.lowerBound)) /
                     denominator
             )
         )
-        return 1.0 + (Self.vpnReadableQualityMaximumTimingScale - 1.0) * progress
+        return 1.0 + (timingPolicy.maximumTimingScale - 1.0) * progress
+    }
+
+    private func vpnReadableQualityTimingPolicy(
+        mediaPathProfile: MirageMediaPathProfile,
+        usesOptimizedVPNProfile: Bool
+    ) -> VPNReadableQualityTimingPolicy {
+        guard mediaPathProfile == .vpnOrOverlay,
+              usesOptimizedVPNProfile else {
+            return VPNReadableQualityTimingPolicy(
+                target: Self.vpnReadableQualityTarget,
+                lowerBound: Self.vpnReadableQualityLowerBound,
+                maximumTimingScale: Self.vpnReadableQualityMaximumTimingScale,
+                maximumSendDeadlineMs: Self.vpnReadableQualityMaximumSendDeadlineMs
+            )
+        }
+        return VPNReadableQualityTimingPolicy(
+            target: Self.optimizedVPNReadableQualityTarget,
+            lowerBound: Self.optimizedVPNReadableQualityLowerBound,
+            maximumTimingScale: Self.optimizedVPNReadableQualityMaximumTimingScale,
+            maximumSendDeadlineMs: Self.optimizedVPNReadableQualityMaximumSendDeadlineMs
+        )
     }
 
     private func treatsFrameAsStillEnoughForQuality(

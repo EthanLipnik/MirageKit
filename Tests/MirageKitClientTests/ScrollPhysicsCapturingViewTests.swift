@@ -32,6 +32,32 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Unified scroll layer accepts direct and indirect scrolling in normal mode")
+    func unifiedScrollLayerAcceptsDirectAndIndirectScrollingInNormalMode() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+
+        let directTouchScrollPanGesture = try #require(view.scrollPhysicsView?.directTouchPanGestureRecognizer)
+        let allowedTouchTypes = allowedTouchTypes(for: directTouchScrollPanGesture)
+
+        #expect(allowedTouchTypes.contains(UITouch.TouchType.direct.rawValue))
+        #expect(allowedTouchTypes.contains(UITouch.TouchType.indirectPointer.rawValue))
+        #expect(allowedTouchTypes.contains(UITouch.TouchType.indirect.rawValue))
+    }
+
+    @Test("Unified scroll layer keeps indirect scrolling in virtual trackpad mode")
+    func unifiedScrollLayerKeepsIndirectScrollingInVirtualTrackpadMode() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .dragCursor
+
+        let directTouchScrollPanGesture = try #require(view.scrollPhysicsView?.directTouchPanGestureRecognizer)
+        let allowedTouchTypes = allowedTouchTypes(for: directTouchScrollPanGesture)
+
+        #expect(!allowedTouchTypes.contains(UITouch.TouchType.direct.rawValue))
+        #expect(allowedTouchTypes.contains(UITouch.TouchType.indirectPointer.rawValue))
+        #expect(allowedTouchTypes.contains(UITouch.TouchType.indirect.rawValue))
+    }
+
     @Test("Direct second tap can take drag ownership before scroll")
     func directSecondTapCanTakeDragOwnershipBeforeScroll() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -288,15 +314,15 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(location == nil)
     }
 
-    @Test("Normal direct touch begin moves the host cursor immediately")
-    func normalDirectTouchBeginMovesHostCursorImmediately() throws {
+    @Test("Normal direct scroll begin moves the host cursor immediately")
+    func normalDirectScrollBeginMovesHostCursorImmediately() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .normal
         var events: [MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
         events.removeAll()
 
-        view.handleDirectTouchBegan(at: CGPoint(x: 80, y: 60))
+        view.handleDirectTouchScrollBegan(at: CGPoint(x: 80, y: 60))
 
         let expectedLocation = CGPoint(x: 0.25, y: 0.25)
         #expect(view.lastCursorPosition == expectedLocation)
@@ -304,28 +330,52 @@ struct ScrollPhysicsCapturingViewTests {
 
         let event = try #require(events.first)
         guard case let .mouseMoved(mouseEvent) = event else {
-            Issue.record("Expected direct touch begin to emit mouseMoved")
+            Issue.record("Expected direct scroll begin to emit mouseMoved")
             return
         }
         #expect(mouseEvent.location == expectedLocation)
     }
 
-    @Test("Simulated trackpad touch begin does not emit a direct cursor move")
-    func simulatedTrackpadTouchBeginDoesNotEmitDirectCursorMove() {
+    @Test("Normal direct scroll begin replaces a stale scroll anchor")
+    func normalDirectScrollBeginReplacesStaleScrollAnchor() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.directTouchScrollAnchorLocation = CGPoint(x: 0.25, y: 0.25)
+        view.lastCursorPosition = CGPoint(x: 0.25, y: 0.25)
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        view.handleDirectTouchScrollBegan(at: CGPoint(x: 240, y: 120))
+
+        let expectedLocation = CGPoint(x: 0.75, y: 0.5)
+        #expect(view.lastCursorPosition == expectedLocation)
+        #expect(view.scrollEventLocation(source: .directTouch) == expectedLocation)
+
+        let event = try #require(events.first)
+        guard case let .mouseMoved(mouseEvent) = event else {
+            Issue.record("Expected direct scroll begin to emit mouseMoved")
+            return
+        }
+        #expect(mouseEvent.location == expectedLocation)
+    }
+
+    @Test("Simulated trackpad scroll begin does not emit a direct cursor move")
+    func simulatedTrackpadScrollBeginDoesNotEmitDirectCursorMove() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .dragCursor
         var events: [MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
         events.removeAll()
 
-        view.handleDirectTouchBegan(at: CGPoint(x: 80, y: 60))
+        view.handleDirectTouchScrollBegan(at: CGPoint(x: 80, y: 60))
 
         #expect(events.isEmpty)
         #expect(view.lastCursorPosition == view.virtualCursorPosition)
     }
 
-    @Test("Cursor locked direct touch begin moves the locked cursor immediately")
-    func cursorLockedDirectTouchBeginMovesLockedCursorImmediately() throws {
+    @Test("Cursor locked direct scroll begin moves the locked cursor immediately")
+    func cursorLockedDirectScrollBeginMovesLockedCursorImmediately() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .normal
         view.cursorLockEnabled = true
@@ -333,7 +383,7 @@ struct ScrollPhysicsCapturingViewTests {
         view.onInputEvent = { events.append($0) }
         events.removeAll()
 
-        view.handleDirectTouchBegan(at: CGPoint(x: 240, y: 120))
+        view.handleDirectTouchScrollBegan(at: CGPoint(x: 240, y: 120))
 
         let expectedLocation = CGPoint(x: 0.75, y: 0.5)
         #expect(view.lockedCursorPosition == expectedLocation)
@@ -341,14 +391,14 @@ struct ScrollPhysicsCapturingViewTests {
 
         let event = try #require(events.first)
         guard case let .mouseMoved(mouseEvent) = event else {
-            Issue.record("Expected cursor locked direct touch begin to emit mouseMoved")
+            Issue.record("Expected cursor locked direct scroll begin to emit mouseMoved")
             return
         }
         #expect(mouseEvent.location == expectedLocation)
     }
 
-    private func allowedTouchTypes(for scrollView: UIScrollView) -> Set<Int> {
-        Set((scrollView.panGestureRecognizer.allowedTouchTypes ?? []).map(\.intValue))
+    private func allowedTouchTypes(for recognizer: UIGestureRecognizer) -> Set<Int> {
+        Set((recognizer.allowedTouchTypes ?? []).map(\.intValue))
     }
 }
 #endif

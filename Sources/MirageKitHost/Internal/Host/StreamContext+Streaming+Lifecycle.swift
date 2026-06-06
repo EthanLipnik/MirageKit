@@ -36,6 +36,7 @@ extension StreamContext {
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
         keyframeInFlightFrameNumber = nil
+        await restoreRuntimeBudgetAfterClientForegroundResume()
 
         let now = CFAbsoluteTimeGetCurrent()
         startFrameChainRepair(
@@ -53,6 +54,69 @@ extension StreamContext {
         MirageLogger.stream(
             "Stream \(streamID) resumed after client foreground " +
                 "wasEncoding=\(wasEncoding) recoveryKeyframeScheduled=\(scheduledRecoveryKeyframe)"
+        )
+    }
+
+    private func restoreRuntimeBudgetAfterClientForegroundResume() async {
+        guard runtimeQualityAdjustmentEnabled else { return }
+
+        let ceilingBitrate = max(
+            1,
+            bitrateAdaptationCeiling ??
+                requestedTargetBitrate ??
+                startupBitrate ??
+                currentTargetBitrateBps ??
+                encoderConfig.bitrate ??
+                realtimeMinimumBitrateFloorBps
+        )
+        let restartBitrate = min(
+            ceilingBitrate,
+            max(
+                realtimeMinimumBitrateFloorBps,
+                currentTargetBitrateBps ?? 0,
+                requestedTargetBitrate ?? 0,
+                startupBitrate ?? 0,
+                encoderConfig.bitrate ?? 0
+            )
+        )
+
+        adaptivePFrameController = HostAdaptivePFrameController()
+        realtimeRuntimeQualityCeiling = nil
+        realtimeRuntimeBitrateCeilingBps = nil
+        realtimeEncoderRateHintBps = nil
+        realtimeSenderPacingBitrateBps = nil
+        realtimePressureState = .observing
+        realtimePressureReason = nil
+        realtimeLastLoggedState = .observing
+        realtimeLastLoggedBitrateCeilingBps = nil
+        pendingEmergencyKeyframeQuality = nil
+
+        if restartBitrate > 0 {
+            await applyRealtimeBudgetBitrate(
+                restartBitrate,
+                ceilingBitrateBps: ceilingBitrate,
+                encoderRateHintBps: restartBitrate,
+                senderPacingBitrateBps: restartBitrate,
+                minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+                reason: HostAdaptivePFrameController.Reason.startup.rawValue
+            )
+        }
+
+        let previousQuality = activeQuality
+        qualityCeiling = resolvedRuntimeQualityCeiling(for: min(configuredQualityCeiling, compressionQualityCeiling))
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
+            for: min(encoderConfig.keyframeQuality, qualityCeiling)
+        )
+        activeQuality = max(activeQuality, qualityFloor, min(configuredQualityCeiling, qualityCeiling))
+        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
+
+        await encoder?.updateQuality(activeQuality)
+        MirageLogger.metrics(
+            "Client foreground resume restored runtime quality for stream \(streamID): " +
+                "active=\(activeQuality.formatted(.number.precision(.fractionLength(2)))) " +
+                "ceiling=\(qualityCeiling.formatted(.number.precision(.fractionLength(2)))) " +
+                "bitrate=\(restartBitrate)"
         )
     }
 

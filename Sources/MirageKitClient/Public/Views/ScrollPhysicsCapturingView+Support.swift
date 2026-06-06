@@ -103,15 +103,32 @@ func isStylusLikeTouch(_ touch: UITouch) -> Bool {
         touch.estimatedPropertiesExpectingUpdates.contains(.altitude)
 }
 
-/// Direct-touch scroll view that separates Pencil/stylus touches from one-finger scroll input.
-final class DirectTouchScrollView: CallbackScrollView {
-    /// Called when direct non-stylus input should wake the touch input path.
+/// Scroll view that tracks whether native scroll physics began from direct touch or indirect pointer input.
+final class InputSourceScrollView: CallbackScrollView {
+    private var pendingInputSource: ScrollPhysicsCapturingView.InputSource?
+    private var directTouchContactIdentifiers: Set<ObjectIdentifier> = []
+    private(set) var activeInputSource: ScrollPhysicsCapturingView.InputSource = .indirectPointer
+
+    var acceptsDirectTouchScroll = false {
+        didSet {
+            if !acceptsDirectTouchScroll, pendingInputSource == .directTouch {
+                pendingInputSource = nil
+            }
+        }
+    }
+
+    var hasDirectInputSource: Bool {
+        pendingInputSource == .directTouch || activeInputSource == .directTouch
+    }
+
+    var hasDirectTouchContact: Bool {
+        !directTouchContactIdentifiers.isEmpty
+    }
+
+    /// Called when accepted direct-scroll touch input should wake the touch input path.
     var onDirectTouchActivity: (() -> Void)?
 
-    /// Called when direct non-stylus input starts, in this scroll view's local coordinates.
-    var onDirectTouchBegan: ((CGPoint) -> Void)?
-
-    /// Called when stylus-like touches begin inside the direct-touch scroll view.
+    /// Called when stylus-like touches begin inside the scroll view.
     var onPencilTouchesBegan: ((Set<UITouch>) -> Void)?
 
     /// Called when stylus-like touches move, preserving the event used for coalesced samples.
@@ -123,19 +140,33 @@ final class DirectTouchScrollView: CallbackScrollView {
     /// Called when stylus-like touches are cancelled.
     var onPencilTouchesCancelled: ((Set<UITouch>) -> Void)?
 
+    func beginScrollingInputSource() -> ScrollPhysicsCapturingView.InputSource {
+        activeInputSource = pendingInputSource ?? .indirectPointer
+        pendingInputSource = nil
+        return activeInputSource
+    }
+
+    func resetInputSource() {
+        pendingInputSource = nil
+        activeInputSource = .indirectPointer
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         let pencilTouches = touches.filter { isStylusLikeTouch($0) }
         if !pencilTouches.isEmpty {
             onPencilTouchesBegan?(Set(pencilTouches))
         }
 
-        let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
-        if !nonPencilTouches.isEmpty {
+        let directContactTouches = touches.filter { isDirectTouchContact($0) }
+        directTouchContactIdentifiers.formUnion(directContactTouches.map(ObjectIdentifier.init))
+        if acceptsDirectTouchScroll, !directContactTouches.isEmpty {
+            pendingInputSource = .directTouch
             onDirectTouchActivity?()
+        } else if touches.contains(where: isIndirectPointerTouch) {
+            pendingInputSource = .indirectPointer
         }
-        if let startLocation = centroid(of: nonPencilTouches, in: self) {
-            onDirectTouchBegan?(startLocation)
-        }
+
+        let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
             super.touchesBegan(Set(nonPencilTouches), with: event)
         }
@@ -149,6 +180,7 @@ final class DirectTouchScrollView: CallbackScrollView {
 
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
+            updatePendingInputSource(from: nonPencilTouches)
             super.touchesMoved(Set(nonPencilTouches), with: event)
         }
     }
@@ -162,6 +194,8 @@ final class DirectTouchScrollView: CallbackScrollView {
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
             super.touchesEnded(Set(nonPencilTouches), with: event)
+            removeDirectTouchContacts(from: nonPencilTouches)
+            pendingInputSource = nil
         }
     }
 
@@ -174,18 +208,39 @@ final class DirectTouchScrollView: CallbackScrollView {
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
             super.touchesCancelled(Set(nonPencilTouches), with: event)
+            removeDirectTouchContacts(from: nonPencilTouches)
+            pendingInputSource = nil
         }
     }
 
-    private func centroid(of touches: Set<UITouch>, in view: UIView) -> CGPoint? {
-        guard !touches.isEmpty else { return nil }
-        let sum = touches.reduce(into: CGPoint.zero) { partialResult, touch in
-            let location = touch.location(in: view)
-            partialResult.x += location.x
-            partialResult.y += location.y
+    private func updatePendingInputSource<Touches: Sequence>(
+        from touches: Touches
+    ) where Touches.Element == UITouch {
+        let hasDirectTouch = touches.contains { isDirectTouchContact($0) }
+        if acceptsDirectTouchScroll, hasDirectTouch {
+            pendingInputSource = .directTouch
+            return
         }
-        let count = CGFloat(touches.count)
-        return CGPoint(x: sum.x / count, y: sum.y / count)
+
+        if touches.contains(where: isIndirectPointerTouch) {
+            pendingInputSource = .indirectPointer
+        }
+    }
+
+    private func removeDirectTouchContacts<Touches: Sequence>(
+        from touches: Touches
+    ) where Touches.Element == UITouch {
+        directTouchContactIdentifiers.subtract(touches
+            .filter { isDirectTouchContact($0) }
+            .map(ObjectIdentifier.init))
+    }
+
+    private func isDirectTouchContact(_ touch: UITouch) -> Bool {
+        touch.type == .direct && !isStylusLikeTouch(touch)
+    }
+
+    private func isIndirectPointerTouch(_ touch: UITouch) -> Bool {
+        (touch.type == .indirectPointer || touch.type == .indirect) && !isStylusLikeTouch(touch)
     }
 }
 #endif

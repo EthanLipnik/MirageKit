@@ -52,6 +52,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     private static let awdlStartupReadabilityFrameQuality: Float = 0.28
     private static let awdlStartupReadabilityCapBps = 72_000_000
     private static let automaticStartupReadabilityFrameQuality: Float = 0.60
+    private static let optimizedVPNAutomaticStartupReadabilityFrameQuality: Float = 0.75
     private static let proximityAutomaticStartupReadabilityFrameQuality: Float = 0.65
 
     static func resolve(_ request: Request) -> Decision? {
@@ -62,7 +63,12 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             return nil
         }
 
-        let pathBudget = budget(for: request.mediaPathProfile, pathKind: request.transportPathKind)
+        let usesOptimizedVPNProfile = usesOptimizedVPNProfile(request)
+        let pathBudget = budget(
+            for: request.mediaPathProfile,
+            pathKind: request.transportPathKind,
+            usesOptimizedVPNProfile: usesOptimizedVPNProfile
+        )
         let usesAwdlInteractiveBudget = pathBudget.label == "awdlInteractiveDisplay"
         guard request.runtimeQualityAdjustmentEnabled || usesAwdlInteractiveBudget else { return nil }
         let geometryStartup = bitrate(
@@ -106,7 +112,8 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         ) : nil
         let automaticReadabilityFloor = automaticStartupReadabilityFloor(
             request: request,
-            maximumCeiling: maximumCeiling
+            maximumCeiling: maximumCeiling,
+            usesOptimizedVPNProfile: usesOptimizedVPNProfile
         )
         let clientStartupLimited = if let explicitStartup {
             manualStartupBitrate(
@@ -208,11 +215,13 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
 
     private static func automaticStartupReadabilityFloor(
         request: Request,
-        maximumCeiling: Int
+        maximumCeiling: Int,
+        usesOptimizedVPNProfile: Bool
     ) -> Int? {
         guard request.enteredBitrateBps == nil,
               let readabilityFrameQuality = automaticStartupReadabilityFrameQuality(
-                  for: request.mediaPathProfile
+                  for: request.mediaPathProfile,
+                  usesOptimizedVPNProfile: usesOptimizedVPNProfile
               ) else {
             return nil
         }
@@ -231,13 +240,17 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     }
 
     private static func automaticStartupReadabilityFrameQuality(
-        for mediaPathProfile: MirageMediaPathProfile
+        for mediaPathProfile: MirageMediaPathProfile,
+        usesOptimizedVPNProfile: Bool
     ) -> Float? {
         switch mediaPathProfile {
         case .localWiFi,
-             .wired,
-             .vpnOrOverlay:
+             .wired:
             return Self.automaticStartupReadabilityFrameQuality
+        case .vpnOrOverlay:
+            return usesOptimizedVPNProfile
+                ? Self.optimizedVPNAutomaticStartupReadabilityFrameQuality
+                : Self.automaticStartupReadabilityFrameQuality
         case .proximityWiredLike:
             return proximityAutomaticStartupReadabilityFrameQuality
         case .awdlRadio,
@@ -328,7 +341,8 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
 
     private static func budget(
         for mediaPathProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind
+        pathKind: MirageNetworkPathKind,
+        usesOptimizedVPNProfile: Bool = false
     ) -> PathBudget {
         switch mediaPathProfile {
         case .awdlRadio:
@@ -384,11 +398,25 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 label: "proximity"
             )
         case .vpnOrOverlay:
+            guard usesOptimizedVPNProfile else {
+                return PathBudget(
+                    startupBitsPerPixelPerFrame: 0.200,
+                    maximumBitsPerPixelPerFrame: 0.450,
+                    startupCapBps: 96_000_000,
+                    maximumCapBps: 180_000_000,
+                    minimumFloorBps: 8_000_000,
+                    honorsRequestedStartup: true,
+                    honorsAutomaticClientStartup: true,
+                    honorsAutomaticClientCeiling: true,
+                    minimumAutomaticClientCeilingBps: nil,
+                    label: "remote"
+                )
+            }
             return PathBudget(
-                startupBitsPerPixelPerFrame: 0.200,
-                maximumBitsPerPixelPerFrame: 0.450,
+                startupBitsPerPixelPerFrame: 0.385,
+                maximumBitsPerPixelPerFrame: 0.800,
                 startupCapBps: 96_000_000,
-                maximumCapBps: 180_000_000,
+                maximumCapBps: 120_000_000,
                 minimumFloorBps: 8_000_000,
                 honorsRequestedStartup: true,
                 honorsAutomaticClientStartup: true,
@@ -406,7 +434,11 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             case .awdl:
                 return budget(for: .awdlRadio, pathKind: pathKind)
             case .vpn, .cellular:
-                return budget(for: .vpnOrOverlay, pathKind: pathKind)
+                return budget(
+                    for: .vpnOrOverlay,
+                    pathKind: pathKind,
+                    usesOptimizedVPNProfile: usesOptimizedVPNProfile
+                )
             case .other, .unknown:
                 return PathBudget(
                     startupBitsPerPixelPerFrame: 0.060,
@@ -423,5 +455,25 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             }
         }
     }
+
+    private static func usesOptimizedVPNProfile(_ request: Request) -> Bool {
+        guard request.mediaPathProfile == .vpnOrOverlay,
+              request.transportPathKind == .vpn,
+              request.enteredBitrateBps == nil,
+              request.frameRate == 30,
+              let requestedBitrate = normalized(request.requestedBitrateBps),
+              Self.optimizedVPNProfileStartupBitratesBps.contains(requestedBitrate),
+              let requestedCeiling = normalized(request.requestedCeilingBps),
+              requestedCeiling >= requestedBitrate else {
+            return false
+        }
+        return true
+    }
+
+    private static let optimizedVPNProfileStartupBitratesBps: Set<Int> = [
+        24_000_000,
+        30_000_000,
+        36_000_000,
+    ]
 }
 #endif

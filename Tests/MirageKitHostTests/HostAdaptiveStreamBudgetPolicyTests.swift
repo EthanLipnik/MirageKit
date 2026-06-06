@@ -61,6 +61,35 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
     }
 
+    @Test("Optimized VPN large stream starts at selected target and keeps readable floor")
+    func optimizedVPNLargeStreamStartsAtSelectedTargetAndKeepsReadableFloor() throws {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 36_000_000,
+                requestedCeilingBps: 240_000_000,
+                outputWidth: 2048,
+                outputHeight: 1536,
+                frameRate: 30,
+                mediaPathProfile: .vpnOrOverlay,
+                transportPathKind: .vpn
+            )
+        )
+        let expectedReadabilityFloor = try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: 0.75,
+                width: 2048,
+                height: 1536,
+                frameRate: 30,
+                maxBitrateBps: decision?.maximumCeilingBps ?? 1
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 36_000_000)
+        #expect((decision?.maximumCeilingBps ?? 0) > 70_000_000)
+        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect((decision?.minimumBitrateFloorBps ?? 0) > 20_000_000)
+    }
+
     @Test("WiFi ProMotion automatic stream starts at readability floor")
     func wifiProMotionAutomaticStreamStartsAtReadabilityFloor() throws {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(

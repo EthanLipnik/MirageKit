@@ -9,7 +9,7 @@ import MirageKit
 #if os(iOS) || os(visionOS)
 import UIKit
 
-/// Invisible scroll views that capture native scroll physics.
+/// Invisible scroll capture that forwards native scroll physics.
 /// The actual content view stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingView: UIView {
@@ -34,32 +34,29 @@ final class ScrollPhysicsCapturingView: UIView {
         ignoresSafeArea ? .zero : super.safeAreaInsets
     }
 
-    /// The invisible scroll view for indirect pointer / trackpad physics
-    private let indirectScrollView: CallbackScrollView
+    /// The invisible scroll view that captures direct-touch and indirect-pointer scroll physics.
+    private let scrollView: InputSourceScrollView
 
-    /// The invisible scroll view for direct-touch physics
-    private let directTouchScrollView: DirectTouchScrollView
-
-    /// Dummy content view that indirectScrollView scrolls (never visible)
-    private let indirectScrollContent: UIView
-
-    /// Dummy content view that directTouchScrollView scrolls (never visible)
-    private let directTouchScrollContent: UIView
+    /// Dummy content view that scrollView scrolls (never visible).
+    private let scrollContent: UIView
 
     /// The actual content we display (stays pinned to bounds)
     let contentView: UIView
 
     /// The pan recognizer that drives native one-finger direct-touch scrolling.
-    var directTouchPanGestureRecognizer: UIPanGestureRecognizer { directTouchScrollView.panGestureRecognizer }
+    var directTouchPanGestureRecognizer: UIPanGestureRecognizer { scrollView.panGestureRecognizer }
 
     /// Callback for scroll events: (deltaX, deltaY, phase, momentumPhase, source)
     var onScroll: ((CGFloat, CGFloat, MirageScrollPhase, MirageScrollPhase, InputSource) -> Void)?
 
     var isIndirectScrollActive: Bool {
-        isIndirectTracking ||
-            indirectScrollView.isTracking ||
-            indirectScrollView.isDragging ||
-            indirectScrollView.panGestureRecognizer.state.isActive
+        guard !scrollView.hasDirectTouchContact else { return false }
+        guard scrollView.activeInputSource == .indirectPointer else { return false }
+        return isScrollTracking ||
+            scrollView.isTracking ||
+            scrollView.isDragging ||
+            scrollView.isDecelerating ||
+            scrollView.panGestureRecognizer.state.isActive
     }
 
     /// Callback for rotation events: (rotationDegrees, phase)
@@ -69,49 +66,54 @@ final class ScrollPhysicsCapturingView: UIView {
     var directTouchScrollEnabled: Bool = false {
         didSet {
             guard directTouchScrollEnabled != oldValue else { return }
-            directTouchScrollView.isUserInteractionEnabled = directTouchScrollEnabled
-            directTouchScrollView.isHidden = !directTouchScrollEnabled
+            configureAllowedTouchTypes()
             if directTouchScrollEnabled {
-                recenterIfNeeded(for: directTouchScrollView, force: true)
+                recenterIfNeeded(for: scrollView, force: true)
             } else {
-                stopTracking(for: directTouchScrollView)
+                cancelDirectTouchScrolling()
+                scrollView.resetInputSource()
             }
         }
     }
 
-    /// Stops any in-progress momentum deceleration on the indirect scroll view.
+    /// Stops any in-progress momentum deceleration from indirect pointer scrolling.
     func stopIndirectScrollDeceleration() {
-        guard indirectScrollView.isDecelerating else { return }
+        guard scrollView.activeInputSource == .indirectPointer, scrollView.isDecelerating else { return }
         // Setting contentOffset to current offset stops momentum
-        indirectScrollView.setContentOffset(indirectScrollView.contentOffset, animated: false)
+        scrollView.setContentOffset(scrollView.contentOffset, animated: false)
     }
 
     /// Cancels direct-touch scrolling when a direct pointer gesture takes ownership.
     func cancelDirectTouchScrolling() {
-        let currentOffset = directTouchScrollView.contentOffset
-        if directTouchScrollView.isDecelerating {
+        guard scrollView.hasDirectInputSource else { return }
+
+        let currentOffset = scrollView.contentOffset
+        if scrollView.isDecelerating {
             // Setting contentOffset to current offset stops momentum
-            directTouchScrollView.setContentOffset(currentOffset, animated: false)
+            scrollView.setContentOffset(currentOffset, animated: false)
         }
 
-        guard isDirectTracking || directTouchScrollView.panGestureRecognizer.state.isActive else {
+        guard isScrollTracking || scrollView.panGestureRecognizer.state.isActive else {
+            recenterIfNeeded(for: scrollView)
+            scrollView.resetInputSource()
             return
         }
 
-        directTouchScrollView.panGestureRecognizer.isEnabled = false
-        directTouchScrollView.panGestureRecognizer.isEnabled = true
-        setTracking(false, for: directTouchScrollView)
-        setLastContentOffset(currentOffset, for: directTouchScrollView)
-        recenterIfNeeded(for: directTouchScrollView)
+        scrollView.panGestureRecognizer.isEnabled = false
+        scrollView.panGestureRecognizer.isEnabled = true
+        setTracking(false)
+        setLastContentOffset(currentOffset)
+        recenterIfNeeded(for: scrollView)
+        scrollView.resetInputSource()
     }
 
-    /// Callback when a direct non-stylus touch is detected.
+    /// Callback when accepted direct-scroll touch input is detected.
     var onDirectTouchActivity: (() -> Void)?
 
-    /// Callback when a direct non-stylus touch begins, in this view's local coordinates.
-    var onDirectTouchBegan: ((CGPoint) -> Void)?
+    /// Callback when a direct non-stylus touch begins scrolling, in this view's local coordinates.
+    var onDirectTouchScrollBegan: ((CGPoint) -> Void)?
 
-    /// Installs Pencil touch callbacks on the private direct-touch scroll view.
+    /// Installs Pencil touch callbacks on the private scroll view.
     ///
     /// Only moved touches receive the `UIEvent` because coalesced touch samples are only read during movement.
     func configurePencilTouchHandlers(
@@ -120,29 +122,20 @@ final class ScrollPhysicsCapturingView: UIView {
         ended: ((Set<UITouch>) -> Void)?,
         cancelled: ((Set<UITouch>) -> Void)?
     ) {
-        directTouchScrollView.onPencilTouchesBegan = began
-        directTouchScrollView.onPencilTouchesMoved = moved
-        directTouchScrollView.onPencilTouchesEnded = ended
-        directTouchScrollView.onPencilTouchesCancelled = cancelled
+        scrollView.onPencilTouchesBegan = began
+        scrollView.onPencilTouchesMoved = moved
+        scrollView.onPencilTouchesEnded = ended
+        scrollView.onPencilTouchesCancelled = cancelled
     }
 
-    /// Whether we're currently tracking a gesture in the indirect scroll view
-    private var isIndirectTracking = false
+    /// Whether we're currently tracking a native scroll gesture.
+    private var isScrollTracking = false
 
-    /// Whether we're currently tracking a gesture in the direct scroll view
-    private var isDirectTracking = false
+    /// Last content offset used to calculate scroll deltas.
+    private var lastScrollContentOffset: CGPoint = .zero
 
-    /// Last content offset for the indirect scroll view
-    private var lastIndirectContentOffset: CGPoint = .zero
-
-    /// Last content offset for the direct scroll view
-    private var lastDirectContentOffset: CGPoint = .zero
-
-    /// Flag to suppress scroll events during indirect recenter operation
-    private var isRecenteringIndirect = false
-
-    /// Flag to suppress scroll events during direct recenter operation
-    private var isRecenteringDirect = false
+    /// Flag to suppress scroll events during recenter operations.
+    private var isRecenteringScroll = false
 
     /// Gesture recognizers for trackpad pinch/rotation
     private var rotationGesture: UIRotationGestureRecognizer!
@@ -152,20 +145,16 @@ final class ScrollPhysicsCapturingView: UIView {
     private var lastRotationAngle: CGFloat = 0.0
 
     override init(frame: CGRect) {
-        indirectScrollView = CallbackScrollView(frame: frame)
-        directTouchScrollView = DirectTouchScrollView(frame: frame)
-        indirectScrollContent = UIView()
-        directTouchScrollContent = UIView()
+        scrollView = InputSourceScrollView(frame: frame)
+        scrollContent = UIView()
         contentView = UIView(frame: frame)
         super.init(frame: frame)
         setup()
     }
 
     required init?(coder: NSCoder) {
-        indirectScrollView = CallbackScrollView()
-        directTouchScrollView = DirectTouchScrollView()
-        indirectScrollContent = UIView()
-        directTouchScrollContent = UIView()
+        scrollView = InputSourceScrollView()
+        scrollContent = UIView()
         contentView = UIView()
         super.init(coder: coder)
         setup()
@@ -174,40 +163,22 @@ final class ScrollPhysicsCapturingView: UIView {
     private func setup() {
         insetsLayoutMarginsFromSafeArea = false
 
-        bindScrollCallbacks(for: indirectScrollView)
-        bindScrollCallbacks(for: directTouchScrollView)
-        configureScrollView(indirectScrollView)
-        configureScrollView(directTouchScrollView)
-
-        indirectScrollView.panGestureRecognizer.allowedTouchTypes = [
-            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
-            NSNumber(value: UITouch.TouchType.indirect.rawValue),
-        ]
-
-        directTouchScrollView.panGestureRecognizer.allowedTouchTypes = [
-            NSNumber(value: UITouch.TouchType.direct.rawValue),
-        ]
-        directTouchScrollView.panGestureRecognizer.minimumNumberOfTouches = 1
-        directTouchScrollView.panGestureRecognizer.maximumNumberOfTouches = 1
-        directTouchScrollView.isUserInteractionEnabled = false
-        directTouchScrollView.isHidden = true
-        directTouchScrollView.onDirectTouchActivity = { [weak self] in
+        bindScrollCallbacks(for: scrollView)
+        configureScrollView(scrollView)
+        configureAllowedTouchTypes()
+        scrollView.panGestureRecognizer.minimumNumberOfTouches = 1
+        scrollView.panGestureRecognizer.maximumNumberOfTouches = 1
+        scrollView.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
         }
-        directTouchScrollView.onDirectTouchBegan = { [weak self, weak directTouchScrollView] location in
-            guard let self, let directTouchScrollView else { return }
-            self.onDirectTouchBegan?(directTouchScrollView.convert(location, to: self))
-        }
 
-        setupScrollContent(indirectScrollContent, in: indirectScrollView)
-        setupScrollContent(directTouchScrollContent, in: directTouchScrollView)
+        setupScrollContent(scrollContent, in: scrollView)
 
         // Content view holds the actual sample-buffer view (stays pinned to our bounds)
         contentView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentView)
 
-        addSubview(indirectScrollView)
-        addSubview(directTouchScrollView)
+        addSubview(scrollView)
 
         NSLayoutConstraint.activate([
             // Content view fills bounds
@@ -216,16 +187,11 @@ final class ScrollPhysicsCapturingView: UIView {
             contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
             contentView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Scroll views fill bounds
-            indirectScrollView.topAnchor.constraint(equalTo: topAnchor),
-            indirectScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            indirectScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            indirectScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            directTouchScrollView.topAnchor.constraint(equalTo: topAnchor),
-            directTouchScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            directTouchScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            directTouchScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Scroll view fills bounds
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         // Rotation gesture for trackpad (indirectPointer only)
@@ -234,10 +200,22 @@ final class ScrollPhysicsCapturingView: UIView {
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
             NSNumber(value: UITouch.TouchType.indirect.rawValue),
         ]
-        rotationGestureDelegate.indirectPanGestureRecognizer = indirectScrollView.panGestureRecognizer
+        rotationGestureDelegate.indirectPanGestureRecognizer = scrollView.panGestureRecognizer
         rotationGestureDelegate.rotationGestureRecognizer = rotationGesture
         rotationGesture.delegate = rotationGestureDelegate
         addGestureRecognizer(rotationGesture)
+    }
+
+    private func configureAllowedTouchTypes() {
+        scrollView.acceptsDirectTouchScroll = directTouchScrollEnabled
+        var allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
+        if directTouchScrollEnabled {
+            allowedTouchTypes.insert(NSNumber(value: UITouch.TouchType.direct.rawValue), at: 0)
+        }
+        scrollView.panGestureRecognizer.allowedTouchTypes = allowedTouchTypes
     }
 
     private func bindScrollCallbacks(for scrollView: CallbackScrollView) {
@@ -287,10 +265,7 @@ final class ScrollPhysicsCapturingView: UIView {
         }
         super.layoutSubviews()
 
-        recenterIfNeeded(for: indirectScrollView, force: lastIndirectContentOffset == .zero)
-        if directTouchScrollEnabled {
-            recenterIfNeeded(for: directTouchScrollView, force: lastDirectContentOffset == .zero)
-        }
+        recenterIfNeeded(for: scrollView, force: lastScrollContentOffset == .zero)
     }
 
     /// Center the scroll view's content offset
@@ -303,38 +278,42 @@ final class ScrollPhysicsCapturingView: UIView {
             y: (Self.scrollableSize - bounds.height) / 2
         )
 
-        if force || (!isTracking(scrollView) && !scrollView.isDecelerating) {
-            setRecentering(true, for: scrollView)
+        if force || (!isTracking && !scrollView.isDecelerating) {
+            setRecentering(true)
             scrollView.contentOffset = centerOffset
-            setLastContentOffset(centerOffset, for: scrollView)
-            setRecentering(false, for: scrollView)
+            setLastContentOffset(centerOffset)
+            setRecentering(false)
         }
     }
 
     // MARK: - Scroll Callbacks
 
     private func handleScrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        setTracking(true, for: scrollView)
-        setLastContentOffset(scrollView.contentOffset, for: scrollView)
-        onScroll?(0, 0, .began, .none, inputSource(for: scrollView))
+        setTracking(true)
+        setLastContentOffset(scrollView.contentOffset)
+        let source = beginScrollingInputSource()
+        if case .directTouch = source {
+            onDirectTouchScrollBegan?(scrollStartLocation(for: scrollView))
+        }
+        onScroll?(0, 0, .began, .none, source)
     }
 
     private func handleScrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard !isRecentering(scrollView) else { return }
+        guard !isRecentering else { return }
 
         let currentOffset = scrollView.contentOffset
-        let lastOffset = lastContentOffset(for: scrollView)
+        let lastOffset = lastContentOffset
 
         // Calculate deltas (inverted: content moving left = scrolling right)
         let deltaX = lastOffset.x - currentOffset.x
         let deltaY = lastOffset.y - currentOffset.y
-        setLastContentOffset(currentOffset, for: scrollView)
+        setLastContentOffset(currentOffset)
 
-        let phase: MirageScrollPhase = isTracking(scrollView) ? .changed : .none
+        let phase: MirageScrollPhase = isTracking ? .changed : .none
         let momentumPhase: MirageScrollPhase = scrollView.isDecelerating ? .changed : .none
 
         if deltaX != 0 || deltaY != 0 {
-            onScroll?(deltaX, deltaY, phase, momentumPhase, inputSource(for: scrollView))
+            onScroll?(deltaX, deltaY, phase, momentumPhase, inputSource)
         }
     }
 
@@ -342,19 +321,23 @@ final class ScrollPhysicsCapturingView: UIView {
         _ scrollView: UIScrollView,
         willDecelerate decelerate: Bool
     ) {
-        setTracking(false, for: scrollView)
+        let source = inputSource
+        setTracking(false)
 
         if decelerate {
-            onScroll?(0, 0, .ended, .began, inputSource(for: scrollView))
+            onScroll?(0, 0, .ended, .began, source)
         } else {
-            onScroll?(0, 0, .ended, .none, inputSource(for: scrollView))
+            onScroll?(0, 0, .ended, .none, source)
             recenterIfNeeded(for: scrollView)
+            resetInputSource()
         }
     }
 
     private func handleScrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        onScroll?(0, 0, .none, .ended, inputSource(for: scrollView))
+        let source = inputSource
+        onScroll?(0, 0, .none, .ended, source)
         recenterIfNeeded(for: scrollView)
+        resetInputSource()
     }
 
     // MARK: - Trackpad Gesture Handlers
@@ -384,54 +367,50 @@ final class ScrollPhysicsCapturingView: UIView {
         }
     }
 
-    private func isTracking(_ scrollView: UIScrollView) -> Bool {
-        if scrollView === indirectScrollView { return isIndirectTracking }
-        return isDirectTracking
+    private var isTracking: Bool {
+        isScrollTracking
     }
 
-    private func inputSource(for scrollView: UIScrollView) -> InputSource {
-        if scrollView === indirectScrollView { return .indirectPointer }
-        return .directTouch
+    private var inputSource: InputSource {
+        scrollView.activeInputSource
     }
 
-    private func setTracking(_ isTracking: Bool, for scrollView: UIScrollView) {
-        if scrollView === indirectScrollView {
-            isIndirectTracking = isTracking
-        } else {
-            isDirectTracking = isTracking
-        }
+    private func beginScrollingInputSource() -> InputSource {
+        scrollView.beginScrollingInputSource()
     }
 
-    private func stopTracking(for scrollView: UIScrollView) {
-        setTracking(false, for: scrollView)
-        setRecentering(false, for: scrollView)
-        scrollView.setContentOffset(lastContentOffset(for: scrollView), animated: false)
+    private func scrollStartLocation(for scrollView: UIScrollView) -> CGPoint {
+        let panGesture = scrollView.panGestureRecognizer
+        let currentLocation = panGesture.location(in: self)
+        let translation = panGesture.translation(in: self)
+        return CGPoint(
+            x: currentLocation.x - translation.x,
+            y: currentLocation.y - translation.y
+        )
     }
 
-    private func lastContentOffset(for scrollView: UIScrollView) -> CGPoint {
-        if scrollView === indirectScrollView { return lastIndirectContentOffset }
-        return lastDirectContentOffset
+    private func resetInputSource() {
+        scrollView.resetInputSource()
     }
 
-    private func setLastContentOffset(_ offset: CGPoint, for scrollView: UIScrollView) {
-        if scrollView === indirectScrollView {
-            lastIndirectContentOffset = offset
-        } else {
-            lastDirectContentOffset = offset
-        }
+    private func setTracking(_ isTracking: Bool) {
+        isScrollTracking = isTracking
     }
 
-    private func isRecentering(_ scrollView: UIScrollView) -> Bool {
-        if scrollView === indirectScrollView { return isRecenteringIndirect }
-        return isRecenteringDirect
+    private var lastContentOffset: CGPoint {
+        lastScrollContentOffset
     }
 
-    private func setRecentering(_ isRecentering: Bool, for scrollView: UIScrollView) {
-        if scrollView === indirectScrollView {
-            isRecenteringIndirect = isRecentering
-        } else {
-            isRecenteringDirect = isRecentering
-        }
+    private func setLastContentOffset(_ offset: CGPoint) {
+        lastScrollContentOffset = offset
+    }
+
+    private var isRecentering: Bool {
+        isRecenteringScroll
+    }
+
+    private func setRecentering(_ isRecentering: Bool) {
+        isRecenteringScroll = isRecentering
     }
 }
 

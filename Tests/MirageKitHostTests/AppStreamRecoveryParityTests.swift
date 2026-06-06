@@ -399,7 +399,8 @@ private extension StreamContext {
         self.streamScale = streamScale
         awdlInteractiveBaseStreamScale = baseScale
         if allowed {
-            grantAwdlHostStructuralQualityReduction(now: CFAbsoluteTimeGetCurrent(), reason: "test")
+            awdlHostEncoderStructuralQualityReductionAllowed = true
+            awdlHostEncoderStructuralQualityReductionDeadline = CFAbsoluteTimeGetCurrent() + 60
         } else {
             clearAwdlHostStructuralQualityReduction()
         }

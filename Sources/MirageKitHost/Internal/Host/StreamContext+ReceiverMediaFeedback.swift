@@ -253,6 +253,12 @@ extension StreamContext {
               feedback.recoveryState == .keyframeRecovery || feedback.recoveryState == .hardRecovery else {
             return false
         }
+        if feedback.recoveryState == .hardRecovery,
+           feedback.reliabilityCauses.contains(.keyframeStarvation),
+           feedback.receivedFPS <= 0.5,
+           feedback.decodedFPS <= 0.5 {
+            return true
+        }
         let presentedAgeMs = feedback.latestPresentedFrameAgeMs ?? 0
         return presentedAgeMs >= 1_500 &&
             feedback.receivedFPS <= 0.5 &&

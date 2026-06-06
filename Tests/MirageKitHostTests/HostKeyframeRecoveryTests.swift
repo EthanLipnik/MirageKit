@@ -261,6 +261,29 @@ struct HostKeyframeRecoveryTests {
         #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
+    @Test("Receiver hard no-progress freeze schedules keyframe without transport evidence")
+    func receiverHardNoProgressFreezeSchedulesKeyframeWithoutTransportEvidence() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 64_000_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay,
+            bitrateAdaptationCeiling: 221_524_992
+        )
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .hardRecovery,
+                recoveryCause: .freezeTimeout,
+                reliabilityCauses: [.keyframeStarvation]
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
     @Test("Receiver startup-timeout feedback bypasses adaptive cooldown")
     func receiverStartupTimeoutFeedbackBypassesAdaptiveCooldown() async {
         let context = makeContext()
@@ -1046,7 +1069,8 @@ struct HostKeyframeRecoveryTests {
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
         transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil
+        mediaPathProfile: MirageMediaPathProfile? = nil,
+        bitrateAdaptationCeiling: Int? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: frameRate,
@@ -1065,7 +1089,8 @@ struct HostKeyframeRecoveryTests {
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             latencyMode: latencyMode,
             transportPathKind: transportPathKind,
-            mediaPathProfile: mediaPathProfile
+            mediaPathProfile: mediaPathProfile,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling
         )
     }
 

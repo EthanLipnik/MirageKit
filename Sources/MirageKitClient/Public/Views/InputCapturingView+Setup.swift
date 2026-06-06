@@ -55,7 +55,11 @@ extension InputCapturingView {
             syncModifiersForInput()
             let modifiers = keyboardModifiers
             sendModifierSnapshotIfNeeded(modifiers)
-            let location = scrollEventLocation(source: source)
+            let location = scrollEventLocation(
+                source: source,
+                phase: phase,
+                momentumPhase: momentumPhase
+            )
             let scrollEvent = makeScrollEvent(
                 deltaX: deltaX,
                 deltaY: deltaY,
@@ -92,10 +96,10 @@ extension InputCapturingView {
         scrollPhysicsView.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
         }
-        scrollPhysicsView.onDirectTouchBegan = { [weak self, weak scrollPhysicsView] location in
+        scrollPhysicsView.onDirectTouchScrollBegan = { [weak self, weak scrollPhysicsView] location in
             guard let self else { return }
             let localLocation = scrollPhysicsView?.convert(location, to: self) ?? location
-            handleDirectTouchBegan(at: localLocation)
+            handleDirectTouchScrollBegan(at: localLocation)
         }
 
         // Enable user interaction

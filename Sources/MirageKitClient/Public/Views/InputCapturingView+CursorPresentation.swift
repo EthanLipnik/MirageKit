@@ -225,7 +225,11 @@ extension InputCapturingView {
         updateLockedCursorViewPosition()
     }
 
-    func scrollEventLocation(source: ScrollPhysicsCapturingView.InputSource) -> CGPoint? {
+    func scrollEventLocation(
+        source: ScrollPhysicsCapturingView.InputSource,
+        phase: MirageScrollPhase = .none,
+        momentumPhase: MirageScrollPhase = .none
+    ) -> CGPoint? {
         switch source {
         case .directTouch:
             if let directTouchScrollAnchorLocation {

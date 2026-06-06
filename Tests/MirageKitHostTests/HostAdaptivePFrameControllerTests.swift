@@ -599,13 +599,13 @@ struct HostAdaptivePFrameControllerTests {
         }
     }
 
-    @Test("VPN low-readability encoded frames get deadline slack before quality cuts")
-    func vpnLowReadabilityEncodedFramesGetDeadlineSlackBeforeQualityCuts() throws {
+    @Test("Regular VPN readable encoded frames keep existing deadline behavior")
+    func regularVPNReadableEncodedFramesKeepExistingDeadlineBehavior() throws {
         let mildlyLateBytes = 100 * 1024
         let frameInterval = 1.0 / 60.0
 
-        var highQualityController = HostAdaptivePFrameController()
-        let highQualityDecision = highQualityController.evaluateEncodedFrame(
+        var controller = HostAdaptivePFrameController()
+        let decision = controller.evaluateEncodedFrame(
             byteCount: mildlyLateBytes,
             wireBytes: mildlyLateBytes,
             packetCount: packetCount(forWireBytes: mildlyLateBytes),
@@ -627,11 +627,46 @@ struct HostAdaptivePFrameControllerTests {
             mediaPathProfile: .vpnOrOverlay,
             now: 10
         )
-        let highQualityBudget = try #require(highQualityDecision.budgetDecision)
+        let budget = try #require(decision.budgetDecision)
 
-        #expect(highQualityDecision.admission == .sendWithQualityDrop)
-        #expect(highQualityBudget.reason == .encodedFrame)
-        #expect(abs(highQualityDecision.sendDeadline - (10 + frameInterval)) < 0.0001)
+        #expect(decision.admission == .sendWithQualityDrop)
+        #expect(budget.reason == .encodedFrame)
+        #expect(abs(decision.sendDeadline - (10 + frameInterval)) < 0.0001)
+    }
+
+    @Test("Optimized VPN readable encoded frames get extended deadline slack")
+    func optimizedVPNReadableEncodedFramesGetExtendedDeadlineSlack() {
+        let mildlyLateBytes = 100 * 1024
+        let frameInterval = 1.0 / 30.0
+
+        var readableQualityController = HostAdaptivePFrameController()
+        let readableQualityDecision = readableQualityController.evaluateEncodedFrame(
+            byteCount: mildlyLateBytes,
+            wireBytes: mildlyLateBytes,
+            packetCount: packetCount(forWireBytes: mildlyLateBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 22_000_000,
+            requestedTargetBitrateBps: 36_000_000,
+            startupCeilingBps: 76_000_000,
+            minimumBitrateFloorBps: 22_000_000,
+            currentFrameRate: 30,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.70,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .vpnOrOverlay,
+            now: 10
+        )
+
+        #expect(readableQualityDecision.admission == .send)
+        #expect(readableQualityDecision.budgetDecision == nil)
+        #expect(readableQualityDecision.sendDeadline > 10 + frameInterval)
+        #expect(readableQualityDecision.sendDeadline <= 10 + 0.080)
 
         var lowQualityController = HostAdaptivePFrameController()
         let lowQualityDecision = lowQualityController.evaluateEncodedFrame(
@@ -643,11 +678,11 @@ struct HostAdaptivePFrameControllerTests {
             senderHealthy: true,
             inputActive: true,
             sourceStill: false,
-            currentBitrateBps: 2_000_000,
-            requestedTargetBitrateBps: 60_000_000,
-            startupCeilingBps: 60_000_000,
-            minimumBitrateFloorBps: 2_000_000,
-            currentFrameRate: 60,
+            currentBitrateBps: 22_000_000,
+            requestedTargetBitrateBps: 36_000_000,
+            startupCeilingBps: 76_000_000,
+            minimumBitrateFloorBps: 22_000_000,
+            currentFrameRate: 30,
             maxPayloadSize: 1_200,
             currentQuality: 0.55,
             qualityFloor: 0.03,
@@ -660,7 +695,32 @@ struct HostAdaptivePFrameControllerTests {
         #expect(lowQualityDecision.admission == .send)
         #expect(lowQualityDecision.budgetDecision == nil)
         #expect(lowQualityDecision.sendDeadline > 10 + frameInterval)
-        #expect(lowQualityDecision.sendDeadline <= 10 + 0.060)
+        #expect(lowQualityDecision.sendDeadline <= 10 + 0.080)
+    }
+
+    @Test("VPN sender deadline pressure keeps runtime quality ceiling readable")
+    func vpnSenderDeadlinePressureKeepsRuntimeQualityCeilingReadable() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let maybeDecision = controller.recordSenderDeadlineDrop(
+            currentBitrateBps: 36_000_000,
+            requestedTargetBitrateBps: 36_000_000,
+            startupCeilingBps: 76_000_000,
+            minimumBitrateFloorBps: 22_000_000,
+            currentFrameRate: 30,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.70,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.80,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .vpnOrOverlay,
+            now: 10
+        )
+        let decision = try #require(maybeDecision)
+
+        #expect(decision.reason == .senderDeadline)
+        #expect(decision.qualityCeiling >= 0.50)
+        #expect(decision.qualityCeiling <= 0.80)
     }
 
     @Test("VPN low-readability timing slack still cuts severe pressure")
