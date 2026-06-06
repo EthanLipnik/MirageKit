@@ -92,7 +92,8 @@ extension MirageClientService {
             dimensionToken: dimensionToken
         )
 
-        if let minW = started.minWidth, let minH = started.minHeight {
+        let isAppCentricStream = streamStartedContinuation == nil
+        if !isAppCentricStream, let minW = started.minWidth, let minH = started.minHeight {
             streamMinSizes[streamID] = (minWidth: minW, minHeight: minH)
             MirageLogger.client("Minimum window size: \(minW)x\(minH) pts")
             let minSize = CGSize(width: minW, height: minH)
@@ -100,7 +101,6 @@ extension MirageClientService {
             onStreamMinimumSizeUpdate?(streamID, minSize)
         }
 
-        let isAppCentricStream = streamStartedContinuation == nil
         streamStartedContinuation?.resume(returning: streamID)
         streamStartedContinuation = nil
         let shouldMarkStartupPending = isAppCentricStream && shouldRegisterVideo

@@ -393,6 +393,65 @@ struct PriorityInputClientRouteTests {
         #expect(await fallbackRecorder.modes == [.orderedBestEffort])
     }
 
+    @Test("Protected fallback does not degrade a proven realtime route")
+    func protectedFallbackDoesNotDegradeProvenRealtimeRoute() async throws {
+        let endpoint = FakePriorityInputEndpoint()
+        let fallbackRecorder = PriorityFallbackRecorder()
+        let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
+            await fallbackRecorder.append(data, mode: mode)
+        }
+        defer { route.stop() }
+
+        try route.sendRealtime(
+            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
+            streamID: 13
+        )
+        let realtimeEnvelope = try MiragePriorityInputEnvelope.deserialize(
+            try await waitForPayload(endpoint: endpoint)
+        )
+        endpoint.yield(MiragePriorityInputEnvelope(
+            kind: .ack,
+            eventID: realtimeEnvelope.eventID,
+            streamID: realtimeEnvelope.streamID,
+            deliveryClass: .realtime,
+            sentAtUptime: ProcessInfo.processInfo.systemUptime
+        ))
+        try await waitUntil("realtime route proof") {
+            route.snapshot().routeState == .priority
+        }
+
+        let sendTask = Task {
+            try await route.send(
+                event: .keyDown(MirageKeyEvent(keyCode: 0x24)),
+                streamID: 13,
+                deliveryMode: .orderedBestEffort
+            )
+        }
+
+        try await waitUntil("ordered protected fallback", timeout: .milliseconds(250)) {
+            await fallbackRecorder.count == 1
+        }
+
+        #expect(route.snapshot().protectedFallbackCount == 1)
+        #expect(route.snapshot().routeState == .priority)
+
+        let protectedEnvelope = try MiragePriorityInputEnvelope.deserialize(
+            try #require(endpoint.firstProtectedPayload)
+        )
+        endpoint.yield(MiragePriorityInputEnvelope(
+            kind: .ack,
+            eventID: protectedEnvelope.eventID,
+            streamID: protectedEnvelope.streamID,
+            deliveryClass: .protected,
+            sentAtUptime: ProcessInfo.processInfo.systemUptime
+        ))
+        try await waitUntil("late ordered protected ack") {
+            route.snapshot().protectedAckCount == 1
+        }
+
+        try await sendTask.value
+    }
+
     @Test("Expected realtime queue drops do not mark priority unhealthy")
     func expectedRealtimeQueueDropsDoNotMarkPriorityUnhealthy() async throws {
         let endpoint = FakePriorityInputEndpoint()

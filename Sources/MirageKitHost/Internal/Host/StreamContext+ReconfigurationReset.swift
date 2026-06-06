@@ -56,6 +56,7 @@ extension StreamContext {
         let emergencyQuality: Float?
         let keyframeSendDeadline: CFAbsoluteTime
         let lastKeyframeRequestTime: CFAbsoluteTime
+        let protectedReason: String?
     }
 
     private func pendingGeometryRecoveryKeyframeStateForReconfiguration()
@@ -73,7 +74,8 @@ extension StreamContext {
             requiresReset: pendingKeyframeRequiresReset,
             emergencyQuality: pendingEmergencyKeyframeQuality,
             keyframeSendDeadline: keyframeSendDeadline,
-            lastKeyframeRequestTime: lastKeyframeRequestTime
+            lastKeyframeRequestTime: lastKeyframeRequestTime,
+            protectedReason: protectedGeometryRecoveryKeyframeReason
         )
     }
 
@@ -90,6 +92,7 @@ extension StreamContext {
         suppressEncodedNonKeyframesUntilKeyframe = true
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = state.lastKeyframeRequestTime
+        protectedGeometryRecoveryKeyframeReason = state.protectedReason ?? state.reason
         MirageLogger.stream(
             "Preserved geometry recovery keyframe across \(reason): \(state.reason)"
         )
@@ -103,6 +106,7 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
+        protectedGeometryRecoveryKeyframeReason = nil
         pendingEmergencyKeyframeQuality = nil
         suppressEncodedNonKeyframesUntilKeyframe = false
         frameChainState = .normal

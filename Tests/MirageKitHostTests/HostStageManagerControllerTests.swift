@@ -10,6 +10,7 @@
 #if os(macOS)
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import Testing
 
 @Suite("Host Stage Manager controller")
@@ -153,6 +154,112 @@ struct HostStageManagerControllerTests {
         #expect(invocations[1].arguments == ["write", "com.apple.WindowManager", "GloballyEnabled", "-bool", "true"])
         #expect(invocations[2].arguments == ["Dock"])
     }
+
+    @Test
+    @MainActor
+    func pendingLockedAppStreamDoesNotDisableStageManagerBeforeLogin() async {
+        let runner = MockCommandRunner(results: [
+            Self.success(stdout: "0\n"),
+        ])
+        let host = MirageHostService()
+        host.stageManagerController = HostStageManagerController(commandRunner: runner.run)
+        let appSessionID = UUID()
+        host.pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = Self.pendingLockedAppStreamIntent(
+            appSessionID: appSessionID
+        )
+        host.pendingLockedAppStreamIntentOrder = [appSessionID]
+
+        await host.restoreStageManagerAfterAppStreamingIfNeeded()
+
+        #expect(!host.appStreamingStageManagerNeedsRestore)
+        let invocations = await runner.invocations()
+        #expect(invocations.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func postLoginAppStreamSetupDisablesStageManagerAndDefersRestore() async {
+        let runner = MockCommandRunner(results: [
+            Self.success(stdout: "1\n"),
+            Self.success(stdout: "1\n"),
+            Self.success(),
+            Self.success(),
+            Self.success(stdout: "0\n"),
+            Self.success(stdout: "0\n"),
+            Self.success(),
+            Self.success(),
+            Self.success(stdout: "1\n"),
+        ])
+        let host = MirageHostService()
+        host.stageManagerController = HostStageManagerController(commandRunner: runner.run)
+        let appSessionID = UUID()
+        host.pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = Self.pendingLockedAppStreamIntent(
+            appSessionID: appSessionID
+        )
+        host.pendingLockedAppStreamIntentOrder = [appSessionID]
+
+        await host.prepareStageManagerForAppStreamingIfNeeded()
+        await host.restoreStageManagerAfterAppStreamingIfNeeded()
+
+        #expect(host.appStreamingStageManagerNeedsRestore)
+        var invocations = await runner.invocations()
+        #expect(invocations.count == 5)
+
+        _ = host.removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+        await host.restoreStageManagerAfterAppStreamingIfNeeded()
+
+        #expect(!host.appStreamingStageManagerNeedsRestore)
+        invocations = await runner.invocations()
+        #expect(invocations.count == 9)
+        #expect(invocations[6].arguments == ["write", "com.apple.WindowManager", "GloballyEnabled", "-bool", "true"])
+    }
+
+    @Test
+    @MainActor
+    func completedLockedIntentDoesNotRestoreDuringPostLoginAppSessionSetup() async {
+        let runner = MockCommandRunner(results: [
+            Self.success(stdout: "0\n"),
+            Self.success(),
+            Self.success(),
+            Self.success(stdout: "1\n"),
+        ])
+        let host = MirageHostService()
+        host.stageManagerController = HostStageManagerController(commandRunner: runner.run)
+        host.appStreamingStageManagerNeedsRestore = true
+        let appSessionID = UUID()
+        host.pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = Self.pendingLockedAppStreamIntent(
+            appSessionID: appSessionID
+        )
+        host.pendingLockedAppStreamIntentOrder = [appSessionID]
+
+        _ = await host.appStreamManager.startAppSession(
+            id: appSessionID,
+            bundleIdentifier: "com.example.App",
+            appName: "Example",
+            appPath: "/Applications/Example.app",
+            clientID: UUID(),
+            clientName: "Client",
+            requestedDisplayResolution: CGSize(width: 1920, height: 1080),
+            requestedClientScaleFactor: nil,
+            maxVisibleSlots: 1,
+            bitrateBudgetBps: nil
+        )
+
+        _ = host.removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+        await host.restoreStageManagerAfterAppStreamingIfNeeded()
+
+        #expect(host.appStreamingStageManagerNeedsRestore)
+        var invocations = await runner.invocations()
+        #expect(invocations.isEmpty)
+
+        await host.appStreamManager.endSession(appSessionID: appSessionID)
+        await host.restoreStageManagerAfterAppStreamingIfNeeded()
+
+        #expect(!host.appStreamingStageManagerNeedsRestore)
+        invocations = await runner.invocations()
+        #expect(invocations.count == 4)
+        #expect(invocations[1].arguments == ["write", "com.apple.WindowManager", "GloballyEnabled", "-bool", "true"])
+    }
 }
 
 extension HostStageManagerControllerTests {
@@ -209,6 +316,23 @@ extension HostStageManagerControllerTests {
             timedOut: false,
             stdout: "",
             errorDescription: nil
+        )
+    }
+
+    static func pendingLockedAppStreamIntent(appSessionID: UUID) -> MirageHostService.PendingLockedAppStreamIntent {
+        MirageHostService.PendingLockedAppStreamIntent(
+            request: SelectAppMessage(
+                appSessionID: appSessionID,
+                bundleIdentifier: "com.example.App",
+                targetFrameRate: 60,
+                displayWidth: 1920,
+                displayHeight: 1080
+            ),
+            clientSessionID: UUID(),
+            clientID: UUID(),
+            createdAt: Date(),
+            loginStreamID: nil,
+            isResuming: false
         )
     }
 }

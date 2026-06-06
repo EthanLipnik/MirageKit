@@ -163,11 +163,19 @@ extension WindowSpaceManager {
             targetContentAspectRatio: targetContentAspectRatio
         )
         let targetSize = CGSize(width: fitFrame.width, height: fitFrame.height)
+        let targetOrigin = fitFrame.origin
+        var mutableInitialPoint = targetOrigin
+        if let positionValue = AXValueCreate(.cgPoint, &mutableInitialPoint) {
+            _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)
+        }
+        if !CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin) {
+            MirageLogger.debug(.host, "Failed to pre-place window \(windowID) at \(targetOrigin)")
+        }
+
         if isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
             _ = await resizeWindowViaAccessibility(windowID, to: targetSize, axElement: axWindow)
         }
 
-        let targetOrigin = fitFrame.origin
         var mutablePoint = targetOrigin
         if let positionValue = AXValueCreate(.cgPoint, &mutablePoint) {
             _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)

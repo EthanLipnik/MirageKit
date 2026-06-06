@@ -708,16 +708,13 @@ struct StreamControllerRecoveryTests {
         }
 
         #expect(await controller.hasPresentedFirstFrame)
-        #expect(await controller.awaitingFirstFrameAfterResize)
-
-        await controller.handleDecoderRecoverySignal()
         #expect(await !(controller.awaitingFirstFrameAfterResize))
 
         await controller.stop()
     }
 
-    @Test("Post-resize transition stays armed until decoder recovery completes")
-    func postResizeTransitionStaysArmedUntilDecoderRecoveryCompletes() async {
+    @Test("Post-resize transition clears after first presented frame")
+    func postResizeTransitionClearsAfterFirstPresentedFrame() async {
         let controller = StreamController(streamID: 190, maxPayloadSize: 1200)
 
         await controller.beginPostResizeTransition()
@@ -727,9 +724,6 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.awaitingFirstFrameAfterResize)
 
         await controller.markFirstFramePresented()
-        #expect(await controller.awaitingFirstFrameAfterResize)
-
-        await controller.handleDecoderRecoverySignal()
         #expect(await !(controller.awaitingFirstFrameAfterResize))
 
         await controller.stop()
@@ -772,7 +766,79 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("New resize re-arms post-resize presentation gating while recovery is still active")
+    @Test("Post-resize first presentation accepts new render generation")
+    func postResizeFirstPresentationAcceptsNewRenderGeneration() async throws {
+        let streamID: StreamID = 194
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 65049, for: streamID)
+        let firstFrameCounter = StreamControllerLockedCounter()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        await controller.setCallbacks(
+            onKeyframeNeeded: nil,
+            onResizeStateChanged: nil,
+            onFrameDecoded: nil,
+            onFirstFramePresented: {
+                firstFrameCounter.increment()
+            }
+        )
+
+        await controller.beginPostResizeTransition()
+        let baselineSnapshot = await controller.firstPresentedFrameBaselineSnapshot
+        #expect(baselineSnapshot != nil)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makeStreamControllerPixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        let currentCursor = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor
+        #expect(currentCursor != nil)
+        guard let currentCursor else {
+            Issue.record("Expected current cursor after post-resize enqueue")
+            await controller.stop()
+            return
+        }
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: currentCursor,
+            for: streamID
+        )
+        let submittedSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        if let baselineSnapshot {
+            #expect(submittedSnapshot.hasSubmittedFrame(after: baselineSnapshot))
+        }
+
+        try await streamControllerWaitUntil("post-resize new-generation presentation") {
+            firstFrameCounter.value == 1
+        }
+        #expect(await !(controller.awaitingFirstFrameAfterResize))
+        #expect(await controller.clientRecoveryStatus == .idle)
+
+        await controller.stop()
+    }
+
+    @Test("Post-resize local timeout clears controller recovery")
+    func postResizeLocalTimeoutClearsControllerRecovery() async {
+        let controller = StreamController(streamID: 195, maxPayloadSize: 1200)
+
+        await controller.beginPostResizeTransition()
+        #expect(await controller.awaitingFirstFrameAfterResize)
+        #expect(await controller.awaitingFirstPresentedFrameAfterResize)
+        #expect(await controller.clientRecoveryStatus == .postResizeAwaitingFirstFrame)
+
+        await controller.clearPostResizeRecoveryAfterLocalTimeout()
+
+        #expect(await !(controller.awaitingFirstFrameAfterResize))
+        #expect(await !(controller.awaitingFirstPresentedFrameAfterResize))
+        #expect(await controller.clientRecoveryStatus == .idle)
+
+        await controller.stop()
+    }
+
+    @Test("New resize re-arms post-resize presentation gating after prior presentation")
     func newResizeRearmsPostResizePresentationGating() async {
         let controller = StreamController(streamID: 192, maxPayloadSize: 1200)
 
@@ -780,7 +846,7 @@ struct StreamControllerRecoveryTests {
         await controller.markFirstFramePresented()
 
         #expect(await !(controller.awaitingFirstPresentedFrameAfterResize))
-        #expect(await controller.awaitingFirstFrameAfterResize)
+        #expect(await !(controller.awaitingFirstFrameAfterResize))
 
         await controller.beginPostResizeTransition()
 

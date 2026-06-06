@@ -296,6 +296,19 @@ public final class MirageClientSessionStore {
         sessionMinSizeUpdateGenerations[sessionEntry.key, default: 0] += 1
     }
 
+    /// Clears a learned minimum size and restores the default stream window floor.
+    /// - Parameter streamID: Stream identifier to update.
+    func clearMinimumSize(for streamID: StreamID) {
+        guard let sessionEntry = streamSessions.first(where: { $0.value.streamID == streamID }) ??
+            streamSessions.first(where: { $0.value.mediaStreamID == streamID }) else { return }
+
+        let session = sessionEntry.value
+        session.minWidth = 400
+        session.minHeight = 300
+        sessionMinSizes.removeValue(forKey: sessionEntry.key)
+        sessionMinSizeUpdateGenerations[sessionEntry.key, default: 0] += 1
+    }
+
     // MARK: - Focus Management
 
     /// Set the focused session for input.

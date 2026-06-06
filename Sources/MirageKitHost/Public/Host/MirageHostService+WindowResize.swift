@@ -100,13 +100,16 @@ extension MirageHostService {
                 streamID: streamID,
                 requestNumber: requestNumber,
                 context: context,
-                noOp: true
+                requestedSize: logicalResolution,
+                outcome: .noChange,
+                noOp: true,
+                reason: "alreadyAtRequestedSize"
             )
             return
         }
 
         do {
-            try await context.updateWindowCaptureResolution(
+            let resizeOutcome = try await context.updateWindowCaptureResolution(
                 newLogicalSize: logicalResolution,
                 targetAspectRatioOverride: requestedAspectRatio,
                 forceReconfigure: false
@@ -128,7 +131,10 @@ extension MirageHostService {
                 streamID: streamID,
                 requestNumber: requestNumber,
                 context: context,
-                noOp: false
+                requestedSize: logicalResolution,
+                outcome: resizeOutcome,
+                noOp: resizeOutcome == .noChange,
+                reason: resizeOutcome == .failed ? "didNotConverge" : nil
             )
             ensureWindowVisibleFrameMonitor(streamID: streamID)
             MirageLogger
@@ -164,7 +170,10 @@ extension MirageHostService {
                 streamID: streamID,
                 requestNumber: requestNumber,
                 context: context,
-                noOp: true
+                requestedSize: logicalResolution,
+                outcome: .failed,
+                noOp: true,
+                reason: "virtualDisplayResizeFailed"
             )
             ensureWindowVisibleFrameMonitor(streamID: streamID)
         }
@@ -175,7 +184,10 @@ extension MirageHostService {
         streamID: StreamID,
         requestNumber: UInt64,
         context: StreamContext,
-        noOp: Bool
+        requestedSize: CGSize,
+        outcome: MirageAppWindowResizeResultOutcome,
+        noOp: Bool,
+        reason: String?
     )
     async {
         guard let currentSession = activeSessionByStreamID[streamID] else { return }
@@ -205,6 +217,8 @@ extension MirageHostService {
         let minWidth = Int(minSize.width)
         let minHeight = Int(minSize.height)
         let streamStart = await context.streamStartSnapshot
+        let appSession = await appStreamManager.sessionForStreamID(streamID)
+        let mediaStreamID = appSession?.windowStreams[updatedWindow.id]?.mediaStreamID ?? streamID
         let message = StreamStartedMessage(
             streamID: streamID,
             windowID: updatedWindow.id,
@@ -217,8 +231,22 @@ extension MirageHostService {
             dimensionToken: streamStart.dimensionToken,
             acceptedMediaMaxPacketSize: streamStart.mediaMaxPacketSize
         )
+        let resizeResult = AppWindowResizeResultMessage(
+            streamID: streamID,
+            mediaStreamID: mediaStreamID,
+            windowID: updatedWindow.id,
+            outcome: outcome,
+            requestedWidth: Int(max(1, requestedSize.width.rounded())),
+            requestedHeight: Int(max(1, requestedSize.height.rounded())),
+            observedWidth: Int(max(1, resolvedWindowFrame.width.rounded())),
+            observedHeight: Int(max(1, resolvedWindowFrame.height.rounded())),
+            minWidth: minWidth,
+            minHeight: minHeight,
+            reason: reason
+        )
         do {
             try await clientContext.send(.streamStarted, content: message)
+            try await clientContext.send(.appWindowResizeResult, content: resizeResult)
             let suffix = noOp ? ", no-op" : ""
             MirageLogger.host(
                 "Sent app/window resize completion for stream \(streamID) (request #\(requestNumber)\(suffix))"

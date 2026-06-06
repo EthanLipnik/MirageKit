@@ -36,6 +36,7 @@ extension StreamContext {
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
         keyframeInFlightFrameNumber = nil
+        clearProtectedGeometryRecoveryKeyframe()
         await restoreRuntimeBudgetAfterClientForegroundResume()
 
         let now = CFAbsoluteTimeGetCurrent()

@@ -266,6 +266,10 @@ extension InputCapturingView {
         performResponderShortcutAction(#selector(selectAll(_:)))
     }
 
+    override public func paste(_: Any?) {
+        performResponderShortcutAction(#selector(paste(_:)))
+    }
+
     override public func printContent(_: Any?) {
         performResponderShortcutAction(#selector(printContent(_:)))
     }

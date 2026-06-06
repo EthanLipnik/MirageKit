@@ -28,7 +28,10 @@ extension MirageHostInputController {
             return
         }
 
-        guard !modifiers.isEmpty else { return }
+        guard !modifiers.isEmpty else {
+            clearUnexpectedSystemModifiersFromPointerIfNeeded(domain: domain)
+            return
+        }
         let now = CACurrentMediaTime()
         for (flag, _) in Self.modifierKeyCodes where modifiers.contains(flag) {
             modifierLastEventTimes[flag] = now

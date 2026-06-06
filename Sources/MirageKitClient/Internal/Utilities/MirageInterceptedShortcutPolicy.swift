@@ -95,6 +95,7 @@ enum MirageInterceptedShortcutPolicy {
         "findNext:": commandGShortcut,
         "findPrevious:": commandShiftGShortcut,
         "selectAll:": commandAShortcut,
+        "paste:": commandVShortcut,
         "print:": commandPShortcut,
         "printContent:": commandPShortcut,
     ]

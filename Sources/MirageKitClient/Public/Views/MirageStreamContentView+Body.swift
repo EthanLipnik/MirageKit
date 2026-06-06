@@ -289,7 +289,7 @@ private extension MirageStreamContentView {
             } catch {
                 return
             }
-            handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
+            handleAppResizeAcknowledgementIfNeeded()
         }
     }
 

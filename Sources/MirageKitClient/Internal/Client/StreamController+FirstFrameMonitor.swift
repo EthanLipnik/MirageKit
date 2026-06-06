@@ -48,9 +48,20 @@ extension StreamController {
     ) async {
         guard !hasTriggeredTerminalStartupFailure else { return }
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let baselineSnapshot = if mode == .recovery {
+            SubmissionSnapshot(
+                cursor: MirageRenderStreamStore.shared.latestCursor(for: streamID),
+                sequence: snapshot.sequence,
+                submittedTime: snapshot.submittedTime,
+                remotePresentationTime: snapshot.remotePresentationTime
+            )
+        } else {
+            snapshot
+        }
         awaitingFirstPresentedFrame = true
         firstPresentedFrameAwaitMode = mode
         firstPresentedFrameBaselineSequence = snapshot.sequence
+        firstPresentedFrameBaselineSnapshot = baselineSnapshot
         firstPresentedFrameWaitReason = reason
         firstPresentedFrameWaitStartTime = currentTime
         firstPresentedFrameLastWaitLogTime = firstPresentedFrameWaitStartTime
@@ -75,6 +86,7 @@ extension StreamController {
         awaitingFirstPresentedFrame = false
         firstPresentedFrameAwaitMode = .startup
         firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameBaselineSnapshot = nil
         firstPresentedFrameWaitReason = nil
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
@@ -107,6 +119,7 @@ extension StreamController {
 
         awaitingFirstPresentedFrame = false
         firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameBaselineSnapshot = nil
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
@@ -117,6 +130,7 @@ extension StreamController {
 
         if awaitingFirstFrameAfterResize {
             awaitingFirstPresentedFrameAfterResize = false
+            postResizeDecodeRecoverySuccessCount = Self.postResizeDecodeRecoverySuccessThreshold
             if waitStart > 0 {
                 let elapsedMs = Int((now - waitStart) * 1000)
                 MirageLogger.client(
@@ -162,7 +176,7 @@ extension StreamController {
             guard awaitingFirstPresentedFrame else { return }
 
             let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-            if snapshot.sequence > firstPresentedFrameBaselineSequence {
+            if hasFirstPresentedFrameProgress(snapshot) {
                 await markFirstFramePresented()
                 return
             }
@@ -177,6 +191,13 @@ extension StreamController {
                 return
             }
         }
+    }
+
+    private func hasFirstPresentedFrameProgress(_ snapshot: SubmissionSnapshot) -> Bool {
+        if let firstPresentedFrameBaselineSnapshot {
+            return snapshot.hasSubmittedFrame(after: firstPresentedFrameBaselineSnapshot)
+        }
+        return snapshot.sequence > firstPresentedFrameBaselineSequence
     }
 
     private func maybeLogFirstPresentedFrameWait(now: CFAbsoluteTime, latestSequence: UInt64) {
@@ -256,6 +277,13 @@ extension StreamController {
 
         let packetAcceptance = reassembler.packetAcceptanceSnapshot
         let awaitingKeyframe = reassembler.isAwaitingKeyframe
+        let isPostResizeWait = firstPresentedFrameAwaitMode == .recovery &&
+            firstPresentedFrameWaitReason?.hasPrefix("post-resize") == true
+        let waitLabel = isPostResizeWait ? "Post-resize" : "Bootstrap"
+        let recoveryReason: RecoveryReason = isPostResizeWait
+            ? .decodeErrorThreshold
+            : .startupKeyframeTimeout
+
         let startupStallKind = if awaitingKeyframe {
             "reassembler awaiting keyframe"
         } else if !packetAcceptance.hasRawPackets {
@@ -281,12 +309,23 @@ extension StreamController {
             (elapsed >= hardRecoveryGrace &&
                 firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold)
         if shouldEscalateToHardRecovery {
+            if isPostResizeWait {
+                MirageLogger.client(
+                    "Post-resize first frame recovery requesting reset keyframe for stream \(streamID) "
+                        + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"
+                )
+                reassembler.beginKeyframeWait()
+                _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+                await setClientRecoveryStatus(.postResizeAwaitingFirstFrame, cause: .manual)
+                await requestKeyframeRecoveryIfPossible(reason: recoveryReason)
+                return
+            }
             MirageLogger.client(
-                "Bootstrap first frame recovery escalating to hard reset for stream \(streamID) "
+                "\(waitLabel) first frame recovery escalating to hard reset for stream \(streamID) "
                     + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"
             )
             await requestRecovery(
-                reason: .startupKeyframeTimeout,
+                reason: recoveryReason,
                 restartRecoveryLoop: false,
                 awaitFirstPresentedFrame: true,
                 firstPresentedFrameWaitReason: "startup-hard-recovery"
@@ -302,11 +341,14 @@ extension StreamController {
             "no-packet-flow"
         }
         MirageLogger.client(
-            "Bootstrap first frame recovery: requesting keyframe for stream \(streamID) "
+            "\(waitLabel) first frame recovery: requesting keyframe for stream \(streamID) "
                 + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind), transport=\(transportProgress), "
                 + "rawPackets=\(packetAcceptance.rawPacketsReceived), "
                 + "acceptedPackets=\(packetAcceptance.acceptedPacketsReceived))"
         )
-        await requestKeyframeRecoveryIfPossible(reason: .startupKeyframeTimeout)
+        await requestKeyframeRecoveryIfPossible(reason: recoveryReason)
+        if isPostResizeWait {
+            await setClientRecoveryStatus(.postResizeAwaitingFirstFrame, cause: .manual)
+        }
     }
 }

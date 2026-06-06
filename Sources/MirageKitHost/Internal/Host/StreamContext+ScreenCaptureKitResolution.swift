@@ -18,6 +18,7 @@ extension StreamContext {
         targetSize: CGSize,
         aspectRatio: CGFloat?,
         maxBounds: CGSize,
+        placementBounds: CGRect? = nil,
         label: String
     ) async -> CGRect {
         let ar = aspectRatio ?? (targetSize.width / max(1, targetSize.height))
@@ -25,12 +26,25 @@ extension StreamContext {
         var candidateH = targetSize.height
         let maxAttempts = 6
         var lastResolvedFrame = Self.queryWindowFrame(windowID)?.standardized ?? .zero
+        var retriedCenteredTargetAfterMismatch = false
 
         for attempt in 1 ... maxAttempts {
             let candidate = CGSize(
                 width: max(200, candidateW.rounded(.down)),
                 height: max(200, candidateH.rounded(.down))
             )
+            if let placementBounds, placementBounds.width > 0, placementBounds.height > 0 {
+                let targetOrigin = CGPoint(
+                    x: placementBounds.minX + floor((placementBounds.width - candidate.width) * 0.5),
+                    y: placementBounds.minY + floor((placementBounds.height - candidate.height) * 0.5)
+                )
+                await WindowSpaceManager.shared.positionWindow(windowID, at: targetOrigin)
+                do {
+                    try await Task.sleep(for: .milliseconds(8))
+                } catch {
+                    return lastResolvedFrame
+                }
+            }
             _ = await WindowSpaceManager.shared.resizeWindow(windowID, to: candidate)
 
             do {
@@ -58,26 +72,32 @@ extension StreamContext {
             }
 
             if attempt < maxAttempts {
-                let constrainedBounds = CGRect(
-                    origin: .zero,
-                    size: CGSize(
-                        width: min(maxBounds.width, actualW),
-                        height: min(maxBounds.height, actualH)
-                    )
-                )
-                let fittedCandidate = Self.aspectFittedFrame(
-                    within: constrainedBounds,
-                    aspectRatio: ar
-                ).size
-                if abs(fittedCandidate.width - candidate.width) > 1 ||
-                    abs(fittedCandidate.height - candidate.height) > 1 {
-                    candidateW = fittedCandidate.width
-                    candidateH = fittedCandidate.height
+                if placementBounds != nil, !retriedCenteredTargetAfterMismatch {
+                    retriedCenteredTargetAfterMismatch = true
+                    candidateW = targetSize.width
+                    candidateH = targetSize.height
                 } else {
-                    let shrunkWidth = min(maxBounds.width, max(200, floor(candidate.width * 0.96)))
-                    let shrunkHeight = min(maxBounds.height, max(200, floor(shrunkWidth / max(ar, 0.001))))
-                    candidateW = shrunkWidth
-                    candidateH = shrunkHeight
+                    let constrainedBounds = CGRect(
+                        origin: .zero,
+                        size: CGSize(
+                            width: min(maxBounds.width, actualW),
+                            height: min(maxBounds.height, actualH)
+                        )
+                    )
+                    let fittedCandidate = Self.aspectFittedFrame(
+                        within: constrainedBounds,
+                        aspectRatio: ar
+                    ).size
+                    if abs(fittedCandidate.width - candidate.width) > 1 ||
+                        abs(fittedCandidate.height - candidate.height) > 1 {
+                        candidateW = fittedCandidate.width
+                        candidateH = fittedCandidate.height
+                    } else {
+                        let shrunkWidth = min(maxBounds.width, max(200, floor(candidate.width * 0.96)))
+                        let shrunkHeight = min(maxBounds.height, max(200, floor(shrunkWidth / max(ar, 0.001))))
+                        candidateW = shrunkWidth
+                        candidateH = shrunkHeight
+                    }
                 }
                 MirageLogger.stream(
                     "Window \(windowID) AR mismatch at \(Int(actualW))x\(Int(actualH)) " +

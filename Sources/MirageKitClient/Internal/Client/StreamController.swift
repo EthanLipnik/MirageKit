@@ -61,6 +61,8 @@ actor StreamController {
     var firstPresentedFrameAwaitMode: FirstPresentedFrameAwaitMode = .startup
     /// Last presented sequence at the moment first-frame presentation waiting was armed.
     var firstPresentedFrameBaselineSequence: UInt64 = 0
+    /// Generation-aware presentation baseline captured when first-frame waiting was armed.
+    var firstPresentedFrameBaselineSnapshot: SubmissionSnapshot?
     /// Human-readable label describing why the first-frame wait was armed.
     var firstPresentedFrameWaitReason: String?
     /// Start time for first-frame presentation wait latency logs.

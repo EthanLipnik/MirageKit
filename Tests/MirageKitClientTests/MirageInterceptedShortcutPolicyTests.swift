@@ -43,6 +43,7 @@ struct MirageInterceptedShortcutPolicyTests {
             ("findNext:", "g", [.command]),
             ("findPrevious:", "g", [.command, .shift]),
             ("selectAll:", "a", [.command]),
+            ("paste:", "v", [.command]),
             ("print:", "p", [.command]),
             ("printContent:", "p", [.command]),
         ]

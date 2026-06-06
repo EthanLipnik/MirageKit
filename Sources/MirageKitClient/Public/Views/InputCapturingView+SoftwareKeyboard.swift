@@ -25,6 +25,9 @@ extension InputCapturingView {
         inputView.onDeleteBackward = { [weak self] in
             self?.handleSoftwareKeyboardDeleteBackward()
         }
+        inputView.onPaste = { [weak self] in
+            self?.handleSoftwareKeyboardPaste()
+        }
         inputView.onFirstResponderChanged = { [weak self] isFirstResponder in
             self?.handleSoftwareKeyboardResponderChange(isFirstResponder: isFirstResponder)
         }
@@ -164,6 +167,10 @@ extension InputCapturingView {
         sendModifierStateIfNeeded(force: true)
         let modifiers = keyboardModifiers
         sendSoftwareKeyEvent(keyCode: 0x33, characters: nil, charactersIgnoringModifiers: nil, modifiers: modifiers)
+    }
+
+    func handleSoftwareKeyboardPaste() {
+        performResponderShortcutAction(#selector(paste(_:)))
     }
 
     func dismissSoftwareKeyboard() {

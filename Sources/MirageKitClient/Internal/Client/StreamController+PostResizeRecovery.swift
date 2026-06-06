@@ -66,6 +66,20 @@ extension StreamController {
         }
     }
 
+    /// Releases post-resize presentation gating after the local UI timeout expires.
+    func clearPostResizeRecoveryAfterLocalTimeout() async {
+        guard awaitingFirstFrameAfterResize || awaitingFirstPresentedFrameAfterResize else { return }
+        awaitingFirstFrameAfterResize = false
+        awaitingFirstPresentedFrameAfterResize = false
+        postResizeDecodeErrorGraceDeadline = 0
+        postResizeDecodeRecoverySuccessCount = 0
+        stopFirstPresentedFrameMonitor()
+        if clientRecoveryStatus == .postResizeAwaitingFirstFrame {
+            await setClientRecoveryStatus(.idle)
+        }
+        MirageLogger.client("Post-resize controller recovery cleared for stream \(streamID) (timeout)")
+    }
+
     /// Clears transient recovery state after verified presentation progress resumes.
     func clearTransientRecoveryStateAfterPresentationProgress() async {
         cancelMemoryBudgetRecoveryTask()

@@ -29,6 +29,7 @@ func startDesktopStream(
     clientScaleFactor: CGFloat? = nil,
     mode: MirageDesktopStreamMode,
     cursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
+    usesHostResolution: Bool,
     keyFrameInterval: Int?,
     colorDepth: MirageStreamColorDepth?,
     captureQueueDepth: Int?,
@@ -160,6 +161,7 @@ async throws {
         desktopSessionID: desktopSessionID,
         mode: mode,
         cursorPresentation: cursorPresentation,
+        usesHostResolution: usesHostResolution,
         virtualDisplayResolution: virtualDisplayResolution
     )
     clearDesktopStartupMarkerOnExit = true
@@ -194,7 +196,7 @@ async throws {
             virtualDisplayResolution: virtualDisplayResolution,
             startupPlan: virtualDisplayStartupPlan,
             startupAttempts: virtualDisplayStartupAttempts,
-            usesHostResolution: desktopUsesHostResolution
+            usesHostResolution: usesHostResolution
         ),
         config: &config,
         virtualDisplayStartupSession: &virtualDisplayStartupSession,

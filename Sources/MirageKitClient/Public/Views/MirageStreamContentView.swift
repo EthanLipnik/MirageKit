@@ -756,21 +756,18 @@ extension MirageStreamContentView {
         _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
     ) {
         guard !isDesktopStream else { return }
-        guard awaitingAppResizeAck,
-              isMeaningfulAppResizeAcknowledgement(
-                  acknowledgement,
-                  comparedTo: appResizeBaselineAcknowledgement
-              ) else { return }
-        if let minimumSize = sessionStore.sessionMinSizes[session.id] {
-            handleResizeAcknowledgement(minimumSize)
-        }
+        finishAppResizeAcknowledgementIfMeaningful(acknowledgement)
     }
 
-    func handleResizeAcknowledgement(_ minSize: CGSize?) {
+    func handleAppResizeAcknowledgementIfNeeded() {
         guard !isDesktopStream else { return }
+        finishAppResizeAcknowledgementIfMeaningful(appStreamStartAcknowledgement)
+    }
+
+    func finishAppResizeAcknowledgementIfMeaningful(
+        _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
+    ) {
         guard awaitingAppResizeAck else { return }
-        guard let minSize, minSize.width > 0, minSize.height > 0 else { return }
-        let acknowledgement = appStreamStartAcknowledgement
         guard isMeaningfulAppResizeAcknowledgement(
             acknowledgement,
             comparedTo: appResizeBaselineAcknowledgement
@@ -785,6 +782,7 @@ extension MirageStreamContentView {
         guard awaitingAppResizeAck else { return }
         guard let result else { return }
         guard result.streamID == session.streamID else { return }
+        let inFlightTarget = appResizeDispatchState.inFlightTarget
         let completedCurrentTarget = appResizeDispatchState.complete(
             result: result,
             now: CFAbsoluteTimeGetCurrent()
@@ -796,7 +794,38 @@ extension MirageStreamContentView {
             )
             return
         }
+        if completedCurrentTarget {
+            applyLearnedMinimumSizeIfNeeded(from: result, inFlightTarget: inFlightTarget)
+        }
         finishAppResizeAwaitingAck()
         scheduleAppDisplayResolutionDispatchIfNeeded()
+    }
+
+    func applyLearnedMinimumSizeIfNeeded(
+        from result: AppWindowResizeResultMessage,
+        inFlightTarget: CGSize?
+    ) {
+        guard result.outcome == .failed || result.outcome == .notResizable else { return }
+        guard let inFlightTarget,
+              Int(inFlightTarget.width) == result.requestedWidth,
+              Int(inFlightTarget.height) == result.requestedHeight else {
+            return
+        }
+        guard let observedWidth = result.observedWidth,
+              let observedHeight = result.observedHeight,
+              observedWidth > 0,
+              observedHeight > 0,
+              result.requestedWidth < observedWidth || result.requestedHeight < observedHeight else {
+            return
+        }
+        guard let minWidth = result.minWidth,
+              let minHeight = result.minHeight,
+              minWidth > 0,
+              minHeight > 0 else {
+            return
+        }
+
+        let minSize = CGSize(width: minWidth, height: minHeight)
+        sessionStore.updateMinimumSize(for: result.streamID, minSize: minSize)
     }
 }

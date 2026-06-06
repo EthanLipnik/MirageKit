@@ -28,8 +28,8 @@ extension SharedClipboardTests {
         #expect(recopiedOpaqueItem?.orderingToken.logicalVersion == 2)
     }
 
-    @Test("Opaque automatic declarations bypass recent remote suppression")
-    func opaqueAutomaticDeclarationsBypassRecentRemoteSuppression() {
+    @Test("Opaque automatic declarations bypass unattributed remote windows")
+    func opaqueAutomaticDeclarationsBypassUnattributedRemoteWindows() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 100_000
@@ -45,8 +45,7 @@ extension SharedClipboardTests {
 
         let declaration = state.prepareLocalDeclaration(
             item: opaqueFileItem(),
-            changeCount: 12,
-            nowMs: observedAtMs
+            changeCount: 12
         )
 
         #expect(declaration?.item.representation.kind == .file)

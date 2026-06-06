@@ -256,6 +256,7 @@ extension MirageHostService {
         if let pendingIntent = removePendingLockedAppStreamIntent(appSessionID: appSessionID) {
             MirageLogger.host("Cancelled pending locked app stream \(appSessionID.uuidString)")
             await stopLockedAppLoginStream(for: pendingIntent, notifyClient: true)
+            await restoreStageManagerAfterAppStreamingIfNeeded()
             return
         }
         guard let session = await appStreamManager.session(appSessionID: appSessionID) else { return }

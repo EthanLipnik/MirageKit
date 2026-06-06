@@ -38,6 +38,25 @@ extension StreamContext {
         }
     }
 
+    func isGeometryRecoveryKeyframeReason(_ reason: String) -> Bool {
+        reason.hasPrefix("Desktop resize") || reason.hasPrefix("Shared display resize")
+    }
+
+    var hasProtectedGeometryRecoveryKeyframe: Bool {
+        protectedGeometryRecoveryKeyframeReason != nil
+    }
+
+    func protectGeometryRecoveryKeyframeIfNeeded(reason: String) {
+        guard isGeometryRecoveryKeyframeReason(reason) else { return }
+        protectedGeometryRecoveryKeyframeReason = reason
+    }
+
+    func clearProtectedGeometryRecoveryKeyframe(reason: String? = nil) {
+        guard let protectedGeometryRecoveryKeyframeReason else { return }
+        guard reason == nil || reason == protectedGeometryRecoveryKeyframeReason else { return }
+        self.protectedGeometryRecoveryKeyframeReason = nil
+    }
+
     var activeKeyframeRequestCooldown: CFAbsoluteTime {
         usesConstrainedKeyframeInFlightWindow ? 1.5 : keyframeRequestCooldown
     }
@@ -502,6 +521,7 @@ extension StreamContext {
             pendingKeyframeRequiresFlush = false
             pendingKeyframeRequiresReset = false
             pendingKeyframeUrgent = false
+            clearProtectedGeometryRecoveryKeyframe()
         }
 
         let queued = queueKeyframe(
@@ -517,6 +537,9 @@ extension StreamContext {
             MirageLogger.stream("\(reason) skipped (recovery keyframe already pending or in flight)")
             return false
         }
+        protectGeometryRecoveryKeyframeIfNeeded(
+            reason: reason
+        )
 
         if noteLoss {
             noteLossEvent(reason: reason, enablePFrameFEC: true)
@@ -552,21 +575,27 @@ extension StreamContext {
     }
 
     func shouldEmitPendingKeyframe(queueBytes: Int) -> Bool {
-        guard pendingKeyframeReason != nil else { return false }
+        guard let pendingKeyframeReason else { return false }
         let now = CFAbsoluteTimeGetCurrent()
         if pendingKeyframeUrgent {
-            pendingKeyframeReason = nil
+            self.pendingKeyframeReason = nil
             pendingKeyframeDeadline = 0
             pendingKeyframeUrgent = false
             lastKeyframeTime = now
+            protectGeometryRecoveryKeyframeIfNeeded(
+                reason: pendingKeyframeReason
+            )
             return true
         }
         let settleThreshold = max(minQueuedBytes, Int(Double(queuePressureBytes) * keyframeQueueSettleFactor))
         let settled = queueBytes <= settleThreshold && inFlightCount == 0
         if settled || now >= pendingKeyframeDeadline {
-            pendingKeyframeReason = nil
+            self.pendingKeyframeReason = nil
             pendingKeyframeDeadline = 0
             lastKeyframeTime = now
+            protectGeometryRecoveryKeyframeIfNeeded(
+                reason: pendingKeyframeReason
+            )
             return true
         }
         return false
@@ -639,6 +668,7 @@ extension StreamContext {
             suppressEncodedNonKeyframesUntilKeyframe = false
             pendingEmergencyKeyframeQuality = nil
         }
+        clearProtectedGeometryRecoveryKeyframe()
         if dynamicFrameFlags.contains(.discontinuity) { dynamicFrameFlags.remove(.discontinuity) }
     }
 

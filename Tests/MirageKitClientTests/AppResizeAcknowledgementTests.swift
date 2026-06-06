@@ -165,6 +165,149 @@ struct AppResizeAcknowledgementTests {
     }
 
     @MainActor
+    @Test("App resize result minimum size requires matched failed shrink")
+    func appResizeResultMinimumSizeRequiresMatchedFailedShrink() throws {
+        let store = MirageClientSessionStore()
+        let service = MirageClientService(sessionStore: store)
+        let sessionID = store.createSession(
+            streamID: 131,
+            mediaStreamID: 130,
+            window: MirageWindow(
+                id: 13101,
+                title: "Logical App Window",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            minSize: nil
+        )
+        let session = try #require(store.session(for: sessionID))
+        let view = MirageStreamContentView(
+            session: session,
+            sessionStore: store,
+            clientService: service
+        )
+
+        let failedGrowResult = appResizeResult(
+            streamID: 131,
+            mediaStreamID: 130,
+            windowID: 13101,
+            outcome: .failed,
+            requestedSize: CGSize(width: 900, height: 700),
+            observedSize: CGSize(width: 640, height: 480),
+            minSize: CGSize(width: 640, height: 480),
+            reason: "didNotConverge"
+        )
+        view.applyLearnedMinimumSizeIfNeeded(
+            from: failedGrowResult,
+            inFlightTarget: CGSize(width: 900, height: 700)
+        )
+
+        #expect(store.sessionMinSizes[sessionID] == nil)
+        #expect(store.session(for: sessionID)?.minWidth == 400)
+        #expect(store.session(for: sessionID)?.minHeight == 300)
+
+        let failedShrinkResult = appResizeResult(
+            streamID: 131,
+            mediaStreamID: 130,
+            windowID: 13101,
+            outcome: .failed,
+            requestedSize: CGSize(width: 500, height: 360),
+            observedSize: CGSize(width: 640, height: 480),
+            minSize: CGSize(width: 640, height: 480),
+            reason: "didNotConverge"
+        )
+        view.applyLearnedMinimumSizeIfNeeded(
+            from: failedShrinkResult,
+            inFlightTarget: CGSize(width: 500, height: 360)
+        )
+
+        #expect(store.sessionMinSizes[sessionID] == CGSize(width: 640, height: 480))
+        #expect(store.sessionMinSizeUpdateGenerations[sessionID] == 1)
+    }
+
+    @MainActor
+    @Test("Locked-login resize result does not update app minimum size")
+    func lockedLoginResizeResultDoesNotUpdateMinimumSize() throws {
+        let store = MirageClientSessionStore()
+        let service = MirageClientService(sessionStore: store)
+        let sessionID = store.createSession(
+            streamID: 141,
+            mediaStreamID: 141,
+            window: MirageWindow(
+                id: 0,
+                title: "Sign In",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 1366, height: 1024),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            minSize: nil
+        )
+        let result = appResizeResult(
+            streamID: 141,
+            mediaStreamID: 141,
+            windowID: 0,
+            outcome: .noChange,
+            requestedSize: CGSize(width: 1600, height: 1200),
+            observedSize: CGSize(width: 1366, height: 1024),
+            minSize: CGSize(width: 1366, height: 1024),
+            reason: "lockedLoginFixedSurface"
+        )
+
+        service.handleAppWindowResizeResult(try ControlMessage(type: .appWindowResizeResult, content: result))
+
+        #expect(service.appWindowResizeResultByStreamID[141] == result)
+        #expect(store.sessionMinSizes[sessionID] == nil)
+        #expect(store.sessionMinSizeUpdateGenerations[sessionID] == nil)
+        #expect(store.session(for: sessionID)?.minWidth == 400)
+        #expect(store.session(for: sessionID)?.minHeight == 300)
+    }
+
+    @MainActor
+    @Test("App stream-start minimum size does not constrain app session")
+    func appStreamStartMinimumSizeDoesNotConstrainAppSession() async throws {
+        let store = MirageClientSessionStore()
+        let service = MirageClientService(sessionStore: store)
+        let sessionID = store.createSession(
+            streamID: 151,
+            mediaStreamID: 151,
+            window: MirageWindow(
+                id: 15101,
+                title: "Logical App Window",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            minSize: nil
+        )
+        let started = StreamStartedMessage(
+            streamID: 151,
+            windowID: 15101,
+            width: 1280,
+            height: 960,
+            frameRate: 60,
+            codec: .h264,
+            minWidth: 1280,
+            minHeight: 960,
+            dimensionToken: 2,
+            acceptedMediaMaxPacketSize: nil
+        )
+
+        await service.handleStreamStarted(try ControlMessage(type: .streamStarted, content: started))
+
+        #expect(store.sessionMinSizes[sessionID] == nil)
+        #expect(store.sessionMinSizeUpdateGenerations[sessionID] == nil)
+        #expect(store.session(for: sessionID)?.minWidth == 400)
+        #expect(store.session(for: sessionID)?.minHeight == 300)
+    }
+
+    @MainActor
     @Test("App resize ack ignores stale stream-start echoes")
     func ignoresStaleStreamStartEchoes() {
         let baseline = MirageClientService.StreamStartAcknowledgement(
@@ -213,5 +356,30 @@ struct AppResizeAcknowledgementTests {
         )
 
         #expect(isMeaningfulAppResizeAcknowledgement(acknowledgement, comparedTo: baseline))
+    }
+
+    private func appResizeResult(
+        streamID: StreamID,
+        mediaStreamID: StreamID,
+        windowID: WindowID,
+        outcome: MirageAppWindowResizeResultOutcome,
+        requestedSize: CGSize,
+        observedSize: CGSize,
+        minSize: CGSize?,
+        reason: String?
+    ) -> AppWindowResizeResultMessage {
+        AppWindowResizeResultMessage(
+            streamID: streamID,
+            mediaStreamID: mediaStreamID,
+            windowID: windowID,
+            outcome: outcome,
+            requestedWidth: Int(requestedSize.width),
+            requestedHeight: Int(requestedSize.height),
+            observedWidth: Int(observedSize.width),
+            observedHeight: Int(observedSize.height),
+            minWidth: minSize.map { Int($0.width) },
+            minHeight: minSize.map { Int($0.height) },
+            reason: reason
+        )
     }
 }

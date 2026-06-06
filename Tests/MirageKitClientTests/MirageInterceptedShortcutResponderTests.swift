@@ -120,16 +120,47 @@ struct MirageInterceptedShortcutResponderTests {
         view.find(nil)
         view.toggleBoldface(nil)
         view.selectAll(nil)
+        view.paste(nil)
         view.printContent(nil)
 
-        #expect(keyDownEvents.map(\.characters) == ["f", "b", "a", "p"])
-        #expect(keyUpEvents.map(\.characters) == ["f", "b", "a", "p"])
+        #expect(keyDownEvents.map(\.characters) == ["f", "b", "a", "v", "p"])
+        #expect(keyUpEvents.map(\.characters) == ["f", "b", "a", "v", "p"])
         #expect(keyDownEvents.map(\.modifiers) == [
             [.command],
             [.command],
             [.command],
             [.command],
+            [.command],
         ])
+    }
+
+    @Test("Software keyboard paste forwards Command-V instead of inserted text")
+    func softwareKeyboardPasteForwardsCommandVInsteadOfInsertedText() {
+        let view = InputCapturingView(frame: .zero)
+        view.setupSoftwareKeyboardField()
+        var keyDownEvents: [MirageKeyEvent] = []
+        var keyUpEvents: [MirageKeyEvent] = []
+        var insertedText: [String] = []
+
+        view.onInputEvent = { event in
+            switch event {
+            case .keyDown(let keyEvent):
+                keyDownEvents.append(keyEvent)
+            case .keyUp(let keyEvent):
+                keyUpEvents.append(keyEvent)
+            default:
+                break
+            }
+        }
+        view.softwareKeyboardField?.onInsertText = { insertedText.append($0) }
+
+        view.softwareKeyboardField?.paste(nil)
+
+        #expect(insertedText.isEmpty)
+        #expect(keyDownEvents.map(\.characters) == ["v"])
+        #expect(keyUpEvents.map(\.characters) == ["v"])
+        #expect(keyDownEvents.map(\.modifiers) == [[.command]])
+        #expect(keyUpEvents.map(\.modifiers) == [[.command]])
     }
 
     @Test("Cmd+F forwards once when both keyCommand and find action paths fire")

@@ -182,6 +182,7 @@ extension StreamContext {
             targetSize: targetWindowSize,
             aspectRatio: targetContentAspectRatio,
             maxBounds: placementBounds.size,
+            placementBounds: placementBounds,
             label: "startup"
         )
         await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
@@ -269,8 +270,8 @@ extension StreamContext {
         newLogicalSize: CGSize,
         targetAspectRatioOverride: CGFloat? = nil,
         forceReconfigure: Bool = false
-    ) async throws {
-        guard isRunning, useVirtualDisplay else { return }
+    ) async throws -> MirageAppWindowResizeResultOutcome {
+        guard isRunning, useVirtualDisplay else { return .noChange }
         let rollbackSnapshot = makeResizeRollbackSnapshot()
 
         let placementBounds = resolvedVirtualDisplayPlacementBounds(for: newLogicalSize)
@@ -296,7 +297,7 @@ extension StreamContext {
             MirageLogger.stream(
                 "Skipping window resize for stream \(streamID): size unchanged"
             )
-            return
+            return .noChange
         }
 
         isResizing = true
@@ -315,6 +316,7 @@ extension StreamContext {
             targetSize: effectiveSize,
             aspectRatio: requestedAspectRatio,
             maxBounds: maxBounds,
+            placementBounds: placementBounds,
             label: "resize"
         )
         await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
@@ -328,6 +330,12 @@ extension StreamContext {
             label: "window resize"
         )
         let windowFrame = Self.queryWindowFrame(windowID)?.standardized ?? resolvedWindowWrapper.window.frame.standardized
+        let resizeOutcome: MirageAppWindowResizeResultOutcome =
+            if Self.windowFrameMatchesTargetSize(windowFrame, targetSize: effectiveSize) {
+                .applied
+            } else {
+                .failed
+            }
         do {
             let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
             baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
@@ -373,6 +381,7 @@ extension StreamContext {
                 "Window resize updated shared-display capture for stream \(streamID): " +
                     "encoded \(scaledWidth)x\(scaledHeight), capture \(captureTarget.width)x\(captureTarget.height)"
             )
+            return resizeOutcome
         } catch {
             var restoredWindowFrame = previousWindowFrame
             if !previousWindowFrame.isEmpty {
@@ -384,6 +393,7 @@ extension StreamContext {
                     targetSize: previousWindowFrame.size,
                     aspectRatio: previousAspectRatio,
                     maxBounds: maxBounds,
+                    placementBounds: placementBounds,
                     label: "rollback"
                 )
                 await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
@@ -442,6 +452,15 @@ extension StreamContext {
         }
 
         return CGRect(origin: .zero, size: fallbackLogicalSize)
+    }
+
+    private static func windowFrameMatchesTargetSize(
+        _ windowFrame: CGRect,
+        targetSize: CGSize,
+        tolerance: CGFloat = 3
+    ) -> Bool {
+        abs(windowFrame.width - targetSize.width) <= tolerance &&
+            abs(windowFrame.height - targetSize.height) <= tolerance
     }
 }
 

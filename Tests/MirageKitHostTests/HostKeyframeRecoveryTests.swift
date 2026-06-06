@@ -316,8 +316,39 @@ struct HostKeyframeRecoveryTests {
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
-    @Test("AWDL receiver post-resize feedback bypasses in-flight geometry keyframe window")
-    func awdlReceiverPostResizeFeedbackBypassesInFlightGeometryKeyframeWindow() async {
+    @Test("AWDL receiver post-resize feedback preserves protected resize keyframe")
+    func awdlReceiverPostResizeFeedbackPreservesProtectedResizeKeyframe() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+
+        await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize resume",
+            resetFrameNumber: true,
+            noteLoss: true,
+            ignoreExistingInFlight: true,
+            supersedesInFlightGeometry: true,
+            bypassesRecoveryCooldown: true
+        )
+        #expect(await context.pendingKeyframeReason == "Desktop resize resume")
+        #expect(await context.protectedGeometryRecoveryKeyframeReason == "Desktop resize resume")
+
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .postResizeAwaitingFirstFrame,
+                recoveryCause: .manual
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Desktop resize resume")
+        #expect(await context.protectedGeometryRecoveryKeyframeReason == "Desktop resize resume")
+        #expect(await context.frameChainRepairKeyframeRetryTask == nil)
+        #expect(!(context.suppressEncodedNonKeyframesUntilKeyframe))
+    }
+
+    @Test("AWDL receiver post-resize feedback still bypasses unprotected in-flight keyframe")
+    func awdlReceiverPostResizeFeedbackStillBypassesUnprotectedInFlightKeyframe() async {
         let context = makeContext(
             transportPathKind: .awdl,
             mediaPathProfile: .awdlRadio

@@ -201,6 +201,14 @@ extension StreamContext {
         }
         let supersedesInFlightGeometry = mediaPathProfile.usesAwdlRadioPolicy &&
             feedback.recoveryState == .postResizeAwaitingFirstFrame
+        if supersedesInFlightGeometry, hasProtectedGeometryRecoveryKeyframe {
+            MirageLogger.stream(
+                "Receiver feedback keyframe recovery deferred for stream \(streamID) " +
+                    "while geometry recovery keyframe is protected " +
+                    "(\(protectedGeometryRecoveryKeyframeReason ?? "unknown"))"
+            )
+            return
+        }
         if supersedesInFlightGeometry {
             frameChainRepairKeyframeRetryTask?.cancel()
             frameChainRepairKeyframeRetryTask = nil

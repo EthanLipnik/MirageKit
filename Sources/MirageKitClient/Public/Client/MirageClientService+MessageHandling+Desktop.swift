@@ -277,8 +277,12 @@ extension MirageClientService {
             clearPendingStreamSetup(kind: .desktop)
 
             let desktopMinSize = presentationSize
-            sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
-            onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
+            if isAppStreamPlaceholder {
+                sessionStore.clearMinimumSize(for: streamID)
+            } else {
+                sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
+                onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
+            }
             await refreshSharedClipboardBridgeState()
             if isResizeTokenAdvance {
                 schedulePostResizeTransitionTimeoutIfNeeded(streamID: streamID)

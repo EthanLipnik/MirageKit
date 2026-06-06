@@ -131,6 +131,7 @@ actor StreamContext {
     var pendingKeyframeRequiresFlush: Bool = false
     var pendingKeyframeUrgent: Bool = false
     var pendingKeyframeRequiresReset: Bool = false
+    var protectedGeometryRecoveryKeyframeReason: String?
     var pendingEmergencyKeyframeQuality: Float?
     var lastClientInputTime: CFAbsoluteTime = 0
     nonisolated(unsafe) var suppressEncodedNonKeyframesUntilKeyframe = false

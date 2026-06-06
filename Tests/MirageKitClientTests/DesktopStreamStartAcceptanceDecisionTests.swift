@@ -648,6 +648,71 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
+    @Test("App-stream placeholder desktop startup clears client minimum size")
+    func appStreamPlaceholderDesktopStartupClearsClientMinimumSize() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 29
+        let desktopSessionID = UUID()
+        let appSessionID = UUID()
+        var desktopStartCallbackSize: CGSize?
+        var minimumSizeCallbackCalled = false
+        service.onDesktopStreamStarted = { streamID, minimumSize, _ in
+            desktopStartCallbackSize = minimumSize
+            let window = MirageWindow(
+                id: 0,
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(origin: .zero, size: minimumSize),
+                isOnScreen: true,
+                windowLayer: 0
+            )
+            service.sessionStore.registerSession(
+                streamID: streamID,
+                mediaStreamID: streamID,
+                window: window,
+                hostName: "Host",
+                minSize: minimumSize
+            )
+        }
+        service.onStreamMinimumSizeUpdate = { _, _ in
+            minimumSizeCallbackCalled = true
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2732,
+            height: 2048,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            presentationWidth: 1366,
+            presentationHeight: 1024,
+            presentationRole: .appStreamPlaceholder,
+            associatedAppSessionID: appSessionID,
+            associatedBundleIdentifier: "com.example.App"
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        let session = try #require(service.sessionStore.sessionByStreamID(streamID))
+        #expect(service.appStreamPlaceholderDesktopStreamID == streamID)
+        #expect(service.appStreamPlaceholderAppSessionID == appSessionID)
+        #expect(service.desktopStreamMode == .secondary)
+        #expect(desktopStartCallbackSize == CGSize(width: 1366, height: 1024))
+        #expect(!minimumSizeCallbackCalled)
+        #expect(service.sessionStore.sessionMinSizes[session.id] == nil)
+        #expect(session.minWidth == 400)
+        #expect(session.minHeight == 300)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
     @Test("Stale desktop startup geometry contract is ignored")
     func staleDesktopStartupGeometryContractIsIgnored() async throws {
         let service = MirageClientService()

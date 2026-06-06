@@ -144,10 +144,12 @@ extension MirageHostService {
         desktopSessionID: UUID,
         mode: MirageDesktopStreamMode,
         cursorPresentation: MirageDesktopCursorPresentation,
+        usesHostResolution: Bool,
         virtualDisplayResolution: CGSize
     ) async {
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
+        desktopUsesHostResolution = usesHostResolution
         desktopCaptureSource = .virtualDisplay
         self.desktopSessionID = desktopSessionID
         resetDesktopResizeTransactionState()

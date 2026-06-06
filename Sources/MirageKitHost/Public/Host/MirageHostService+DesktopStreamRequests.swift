@@ -124,9 +124,6 @@ extension MirageHostService {
                     startupRequestID: request.startupRequestID
                 )
             }
-            desktopStreamMode = request.mode ?? .unified
-            desktopUsesHostResolution = usesHostResolution
-            desktopCursorPresentation = request.cursorPresentation ?? .simulatedCursor
             pendingLightsOutSetup = true
             await beginPendingDesktopStreamLightsOutSetup()
             try await startDesktopStream(
@@ -135,6 +132,7 @@ extension MirageHostService {
                 clientScaleFactor: request.scaleFactor,
                 mode: request.mode ?? .unified,
                 cursorPresentation: request.cursorPresentation ?? .simulatedCursor,
+                usesHostResolution: usesHostResolution,
                 keyFrameInterval: request.keyFrameInterval,
                 colorDepth: request.colorDepth,
                 captureQueueDepth: request.captureQueueDepth,

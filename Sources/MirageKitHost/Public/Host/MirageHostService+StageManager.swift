@@ -56,8 +56,7 @@ extension MirageHostService {
         guard appStreamingStageManagerNeedsRestore else { return }
 
         if !force {
-            let sessions = await appStreamManager.allSessions()
-            guard sessions.isEmpty else { return }
+            guard await !hasAppStreamingStageManagerWorkInProgress() else { return }
         }
 
         let restored = await stageManagerController.setEnabled(true)
@@ -67,6 +66,13 @@ extension MirageHostService {
         } else {
             MirageLogger.error(.host, "Failed to restore Stage Manager after app streaming")
         }
+    }
+
+    private func hasAppStreamingStageManagerWorkInProgress() async -> Bool {
+        if !pendingLockedAppStreamIntentsByAppSessionID.isEmpty { return true }
+
+        let sessions = await appStreamManager.allSessions()
+        return !sessions.isEmpty
     }
 
     /// Removes a stopped stream's window from its app session and ends the session if it is idle.

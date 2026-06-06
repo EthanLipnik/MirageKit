@@ -12,6 +12,7 @@ import UIKit
 final class SoftwareKeyboardInputView: UIView, UIKeyInput {
     var onInsertText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
+    var onPaste: (() -> Void)?
     var onFirstResponderChanged: ((Bool) -> Void)?
     var onAttachmentChanged: ((Bool) -> Void)?
     var softwareInputAccessoryView: UIView?
@@ -78,6 +79,17 @@ final class SoftwareKeyboardInputView: UIView, UIKeyInput {
 
     func deleteBackward() {
         onDeleteBackward?()
+    }
+
+    override func paste(_: Any?) {
+        onPaste?()
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) {
+            return onPaste != nil
+        }
+        return super.canPerformAction(action, withSender: sender)
     }
 
     private func configure() {

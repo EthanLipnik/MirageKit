@@ -349,6 +349,11 @@ extension MirageClientService {
         postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
         sessionStore.clearPostResizeTransition(for: streamID)
         desktopResizeCoordinator.clearLocalPresentationState()
+        if reason == "timeout", let controller = controllersByStream[streamID] {
+            Task {
+                await controller.clearPostResizeRecoveryAfterLocalTimeout()
+            }
+        }
         MirageLogger.client("Post-resize transition cleared for stream \(streamID) (\(reason))")
         if dispatchQueuedResize {
             handleDesktopPresentationReady(streamID: streamID)

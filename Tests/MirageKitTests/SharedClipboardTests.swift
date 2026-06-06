@@ -56,14 +56,12 @@ struct SharedClipboardTests {
         #expect(
             state.prepareLocalSend(
                 currentItem: textItem("old-client"),
-                changeCount: 5,
-                nowMs: observedAtMs
+                changeCount: 5
             ) == nil
         )
         let localSend = state.prepareLocalSend(
             currentItem: textItem("new-client"),
-            changeCount: 6,
-            nowMs: afterRemoteWindow(from: observedAtMs)
+            changeCount: 6
         )
         #expect(localSend?.text == "new-client")
         #expect(localSend?.orderingToken.logicalVersion == 2)
@@ -87,8 +85,7 @@ struct SharedClipboardTests {
 
         let localSend = state.prepareLocalSend(
             currentItem: textItem("client-newer"),
-            changeCount: 6,
-            nowMs: afterRemoteWindow(from: observedAtMs)
+            changeCount: 6
         )
         #expect(localSend == nil)
     }
@@ -114,8 +111,7 @@ struct SharedClipboardTests {
         #expect(
             state.prepareLocalSend(
                 currentItem: textItem("client"),
-                changeCount: 5,
-                nowMs: observedAtMs
+                changeCount: 5
             ) == nil
         )
     }
@@ -141,8 +137,8 @@ struct SharedClipboardTests {
         #expect(!state.shouldApplyRemoteUpdate(orderingToken: remoteToken))
     }
 
-    @Test("Client pasteboard changes inside recent host window are treated as host-origin")
-    func clientPasteboardChangesInsideRecentHostWindowAreTreatedAsHostOrigin() {
+    @Test("Client pasteboard changes inside host-origin attribution window are treated as host-origin")
+    func clientPasteboardChangesInsideHostOriginAttributionWindowAreTreatedAsHostOrigin() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 50_000
@@ -156,25 +152,28 @@ struct SharedClipboardTests {
             orderingToken: remoteToken,
             observedAtMs: observedAtMs
         )
+        let observedClientChange = state.recordPasteboardChangeObservation(
+            changeCount: 11,
+            observedAtMs: observedAtMs + MirageSharedClipboard.hostOriginAttributionWindowMilliseconds
+        )
+        #expect(observedClientChange)
 
         #expect(
             state.prepareLocalSend(
                 currentItem: textItem("maybe-host"),
-                changeCount: 11,
-                nowMs: observedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+                changeCount: 11
             ) == nil
         )
         #expect(
             state.prepareLocalSend(
                 currentItem: textItem("maybe-host"),
-                changeCount: 11,
-                nowMs: afterRemoteWindow(from: observedAtMs)
+                changeCount: 11
             ) == nil
         )
     }
 
-    @Test("Client pasteboard changes after recent host window can sync")
-    func clientPasteboardChangesAfterRecentHostWindowCanSync() {
+    @Test("Client pasteboard changes after host-origin attribution window can sync")
+    func clientPasteboardChangesAfterHostOriginAttributionWindowCanSync() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 60_000
@@ -188,15 +187,48 @@ struct SharedClipboardTests {
             orderingToken: remoteToken,
             observedAtMs: observedAtMs
         )
+        let observedClientChange = state.recordPasteboardChangeObservation(
+            changeCount: 11,
+            observedAtMs: afterRemoteWindow(from: observedAtMs)
+        )
+        #expect(!observedClientChange)
 
         let localSend = state.prepareLocalSend(
             currentItem: textItem("client-newer"),
-            changeCount: 11,
-            nowMs: afterRemoteWindow(from: observedAtMs)
+            changeCount: 11
         )
 
         #expect(localSend?.text == "client-newer")
         #expect(localSend?.orderingToken.logicalVersion == 2)
+    }
+
+    @Test("Universal Clipboard style delayed client change inside host-origin window is suppressed")
+    func universalClipboardStyleDelayedClientChangeInsideHostOriginWindowIsSuppressed() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 20)
+        let observedAtMs: Int64 = 65_000
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 2,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000021")!
+        )
+
+        _ = state.recordRemoteTransferObservation(
+            changeCount: 20,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
+        let observedClientChange = state.recordPasteboardChangeObservation(
+            changeCount: 22,
+            observedAtMs: observedAtMs + 5_000
+        )
+        #expect(observedClientChange)
+
+        #expect(
+            state.prepareLocalSend(
+                currentItem: textItem("universal-clipboard-host-copy"),
+                changeCount: 22
+            ) == nil
+        )
     }
 
     @Test("Stale host observations do not override newer ordering")
@@ -228,8 +260,7 @@ struct SharedClipboardTests {
 
         let localSend = state.prepareLocalSend(
             currentItem: textItem("client-newer"),
-            changeCount: 1,
-            nowMs: afterRemoteWindow(from: 70_000)
+            changeCount: 1
         )
         #expect(localSend?.orderingToken.logicalVersion == 6)
         let recordedOlderAfterLocalSend = state.recordRemoteTransferObservation(
@@ -276,17 +307,20 @@ struct SharedClipboardTests {
             observedAtMs: appliedAtMs
         )
 
+        let observedClientChange = state.recordPasteboardChangeObservation(
+            changeCount: 12,
+            observedAtMs: appliedAtMs + MirageSharedClipboard.hostOriginAttributionWindowMilliseconds
+        )
+        #expect(observedClientChange)
         #expect(
             state.shouldSuppressLocalSend(
-                changeCount: 12,
-                nowMs: appliedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+                changeCount: 12
             )
         )
         #expect(
             state.prepareLocalSend(
                 currentItem: textItem("host-value"),
-                changeCount: 12,
-                nowMs: appliedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+                changeCount: 12
             ) == nil
         )
     }
@@ -309,8 +343,7 @@ struct SharedClipboardTests {
 
         let localSend = state.prepareLocalSend(
             currentItem: textItem("client-value"),
-            changeCount: 12,
-            nowMs: afterRemoteWindow(from: observedAtMs)
+            changeCount: 12
         )
 
         #expect(localSend?.text == "client-value")
@@ -342,17 +375,17 @@ struct SharedClipboardTests {
         )
     }
 
-    @Test("Automatic shared clipboard suppresses duplicate content fingerprints")
-    func automaticSharedClipboardSuppressesDuplicateContentFingerprints() {
+    @Test("Automatic shared clipboard declares supported pasteboard change-count advances")
+    func automaticSharedClipboardDeclaresSupportedPasteboardChangeCountAdvances() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 0)
 
         let first = state.prepareLocalDeclaration(item: textItem("same"), changeCount: 1)
-        let duplicateWithNewChangeCount = state.prepareLocalDeclaration(item: textItem("same"), changeCount: 2)
+        let recopiedSameContents = state.prepareLocalDeclaration(item: textItem("same"), changeCount: 2)
         let changed = state.prepareLocalDeclaration(item: textItem("different"), changeCount: 3)
 
         #expect(first?.text == "same")
-        #expect(duplicateWithNewChangeCount == nil)
+        #expect(recopiedSameContents?.text == "same")
         #expect(changed?.text == "different")
     }
 
@@ -375,8 +408,8 @@ struct SharedClipboardTests {
         #expect(changed?.text == "supported")
     }
 
-    @Test("Manual shared clipboard does not use automatic duplicate fingerprint suppression")
-    func manualSharedClipboardDoesNotUseAutomaticDuplicateSuppression() {
+    @Test("Manual shared clipboard sends repeated pasteboard change-count advances")
+    func manualSharedClipboardSendsRepeatedPasteboardChangeCountAdvances() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 0)
 
@@ -446,7 +479,7 @@ private func textItem(_ text: String) -> MirageSharedClipboardItem {
 }
 
 private func afterRemoteWindow(from observedAtMs: Int64) -> Int64 {
-    observedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds + 1
+    observedAtMs + MirageSharedClipboard.hostOriginAttributionWindowMilliseconds + 1
 }
 
 private extension Optional where Wrapped == MirageSharedClipboardLocalSend {

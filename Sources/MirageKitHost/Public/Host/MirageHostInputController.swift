@@ -104,11 +104,17 @@ public final class MirageHostInputController: @unchecked Sendable {
     /// Timer to periodically check for stuck modifiers.
     var modifierResetTimer: DispatchSourceTimer?
 
+    /// Last pointer-triggered check for host-observed modifiers Mirage is not holding.
+    var lastPointerUnexpectedModifierCheckTime: TimeInterval = 0
+
     /// Maximum time modifiers can be held before being considered stuck.
     let modifierStuckTimeoutSeconds: TimeInterval = 0.5
 
     /// Poll interval for stuck modifier detection.
     let modifierResetPollIntervalSeconds: TimeInterval = 0.1
+
+    /// Minimum spacing for pointer-triggered unexpected modifier checks.
+    let pointerUnexpectedModifierCheckIntervalSeconds: TimeInterval = 0.25
 
     /// Mapping from modifier flags to their corresponding virtual key codes.
     static let modifierKeyCodes: [(flag: MirageModifierFlags, keyCode: CGKeyCode)] = [

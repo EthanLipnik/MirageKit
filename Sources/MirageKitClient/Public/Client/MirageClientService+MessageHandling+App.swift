@@ -136,11 +136,6 @@ extension MirageClientService {
         do {
             let result = try message.decode(AppWindowResizeResultMessage.self)
             appWindowResizeResultByStreamID[result.streamID] = result
-            if let minWidth = result.minWidth, let minHeight = result.minHeight, minWidth > 0, minHeight > 0 {
-                let minSize = CGSize(width: minWidth, height: minHeight)
-                sessionStore.updateMinimumSize(for: result.streamID, minSize: minSize)
-                onStreamMinimumSizeUpdate?(result.streamID, minSize)
-            }
             if let observedWidth = result.observedWidth,
                let observedHeight = result.observedHeight,
                observedWidth > 0,

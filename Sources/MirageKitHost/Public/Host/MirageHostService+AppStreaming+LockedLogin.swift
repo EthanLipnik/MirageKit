@@ -74,6 +74,7 @@ extension MirageHostService {
             )
         } catch {
             _ = removePendingLockedAppStreamIntent(appSessionID: appSessionID)
+            await restoreStageManagerAfterAppStreamingIfNeeded()
             throw error
         }
     }
@@ -467,8 +468,8 @@ extension MirageHostService {
             requestedHeight: Int(max(1, requestedSize.height.rounded())),
             observedWidth: Int(max(1, observedSize.width.rounded())),
             observedHeight: Int(max(1, observedSize.height.rounded())),
-            minWidth: Int(max(1, observedSize.width.rounded())),
-            minHeight: Int(max(1, observedSize.height.rounded())),
+            minWidth: nil,
+            minHeight: nil,
             reason: "lockedLoginFixedSurface"
         )
         do {
@@ -513,6 +514,7 @@ extension MirageHostService {
                   !disconnectingClientIDs.contains(intent.clientID) else {
                 if let removed = removePendingLockedAppStreamIntent(appSessionID: appSessionID) {
                     await stopLockedAppLoginStream(for: removed, notifyClient: false)
+                    await restoreStageManagerAfterAppStreamingIfNeeded()
                 }
                 continue
             }
@@ -532,6 +534,7 @@ extension MirageHostService {
             }
             if let completedIntent = removePendingLockedAppStreamIntent(appSessionID: appSessionID) {
                 await stopLockedAppLoginStream(for: completedIntent, notifyClient: true)
+                await restoreStageManagerAfterAppStreamingIfNeeded()
             }
         }
     }

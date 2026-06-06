@@ -427,7 +427,6 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             group.cancelAll()
             if !result {
                 completeProtectedAck(eventID: eventID, acked: false)
-                markRouteState(.fallback)
             }
             return result
         }
@@ -692,10 +691,10 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
                 } else {
                     state.realtimeFallbackCount &+= 1
                 }
+                state.routeState = .fallback
             case .protected:
                 state.protectedFallbackCount &+= 1
             }
-            state.routeState = .fallback
         }
     }
 

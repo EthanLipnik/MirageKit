@@ -91,6 +91,18 @@ extension MirageHostInputController {
         postFlagsChangedEvent(lastSentModifiers, domain: domain)
     }
 
+    /// Clears host-observed modifiers from pointer traffic without querying the system on every sample.
+    func clearUnexpectedSystemModifiersFromPointerIfNeeded(domain: HostKeyboardInjectionDomain) {
+        let now = CACurrentMediaTime()
+        guard lastPointerUnexpectedModifierCheckTime == 0 ||
+            now - lastPointerUnexpectedModifierCheckTime >= pointerUnexpectedModifierCheckIntervalSeconds else {
+            return
+        }
+
+        lastPointerUnexpectedModifierCheckTime = now
+        clearUnexpectedSystemModifiers(domain: domain)
+    }
+
     /// Clears all tracked and host-observed modifier state.
     /// - Note: Call when starting a new stream or reconnecting to avoid stuck modifiers.
     public func clearAllModifiers() {
@@ -112,6 +124,7 @@ extension MirageHostInputController {
 
             lastSentModifiers = []
             lastModifierInjectionDomain = .session
+            lastPointerUnexpectedModifierCheckTime = 0
             modifierLastEventTimes.removeAll()
             stopModifierResetTimer()
         }
