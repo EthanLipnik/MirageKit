@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/3/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreVideo
 import Foundation
 import Metal
-import MirageKit
 
 #if os(macOS)
 /// Errors emitted by the Metal app-atlas compositor.

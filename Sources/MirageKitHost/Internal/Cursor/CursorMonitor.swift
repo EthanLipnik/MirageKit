@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/3/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import Foundation
@@ -14,7 +22,7 @@ import Foundation
 actor CursorMonitor {
     private struct CursorSample {
         let mouseLocation: CGPoint
-        let cursorType: MirageCursorType
+        let cursorType: MirageWire.MirageCursorType
         let source: String
         let sampledAt: CFAbsoluteTime
         let sampleMilliseconds: Double
@@ -52,7 +60,7 @@ actor CursorMonitor {
     private var lastWindowFrameRefreshTime: CFAbsoluteTime = 0
 
     /// Most recent cursor shape sent for each stream.
-    private var lastCursorTypes: [StreamID: MirageCursorType] = [:]
+    private var lastCursorTypes: [StreamID: MirageWire.MirageCursorType] = [:]
 
     /// Most recent cursor visibility state sent for each stream.
     private var lastVisibility: [StreamID: Bool] = [:]
@@ -68,7 +76,7 @@ actor CursorMonitor {
     private var nextCursorShapeRefreshTime: CFAbsoluteTime = 0
 
     /// Callback invoked when a stream's cursor shape or visibility changes.
-    private var onCursorChange: (@Sendable (StreamID, MirageCursorType, Bool, CFAbsoluteTime) async -> Void)?
+    private var onCursorChange: (@Sendable (StreamID, MirageWire.MirageCursorType, Bool, CFAbsoluteTime) async -> Void)?
 
     /// Callback invoked with cursor position updates for a stream.
     private var onCursorPosition: ((StreamID, CGPoint, Bool) async -> Void)?
@@ -78,7 +86,7 @@ actor CursorMonitor {
     ///   - pollingRate: Cursor samples per second.
     ///   - windowFrameRefreshRate: Stream window frame refreshes per second.
     init(
-        pollingRate: Double = Double(MirageInteractionCadence.targetFPS120),
+        pollingRate: Double = Double(MirageMedia.MirageInteractionCadence.targetFPS120),
         windowFrameRefreshRate: Double = 30.0
     ) {
         pollingInterval = Self.normalizedInterval(rate: pollingRate)
@@ -92,7 +100,7 @@ actor CursorMonitor {
     ///   - onCursorPosition: Optional callback invoked for movement updates and position heartbeats.
     func start(
         windowFrameProvider: @escaping @MainActor () -> [(StreamID, CGRect)],
-        onCursorChange: @escaping @Sendable (StreamID, MirageCursorType, Bool, CFAbsoluteTime) async -> Void,
+        onCursorChange: @escaping @Sendable (StreamID, MirageWire.MirageCursorType, Bool, CFAbsoluteTime) async -> Void,
         onCursorPosition: (@Sendable (StreamID, CGPoint, Bool) async -> Void)? = nil
     ) {
         self.onCursorChange = onCursorChange
@@ -132,9 +140,9 @@ actor CursorMonitor {
     }
 
     nonisolated static func didCursorStateChange(
-        previousType: MirageCursorType?,
+        previousType: MirageWire.MirageCursorType?,
         previousVisibility: Bool?,
-        cursorType: MirageCursorType,
+        cursorType: MirageWire.MirageCursorType,
         isVisible: Bool
     )
     -> Bool {
@@ -149,8 +157,8 @@ actor CursorMonitor {
     nonisolated static func resolvedCursorType(
         currentSystemCursor: NSCursor?
     )
-    -> (cursorType: MirageCursorType, source: String) {
-        if let systemType = MirageCursorType(from: currentSystemCursor) {
+    -> (cursorType: MirageWire.MirageCursorType, source: String) {
+        if let systemType = MirageWire.MirageCursorType(from: currentSystemCursor) {
             return (systemType, "currentSystem")
         }
         return (.arrow, "fallback")

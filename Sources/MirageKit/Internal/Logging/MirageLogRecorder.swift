@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 3/14/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
+import Loom
 
 // MARK: - Configuration
 
@@ -65,12 +73,12 @@ public final class MirageLogRecorder: @unchecked Sendable {
             truncationLabel: "Mirage",
             baselineCategories: Set(
                 [
-                    MirageLogCategory.host,
-                    MirageLogCategory.client,
-                    MirageLogCategory.appState,
-                    MirageLogCategory.stream,
-                    MirageLogCategory.decoder,
-                    MirageLogCategory.renderer,
+                    MirageDiagnostics.MirageLogCategory.host,
+                    MirageDiagnostics.MirageLogCategory.client,
+                    MirageDiagnostics.MirageLogCategory.appState,
+                    MirageDiagnostics.MirageLogCategory.stream,
+                    MirageDiagnostics.MirageLogCategory.decoder,
+                    MirageDiagnostics.MirageLogCategory.renderer,
                 ].map { LoomLogCategory(rawValue: $0.rawValue) }
             )
         )
@@ -86,13 +94,13 @@ public final class MirageLogRecorder: @unchecked Sendable {
             truncationLabel: "Mirage Host",
             baselineCategories: Set(
                 [
-                    MirageLogCategory.host,
-                    MirageLogCategory.appState,
-                    MirageLogCategory.stream,
-                    MirageLogCategory.capture,
-                    MirageLogCategory.encoder,
-                    MirageLogCategory.timing,
-                    MirageLogCategory.metrics,
+                    MirageDiagnostics.MirageLogCategory.host,
+                    MirageDiagnostics.MirageLogCategory.appState,
+                    MirageDiagnostics.MirageLogCategory.stream,
+                    MirageDiagnostics.MirageLogCategory.capture,
+                    MirageDiagnostics.MirageLogCategory.encoder,
+                    MirageDiagnostics.MirageLogCategory.timing,
+                    MirageDiagnostics.MirageLogCategory.metrics,
                 ].map { LoomLogCategory(rawValue: $0.rawValue) }
             )
         )
@@ -202,7 +210,7 @@ public final class MirageLogRecorder: @unchecked Sendable {
         diagnosticsSummary: String? = nil,
         includePreviousSessionLog: Bool = false,
         previousSessionEntryName: String = "PreviousSession.log",
-        additionalEntries: [MirageLogArchiveEntry] = []
+        additionalEntries: [MirageDiagnostics.MirageLogArchiveEntry] = []
     ) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
@@ -217,13 +225,13 @@ public final class MirageLogRecorder: @unchecked Sendable {
                     if includePreviousSessionLog,
                        let previousLogData = try previousSessionLogData() {
                         archiveEntries.append(
-                            MirageLogArchiveEntry(
+                            MirageDiagnostics.MirageLogArchiveEntry(
                                 name: previousSessionEntryName,
                                 data: previousLogData
                             )
                         )
                     }
-                    let archiveURL = try MirageLogArchiver.exportArchive(
+                    let archiveURL = try MirageDiagnostics.MirageLogArchiver.exportArchive(
                         from: filteredLogData,
                         filename: filename,
                         maximumCompressedBytes: maximumCompressedBytes,

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -81,7 +89,7 @@ extension MirageClientService {
               sharedClipboardEnabled,
               let mediaSecurityContext,
               let controlChannel else {
-            throw MirageError.protocolError("Shared clipboard unavailable")
+            throw MirageCore.MirageError.protocolError("Shared clipboard unavailable")
         }
 
         let messages = try MirageSharedClipboard.makeUpdateMessages(

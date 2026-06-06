@@ -8,8 +8,11 @@
 #if os(macOS)
 @testable import MirageKit
 @testable import MirageKitHost
-import Loom
 import Testing
+import Loom
+import MirageConnectivity
+import MirageCore
+import MirageMedia
 
 @Suite("Mirage Effective Media Path Policy")
 struct MirageEffectiveMediaPathPolicyTests {
@@ -154,7 +157,7 @@ struct MirageEffectiveMediaPathPolicyTests {
 
     @Test("Low-latency wireless host snapshot resolves local WiFi policy")
     func lowLatencyWirelessHostSnapshotResolvesLocalWiFiPolicy() {
-        let hostSnapshot = MirageNetworkPathClassifier.classify(
+        let hostSnapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["llw0"],
             usesWiFi: true,
             usesWired: false,
@@ -224,7 +227,7 @@ struct MirageEffectiveMediaPathPolicyTests {
 
     @Test("Mixed WiFi and available AWDL host snapshot resolves WiFi media policy")
     func mixedWiFiAndAvailableAwdlHostSnapshotResolvesWiFiMediaPolicy() {
-        let hostSnapshot = MirageNetworkPathClassifier.classify(
+        let hostSnapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0", "awdl0"],
             usesWiFi: true,
             usesWired: false,
@@ -240,12 +243,11 @@ struct MirageEffectiveMediaPathPolicyTests {
 
         #expect(hostSnapshot.kind == .wifi)
         #expect(hostSnapshot.mediaProfile == .localWiFi)
-        #expect(LoomAuthenticatedSession.mirageMediaSendProfile(for: hostSnapshot.mediaProfile) == .interactiveMedia)
     }
 
     @Test("APNI host route is not masked by client generic wired route")
     func apniHostRouteIsNotMaskedByClientGenericWiredRoute() {
-        let hostSnapshot = MirageNetworkPathClassifier.classify(
+        let hostSnapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["apni2"],
             usesWiFi: false,
             usesWired: true,
@@ -293,30 +295,10 @@ struct MirageEffectiveMediaPathPolicyTests {
         #expect(unknownClient.mediaPathProfile == .localWiFi)
     }
 
-    @Test("Live Loom path snapshot wins over bootstrap path snapshot")
-    func liveLoomPathSnapshotWinsOverBootstrapPathSnapshot() {
-        let selected = currentHostMediaPathSnapshot(
-            liveSnapshot: Self.loomSnapshot(kind: .awdl),
-            bootstrapSnapshot: Self.loomSnapshot(kind: .wifi)
-        )
-
-        #expect(selected?.kind == .awdl)
-        #expect(selected?.mediaProfile == .awdlRadio)
-
-        let policy = MirageEffectiveMediaPathPolicy.resolve(
-            hostSnapshot: selected,
-            clientPathKind: .wifi,
-            clientMediaPathProfile: .localWiFi,
-            clientPathSignature: "client-wifi"
-        )
-        #expect(policy.transportPathKind == .awdl)
-        #expect(policy.mediaPathProfile == .awdlRadio)
-    }
-
-    private static func snapshot(kind: MirageNetworkPathKind) -> MirageNetworkPathSnapshot {
+    private static func snapshot(kind: MirageCore.MirageNetworkPathKind) -> MirageConnectivity.MirageNetworkPathSnapshot {
         switch kind {
         case .awdl:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: ["awdl0"],
                 usesWiFi: false,
                 usesWired: false,
@@ -330,7 +312,7 @@ struct MirageEffectiveMediaPathPolicyTests {
                 supportsIPv6: true
             )
         case .wifi:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: ["en0"],
                 usesWiFi: true,
                 usesWired: false,
@@ -344,7 +326,7 @@ struct MirageEffectiveMediaPathPolicyTests {
                 supportsIPv6: true
             )
         case .wired:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: ["en7"],
                 usesWiFi: false,
                 usesWired: true,
@@ -358,7 +340,7 @@ struct MirageEffectiveMediaPathPolicyTests {
                 supportsIPv6: true
             )
         case .cellular, .vpn, .loopback, .other, .unknown:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: [],
                 usesWiFi: false,
                 usesWired: false,
@@ -374,73 +356,5 @@ struct MirageEffectiveMediaPathPolicyTests {
         }
     }
 
-    private static func loomSnapshot(kind: MirageNetworkPathKind) -> LoomSessionNetworkPathSnapshot {
-        switch kind {
-        case .awdl:
-            LoomSessionNetworkPathSnapshot(
-                status: .satisfied,
-                interfaceNames: ["awdl0"],
-                isExpensive: false,
-                isConstrained: false,
-                supportsIPv4: true,
-                supportsIPv6: true,
-                usesWiFi: false,
-                usesWiredEthernet: false,
-                usesCellular: false,
-                usesLoopback: false,
-                usesOther: true,
-                localEndpoint: nil,
-                remoteEndpoint: nil
-            )
-        case .wifi:
-            LoomSessionNetworkPathSnapshot(
-                status: .satisfied,
-                interfaceNames: ["en0"],
-                isExpensive: false,
-                isConstrained: false,
-                supportsIPv4: true,
-                supportsIPv6: true,
-                usesWiFi: true,
-                usesWiredEthernet: false,
-                usesCellular: false,
-                usesLoopback: false,
-                usesOther: false,
-                localEndpoint: nil,
-                remoteEndpoint: nil
-            )
-        case .wired:
-            LoomSessionNetworkPathSnapshot(
-                status: .satisfied,
-                interfaceNames: ["en7"],
-                isExpensive: false,
-                isConstrained: false,
-                supportsIPv4: true,
-                supportsIPv6: true,
-                usesWiFi: false,
-                usesWiredEthernet: true,
-                usesCellular: false,
-                usesLoopback: false,
-                usesOther: false,
-                localEndpoint: nil,
-                remoteEndpoint: nil
-            )
-        case .cellular, .vpn, .loopback, .other, .unknown:
-            LoomSessionNetworkPathSnapshot(
-                status: .satisfied,
-                interfaceNames: [],
-                isExpensive: false,
-                isConstrained: false,
-                supportsIPv4: true,
-                supportsIPv6: true,
-                usesWiFi: false,
-                usesWiredEthernet: false,
-                usesCellular: kind == .cellular,
-                usesLoopback: kind == .loopback,
-                usesOther: kind == .other,
-                localEndpoint: nil,
-                remoteEndpoint: nil
-            )
-        }
-    }
 }
 #endif

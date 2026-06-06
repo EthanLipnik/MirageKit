@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 1/6/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Darwin
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -30,8 +38,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     private nonisolated(unsafe) static var cgVirtualDisplaySettingsClass: AnyClass?
     private nonisolated(unsafe) static var cgVirtualDisplayModeClass: AnyClass?
     private nonisolated(unsafe) static var isLoaded = false
-    nonisolated(unsafe) static var cachedSerialNumbers: [MirageColorSpace: UInt32] = [:]
-    nonisolated(unsafe) static var cachedSerialSlots: [MirageColorSpace: SerialSlot] = [:]
+    nonisolated(unsafe) static var cachedSerialNumbers: [MirageMedia.MirageColorSpace: UInt32] = [:]
+    nonisolated(unsafe) static var cachedSerialSlots: [MirageMedia.MirageColorSpace: SerialSlot] = [:]
     nonisolated(unsafe) static var cachedHardwareModel: String?
     nonisolated(unsafe) static var configuredDisplayOrigins: [CGDirectDisplayID: CGPoint] = [:]
     static let mirageVendorID: UInt32 = 0x1234
@@ -101,7 +109,7 @@ extension CGVirtualDisplayBridge {
         refreshRate: Double = 60.0,
         hiDPI: Bool = false,
         ppi: Double = 220.0,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     -> VirtualDisplayCreationResult {
@@ -285,7 +293,7 @@ extension CGVirtualDisplayBridge {
         refreshRate: Double,
         hiDPI: Bool,
         ppi: Double,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         profile: DescriptorAttempt,
         descriptorClass: NSObject.Type,
         settingsClass: NSObject.Type,

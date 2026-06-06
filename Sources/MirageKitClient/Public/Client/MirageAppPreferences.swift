@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/21/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Client-side preferences for app organization and sorting.
 public struct MirageAppPreferences: Codable, Equatable {
@@ -170,7 +178,7 @@ public extension MirageAppPreferences {
     /// - Parameters:
     ///   - apps: Apps to sort.
     ///   - hostID: Host identifier that owns the preference.
-    func sortedApps(_ apps: [MirageInstalledApp], for hostID: UUID) -> [MirageInstalledApp] {
+    func sortedApps(_ apps: [MirageWire.MirageInstalledApp], for hostID: UUID) -> [MirageWire.MirageInstalledApp] {
         let prefs = preferences(for: hostID)
 
         return apps.sorted { app1, app2 in

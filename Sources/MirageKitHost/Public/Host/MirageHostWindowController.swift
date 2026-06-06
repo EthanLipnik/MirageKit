@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 1/21/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -110,7 +118,7 @@ public final class MirageHostWindowController {
     /// - Returns: `true` when meaningful drift remains and a follow-up pass should be scheduled.
     private func enforceDirectStreamWindowFrame(
         axWindow: AXUIElement,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         desiredSizeOverride: CGSize? = nil
     ) -> Bool {
         let currentFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id)
@@ -156,7 +164,7 @@ public final class MirageHostWindowController {
     }
 
     func requestFrameEnforcement(
-        for window: MirageWindow,
+        for window: MirageMedia.MirageWindow,
         targetSize: CGSize? = nil,
         remainingAttempts: Int? = nil
     ) {
@@ -285,7 +293,7 @@ public final class MirageHostWindowController {
     /// - Parameters:
     ///   - window: Window to resize.
     ///   - targetSize: Desired size in points.
-    func resizeAndCenterWindowForStream(_ window: MirageWindow, targetSize: CGSize) {
+    func resizeAndCenterWindowForStream(_ window: MirageMedia.MirageWindow, targetSize: CGSize) {
         guard let axWindow = cachedAXWindow(for: window) else { return }
 
         let screenFrame: CGRect

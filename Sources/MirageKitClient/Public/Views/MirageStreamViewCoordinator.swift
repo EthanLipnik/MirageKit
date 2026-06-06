@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 /// Bridges platform stream views to Mirage input, metrics, and keyboard callbacks.
 public final class MirageStreamViewCoordinator {
@@ -16,7 +24,7 @@ public final class MirageStreamViewCoordinator {
     private static let representableUpdateLogInterval: CFTimeInterval = 5.0
     #endif
 
-    var onInputEvent: ((MirageInputEvent) -> Void)?
+    var onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?
     var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
     var onContainerSizeChanged: ((CGSize) -> Void)?
     var onRefreshRateOverrideChange: ((Int) -> Void)?
@@ -38,7 +46,7 @@ public final class MirageStreamViewCoordinator {
     #endif
 
     init(
-        onInputEvent: ((MirageInputEvent) -> Void)?,
+        onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
         onContainerSizeChanged: ((CGSize) -> Void)?,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil
@@ -51,7 +59,7 @@ public final class MirageStreamViewCoordinator {
 
     #if os(iOS) || os(visionOS)
     convenience init(
-        onInputEvent: ((MirageInputEvent) -> Void)?,
+        onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
         onContainerSizeChanged: ((CGSize) -> Void)?,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,

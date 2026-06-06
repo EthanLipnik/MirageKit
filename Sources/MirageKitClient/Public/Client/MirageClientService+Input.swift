@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+Input.swift
 //  MirageKit
@@ -7,17 +16,16 @@
 //  Client input event dispatch.
 //
 
-import MirageKit
 
 public extension MirageClientService {
     /// Send an input event to the host with network confirmation.
-    nonisolated func sendInput(_ event: MirageInputEvent, forStream streamID: StreamID) async throws {
+    nonisolated func sendInput(_ event: MirageInput.MirageInputEvent, forStream streamID: StreamID) async throws {
         MirageRenderStreamStore.shared.noteInteraction(for: streamID)
         try await inputEventSender.sendInput(event, streamID: streamID)
     }
 
     /// Send an input event to the host without waiting for network confirmation.
-    nonisolated func sendInputFireAndForget(_ event: MirageInputEvent, forStream streamID: StreamID) {
+    nonisolated func sendInputFireAndForget(_ event: MirageInput.MirageInputEvent, forStream streamID: StreamID) {
         MirageRenderStreamStore.shared.noteInteraction(for: streamID)
         inputEventSender.sendInputFireAndForget(event, streamID: streamID)
     }

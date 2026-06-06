@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/11/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import AppKit
@@ -29,7 +37,7 @@ extension MirageHostService {
         guard cursorMonitor == nil else { return }
 
         let monitor = CursorMonitor(
-            pollingRate: Double(MirageInteractionCadence.targetFPS120),
+            pollingRate: Double(MirageMedia.MirageInteractionCadence.targetFPS120),
             windowFrameRefreshRate: 30
         )
         cursorMonitor = monitor
@@ -115,7 +123,7 @@ extension MirageHostService {
     /// Sends a cursor shape or visibility update to the client that owns the stream.
     func sendCursorUpdate(
         streamID: StreamID,
-        cursorType: MirageCursorType,
+        cursorType: MirageWire.MirageCursorType,
         isVisible: Bool,
         sampledAt: CFAbsoluteTime? = nil
     ) {
@@ -130,7 +138,7 @@ extension MirageHostService {
 
         guard let clientContext else { return }
 
-        let message = CursorUpdateMessage(
+        let message = MirageWire.CursorUpdateMessage(
             streamID: streamID,
             cursorType: cursorType,
             isVisible: isVisible
@@ -162,7 +170,7 @@ extension MirageHostService {
             position,
             desktopStreamMode: desktopStreamMode
         )
-        let message = CursorPositionUpdateMessage(
+        let message = MirageWire.CursorPositionUpdateMessage(
             streamID: streamID,
             normalizedX: Float(resolvedPosition.x),
             normalizedY: Float(resolvedPosition.y),
@@ -241,8 +249,8 @@ extension MirageHostService {
     nonisolated static func shouldSendCursorPositionUpdate(
         streamID: StreamID,
         desktopStreamID: StreamID?,
-        desktopStreamMode: MirageDesktopStreamMode?,
-        desktopCursorPresentation: MirageDesktopCursorPresentation
+        desktopStreamMode: MirageMedia.MirageDesktopStreamMode?,
+        desktopCursorPresentation: MirageWire.MirageDesktopCursorPresentation
     ) -> Bool {
         guard streamID == desktopStreamID else { return false }
         return desktopStreamMode == .secondary || desktopCursorPresentation.requiresCursorPositionUpdates
@@ -250,7 +258,7 @@ extension MirageHostService {
 
     nonisolated static func resolvedClientCursorPosition(
         _ position: CGPoint,
-        desktopStreamMode: MirageDesktopStreamMode?
+        desktopStreamMode: MirageMedia.MirageDesktopStreamMode?
     )
     -> CGPoint {
         if desktopStreamMode == .secondary { return position }

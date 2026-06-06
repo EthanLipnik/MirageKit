@@ -10,6 +10,8 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageCore
+import MirageWire
 
 @Suite("Frame Reassembler Provenance")
 struct FrameReassemblerProvenanceTests {
@@ -109,7 +111,7 @@ struct FrameReassemblerProvenanceTests {
 
     private func makeHeader(
         streamID: StreamID,
-        flags: FrameFlags,
+        flags: MirageWire.FrameFlags,
         frameNumber: UInt32,
         payload: Data,
         timestamp: UInt64 = 0,
@@ -118,8 +120,8 @@ struct FrameReassemblerProvenanceTests {
         frameByteCount: UInt32? = nil,
         dimensionToken: UInt16,
         epoch: UInt16
-    ) -> FrameHeader {
-        FrameHeader(
+    ) -> MirageWire.FrameHeader {
+        MirageWire.FrameHeader(
             flags: flags,
             streamID: streamID,
             sequenceNumber: frameNumber,
@@ -129,7 +131,7 @@ struct FrameReassemblerProvenanceTests {
             fragmentCount: fragmentCount,
             payloadLength: UInt32(payload.count),
             frameByteCount: frameByteCount ?? UInt32(payload.count),
-            checksum: CRC32.calculate(payload),
+            checksum: MirageWire.CRC32.calculate(payload),
             contentRect: CGRect(x: 1, y: 2, width: 3, height: 4),
             dimensionToken: dimensionToken,
             epoch: epoch

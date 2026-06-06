@@ -7,11 +7,19 @@
 //  HEVC decoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
-import MirageKit
 
 private struct SendableOpaquePointer: @unchecked Sendable {
     let value: UnsafeMutableRawPointer
@@ -157,7 +165,7 @@ extension VideoDecoder {
         if decompressionSession == nil { try createSession(formatDescription: formatDesc) }
 
         guard let session = decompressionSession else {
-            throw MirageError.decodingError(NSError(
+            throw MirageCore.MirageError.decodingError(NSError(
                 domain: "MirageKit",
                 code: -1,
                 userInfo: [NSLocalizedDescriptionKey: "No decompression session"]
@@ -181,12 +189,12 @@ extension VideoDecoder {
             blockBufferOut: &blockBuffer
         )
 
-        guard status == noErr, let buffer = blockBuffer else { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
+        guard status == noErr, let buffer = blockBuffer else { throw MirageCore.MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
 
         // Copy frame data into the block buffer's owned memory
         try frameData.withUnsafeBytes { ptr in
             guard let baseAddress = ptr.baseAddress else {
-                throw MirageError.decodingError(NSError(
+                throw MirageCore.MirageError.decodingError(NSError(
                     domain: "MirageKit",
                     code: -1,
                     userInfo: [NSLocalizedDescriptionKey: "No frame data"]
@@ -198,7 +206,7 @@ extension VideoDecoder {
                 offsetIntoDestination: 0,
                 dataLength: frameData.count
             )
-            if status != noErr { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
+            if status != noErr { throw MirageCore.MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
         }
 
         // Create sample buffer
@@ -224,7 +232,7 @@ extension VideoDecoder {
             sampleBufferOut: &sampleBuffer
         )
 
-        guard sampleStatus == noErr, let sampleBuffer else { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(sampleStatus))) }
+        guard sampleStatus == noErr, let sampleBuffer else { throw MirageCore.MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(sampleStatus))) }
 
         // Decode
         var flags: VTDecodeInfoFlags = []
@@ -330,7 +338,7 @@ extension VideoDecoder {
         if decodeStatus != noErr {
             Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).release()
             releaseDecodeSubmissionSlot()
-            throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(decodeStatus)))
+            throw MirageCore.MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(decodeStatus)))
         }
 
         if isKeyframe {

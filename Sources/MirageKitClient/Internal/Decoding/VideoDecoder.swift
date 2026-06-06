@@ -5,22 +5,30 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
-import MirageKit
 
 /// Hardware-accelerated video decoder using VideoToolbox (HEVC or ProRes)
 actor VideoDecoder {
     var decompressionSession: VTDecompressionSession?
     var formatDescription: CMFormatDescription?
-    var codec: MirageVideoCodec = .hevc
+    var codec: MirageMedia.MirageVideoCodec = .hevc
     /// Stream dimensions for ProRes format description creation (set from stream started message)
     var proResStreamDimensions: (width: Int, height: Int)?
     var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-    var preferredOutputColorDepth: MirageStreamColorDepth = .standard
+    var preferredOutputColorDepth: MirageMedia.MirageStreamColorDepth = .standard
     var lastDecodedOutputPixelFormat: OSType?
     var maximizePowerEfficiencyEnabled = false
     var decompressionSessionGeneration: UInt64 = 0
@@ -80,7 +88,7 @@ actor VideoDecoder {
 }
 
 extension VideoDecoder {
-    func preferredOutputPixelFormat(for colorDepth: MirageStreamColorDepth) -> OSType {
+    func preferredOutputPixelFormat(for colorDepth: MirageMedia.MirageStreamColorDepth) -> OSType {
         switch colorDepth {
         case .standard:
             return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
@@ -108,7 +116,7 @@ extension VideoDecoder {
     }
 
     nonisolated static func shouldWarnOutputFormatFallback(
-        preferredColorDepth: MirageStreamColorDepth,
+        preferredColorDepth: MirageMedia.MirageStreamColorDepth,
         actualOutputPixelFormat: OSType
     )
     -> Bool {
@@ -122,7 +130,7 @@ extension VideoDecoder {
         }
     }
 
-    nonisolated static func outputFormatRequirementName(for colorDepth: MirageStreamColorDepth) -> String? {
+    nonisolated static func outputFormatRequirementName(for colorDepth: MirageMedia.MirageStreamColorDepth) -> String? {
         switch colorDepth {
         case .standard:
             nil
@@ -223,7 +231,7 @@ final class DecodeInfo: @unchecked Sendable {
     let performanceTracker: DecodePerformanceTracker?
     let callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?
     let sessionGeneration: UInt64
-    let colorDepth: MirageStreamColorDepth
+    let colorDepth: MirageMedia.MirageStreamColorDepth
     let onCompletion: (@Sendable () -> Void)?
 
     init(
@@ -235,7 +243,7 @@ final class DecodeInfo: @unchecked Sendable {
         performanceTracker: DecodePerformanceTracker?,
         callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?,
         sessionGeneration: UInt64,
-        colorDepth: MirageStreamColorDepth,
+        colorDepth: MirageMedia.MirageStreamColorDepth,
         onCompletion: (@Sendable () -> Void)?
     ) {
         self.handler = handler

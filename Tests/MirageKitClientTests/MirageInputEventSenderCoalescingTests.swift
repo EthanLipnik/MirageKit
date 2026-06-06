@@ -13,6 +13,9 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageCore
+import MirageInput
+import MirageWire
 
 @Suite("Input Sender Coalescing")
 struct MirageInputEventSenderCoalescingTests {
@@ -31,7 +34,7 @@ struct MirageInputEventSenderCoalescingTests {
         let sender = MirageInputEventSender()
 
         sender.recordInteractionIfNeeded(
-            .windowResize(MirageResizeEvent(windowID: 1, newSize: CGSize(width: 800, height: 600), scaleFactor: 2)),
+            .windowResize(MirageInput.MirageResizeEvent(windowID: 1, newSize: CGSize(width: 800, height: 600), scaleFactor: 2)),
             now: 500
         )
 
@@ -107,7 +110,7 @@ struct MirageInputEventSenderCoalescingTests {
 
         for index in 0 ..< 5 {
             sender.sendInputFireAndForget(
-                .mouseMoved(MirageMouseEvent(
+                .mouseMoved(MirageInput.MirageMouseEvent(
                     location: CGPoint(x: CGFloat(index) / 10, y: 0.5),
                     timestamp: TimeInterval(index)
                 )),
@@ -133,9 +136,9 @@ struct MirageInputEventSenderCoalescingTests {
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        sender.sendInputFireAndForget(.keyDown(MirageKeyEvent(keyCode: 0x31)), streamID: streamID)
+        sender.sendInputFireAndForget(.keyDown(MirageInput.MirageKeyEvent(keyCode: 0x31)), streamID: streamID)
         sender.sendInputFireAndForget(
-            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.1, y: 0.5), timestamp: 1)),
+            .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.1, y: 0.5), timestamp: 1)),
             streamID: streamID
         )
         sender.sendInputFireAndForget(
@@ -143,12 +146,12 @@ struct MirageInputEventSenderCoalescingTests {
             streamID: streamID
         )
         sender.sendInputFireAndForget(
-            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.5), timestamp: 2)),
+            .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.5), timestamp: 2)),
             streamID: streamID
         )
-        sender.sendInputFireAndForget(.keyUp(MirageKeyEvent(keyCode: 0x31)), streamID: streamID)
+        sender.sendInputFireAndForget(.keyUp(MirageInput.MirageKeyEvent(keyCode: 0x31)), streamID: streamID)
         sender.sendInputFireAndForget(
-            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.3, y: 0.5), timestamp: 3)),
+            .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.3, y: 0.5), timestamp: 3)),
             streamID: streamID
         )
         sender.sendInputFireAndForget(
@@ -156,7 +159,7 @@ struct MirageInputEventSenderCoalescingTests {
             streamID: streamID
         )
         sender.sendInputFireAndForget(
-            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 4)),
+            .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 4)),
             streamID: streamID
         )
 
@@ -181,8 +184,8 @@ struct MirageInputEventSenderCoalescingTests {
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        sender.sendInputFireAndForget(.keyDown(MirageKeyEvent(keyCode: 0x7E)), streamID: streamID)
-        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+        sender.sendInputFireAndForget(.keyDown(MirageInput.MirageKeyEvent(keyCode: 0x7E)), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 1,
             deltaY: 2,
             location: location,
@@ -190,7 +193,7 @@ struct MirageInputEventSenderCoalescingTests {
             isPrecise: true,
             timestamp: 1
         )), streamID: streamID)
-        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+        sender.sendInputFireAndForget(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 3,
             deltaY: 4,
             location: location,
@@ -223,15 +226,15 @@ struct MirageInputEventSenderCoalescingTests {
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        sender.sendInputFireAndForget(.keyDown(MirageKeyEvent(keyCode: 0x7E)), streamID: streamID)
-        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+        sender.sendInputFireAndForget(.keyDown(MirageInput.MirageKeyEvent(keyCode: 0x7E)), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 1,
             deltaY: 2,
             location: location,
             isPrecise: true,
             timestamp: 1
         )), streamID: streamID)
-        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+        sender.sendInputFireAndForget(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 3,
             deltaY: 4,
             location: location,
@@ -254,7 +257,7 @@ struct MirageInputEventSenderCoalescingTests {
         let sender = MirageInputEventSender()
         let recorder = DeliveryModeRecorder()
         let streamID: StreamID = 910
-        let keyEvent = MirageKeyEvent(keyCode: 0x7E, modifiers: [])
+        let keyEvent = MirageInput.MirageKeyEvent(keyCode: 0x7E, modifiers: [])
 
         sender.updateSendHandler { _, deliveryMode in
             await recorder.append(deliveryMode)
@@ -264,7 +267,7 @@ struct MirageInputEventSenderCoalescingTests {
         sender.sendInputFireAndForget(.pointerSampleBatch(makePointerBatch(phase: .hover, isHovering: true)), streamID: streamID)
         sender.sendInputFireAndForget(.keyDown(keyEvent), streamID: streamID)
         sender.sendInputFireAndForget(.scrollWheel(
-            MirageScrollEvent(deltaX: 0, deltaY: 1, location: CGPoint(x: 0.5, y: 0.5))
+            MirageInput.MirageScrollEvent(deltaX: 0, deltaY: 1, location: CGPoint(x: 0.5, y: 0.5))
         ), streamID: streamID)
 
         try await Task.sleep(for: .milliseconds(100))
@@ -277,20 +280,20 @@ struct MirageInputEventSenderCoalescingTests {
         ])
     }
 
-    private func makeMouseEvent() -> MirageMouseEvent {
-        MirageMouseEvent(location: CGPoint(x: 0.5, y: 0.5), timestamp: 0)
+    private func makeMouseEvent() -> MirageInput.MirageMouseEvent {
+        MirageInput.MirageMouseEvent(location: CGPoint(x: 0.5, y: 0.5), timestamp: 0)
     }
 
     private func makePointerBatch(
-        phase: MiragePointerSampleBatchPhase,
+        phase: MirageInput.MiragePointerSampleBatchPhase,
         sampleX: CGFloat = 0.5,
         isButtonPressed: Bool = false,
         isHovering: Bool = false
-    ) -> MiragePointerSampleBatch {
-        let sample = MiragePointerSample(
+    ) -> MirageInput.MiragePointerSampleBatch {
+        let sample = MirageInput.MiragePointerSample(
             location: CGPoint(x: sampleX, y: 0.5),
             pressure: isButtonPressed ? 0.5 : 0,
-            stylus: MirageStylusEvent(
+            stylus: MirageInput.MirageStylusEvent(
                 altitudeAngle: .pi / 4,
                 azimuthAngle: .pi / 6,
                 tiltX: 0.1,
@@ -299,7 +302,7 @@ struct MirageInputEventSenderCoalescingTests {
             ),
             timestamp: TimeInterval(sampleX)
         )
-        return MiragePointerSampleBatch(
+        return MirageInput.MiragePointerSampleBatch(
             phase: phase,
             modifiers: [],
             clickCount: isButtonPressed ? 1 : 0,
@@ -310,46 +313,46 @@ struct MirageInputEventSenderCoalescingTests {
     }
 }
 
-private func decodeInputEvents(from data: Data) throws -> [MirageInputEvent] {
-    guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+private func decodeInputEvents(from data: Data) throws -> [MirageInput.MirageInputEvent] {
+    guard case let .success(message, _) = MirageWire.ControlMessage.deserialize(from: data) else {
         Issue.record("Expected a serialized control message")
         return []
     }
 
     switch message.type {
     case .inputEvent:
-        return [try InputEventMessage.deserializePayload(message.payload).event]
+        return [try MirageWire.InputEventMessage.deserializePayload(message.payload).event]
     case .priorityInputEvent:
-        let envelope = try MiragePriorityInputEnvelope.deserialize(message.payload)
+        let envelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(message.payload)
         if envelope.kind == .continuousInput {
-            return try MirageContinuousInputBatch.deserialize(envelope.inputPayload).inputEvents()
+            return try MirageInput.MirageContinuousInputBatch.deserialize(envelope.inputPayload).inputEvents()
         }
-        return [try InputEventMessage.deserializePayload(envelope.inputPayload).event]
+        return [try MirageWire.InputEventMessage.deserializePayload(envelope.inputPayload).event]
     default:
         return []
     }
 }
 
 private actor PointerBatchRecorder {
-    private var batches: [MiragePointerSampleBatch] = []
+    private var batches: [MirageInput.MiragePointerSampleBatch] = []
 
-    func append(_ batch: MiragePointerSampleBatch) {
+    func append(_ batch: MirageInput.MiragePointerSampleBatch) {
         batches.append(batch)
     }
 
-    func snapshot() -> [MiragePointerSampleBatch] {
+    func snapshot() -> [MirageInput.MiragePointerSampleBatch] {
         batches
     }
 }
 
 private actor InputEventRecorder {
-    private var events: [MirageInputEvent] = []
+    private var events: [MirageInput.MirageInputEvent] = []
 
-    func append(_ event: MirageInputEvent) {
+    func append(_ event: MirageInput.MirageInputEvent) {
         events.append(event)
     }
 
-    func scrollEvents() -> [MirageScrollEvent] {
+    func scrollEvents() -> [MirageInput.MirageScrollEvent] {
         events.compactMap { event in
             guard case let .scrollWheel(scrollEvent) = event else { return nil }
             return scrollEvent

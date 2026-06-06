@@ -7,9 +7,17 @@
 //  Bitrate-driven quality mapping helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension StreamContext {
@@ -218,10 +226,10 @@ extension StreamContext {
     ) -> DerivedQualityTargets {
         let width = max(2, Int(outputSize.width))
         let height = max(2, Int(outputSize.height))
-        let qualityReferenceFrameRate = MirageBitrateQualityMapper.qualityReferenceFrameRate(
+        let qualityReferenceFrameRate = MirageMedia.MirageBitrateQualityMapper.qualityReferenceFrameRate(
             for: currentFrameRate
         )
-        let derived = MirageBitrateQualityMapper.derivedQualities(
+        let derived = MirageMedia.MirageBitrateQualityMapper.derivedQualities(
             targetBitrateBps: targetBitrateBps,
             width: width,
             height: height,
@@ -234,7 +242,7 @@ extension StreamContext {
             min(derived.keyframeQuality, cappedFrameQuality),
             frameQuality: cappedFrameQuality
         )
-        let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
+        let bpp = MirageMedia.MirageBitrateQualityMapper.bitsPerPixelPerFrame(
             targetBitrateBps: targetBitrateBps,
             width: width,
             height: height,
@@ -244,7 +252,10 @@ extension StreamContext {
             frameQuality: cappedFrameQuality,
             keyframeQuality: cappedKeyframeQuality,
             bpp: bpp,
-            frameRateScale: MirageBitrateQualityMapper.frameRateScale(frameRate: currentFrameRate, bpp: bpp),
+            frameRateScale: MirageMedia.MirageBitrateQualityMapper.frameRateScale(
+                frameRate: currentFrameRate,
+                bpp: bpp
+            ),
             qualityReferenceFrameRate: qualityReferenceFrameRate
         )
     }
@@ -347,7 +358,7 @@ extension StreamContext {
 
         await applyHostAdaptiveBudgetIfNeeded(for: outputSize, logLabel: logLabel)
 
-        guard let targetBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        guard let targetBitrate = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: encoderConfig.bitrate
         ) else {
             return

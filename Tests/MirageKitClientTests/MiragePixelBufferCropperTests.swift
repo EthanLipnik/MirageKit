@@ -12,52 +12,11 @@ import CoreMedia
 import CoreVideo
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
-@Suite("Pixel Buffer Cropper")
-struct MiragePixelBufferCropperTests {
-    @Test("Cropping BGRA atlas returns only requested pixels")
-    func croppingBGRAAtlasReturnsRequestedPixels() throws {
-        let source = try makeBGRAAtlas(width: 6, height: 4)
-        let cropper = MiragePixelBufferCropper()
-
-        let result = try #require(
-            cropper.crop(source, to: CGRect(x: 2, y: 1, width: 3, height: 2))
-        )
-
-        #expect(!sameBuffer(result.pixelBuffer, source))
-        #expect(CVPixelBufferGetWidth(result.pixelBuffer) == 3)
-        #expect(CVPixelBufferGetHeight(result.pixelBuffer) == 2)
-        #expect(pixelBytes(in: result.pixelBuffer, x: 0, y: 0) == pixelBytes(in: source, x: 2, y: 1))
-        #expect(pixelBytes(in: result.pixelBuffer, x: 2, y: 1) == pixelBytes(in: source, x: 4, y: 2))
-    }
-
-    @Test("Full-frame override returns original buffer")
-    func fullFrameOverrideReturnsOriginalBuffer() throws {
-        let source = try makeBGRAAtlas(width: 6, height: 4)
-        let cropper = MiragePixelBufferCropper()
-
-        let result = try #require(
-            cropper.crop(source, to: CGRect(x: 0, y: 0, width: 6, height: 4))
-        )
-
-        #expect(sameBuffer(result.pixelBuffer, source))
-        #expect(CVPixelBufferGetWidth(result.pixelBuffer) == 6)
-        #expect(CVPixelBufferGetHeight(result.pixelBuffer) == 4)
-    }
-
-    @Test("Out-of-bounds crop returns original buffer")
-    func outOfBoundsCropReturnsOriginalBuffer() throws {
-        let source = try makeBGRAAtlas(width: 6, height: 4)
-        let cropper = MiragePixelBufferCropper()
-
-        let result = try #require(
-            cropper.crop(source, to: CGRect(x: 5, y: 0, width: 3, height: 2))
-        )
-
-        #expect(sameBuffer(result.pixelBuffer, source))
-        #expect(result.contentRect == CGRect(x: 0, y: 0, width: 6, height: 4))
-    }
-
+@Suite("App Atlas Render Fanout")
+struct MirageAppAtlasRenderFanoutTests {
     @Test("App atlas fanout enqueues cropped frames for logical streams")
     func appAtlasFanoutEnqueuesCroppedFramesForLogicalStreams() throws {
         let mediaStreamID: StreamID = 6100
@@ -77,7 +36,7 @@ struct MiragePixelBufferCropperTests {
             [
                 MirageAppAtlasRenderTarget(
                     streamID: firstLogicalStreamID,
-                    region: MirageAppAtlasRegion(
+                    region: MirageMedia.MirageAppAtlasRegion(
                         windowID: 610101,
                         x: 0,
                         y: 0,
@@ -87,7 +46,7 @@ struct MiragePixelBufferCropperTests {
                 ),
                 MirageAppAtlasRenderTarget(
                     streamID: secondLogicalStreamID,
-                    region: MirageAppAtlasRegion(
+                    region: MirageMedia.MirageAppAtlasRegion(
                         windowID: 610102,
                         x: 2,
                         y: 0,
@@ -183,8 +142,5 @@ struct MiragePixelBufferCropperTests {
         return Array(UnsafeBufferPointer(start: pixel, count: 4))
     }
 
-    private func sameBuffer(_ lhs: CVPixelBuffer, _ rhs: CVPixelBuffer) -> Bool {
-        Unmanaged.passUnretained(lhs).toOpaque() == Unmanaged.passUnretained(rhs).toOpaque()
-    }
 }
 #endif

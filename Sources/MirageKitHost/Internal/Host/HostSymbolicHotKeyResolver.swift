@@ -5,14 +5,22 @@
 //  Created by Ethan Lipnik on 4/11/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Result of resolving a macOS symbolic hot key for a host system action.
 enum HostSymbolicHotKeyResolution: Equatable {
     /// The action has an enabled shortcut that can be forwarded to the host.
-    case shortcut(MirageKeyEvent)
+    case shortcut(MirageInput.MirageKeyEvent)
 
     /// The symbolic hot key exists but is disabled in System Settings.
     case disabled
@@ -31,7 +39,7 @@ enum HostSymbolicHotKeyResolver {
     private static let functionModifierMask: UInt = 1 << 23
 
     static func resolve(
-        _ action: MirageHostSystemAction,
+        _ action: MirageInput.MirageHostSystemAction,
         fileManager: FileManager = .default
     ) -> HostSymbolicHotKeyResolution {
         let preferencesURL = fileManager.homeDirectoryForCurrentUser.appending(
@@ -50,7 +58,7 @@ enum HostSymbolicHotKeyResolver {
     }
 
     static func resolve(
-        _ action: MirageHostSystemAction,
+        _ action: MirageInput.MirageHostSystemAction,
         propertyList: [AnyHashable: Any]
     ) -> HostSymbolicHotKeyResolution {
         guard let hotKeysDictionary = propertyList["AppleSymbolicHotKeys"] as? [AnyHashable: Any] else {
@@ -80,14 +88,14 @@ enum HostSymbolicHotKeyResolver {
             return .unavailable
         }
 
-        return .shortcut(MirageKeyEvent(
+        return .shortcut(MirageInput.MirageKeyEvent(
             keyCode: resolvedKeyCode,
             modifiers: modifiers(fromSymbolicHotKeyFlags: modifierFlagsRaw)
         ))
     }
 
-    private static func modifiers(fromSymbolicHotKeyFlags rawValue: UInt) -> MirageModifierFlags {
-        var modifiers: MirageModifierFlags = []
+    private static func modifiers(fromSymbolicHotKeyFlags rawValue: UInt) -> MirageInput.MirageModifierFlags {
+        var modifiers: MirageInput.MirageModifierFlags = []
         if rawValue & shiftModifierMask != 0 { modifiers.insert(.shift) }
         if rawValue & controlModifierMask != 0 { modifiers.insert(.control) }
         if rawValue & optionModifierMask != 0 { modifiers.insert(.option) }
@@ -119,7 +127,7 @@ enum HostSymbolicHotKeyResolver {
     }
 }
 
-private extension MirageHostSystemAction {
+private extension MirageInput.MirageHostSystemAction {
     /// AppleSymbolicHotKeys preference identifier for this host system action.
     var symbolicHotKeyID: Int {
         switch self {

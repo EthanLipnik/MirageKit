@@ -8,21 +8,23 @@
 import Foundation
 @testable import MirageKit
 import Testing
+import MirageMedia
+import MirageWire
 
 @Suite("MirageKit App Streaming Serialization")
 struct MirageKitAppStreamingSerializationTests {
     @Test("Select app message includes max visible slot count")
     func selectAppMessageMaxVisibleSlotsSerialization() throws {
-        let request = SelectAppMessage(
+        let request = MirageWire.SelectAppMessage(
             bundleIdentifier: "com.apple.mail",
             targetFrameRate: 60,
             enteredBitrate: 600_000_000,
             allowEncoderCatchUpQualityAdjustment: true,
             maxConcurrentVisibleWindows: 8
         )
-        let envelope = try ControlMessage(type: .selectApp, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .selectApp, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.SelectAppMessage.self)
         #expect(decoded.bundleIdentifier == "com.apple.mail")
         #expect(decoded.maxConcurrentVisibleWindows == 8)
         #expect(decoded.enteredBitrate == 600_000_000)
@@ -31,7 +33,7 @@ struct MirageKitAppStreamingSerializationTests {
 
     @Test("App list request supports icon reset and priority ordering")
     func appListRequestSerialization() throws {
-        let request = try AppListRequestMessage(
+        let request = try MirageWire.AppListRequestMessage(
             forceRefresh: true,
             forceIconReset: true,
             priorityBundleIdentifiers: [
@@ -42,9 +44,9 @@ struct MirageKitAppStreamingSerializationTests {
             requestID: #require(UUID(uuidString: "00000000-0000-0000-0000-000000000123"))
         )
 
-        let envelope = try ControlMessage(type: .appListRequest, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .appListRequest, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppListRequestMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.AppListRequestMessage.self)
 
         #expect(decoded.forceRefresh)
         #expect(decoded.forceIconReset)
@@ -56,7 +58,7 @@ struct MirageKitAppStreamingSerializationTests {
     @Test("App list progress with inline icons serializes")
     func appListProgressWithInlineIconsSerialization() throws {
         let progressApps = [
-            MirageInstalledApp(
+            MirageWire.MirageInstalledApp(
                 bundleIdentifier: "com.apple.mail",
                 name: "Mail",
                 path: "/Applications/Mail.app",
@@ -67,19 +69,19 @@ struct MirageKitAppStreamingSerializationTests {
             ),
         ]
         let requestID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000321"))
-        let appListCompletion = AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
-        let appListCompletionEnvelope = try ControlMessage(type: .appListComplete, content: appListCompletion)
+        let appListCompletion = MirageWire.AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+        let appListCompletionEnvelope = try MirageWire.ControlMessage(type: .appListComplete, content: appListCompletion)
         let (decodedAppListCompletionEnvelope, _) = try requireParsedControlMessage(
             from: appListCompletionEnvelope.serialize()
         )
-        let decodedAppListCompletion = try decodedAppListCompletionEnvelope.decode(AppListCompleteMessage.self)
+        let decodedAppListCompletion = try decodedAppListCompletionEnvelope.decode(MirageWire.AppListCompleteMessage.self)
         #expect(decodedAppListCompletion.requestID == requestID)
         #expect(decodedAppListCompletion.totalAppCount == 1)
 
-        let progress = AppListProgressMessage(requestID: requestID, apps: progressApps)
-        let progressEnvelope = try ControlMessage(type: .appListProgress, content: progress)
+        let progress = MirageWire.AppListProgressMessage(requestID: requestID, apps: progressApps)
+        let progressEnvelope = try MirageWire.ControlMessage(type: .appListProgress, content: progress)
         let (decodedProgressEnvelope, _) = try requireParsedControlMessage(from: progressEnvelope.serialize())
-        let decodedProgress = try decodedProgressEnvelope.decode(AppListProgressMessage.self)
+        let decodedProgress = try decodedProgressEnvelope.decode(MirageWire.AppListProgressMessage.self)
         #expect(decodedProgress.requestID == requestID)
         #expect(decodedProgress.apps.count == 1)
         #expect(decodedProgress.apps[0].bundleIdentifier == "com.apple.mail")
@@ -88,7 +90,7 @@ struct MirageKitAppStreamingSerializationTests {
 
     @Test("App window inventory and swap messages serialize")
     func appWindowInventoryAndSwapSerialization() throws {
-        let atlasRegion = MirageAppAtlasRegion(
+        let atlasRegion = MirageMedia.MirageAppAtlasRegion(
             windowID: 9001,
             x: 32,
             y: 48,
@@ -96,20 +98,20 @@ struct MirageKitAppStreamingSerializationTests {
             height: 900,
             zIndex: 1
         )
-        let atlasLayout = MirageAppAtlasLayout(
+        let atlasLayout = MirageMedia.MirageAppAtlasLayout(
             mediaStreamID: 41,
             width: 2048,
             height: 1536,
             regions: [atlasRegion]
         )
-        let metadata = AppWindowInventoryMessage.WindowMetadata(
+        let metadata = MirageWire.AppWindowInventoryMessage.WindowMetadata(
             windowID: 9001,
             title: "Inbox",
             width: 1440,
             height: 900,
             isResizable: true
         )
-        let inventory = AppWindowInventoryMessage(
+        let inventory = MirageWire.AppWindowInventoryMessage(
             bundleIdentifier: "com.apple.mail",
             maxVisibleSlots: 8,
             slots: [
@@ -126,9 +128,9 @@ struct MirageKitAppStreamingSerializationTests {
             ],
             atlasLayouts: [atlasLayout]
         )
-        let inventoryEnvelope = try ControlMessage(type: .appWindowInventory, content: inventory)
+        let inventoryEnvelope = try MirageWire.ControlMessage(type: .appWindowInventory, content: inventory)
         let (decodedInventoryEnvelope, _) = try requireParsedControlMessage(from: inventoryEnvelope.serialize())
-        let decodedInventory = try decodedInventoryEnvelope.decode(AppWindowInventoryMessage.self)
+        let decodedInventory = try decodedInventoryEnvelope.decode(MirageWire.AppWindowInventoryMessage.self)
         #expect(decodedInventory.bundleIdentifier == "com.apple.mail")
         #expect(decodedInventory.maxVisibleSlots == 8)
         #expect(decodedInventory.slots.count == 1)
@@ -139,18 +141,18 @@ struct MirageKitAppStreamingSerializationTests {
         #expect(decodedInventory.hiddenWindows.count == 1)
         #expect(decodedInventory.atlasLayouts == [atlasLayout])
 
-        let swapRequest = AppWindowSwapRequestMessage(
+        let swapRequest = MirageWire.AppWindowSwapRequestMessage(
             bundleIdentifier: "com.apple.mail",
             targetSlotStreamID: 141,
             targetWindowID: 9002
         )
-        let requestEnvelope = try ControlMessage(type: .appWindowSwapRequest, content: swapRequest)
+        let requestEnvelope = try MirageWire.ControlMessage(type: .appWindowSwapRequest, content: swapRequest)
         let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
-        let decodedSwapRequest = try decodedRequestEnvelope.decode(AppWindowSwapRequestMessage.self)
+        let decodedSwapRequest = try decodedRequestEnvelope.decode(MirageWire.AppWindowSwapRequestMessage.self)
         #expect(decodedSwapRequest.targetSlotStreamID == 141)
         #expect(decodedSwapRequest.targetWindowID == 9002)
 
-        let swappedRegion = MirageAppAtlasRegion(
+        let swappedRegion = MirageMedia.MirageAppAtlasRegion(
             windowID: 9002,
             x: 32,
             y: 48,
@@ -158,13 +160,13 @@ struct MirageKitAppStreamingSerializationTests {
             height: 860,
             zIndex: 1
         )
-        let swappedLayout = MirageAppAtlasLayout(
+        let swappedLayout = MirageMedia.MirageAppAtlasLayout(
             mediaStreamID: 41,
             width: 2048,
             height: 1536,
             regions: [swappedRegion]
         )
-        let swapResult = AppWindowSwapResultMessage(
+        let swapResult = MirageWire.AppWindowSwapResultMessage(
             bundleIdentifier: "com.apple.mail",
             targetSlotStreamID: 141,
             mediaStreamID: 41,
@@ -174,9 +176,9 @@ struct MirageKitAppStreamingSerializationTests {
             atlasRegion: swappedRegion,
             atlasLayouts: [swappedLayout]
         )
-        let resultEnvelope = try ControlMessage(type: .appWindowSwapResult, content: swapResult)
+        let resultEnvelope = try MirageWire.ControlMessage(type: .appWindowSwapResult, content: swapResult)
         let (decodedResultEnvelope, _) = try requireParsedControlMessage(from: resultEnvelope.serialize())
-        let decodedSwapResult = try decodedResultEnvelope.decode(AppWindowSwapResultMessage.self)
+        let decodedSwapResult = try decodedResultEnvelope.decode(MirageWire.AppWindowSwapResultMessage.self)
         #expect(decodedSwapResult.success == true)
         #expect(decodedSwapResult.targetSlotStreamID == 141)
         #expect(decodedSwapResult.mediaStreamID == 41)
@@ -187,7 +189,7 @@ struct MirageKitAppStreamingSerializationTests {
 
     @Test("App atlas payload keeps logical and media stream keys distinct")
     func appAtlasPayloadKeepsLogicalAndMediaStreamKeysDistinct() throws {
-        let window = AppStreamStartedMessage.AppStreamWindow(
+        let window = MirageWire.AppStreamStartedMessage.AppStreamWindow(
             streamID: 141,
             mediaStreamID: 41,
             windowID: 9001,
@@ -209,7 +211,7 @@ struct MirageKitAppStreamingSerializationTests {
     @Test("App atlas media update serializes startup and layout metadata")
     func appAtlasMediaUpdateSerialization() throws {
         let startupAttemptID = try #require(UUID(uuidString: "00000000-0000-0000-0000-0000000009F0"))
-        let region = MirageAppAtlasRegion(
+        let region = MirageMedia.MirageAppAtlasRegion(
             windowID: 9001,
             x: 128,
             y: 64,
@@ -218,14 +220,14 @@ struct MirageKitAppStreamingSerializationTests {
             zIndex: 2,
             isFocused: true
         )
-        let layout = MirageAppAtlasLayout(
+        let layout = MirageMedia.MirageAppAtlasLayout(
             mediaStreamID: 41,
             layoutEpoch: 7,
             width: 4096,
             height: 2304,
             regions: [region]
         )
-        let update = AppAtlasMediaUpdateMessage(
+        let update = MirageWire.AppAtlasMediaUpdateMessage(
             mediaStreamID: 41,
             width: 4096,
             height: 2304,
@@ -238,9 +240,9 @@ struct MirageKitAppStreamingSerializationTests {
             startupAttemptID: startupAttemptID
         )
 
-        let envelope = try ControlMessage(type: .appAtlasMediaUpdate, content: update)
+        let envelope = try MirageWire.ControlMessage(type: .appAtlasMediaUpdate, content: update)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppAtlasMediaUpdateMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.AppAtlasMediaUpdateMessage.self)
 
         #expect(decodedEnvelope.type == .appAtlasMediaUpdate)
         #expect(decoded.mediaStreamID == 41)
@@ -257,7 +259,7 @@ struct MirageKitAppStreamingSerializationTests {
 
     @Test("App window resize result serializes terminal outcome")
     func appWindowResizeResultSerialization() throws {
-        let result = AppWindowResizeResultMessage(
+        let result = MirageWire.AppWindowResizeResultMessage(
             streamID: 141,
             mediaStreamID: 41,
             windowID: 9001,
@@ -271,9 +273,9 @@ struct MirageKitAppStreamingSerializationTests {
             reason: "sizeAttributeNotSettable"
         )
 
-        let envelope = try ControlMessage(type: .appWindowResizeResult, content: result)
+        let envelope = try MirageWire.ControlMessage(type: .appWindowResizeResult, content: result)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppWindowResizeResultMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.AppWindowResizeResultMessage.self)
 
         #expect(decoded.streamID == 141)
         #expect(decoded.mediaStreamID == 41)

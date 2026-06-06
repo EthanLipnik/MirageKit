@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/28/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 struct HostAdaptiveStreamBudgetPolicy: Equatable {
@@ -17,11 +25,11 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let enteredBitrateBps: Int?
         let runtimeQualityAdjustmentEnabled: Bool
         let encoderCatchUpQualityAdjustmentEnabled: Bool
-        let codec: MirageVideoCodec
+        let codec: MirageMedia.MirageVideoCodec
         let outputSize: CGSize
         let frameRate: Int
-        let transportPathKind: MirageNetworkPathKind
-        let mediaPathProfile: MirageMediaPathProfile
+        let transportPathKind: MirageCore.MirageNetworkPathKind
+        let mediaPathProfile: MirageMedia.MirageMediaPathProfile
     }
 
     struct Decision: Equatable {
@@ -228,7 +236,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         }
         let width = max(2, Int(request.outputSize.width))
         let height = max(2, Int(request.outputSize.height))
-        guard let readabilityBitrate = MirageBitrateQualityMapper.targetBitrateBps(
+        guard let readabilityBitrate = MirageMedia.MirageBitrateQualityMapper.targetBitrateBps(
             forFrameQuality: readabilityFrameQuality,
             width: width,
             height: height,
@@ -241,7 +249,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     }
 
     private static func automaticStartupReadabilityFrameQuality(
-        for mediaPathProfile: MirageMediaPathProfile,
+        for mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         usesOptimizedVPNProfile: Bool
     ) -> Float? {
         switch mediaPathProfile {
@@ -328,7 +336,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         }
         let width = max(2, Int(request.outputSize.width))
         let height = max(2, Int(request.outputSize.height))
-        guard let readabilityBitrate = MirageBitrateQualityMapper.targetBitrateBps(
+        guard let readabilityBitrate = MirageMedia.MirageBitrateQualityMapper.targetBitrateBps(
             forFrameQuality: awdlStartupReadabilityFrameQuality,
             width: width,
             height: height,
@@ -341,8 +349,8 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     }
 
     private static func budget(
-        for mediaPathProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind,
+        for mediaPathProfile: MirageMedia.MirageMediaPathProfile,
+        pathKind: MirageCore.MirageNetworkPathKind,
         usesOptimizedVPNProfile: Bool = false
     ) -> PathBudget {
         switch mediaPathProfile {

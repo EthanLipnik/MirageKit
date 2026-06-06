@@ -5,11 +5,19 @@
 //  Created by Ethan Lipnik on 4/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import VideoToolbox
@@ -20,7 +28,7 @@ enum DisplayStartupFrameSeeder {
         targetWidth: Int,
         targetHeight: Int,
         pixelFormatType: OSType,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         frameRate: Int
     ) -> CapturedFrame? {
         let width = max(1, targetWidth)
@@ -72,7 +80,7 @@ enum DisplayStartupFrameSeeder {
         from image: CGImage,
         targetWidth: Int,
         targetHeight: Int,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageMedia.MirageColorSpace
     ) -> CVPixelBuffer? {
         guard let pixelBuffer = makePixelBuffer(
             width: targetWidth,
@@ -164,7 +172,7 @@ enum DisplayStartupFrameSeeder {
         let cgColorSpaceName: CFString
     }
 
-    private static func expectedColorAttachments(for colorSpace: MirageColorSpace) -> CaptureColorAttachments {
+    private static func expectedColorAttachments(for colorSpace: MirageMedia.MirageColorSpace) -> CaptureColorAttachments {
         switch colorSpace {
         case .displayP3:
             return CaptureColorAttachments(
@@ -185,7 +193,7 @@ enum DisplayStartupFrameSeeder {
 
     private static func enforceCaptureColorAttachments(
         on pixelBuffer: CVPixelBuffer,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageMedia.MirageColorSpace
     ) {
         let expected = expectedColorAttachments(for: colorSpace)
         MirageCVBufferAttachments.setIfNeeded(

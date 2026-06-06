@@ -7,9 +7,17 @@
 //  Host support log archive request handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -18,7 +26,7 @@ extension MirageHostService {
 
     /// Handles a client request to export and transfer host support logs.
     func handleHostSupportLogArchiveRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
         let clientID = clientContext.client.id
@@ -30,9 +38,9 @@ extension MirageHostService {
             }
         }
 
-        let request: HostSupportLogArchiveRequestMessage
+        let request: MirageWire.HostSupportLogArchiveRequestMessage
         do {
-            request = try message.decode(HostSupportLogArchiveRequestMessage.self)
+            request = try message.decode(MirageWire.HostSupportLogArchiveRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode host support log archive request: ")
             return
@@ -40,7 +48,7 @@ extension MirageHostService {
 
         do {
             guard let hostSupportLogArchiveProvider else {
-                let response = HostSupportLogArchiveMessage(
+                let response = MirageWire.HostSupportLogArchiveMessage(
                     requestID: request.requestID,
                     errorMessage: "Host log export is unavailable."
                 )
@@ -63,7 +71,7 @@ extension MirageHostService {
                 using: hostSupportLogArchiveProvider,
                 timeout: Self.hostSupportLogArchiveProviderTimeout
             )
-            let response = HostSupportLogArchiveMessage(
+            let response = MirageWire.HostSupportLogArchiveMessage(
                 requestID: request.requestID,
                 fileName: archiveURL.lastPathComponent
             )
@@ -97,7 +105,7 @@ extension MirageHostService {
             )
         } catch {
             if isExpectedLifecycleControlSendFailure(error) ||
-                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageConnectionErrorClassifier.isLikelyUserDependent(error: error) {
                 MirageLogger.host(
                     "Host support log archive request did not complete: \(error.localizedDescription)"
                 )
@@ -105,7 +113,7 @@ extension MirageHostService {
                 MirageLogger.error(.host, error: error, message: "Failed to handle host support log archive request: ")
             }
             let errorMessage = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-            let response = HostSupportLogArchiveMessage(
+            let response = MirageWire.HostSupportLogArchiveMessage(
                 requestID: request.requestID,
                 errorMessage: errorMessage.isEmpty ? "Failed to export host logs." : errorMessage
             )
@@ -134,10 +142,10 @@ extension MirageHostService {
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw MirageError.protocolError("Timed out exporting host support logs")
+                throw MirageCore.MirageError.protocolError("Timed out exporting host support logs")
             }
             guard let result = try await group.next() else {
-                throw MirageError.protocolError("Host support log export did not complete")
+                throw MirageCore.MirageError.protocolError("Host support log export did not complete")
             }
             group.cancelAll()
             return result
@@ -164,23 +172,18 @@ extension MirageHostService {
                 expectedClient: expectedClient
             )
             guard let expectedClientContext = clientsByID[expectedClient.id] else {
-                throw MirageError.protocolError("Missing client context for Loom transfer session")
+                throw MirageCore.MirageError.protocolError("Missing client context for Loom transfer session")
             }
 
-            let source = try LoomFileTransferSource(url: archiveURL)
-            let byteLength = await source.byteLength
-            let outgoing = try await expectedClientContext.transferEngine.offerTransfer(
-                LoomTransferOffer(
-                    logicalName: archiveURL.lastPathComponent,
-                    byteLength: byteLength,
-                    contentType: "application/zip",
-                    metadata: [
-                        "mirage.transfer-kind": "host-support-log-archive",
-                        "mirage.request-id": requestID.uuidString.lowercased(),
-                    ]
-                ),
-                source: source
+            let outgoing = try await expectedClientContext.transferEngine.offerFileTransfer(
+                url: archiveURL,
+                contentType: "application/zip",
+                metadata: [
+                    "mirage.transfer-kind": "host-support-log-archive",
+                    "mirage.request-id": requestID.uuidString.lowercased(),
+                ]
             )
+            let byteLength = outgoing.offer.byteLength
 
             let terminalProgress = await MirageTransferProgress.terminalProgress(from: outgoing.progressEvents)
             switch terminalProgress?.state {
@@ -193,7 +196,7 @@ extension MirageHostService {
                 )
                 return
             default:
-                throw MirageError.protocolError("Host support log Loom transfer did not complete")
+                throw MirageCore.MirageError.protocolError("Host support log Loom transfer did not complete")
             }
 
             MirageLogger.host(
@@ -202,7 +205,7 @@ extension MirageHostService {
             )
         } catch {
             if isExpectedLifecycleControlSendFailure(error) ||
-                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageConnectionErrorClassifier.isLikelyUserDependent(error: error) {
                 MirageLogger.host(
                     "Host support log Loom transfer ended without completion: \(error.localizedDescription)"
                 )
@@ -230,14 +233,14 @@ extension MirageHostService {
         expectedClient: MirageConnectedClient
     ) async throws {
         guard let context = await session.context else {
-            throw MirageError.protocolError("Missing Loom transfer session context")
+            throw MirageCore.MirageError.protocolError("Missing Loom transfer session context")
         }
         if let expectedKeyID = expectedClient.identityKeyID,
            context.peerIdentity.identityKeyID != expectedKeyID {
-            throw MirageError.protocolError("Client identity mismatch for Loom transfer session")
+            throw MirageCore.MirageError.protocolError("Client identity mismatch for Loom transfer session")
         }
         if context.peerIdentity.deviceID != expectedClient.id {
-            throw MirageError.protocolError("Client device mismatch for Loom transfer session")
+            throw MirageCore.MirageError.protocolError("Client device mismatch for Loom transfer session")
         }
     }
 }

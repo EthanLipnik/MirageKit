@@ -11,6 +11,8 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import Testing
+import MirageCore
+import MirageWire
 
 #if os(macOS)
 @Suite("Stream Controller Decode Watchdog Recovery", .serialized)
@@ -696,7 +698,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         let payload = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
         reassembler.processPacket(
             payload,
-            header: FrameHeader(
+            header: MirageWire.FrameHeader(
                 flags: [.keyframe, .endOfFrame],
                 streamID: 241,
                 sequenceNumber: 1,

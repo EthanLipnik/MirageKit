@@ -7,14 +7,22 @@
 //  Display capture on a shared virtual display.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
 
 extension StreamContext {
-    func updateWindowCaptureVirtualDisplayState(_ snapshot: SharedVirtualDisplayManager.DisplaySnapshot?) {
+    func updateWindowCaptureVirtualDisplayState(_ snapshot: MirageHostVirtualDisplaySnapshot?) {
         guard let snapshot else {
             virtualDisplayVisibleBounds = .zero
             virtualDisplayCaptureSourceRect = .zero
@@ -27,14 +35,14 @@ extension StreamContext {
             for: snapshot.resolution,
             scaleFactor: scaleFactor
         )
-        var displayBounds = CGVirtualDisplayBridge.displayBounds(
+        var displayBounds = virtualDisplayBackend.displayBounds(
             snapshot.displayID,
             knownResolution: logicalResolution
         )
         if displayBounds.isEmpty {
             displayBounds = CGRect(origin: .zero, size: logicalResolution)
         }
-        var visibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+        var visibleBounds = virtualDisplayBackend.displayVisibleBounds(
             snapshot.displayID,
             knownBounds: displayBounds
         )
@@ -44,7 +52,7 @@ extension StreamContext {
         }
 
         virtualDisplayVisibleBounds = visibleBounds
-        let captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
+        let captureSourceRect = virtualDisplayBackend.displayCaptureSourceRect(
             snapshot.displayID,
             knownBounds: displayBounds
         )
@@ -56,7 +64,7 @@ extension StreamContext {
 
     func resolveWindowCaptureDisplayWrapper(
         sourceDisplayWrapper: SCDisplayWrapper,
-        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        mirroredDisplaySnapshot: MirageHostVirtualDisplaySnapshot?,
         label: String
     )
     async throws -> SCDisplayWrapper {
@@ -77,8 +85,8 @@ extension StreamContext {
     func startSharedDisplayWindowCapture(
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
-        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
-        sizePreset: MirageDisplaySizePreset,
+        mirroredDisplaySnapshot: MirageHostVirtualDisplaySnapshot,
+        sizePreset: MirageMedia.MirageDisplaySizePreset,
         clientLogicalSize: CGSize,
         sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: (@Sendable (Error) -> Void)? = nil
@@ -115,11 +123,11 @@ extension StreamContext {
             for: mirroredDisplaySnapshot.resolution,
             scaleFactor: scaleFactor
         )
-        let mirroredDisplayBounds = CGVirtualDisplayBridge.displayBounds(
+        let mirroredDisplayBounds = virtualDisplayBackend.displayBounds(
             mirroredDisplaySnapshot.displayID,
             knownResolution: logicalResolution
         )
-        let mirroredVisibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+        let mirroredVisibleBounds = virtualDisplayBackend.displayVisibleBounds(
             mirroredDisplaySnapshot.displayID,
             knownBounds: mirroredDisplayBounds
         )
@@ -127,7 +135,7 @@ extension StreamContext {
             ? mirroredDisplayBounds
             : mirroredVisibleBounds.intersection(mirroredDisplayBounds)
         let sourceDisplayBounds = CGDisplayBounds(displayWrapper.display.displayID)
-        let sourceVisibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+        let sourceVisibleBounds = virtualDisplayBackend.displayVisibleBounds(
             displayWrapper.display.displayID,
             knownBounds: sourceDisplayBounds
         )
@@ -170,7 +178,7 @@ extension StreamContext {
             label: "mirrored app capture display"
         )
 
-        try await WindowSpaceManager.shared.prepareWindowForMirroredCapture(
+        try await virtualDisplayBackend.prepareWindowForMirroredCapture(
             windowID,
             owner: WindowSpaceManager.WindowBindingOwner(
                 streamID: streamID
@@ -185,7 +193,7 @@ extension StreamContext {
             placementBounds: placementBounds,
             label: "startup"
         )
-        await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
+        await virtualDisplayBackend.centerWindow(windowID, on: placementBounds)
         try await Task.sleep(for: .milliseconds(24))
 
         let settledWindowWrapper = try await resolveSCWindowWrapper(
@@ -236,19 +244,21 @@ extension StreamContext {
         let captureEngine = try await setupAndStartCaptureEngine(
             usesDisplayRefreshCadence: true
         )
-        try await captureEngine.startDisplayCapture(
-            display: resolvedDisplayWrapper.display,
-            resolution: outputSize,
-            sourceRect: captureLayout.captureSourceRect,
-            destinationRect: captureLayout.destinationRect,
-            contentWindowID: windowID,
-            includedWindows: captureLayout.includedWindowWrappers.map(\.window),
-            showsCursor: false,
+        let captureSourceBackend = makeCaptureSourceBackend()
+        try await captureSourceBackend.startCapture(
+            sharedDisplayWindowCaptureRequest(
+                displayID: resolvedDisplayWrapper.display.displayID,
+                outputSize: outputSize,
+                sourceRect: captureLayout.captureSourceRect,
+                destinationRect: captureLayout.destinationRect,
+                contentWindowID: windowID,
+                includedWindowIDs: captureLayout.includedWindowWrappers.map { WindowID($0.window.windowID) }
+            ),
+            using: captureEngine,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },
-            onAudio: onCapturedAudioBuffer,
-            audioChannelCount: requestedAudioChannelCount
+            onAudio: onCapturedAudioBuffer
         )
         await refreshCaptureCadence()
 
@@ -319,7 +329,7 @@ extension StreamContext {
             placementBounds: placementBounds,
             label: "resize"
         )
-        await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
+        await virtualDisplayBackend.centerWindow(windowID, on: placementBounds)
 
         // Brief pause for the window to settle
         try await Task.sleep(for: .milliseconds(24))
@@ -348,7 +358,7 @@ extension StreamContext {
             let scaledWidth = Int(outputSize.width)
             let scaledHeight = Int(outputSize.height)
             guard scaledWidth > 0, scaledHeight > 0 else {
-                throw MirageError.protocolError("Invalid app/window resize output size")
+                throw MirageCore.MirageError.protocolError("Invalid app/window resize output size")
             }
 
             currentContentRect = .zero
@@ -363,9 +373,7 @@ extension StreamContext {
             currentEncodedSize = outputSize
             captureMode = .display
             updateQueueLimits()
-            if let captureEngine {
-                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
-            }
+            try await updateActiveCaptureResolution(width: scaledWidth, height: scaledHeight)
             try await refreshSharedDisplayAppCaptureLayout(
                 primaryWindowWrapper: resolvedWindowWrapper,
                 primaryWindowFrameOverride: windowFrame,
@@ -396,7 +404,7 @@ extension StreamContext {
                     placementBounds: placementBounds,
                     label: "rollback"
                 )
-                await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
+                await virtualDisplayBackend.centerWindow(windowID, on: placementBounds)
                 try await Task.sleep(for: .milliseconds(24))
                 do {
                     let resolvedRollbackWindowWrapper = try await resolveSCWindowWrapper(
@@ -431,11 +439,11 @@ extension StreamContext {
                 for: virtualDisplayContext.resolution,
                 scaleFactor: scale
             )
-            let displayBounds = CGVirtualDisplayBridge.displayBounds(
+            let displayBounds = virtualDisplayBackend.displayBounds(
                 virtualDisplayContext.displayID,
                 knownResolution: logicalResolution
             )
-            let visibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+            let visibleBounds = virtualDisplayBackend.displayVisibleBounds(
                 virtualDisplayContext.displayID,
                 knownBounds: displayBounds
             )

@@ -11,7 +11,9 @@
 @testable import MirageKitClient
 import Loom
 import Network
+import Foundation
 import Testing
+import MirageWire
 
 @Suite("Host Wallpaper Handling")
 struct HostWallpaperHandlingTests {
@@ -38,13 +40,13 @@ struct HostWallpaperHandlingTests {
             receivedImageData = data
         }
 
-        let message = HostWallpaperMessage(
+        let message = MirageWire.HostWallpaperMessage(
             requestID: requestID,
             imageData: imageData,
             pixelWidth: 854,
             pixelHeight: 480
         )
-        let envelope = try ControlMessage(type: .hostWallpaper, content: message)
+        let envelope = try MirageWire.ControlMessage(type: .hostWallpaper, content: message)
 
         try await withCheckedThrowingContinuation { continuation in
             service.hostWallpaperRequestID = requestID

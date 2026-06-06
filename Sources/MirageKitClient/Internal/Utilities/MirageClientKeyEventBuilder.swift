@@ -5,14 +5,22 @@
 //  Created by Ethan Lipnik on 3/30/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 struct SoftwareKeyEvent: Equatable {
     let keyCode: UInt16
     let characters: String
     let charactersIgnoringModifiers: String
-    let modifiers: MirageModifierFlags
+    let modifiers: MirageInput.MirageModifierFlags
 }
 
 enum MirageClientKeyEventBuilder {
@@ -144,7 +152,7 @@ enum MirageClientKeyEventBuilder {
 
     static func softwareKeyEvent(
         for character: String,
-        baseModifiers: MirageModifierFlags
+        baseModifiers: MirageInput.MirageModifierFlags
     ) -> SoftwareKeyEvent? {
         var modifiers = baseModifiers
         var charactersIgnoring = character
@@ -169,7 +177,7 @@ enum MirageClientKeyEventBuilder {
 
         guard let keyCode = characterToMacKeyCodeIfKnown(lowercased) else {
             return SoftwareKeyEvent(
-                keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
+                keyCode: MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode,
                 characters: character,
                 charactersIgnoringModifiers: character,
                 modifiers: baseModifiers
@@ -188,9 +196,9 @@ enum MirageClientKeyEventBuilder {
         keyCode: UInt16,
         characters: String?,
         charactersIgnoringModifiers: String?,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         isRepeat: Bool = false
-    ) -> MirageKeyEvent {
+    ) -> MirageInput.MirageKeyEvent {
         let normalizedCharacters = normalizedHardwareCharacters(characters)
         let normalizedCharactersIgnoringModifiers = normalizedHardwareCharacters(charactersIgnoringModifiers)
 
@@ -199,8 +207,8 @@ enum MirageClientKeyEventBuilder {
             characters: normalizedCharacters,
             modifiers: modifiers
         ) {
-            return MirageKeyEvent(
-                keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
+            return MirageInput.MirageKeyEvent(
+                keyCode: MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode,
                 characters: normalizedCharacters,
                 charactersIgnoringModifiers: normalizedCharactersIgnoringModifiers ?? normalizedCharacters,
                 modifiers: modifiers,
@@ -208,7 +216,7 @@ enum MirageClientKeyEventBuilder {
             )
         }
 
-        return MirageKeyEvent(
+        return MirageInput.MirageKeyEvent(
             keyCode: keyCode,
             characters: normalizedCharacters,
             charactersIgnoringModifiers: normalizedCharactersIgnoringModifiers,
@@ -220,7 +228,7 @@ enum MirageClientKeyEventBuilder {
     static func shouldUseUnicodeFallbackForHardwareKey(
         keyCode: UInt16,
         characters: String?,
-        modifiers: MirageModifierFlags
+        modifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         if nonTextHardwareKeyCodes.contains(keyCode) { return false }
         guard let characters, isPrintableText(characters) else { return false }

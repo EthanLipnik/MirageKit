@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 #if canImport(GameController)
@@ -33,13 +41,13 @@ extension InputCapturingView {
         return .forwardKey
     }
 
-    nonisolated static func shouldClaimGCForwardKey(modifiers: MirageModifierFlags) -> Bool {
+    nonisolated static func shouldClaimGCForwardKey(modifiers: MirageInput.MirageModifierFlags) -> Bool {
         modifiers.contains(.command) || modifiers.contains(.control)
     }
 
     nonisolated static func shouldClaimGCForwardKey(
         macKeyCode: UInt16,
-        modifiers: MirageModifierFlags
+        modifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         if shouldClaimGCForwardKey(modifiers: modifiers) {
             return true
@@ -50,7 +58,7 @@ extension InputCapturingView {
     nonisolated static func shouldRecoverFirstResponderForGCKey(
         isPressed: Bool,
         macKeyCode: UInt16,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         hasAction: Bool,
         hasClientShortcut: Bool,
         hasPassthroughShortcut: Bool
@@ -64,13 +72,13 @@ extension InputCapturingView {
 
     private func gcKeyboardKeyEvent(
         hidUsage: UIKeyboardHIDUsage,
-        modifiers: MirageModifierFlags
-    ) -> MirageKeyEvent {
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        modifiers: MirageInput.MirageModifierFlags
+    ) -> MirageInput.MirageKeyEvent {
+        let macKeyCode = MirageInput.MirageKeyEvent.hidToMacKeyCode(hidUsage)
         let character = MirageClientKeyEventBuilder.characterToMacKeyCodeMap.first {
             $0.value == macKeyCode
         }?.key
-        return MirageKeyEvent(
+        return MirageInput.MirageKeyEvent(
             keyCode: macKeyCode,
             characters: character,
             charactersIgnoringModifiers: character,
@@ -103,7 +111,7 @@ extension InputCapturingView {
         guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return }
 
         let eventModifiers = keyboardModifiers
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let macKeyCode = MirageInput.MirageKeyEvent.hidToMacKeyCode(hidUsage)
         let decision = Self.gcKeyboardKeyRoutingDecision(
             hasHeldModifiers: !heldModifierKeys.isEmpty,
             hasAction: matchingAction(keyCode: macKeyCode, modifiers: eventModifiers) != nil,
@@ -169,7 +177,7 @@ extension InputCapturingView {
         guard window?.windowScene?.activationState == .foregroundActive else { return false }
         guard refreshModifierStateFromHardware() else { return false }
         guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return false }
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let macKeyCode = MirageInput.MirageKeyEvent.hidToMacKeyCode(hidUsage)
         let eventModifiers = keyboardModifiers
         guard Self.shouldRecoverFirstResponderForGCKey(
             isPressed: isPressed,

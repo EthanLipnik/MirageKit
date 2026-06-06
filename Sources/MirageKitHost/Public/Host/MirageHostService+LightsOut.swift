@@ -7,8 +7,16 @@
 //  Lights Out (curtain) mode support.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import AppKit
@@ -22,7 +30,7 @@ extension MirageHostService {
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool,
-        desktopStreamMode: MirageDesktopStreamMode = .unified,
+        desktopStreamMode: MirageMedia.MirageDesktopStreamMode = .unified,
         lightsOutEnabled: Bool,
         lightsOutDisabledByEnvironment: Bool = false
     ) -> Bool {
@@ -44,7 +52,7 @@ extension MirageHostService {
 
         await forceDisableLightsOut(reason: "emergency recovery")
 
-        guard sessionState == .ready else { return }
+        guard mirageSessionAvailability == .ready else { return }
         if let lockHostHandler {
             lockHostHandler()
             return
@@ -97,7 +105,7 @@ extension MirageHostService {
     }
 
     func updateLightsOutState() async {
-        guard sessionState != .unavailable else {
+        guard mirageSessionAvailability != .unavailable else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
             return
@@ -122,6 +130,7 @@ extension MirageHostService {
             return
         }
 
+        lightsOutController.virtualDisplayBackend = platformVirtualDisplayBackend
         guard lightsOutController.updateTarget(
             .physicalDisplays,
             emergencyShortcut: lightsOutEmergencyShortcut
@@ -157,7 +166,7 @@ extension MirageHostService {
 
         for attempt in 1 ... attempts {
             do {
-                let content = try await SCShareableContent.mirageHostContent()
+                let content = try await currentCaptureShareableContent()
                 let windows = content.windows.filter { overlayIDs.contains($0.windowID) }
                 if windows.count == overlayIDs.count || attempt == attempts {
                     return windows.map { SCWindowWrapper(window: $0) }
@@ -182,14 +191,14 @@ extension MirageHostService {
 
     private nonisolated static func shouldLockHostWhenStreamingStops(
         lockHostWhenStreamingStops: Bool,
-        sessionState: LoomSessionAvailability,
+        sessionAvailability: MirageWire.MirageHostSessionAvailability,
         hasAppStreams: Bool,
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool,
         triggeredByExplicitStreamStop: Bool = true
     ) -> Bool {
-        guard triggeredByExplicitStreamStop, lockHostWhenStreamingStops, sessionState == .ready else { return false }
+        guard triggeredByExplicitStreamStop, lockHostWhenStreamingStops, sessionAvailability == .ready else { return false }
         return !hasAppStreams &&
             !hasDesktopStream &&
             !hasPendingAppStreamStart &&
@@ -199,7 +208,7 @@ extension MirageHostService {
     func lockHostIfStreamingStopped(triggeredByExplicitStreamStop: Bool = true) {
         guard Self.shouldLockHostWhenStreamingStops(
             lockHostWhenStreamingStops: lockHostWhenStreamingStops,
-            sessionState: sessionState,
+            sessionAvailability: mirageSessionAvailability,
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamContext != nil,
             hasPendingAppStreamStart: pendingAppStreamStartCount > 0,

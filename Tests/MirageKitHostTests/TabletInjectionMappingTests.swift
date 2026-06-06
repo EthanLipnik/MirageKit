@@ -11,6 +11,7 @@
 @testable import MirageKitHost
 import CoreGraphics
 import Testing
+import MirageInput
 
 @Suite("Tablet Injection Mapping")
 struct TabletInjectionMappingTests {
@@ -26,13 +27,13 @@ struct TabletInjectionMappingTests {
             )
         )
 
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 6,
             tiltX: 0.3,
             tiltY: -0.25
         )
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: CGPoint(x: 0.5, y: 0.5),
             pressure: 0.72,
@@ -52,13 +53,13 @@ struct TabletInjectionMappingTests {
     @Test("Stylus contact events keep actionable mouse event type")
     func stylusContactEventCreationUsesMouseType() throws {
         let controller = MirageHostInputController()
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 6,
             tiltX: 0.2,
             tiltY: 0.1
         )
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: CGPoint(x: 0.5, y: 0.5),
             pressure: 0.66,
@@ -83,19 +84,19 @@ struct TabletInjectionMappingTests {
     @Test("Pointer sample batches create actionable drag events with tablet fields")
     func pointerSampleBatchCreatesActionableDragEvent() throws {
         let controller = MirageHostInputController()
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 6,
             tiltX: -0.2,
             tiltY: 0.35
         )
-        let sample = MiragePointerSample(
+        let sample = MirageInput.MiragePointerSample(
             location: CGPoint(x: 0.2, y: 0.8),
             pressure: 0.55,
             stylus: stylus,
             timestamp: 2
         )
-        let batch = MiragePointerSampleBatch(
+        let batch = MirageInput.MiragePointerSampleBatch(
             phase: .moved,
             modifiers: [.shift],
             clickCount: 1,
@@ -123,24 +124,24 @@ struct TabletInjectionMappingTests {
     @Test("Pointer sample batch boundaries produce down and up mouse events")
     func pointerSampleBatchBoundariesProduceActionableMouseEvents() throws {
         let controller = MirageHostInputController()
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 6,
             tiltX: 0,
             tiltY: 0
         )
-        let sample = MiragePointerSample(
+        let sample = MirageInput.MiragePointerSample(
             location: .zero,
             pressure: 0.5,
             stylus: stylus
         )
-        let began = MiragePointerSampleBatch(
+        let began = MirageInput.MiragePointerSampleBatch(
             phase: .began,
             clickCount: 1,
             isButtonPressed: true,
             samples: [sample]
         )
-        let ended = MiragePointerSampleBatch(
+        let ended = MirageInput.MiragePointerSampleBatch(
             phase: .ended,
             clickCount: 1,
             isButtonPressed: false,
@@ -175,19 +176,19 @@ struct TabletInjectionMappingTests {
     @Test("Pointer sample hover remains non-clicking movement")
     func pointerSampleHoverRemainsMovementOnly() throws {
         let controller = MirageHostInputController()
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 6,
             tiltX: 0,
             tiltY: 0,
             isHovering: true
         )
-        let sample = MiragePointerSample(
+        let sample = MirageInput.MiragePointerSample(
             location: .zero,
             pressure: 0,
             stylus: stylus
         )
-        let hover = MiragePointerSampleBatch(
+        let hover = MirageInput.MiragePointerSampleBatch(
             phase: .hover,
             isButtonPressed: false,
             samples: [sample]

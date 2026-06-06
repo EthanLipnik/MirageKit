@@ -7,6 +7,7 @@
 
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import MirageKit
 import Testing
 

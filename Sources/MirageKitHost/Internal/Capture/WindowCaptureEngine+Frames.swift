@@ -7,11 +7,19 @@
 //  Frame handling helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import os
-import MirageKit
 
 #if os(macOS)
 import AppKit

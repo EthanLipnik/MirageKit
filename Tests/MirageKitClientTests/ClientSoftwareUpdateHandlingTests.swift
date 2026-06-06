@@ -10,6 +10,10 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
+import Foundation
+import MirageCore
+import MirageKit
+import MirageWire
 
 @Suite("Client Software Update Handling")
 struct ClientSoftwareUpdateHandlingTests {
@@ -17,7 +21,7 @@ struct ClientSoftwareUpdateHandlingTests {
     @Test("Protocol mismatch rejection maps to deterministic mismatch info")
     func protocolMismatchRejectionMapsToMismatchInfo() {
         let service = MirageClientService()
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
@@ -38,7 +42,7 @@ struct ClientSoftwareUpdateHandlingTests {
     @Test("Protocol mismatch rejection maps to terminal connection rejection")
     func protocolMismatchRejectionMapsToTerminalConnectionRejection() {
         let service = MirageClientService()
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
@@ -60,7 +64,7 @@ struct ClientSoftwareUpdateHandlingTests {
 
     @Test("Malformed bootstrap rejection is terminal and user-facing")
     func malformedBootstrapRejectionIsTerminalAndUserFacing() {
-        let rejection = MirageConnectionRejection(
+        let rejection = MirageCore.MirageConnectionRejection(
             reason: .malformedBootstrap,
             hostName: "Host"
         )
@@ -71,7 +75,7 @@ struct ClientSoftwareUpdateHandlingTests {
 
     @Test("Local network blocked rejection uses Proximity Connect wording")
     func localNetworkBlockedRejectionUsesProximityConnectWording() {
-        let rejection = MirageConnectionRejection(
+        let rejection = MirageCore.MirageConnectionRejection(
             reason: .localNetworkBlocked,
             hostName: "Host"
         )
@@ -87,7 +91,7 @@ struct ClientSoftwareUpdateHandlingTests {
     @Test("Remote access disabled bootstrap rejection maps to VPN Access message")
     func remoteAccessDisabledBootstrapRejectionMapsToVPNAccessMessage() {
         let service = MirageClientService()
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
@@ -112,7 +116,7 @@ struct ClientSoftwareUpdateHandlingTests {
     @Test("Host update bootstrap rejection maps to update-in-progress message")
     func hostUpdateBootstrapRejectionMapsToUpdateInProgressMessage() {
         let service = MirageClientService()
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
@@ -136,7 +140,9 @@ struct ClientSoftwareUpdateHandlingTests {
         let defaultRequest = service.makeBootstrapRequest()
 
         #expect(request.protocolVersion == 7)
-        #expect(defaultRequest.protocolVersion == Int(MirageKit.protocolVersion))
+        #expect(defaultRequest.protocolVersion == Int(MirageKit.controlProtocolVersion))
+        #expect(defaultRequest.clientCapabilities?.mediaPacketFamilies == [.fixedHeaderFullFrame])
+        #expect(defaultRequest.clientCapabilities?.mediaTopologies == [.singleUnit])
     }
 
     @MainActor
@@ -148,7 +154,7 @@ struct ClientSoftwareUpdateHandlingTests {
             receivedStatus = status
         }
 
-        let message = HostSoftwareUpdateStatusMessage(
+        let message = MirageWire.HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: true,
             isCheckingForUpdates: false,
             isInstallInProgress: true,
@@ -171,7 +177,7 @@ struct ClientSoftwareUpdateHandlingTests {
             releaseNotesFormat: .plainText,
             lastCheckedAtMs: 1_700_000_000_000
         )
-        let envelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: message)
+        let envelope = try MirageWire.ControlMessage(type: .hostSoftwareUpdateStatus, content: message)
 
         service.handleHostSoftwareUpdateStatus(envelope)
 
@@ -201,7 +207,7 @@ struct ClientSoftwareUpdateHandlingTests {
             receivedResult = result
         }
 
-        let status = HostSoftwareUpdateStatusMessage(
+        let status = MirageWire.HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: true,
             isCheckingForUpdates: true,
             isInstallInProgress: true,
@@ -224,14 +230,14 @@ struct ClientSoftwareUpdateHandlingTests {
             releaseNotesFormat: .plainText,
             lastCheckedAtMs: 1_700_000_000_000
         )
-        let resultMessage = HostSoftwareUpdateInstallResultMessage(
+        let resultMessage = MirageWire.HostSoftwareUpdateInstallResultMessage(
             message: "Install started.",
             resultCode: .started,
             blockReason: nil,
             remediationHint: nil,
             status: status
         )
-        let envelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: resultMessage)
+        let envelope = try MirageWire.ControlMessage(type: .hostSoftwareUpdateInstallResult, content: resultMessage)
 
         service.handleHostSoftwareUpdateInstallResult(envelope)
 
@@ -253,11 +259,11 @@ struct ClientSoftwareUpdateHandlingTests {
             receivedResult = result
         }
 
-        let resultMessage = HostApplicationRestartResultMessage(
+        let resultMessage = MirageWire.HostApplicationRestartResultMessage(
             accepted: true,
             message: "Restarting Mirage Host."
         )
-        let envelope = try ControlMessage(type: .hostApplicationRestartResult, content: resultMessage)
+        let envelope = try MirageWire.ControlMessage(type: .hostApplicationRestartResult, content: resultMessage)
 
         service.handleHostApplicationRestartResult(envelope)
 

@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 #if canImport(GameController)
@@ -75,7 +83,7 @@ extension InputCapturingView {
     }
 
     static func uiKeyModifierFlags(
-        from modifiers: MirageModifierFlags
+        from modifiers: MirageInput.MirageModifierFlags
     ) -> UIKeyModifierFlags {
         var result: UIKeyModifierFlags = []
         if modifiers.contains(.capsLock) { result.insert(.alphaShift) }
@@ -88,9 +96,9 @@ extension InputCapturingView {
     }
 
     static func resolvedHardwareKeyModifiers(
-        reportedModifiers: MirageModifierFlags?,
-        trackedModifiers: MirageModifierFlags
-    ) -> MirageModifierFlags {
+        reportedModifiers: MirageInput.MirageModifierFlags?,
+        trackedModifiers: MirageInput.MirageModifierFlags
+    ) -> MirageInput.MirageModifierFlags {
         guard let reportedModifiers else { return trackedModifiers }
         return trackedModifiers.union(reportedModifiers)
     }
@@ -98,13 +106,13 @@ extension InputCapturingView {
     private func resolvedHardwareKeyModifiers(
         from event: UIPressesEvent?,
         fallbackFlags: UIKeyModifierFlags?
-    ) -> MirageModifierFlags {
+    ) -> MirageInput.MirageModifierFlags {
         let reportedModifiers = modifierSnapshot(
             from: event,
             fallbackFlags: fallbackFlags,
             allowFallback: true
         )
-        .map(MirageModifierFlags.init(uiKeyModifierFlags:))
+        .map(MirageInput.MirageModifierFlags.init(uiKeyModifierFlags:))
 
         return Self.resolvedHardwareKeyModifiers(
             reportedModifiers: reportedModifiers,
@@ -114,7 +122,7 @@ extension InputCapturingView {
 
     func clientShortcut(
         keyCode: UInt16,
-        modifiers: MirageModifierFlags
+        modifiers: MirageInput.MirageModifierFlags
     ) -> MirageClientShortcut? {
         let normalizedModifiers = modifiers.normalizedForShortcutMatching
         return clientShortcuts.first { shortcut in
@@ -127,8 +135,8 @@ extension InputCapturingView {
 
     func matchingAction(
         keyCode: UInt16,
-        modifiers: MirageModifierFlags
-    ) -> MirageAction? {
+        modifiers: MirageInput.MirageModifierFlags
+    ) -> MirageInput.MirageAction? {
         let normalizedModifiers = modifiers.normalizedForShortcutMatching
         return actions.first { action in
             guard action.isEnabled else { return false }
@@ -139,7 +147,7 @@ extension InputCapturingView {
     }
 
     func performAction(
-        _ action: MirageAction,
+        _ action: MirageInput.MirageAction,
         source: ClientShortcutDispatchSource
     ) {
         guard onActionTriggered != nil else { return }
@@ -235,7 +243,7 @@ extension InputCapturingView {
                 // Skip if GCKeyboard already claimed this key (modifier+key combo)
                 if gcClaimedKeyCodes.contains(GCKeyCode(rawValue: key.keyCode.rawValue)) { continue }
                 #endif
-                let macKeyCode = MirageKeyEvent.hidToMacKeyCode(key.keyCode)
+                let macKeyCode = MirageInput.MirageKeyEvent.hidToMacKeyCode(key.keyCode)
                 if let action = matchingAction(
                     keyCode: macKeyCode,
                     modifiers: resolvedModifiers
@@ -339,7 +347,7 @@ extension InputCapturingView {
                 }
             } else {
                 let shortcut = MirageInterceptedShortcutPolicy.shortcut(
-                    keyCode: MirageKeyEvent.hidToMacKeyCode(key.keyCode),
+                    keyCode: MirageInput.MirageKeyEvent.hidToMacKeyCode(key.keyCode),
                     modifiers: resolvedModifiers
                 )
                 #if canImport(GameController)

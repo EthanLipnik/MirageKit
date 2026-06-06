@@ -8,6 +8,7 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import Foundation
+import MirageWire
 
 #if os(macOS)
 extension StreamController {
@@ -56,7 +57,7 @@ extension StreamController {
         nonKeyframeHoldDrops: UInt64? = nil
     ) {
         updateHostMetrics(
-            StreamMetricsMessage(
+            MirageWire.StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
                 idleEncodedFPS: 0,

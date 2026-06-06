@@ -7,13 +7,21 @@
 //  Stream controller extensions.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension StreamController {
     // MARK: - Decoder Control
 
-    func setDecoderCodec(_ codec: MirageVideoCodec, streamDimensions: (width: Int, height: Int)? = nil) async {
+    func setDecoderCodec(_ codec: MirageMedia.MirageVideoCodec, streamDimensions: (width: Int, height: Int)? = nil) async {
         await decoder.setCodec(codec, streamDimensions: streamDimensions)
     }
 
@@ -21,7 +29,7 @@ extension StreamController {
         await decoder.setMaximizePowerEfficiencyEnabled(enabled)
     }
 
-    func setPreferredDecoderColorDepth(_ colorDepth: MirageStreamColorDepth) async {
+    func setPreferredDecoderColorDepth(_ colorDepth: MirageMedia.MirageStreamColorDepth) async {
         await decoder.setPreferredOutputColorDepth(colorDepth)
     }
 
@@ -93,7 +101,7 @@ extension StreamController {
     /// Prepare decoder/reassembler state for an in-place desktop resize without
     /// clearing steady-state metrics or startup history for the active stream.
     func prepareForResize(
-        codec: MirageVideoCodec,
+        codec: MirageMedia.MirageVideoCodec,
         streamDimensions: (width: Int, height: Int)? = nil
     )
     async {
@@ -137,7 +145,7 @@ extension StreamController {
     func updateCadenceTarget(
         sourceFPS: Int,
         displayFPS: Int? = nil,
-        latencyMode: MirageStreamLatencyMode? = nil,
+        latencyMode: MirageMedia.MirageStreamLatencyMode? = nil,
         playoutDelayFrames: Int? = nil,
         reason: String = "cadence target update"
     ) async {
@@ -151,7 +159,7 @@ extension StreamController {
             resolvedDisplayFPS = MirageRenderModePolicy.normalizedTargetFPS(displayFPS ?? resolvedSourceFPS)
         }
         let resolvedLatencyMode = latencyMode ?? streamCadenceTarget.latencyMode
-        let target = MirageStreamCadenceTarget(
+        let target = MirageMedia.MirageStreamCadenceTarget(
             sourceFPS: resolvedSourceFPS,
             displayFPS: resolvedDisplayFPS,
             latencyMode: resolvedLatencyMode,

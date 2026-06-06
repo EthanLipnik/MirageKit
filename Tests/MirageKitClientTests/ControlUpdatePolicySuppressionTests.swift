@@ -12,25 +12,27 @@ import CoreGraphics
 import Foundation
 import MirageKit
 import Testing
+import MirageMedia
+import MirageWire
 
 @Suite("Control Update Policy Suppression")
 struct ControlUpdatePolicySuppressionTests {
     @Test("Deferred refresh requirements are tracked and consumed once")
     func deferredRefreshRequirementsConsumeOnce() async throws {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
-        let appListMessage = try ControlMessage(
+        let appListMessage = try MirageWire.ControlMessage(
             type: .appListComplete,
-            content: AppListCompleteMessage(requestID: UUID(), totalAppCount: 0)
+            content: MirageWire.AppListCompleteMessage(requestID: UUID(), totalAppCount: 0)
         )
-        let windowListMessage = try ControlMessage(
+        let windowListMessage = try MirageWire.ControlMessage(
             type: .windowList,
-            content: WindowListMessage(windows: [Self.makeWindow()])
+            content: MirageWire.WindowListMessage(windows: [Self.makeWindow()])
         )
-        let windowUpdateMessage = ControlMessage(
+        let windowUpdateMessage = MirageWire.ControlMessage(
             type: .windowUpdate,
             payload: Self.emptyWindowUpdatePayload()
         )
-        let hostUpdateStatusMessage = try ControlMessage(
+        let hostUpdateStatusMessage = try MirageWire.ControlMessage(
             type: .hostSoftwareUpdateStatus,
             content: Self.makeHostSoftwareUpdateStatus()
         )
@@ -58,11 +60,11 @@ struct ControlUpdatePolicySuppressionTests {
         Data(#"{"added":[],"removed":[],"updated":[]}"#.utf8)
     }
 
-    private static func makeWindow() -> MirageWindow {
-        MirageWindow(
+    private static func makeWindow() -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: 101,
             title: "Test Window",
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 1,
                 bundleIdentifier: "com.example.test",
                 name: "Test App"
@@ -73,8 +75,8 @@ struct ControlUpdatePolicySuppressionTests {
         )
     }
 
-    private static func makeHostSoftwareUpdateStatus() -> HostSoftwareUpdateStatusMessage {
-        HostSoftwareUpdateStatusMessage(
+    private static func makeHostSoftwareUpdateStatus() -> MirageWire.HostSoftwareUpdateStatusMessage {
+        MirageWire.HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: true,
             isCheckingForUpdates: false,
             isInstallInProgress: false,

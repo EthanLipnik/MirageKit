@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 @MainActor
 extension MirageClientService {
@@ -102,7 +110,7 @@ extension MirageClientService {
             }
         }
 
-        func acceptsProximityPath(_ snapshot: MirageNetworkPathSnapshot) -> Bool {
+        func acceptsProximityPath(_ snapshot: MirageConnectivity.MirageNetworkPathSnapshot) -> Bool {
             guard requiresProximityPathValidation else { return true }
 
             let normalizedNames = Set(snapshot.interfaceNames.map(Self.normalizedInterfaceName(_:)))
@@ -127,7 +135,7 @@ extension MirageClientService {
         }
 
         private static func path(
-            _ snapshot: MirageNetworkPathSnapshot,
+            _ snapshot: MirageConnectivity.MirageNetworkPathSnapshot,
             matches kind: LoomDiscoveredInterfaceKind
         ) -> Bool {
             let names = snapshot.interfaceNames.map(normalizedInterfaceName(_:))
@@ -148,7 +156,7 @@ extension MirageClientService {
         }
 
         private static func pathUsesAnyPreferredProximityInterface(
-            _ snapshot: MirageNetworkPathSnapshot
+            _ snapshot: MirageConnectivity.MirageNetworkPathSnapshot
         ) -> Bool {
             let names = snapshot.interfaceNames.map(normalizedInterfaceName(_:))
             if names.contains(where: { name in
@@ -213,12 +221,12 @@ extension MirageClientService {
     }
 
     struct ControlSessionNetworkDiagnostics: Equatable {
-        let currentPathKind: MirageNetworkPathKind
+        let currentPathKind: MirageCore.MirageNetworkPathKind
         let wifiSubnetSignatures: [String]
         let wiredSubnetSignatures: [String]
 
         init(
-            currentPathKind: MirageNetworkPathKind,
+            currentPathKind: MirageCore.MirageNetworkPathKind,
             wifiSubnetSignatures: [String],
             wiredSubnetSignatures: [String]
         ) {
@@ -227,7 +235,7 @@ extension MirageClientService {
             self.wiredSubnetSignatures = wiredSubnetSignatures
         }
 
-        init(snapshot: MirageLocalNetworkSnapshot) {
+        init(snapshot: MirageConnectivity.MirageLocalNetworkSnapshot) {
             self.init(
                 currentPathKind: snapshot.currentPathKind,
                 wifiSubnetSignatures: snapshot.wifiSubnetSignatures,
@@ -236,7 +244,7 @@ extension MirageClientService {
         }
 
         var allSubnetSignatures: Set<String> {
-            MirageLocalNetworkSnapshot.subnetSignatureSet(
+            MirageConnectivity.MirageLocalNetworkSnapshot.subnetSignatureSet(
                 wifiSubnetSignatures: wifiSubnetSignatures,
                 wiredSubnetSignatures: wiredSubnetSignatures
             )
@@ -285,50 +293,9 @@ extension MirageClientService {
     }
 
     nonisolated static func classifyControlSessionFailure(_ error: Error) -> ControlSessionFailureClassification {
-        if error is CancellationError {
-            return .cancelled
-        }
-
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case .timeout:
-                return .timeout
-            case let .protocolError(reason):
-                return classifyProtocolErrorReason(reason) ?? .other
-            case let .connectionFailed(underlyingError):
-                return classifyControlSessionFailure(underlyingError)
-            default:
-                break
-            }
-        }
-
-        if let loomError = error as? LoomError {
-            switch loomError {
-            case .timeout:
-                return .timeout
-            case let .protocolError(reason):
-                return classifyProtocolErrorReason(reason) ?? .other
-            case let .connectionFailed(underlyingError):
-                if let failure = underlyingError as? LoomConnectionFailure {
-                    return classifyLoomConnectionFailure(failure)
-                }
-                return classifyControlSessionFailure(underlyingError)
-            default:
-                break
-            }
-        }
-
-        if let nwError = error as? NWError {
-            return classifyNetworkFailure(nwError)
-        }
-
-        let nsError = error as NSError
-        if nsError.domain == NSPOSIXErrorDomain,
-           let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
-            return classifyPOSIXError(code)
-        }
-
-        return .other
+        ControlSessionFailureClassification(
+            MirageConnectionErrorClassifier.classifyControlSessionFailure(error)
+        )
     }
 
     nonisolated static func classifyBootstrappedControlSessionFailure(
@@ -368,71 +335,6 @@ extension MirageClientService {
         return attempts.indices.contains(currentAttemptIndex + 1)
     }
 
-    /// Classifies human-readable protocol errors produced before typed failure details are available.
-    nonisolated static func classifyProtocolErrorReason(_ reason: String) -> ControlSessionFailureClassification? {
-        if looksLikeProximityPathValidationFailure(reason) {
-            return .transportLoss
-        }
-        if looksLikeAddressResolutionFailure(reason) {
-            return .addressUnavailable
-        }
-        if looksLikeBootstrapResponseTimeout(reason) {
-            return .timeout
-        }
-        if looksLikeBootstrapTransportFailure(reason) {
-            return .transportLoss
-        }
-        if looksLikeHostIdentityMismatch(reason) {
-            return .hostIdentityMismatch
-        }
-        return nil
-    }
-
-    nonisolated static func looksLikeProximityPathValidationFailure(_ reason: String) -> Bool {
-        reason.lowercased().contains("proximity path validation failed")
-    }
-
-    nonisolated static func looksLikeAddressResolutionFailure(_ reason: String) -> Bool {
-        let normalized = reason.lowercased()
-        return normalized.contains("failed to resolve") ||
-            normalized.contains("nodename nor servname provided") ||
-            normalized.contains("name or service not known")
-    }
-
-    nonisolated static func looksLikeBootstrapResponseTimeout(_ reason: String) -> Bool {
-        let normalized = reason.lowercased()
-        return normalized.contains("timed out waiting for host bootstrap response")
-    }
-
-    nonisolated static func looksLikeBootstrapTransportFailure(_ reason: String) -> Bool {
-        let normalized = reason.lowercased()
-        return normalized.contains("control stream closed before receiving bootstrap response") ||
-            normalized.contains("authenticated loom session closed before mirage control stream opened")
-    }
-
-    nonisolated static func looksLikeHostIdentityMismatch(_ reason: String) -> Bool {
-        reason.lowercased().contains("host identity mismatch")
-    }
-
-    nonisolated static func classifyLoomConnectionFailure(
-        _ failure: LoomConnectionFailure
-    ) -> ControlSessionFailureClassification {
-        switch failure.reason {
-        case .timedOut:
-            .timeout
-        case .transportLoss, .closed:
-            .transportLoss
-        case .connectionRefused:
-            .connectionRefused
-        case .addressUnavailable:
-            .addressUnavailable
-        case .cancelled:
-            .cancelled
-        case .other:
-            .other
-        }
-    }
-
     nonisolated static func bootstrappedControlSessionFailureReason(
         for attempt: ControlSessionAttempt,
         classification: ControlSessionFailureClassification,
@@ -457,7 +359,7 @@ extension MirageClientService {
             return nil
         }
 
-        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+        let hostNetwork = MirageConnectivity.MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
             from: host.advertisement
         )
         guard localNetwork.currentPathKind != .awdl,
@@ -492,44 +394,23 @@ extension MirageClientService {
 
         return nil
     }
+}
 
-    nonisolated static func classifyNetworkFailure(_ error: NWError) -> ControlSessionFailureClassification {
-        switch error {
-        case let .posix(code):
-            return classifyPOSIXError(code)
-        case .dns:
-            return .addressUnavailable
-        case .tls:
-            return .other
-        case .wifiAware:
-            return .other
-        @unknown default:
-            return .other
-        }
-    }
-
-    nonisolated static func classifyPOSIXError(_ code: POSIXErrorCode) -> ControlSessionFailureClassification {
-        switch code {
-        case .ETIMEDOUT:
-            .timeout
-        case .ECONNREFUSED:
-            .connectionRefused
-        case .EADDRNOTAVAIL:
-            .addressUnavailable
-        case .ENETDOWN,
-             .ENETUNREACH,
-             .EHOSTDOWN,
-             .EHOSTUNREACH,
-             .ENETRESET,
-             .ECONNABORTED,
-             .ECONNRESET,
-             .ENOTCONN,
-             .EPIPE:
-            .transportLoss
-        case .ECANCELED:
-            .cancelled
-        default:
-            .other
+private extension MirageClientService.ControlSessionFailureClassification {
+    init(_ classification: MirageControlSessionFailureClassification) {
+        switch classification {
+        case .timeout:
+            self = .timeout
+        case .transportLoss:
+            self = .transportLoss
+        case .connectionRefused:
+            self = .connectionRefused
+        case .addressUnavailable:
+            self = .addressUnavailable
+        case .cancelled:
+            self = .cancelled
+        case .other:
+            self = .other
         }
     }
 }

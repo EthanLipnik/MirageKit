@@ -7,8 +7,16 @@
 //  App-streaming runtime coordination (active live + passive snapshot tiers).
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import AppKit
@@ -27,7 +35,7 @@ extension MirageHostService {
             encoderConfig.bitrate ??
             MirageEncoderConfiguration.highQuality.bitrate
         guard let sourceBitrate else { return nil }
-        let normalized = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: sourceBitrate) ?? sourceBitrate
+        let normalized = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: sourceBitrate) ?? sourceBitrate
         return max(Self.minimumSharedBitrateBudgetBps, normalized)
     }
 
@@ -45,7 +53,7 @@ extension MirageHostService {
                   let atlasRegion = layout.region(for: slot.window.windowID) else {
                 return slot
             }
-            return AppWindowInventoryMessage.Slot(
+            return MirageWire.AppWindowInventoryMessage.Slot(
                 slotIndex: slot.slotIndex,
                 streamID: slot.streamID,
                 mediaStreamID: slot.mediaStreamID,
@@ -53,7 +61,7 @@ extension MirageHostService {
                 atlasRegion: atlasRegion
             )
         }
-        let outboundInventory = AppWindowInventoryMessage(
+        let outboundInventory = MirageWire.AppWindowInventoryMessage(
             bundleIdentifier: inventory.bundleIdentifier,
             appSessionID: inventory.appSessionID,
             maxVisibleSlots: inventory.maxVisibleSlots,
@@ -89,7 +97,7 @@ extension MirageHostService {
 
     func handleAppStreamOwnershipSignal(
         streamID: StreamID,
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         reason: String
     ) async {
         guard AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(event) else { return }
@@ -250,7 +258,7 @@ extension MirageHostService {
             bundleIdentifier: bundleIdentifier,
             targets: appliedTargets
         )
-        let policyUpdate = StreamPolicyUpdateMessage(epoch: snapshot.epoch, policies: snapshot.policies)
+        let policyUpdate = MirageWire.StreamPolicyUpdateMessage(epoch: snapshot.epoch, policies: snapshot.policies)
         do {
             try await clientContext.send(.streamPolicyUpdate, content: policyUpdate)
         } catch {
@@ -260,7 +268,7 @@ extension MirageHostService {
         if snapshot.activeChanged,
            let activeStreamID = snapshot.activeStreamID,
            let activeSession = activeSessionByStreamID[activeStreamID] {
-            activateWindow(activeSession.window)
+            await activateWindow(activeSession.window)
         }
 
         let activeText = snapshot.activeStreamID.map(String.init) ?? "none"

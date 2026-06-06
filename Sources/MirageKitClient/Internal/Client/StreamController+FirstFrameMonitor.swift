@@ -7,8 +7,16 @@
 //  First-frame presentation watchdog and bootstrap recovery.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension StreamController {
     func syncPresentationProgressFromFrameStore(now: CFAbsoluteTime? = nil) -> Bool {

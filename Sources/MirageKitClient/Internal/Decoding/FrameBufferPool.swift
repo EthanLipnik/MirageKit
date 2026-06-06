@@ -7,8 +7,16 @@
 //  Reusable frame buffers for packet reassembly.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Reuses large frame-reassembly buffers while returning finalized frame data as detached `Data`.
 final class FrameBufferPool: @unchecked Sendable {

@@ -7,8 +7,16 @@
 //  Host-side client liveness monitoring.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Liveness action chosen for a connected host client.
@@ -118,7 +126,7 @@ extension MirageHostService {
 
     /// Arms a temporary lease that lets a backgrounded client keep its host slot.
     func scheduleBackgroundLease(
-        _ lease: ClientBackgroundLeaseMessage,
+        _ lease: MirageWire.ClientBackgroundLeaseMessage,
         for clientContext: ClientContext
     ) {
         let duration = Self.clampedBackgroundLeaseDuration(lease.durationSeconds)

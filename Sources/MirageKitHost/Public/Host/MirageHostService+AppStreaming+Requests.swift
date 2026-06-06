@@ -7,21 +7,29 @@
 //  App stream request handling.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Handles a client's request to start streaming an application's windows.
     func handleSelectApp(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     )
     async {
         var pendingLightsOutSetup = false
         do {
-            let request = try message.decode(SelectAppMessage.self)
+            let request = try message.decode(MirageWire.SelectAppMessage.self)
             let client = clientContext.client
             guard beginStreamSetup(
                 clientSessionID: clientContext.sessionID,
@@ -55,7 +63,7 @@ extension MirageHostService {
                   displayWidth > 0,
                   displayHeight > 0 else {
                 MirageLogger.host("Rejecting app stream request without display size")
-                let error = ErrorMessage(
+                let error = MirageWire.ErrorMessage(
                     code: .invalidMessage,
                     message: "App streaming requires displayWidth/displayHeight"
                 )
@@ -80,7 +88,8 @@ extension MirageHostService {
                 )
 
             await refreshSessionStateIfNeeded()
-            guard sessionState != .unavailable else {
+            let sessionAvailability = mirageSessionAvailability
+            guard sessionAvailability != .unavailable else {
                 MirageLogger.host("Rejecting app stream while session is unavailable")
                 await sendSessionState(to: clientContext)
                 sendAppSelectionError(
@@ -91,7 +100,7 @@ extension MirageHostService {
                 )
                 return
             }
-            if sessionState.requiresCredentials {
+            if sessionAvailability.requiresCredentials {
                 do {
                     try await acceptLockedAppStreamIntent(
                         request: request,

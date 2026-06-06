@@ -7,8 +7,16 @@
 //  Per-client host audio encode + packet send pipeline.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -30,9 +38,9 @@ actor HostAudioPipeline {
 
     init(
         sourceStreamID: StreamID,
-        audioConfiguration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        audioConfiguration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext?,
         maxQueuedDurationSeconds: Double = 0.120,
@@ -56,9 +64,9 @@ actor HostAudioPipeline {
     }
 
     func updateConfiguration(
-        _ configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile
+        _ configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) async {
         let profile = qualityGovernor.updateConfiguration(
             configuration,
@@ -104,7 +112,7 @@ actor HostAudioPipeline {
         }
     }
 
-    func recordReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
+    func recordReceiverMediaFeedback(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) {
         if let profile = qualityGovernor.recordReceiverFeedback(feedback) {
             pendingProfile = profile
         }
@@ -203,14 +211,18 @@ actor HostAudioPipeline {
             MirageLogger.host("Audio resolved profile unavailable reason=\(reason)")
             return
         }
-        MirageLogger.host(
-            "Audio resolved profile reason=\(reason) codec=\(profile.codec) " +
-                "quality=\(profile.quality.rawValue) sampleRate=\(Int(profile.sampleRate.rounded())) " +
-                "channels=\(profile.channelCount) bitrate=\(profile.bitrateBps.map(String.init) ?? "lossless") " +
-                "floor=\(profile.minimumBitrateBps.map(String.init) ?? "none") " +
-                "ceiling=\(profile.maximumBitrateBps.map(String.init) ?? "none") " +
-                "adaptive=\(profile.adaptiveCompressionEnabled) policy=\(profile.reason)"
-        )
+        let sampleRate = Int(profile.sampleRate.rounded())
+        let bitrate = profile.bitrateBps.map(String.init) ?? "lossless"
+        let floor = profile.minimumBitrateBps.map(String.init) ?? "none"
+        let ceiling = profile.maximumBitrateBps.map(String.init) ?? "none"
+        let header = "Audio resolved profile reason=\(reason) codec=\(profile.codec) "
+        let qualityPart = "quality=\(profile.quality.rawValue) sampleRate=\(sampleRate) "
+        let channelPart = "channels=\(profile.channelCount) bitrate=\(bitrate) "
+        let floorPart = "floor=\(floor) "
+        let ceilingPart = "ceiling=\(ceiling) "
+        let adaptivePart = "adaptive=\(profile.adaptiveCompressionEnabled) policy=\(profile.reason)"
+        let message = header + qualityPart + channelPart + floorPart + ceilingPart + adaptivePart
+        MirageLogger.host(message)
     }
 }
 

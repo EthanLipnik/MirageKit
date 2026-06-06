@@ -7,11 +7,19 @@
 //  Capture engine start/stop.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import os
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -29,7 +37,7 @@ extension WindowCaptureEngine {
         audioChannelCount: Int? = nil
     )
         async throws {
-        guard !isCapturing else { throw MirageError.protocolError("Already capturing") }
+        guard !isCapturing else { throw MirageCore.MirageError.protocolError("Already capturing") }
         cancelScheduledCaptureRestart(reason: "new_capture_start")
         restartGeneration &+= 1
 
@@ -53,8 +61,8 @@ extension WindowCaptureEngine {
         let clampedScale = max(0.1, min(1.0, outputScale))
         self.outputScale = clampedScale
         currentScaleFactor = target.hostScaleFactor * clampedScale
-        currentWidth = MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.width) * clampedScale)
-        currentHeight = MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.height) * clampedScale)
+        currentWidth = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.width) * clampedScale)
+        currentHeight = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.height) * clampedScale)
         captureMode = .window
         captureSessionConfig = CaptureSessionConfiguration(
             windowID: WindowID(window.windowID),
@@ -120,7 +128,7 @@ extension WindowCaptureEngine {
         // Create stream
         stream = SCStream(filter: filter, configuration: streamConfig, delegate: nil)
 
-        guard let stream else { throw MirageError.protocolError("Failed to create stream") }
+        guard let stream else { throw MirageCore.MirageError.protocolError("Failed to create stream") }
 
         // Create output handler with windowID for fallback capture during SCK pauses
         let captureRate = minimumFrameIntervalRate
@@ -154,7 +162,7 @@ extension WindowCaptureEngine {
             targetFrameRate: currentFrameRate
         )
         guard let output = streamOutput else {
-            throw MirageError.captureSetupFailed("streamOutput was not initialized")
+            throw MirageCore.MirageError.captureSetupFailed("streamOutput was not initialized")
         }
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
@@ -203,7 +211,7 @@ extension WindowCaptureEngine {
         audioChannelCount: Int? = nil
     )
         async throws {
-        guard !isCapturing else { throw MirageError.protocolError("Already capturing") }
+        guard !isCapturing else { throw MirageCore.MirageError.protocolError("Already capturing") }
         cancelScheduledCaptureRestart(reason: "new_capture_start")
         restartGeneration &+= 1
 
@@ -339,7 +347,7 @@ extension WindowCaptureEngine {
         // Create stream
         stream = SCStream(filter: filter, configuration: streamConfig, delegate: nil)
 
-        guard let stream else { throw MirageError.protocolError("Failed to create display stream") }
+        guard let stream else { throw MirageCore.MirageError.protocolError("Failed to create display stream") }
 
         // Create output handler
         let captureRate = minimumFrameIntervalRate
@@ -373,7 +381,7 @@ extension WindowCaptureEngine {
             targetFrameRate: currentFrameRate
         )
         guard let output = streamOutput else {
-            throw MirageError.captureSetupFailed("streamOutput was not initialized")
+            throw MirageCore.MirageError.captureSetupFailed("streamOutput was not initialized")
         }
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
@@ -406,7 +414,7 @@ extension WindowCaptureEngine {
         requestedChannelCount: Int?
     ) -> Int? {
         guard isAudioEnabled else { return nil }
-        let requested = requestedChannelCount ?? MirageAudioChannelLayout.stereo.channelCount
+        let requested = requestedChannelCount ?? MirageMedia.MirageAudioChannelLayout.stereo.channelCount
         return min(max(requested, 1), 8)
     }
 }

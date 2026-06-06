@@ -11,6 +11,9 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageCore
+import MirageInput
+import MirageWire
 
 @Suite("Host Input Message Scheduler Scroll Coalescing")
 struct HostInputMessageSchedulerScrollTests {
@@ -18,14 +21,14 @@ struct HostInputMessageSchedulerScrollTests {
     func nativeContinuousScrollMessagesMergeBySummingDeltas() async throws {
         let streamID: StreamID = 701
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-scroll-native", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
         let location = CGPoint(x: 0.5, y: 0.5)
 
-        scheduler.enqueue(try inputMessage(.keyDown(MirageKeyEvent(keyCode: 0x7E)), streamID: streamID))
-        scheduler.enqueue(try inputMessage(.scrollWheel(MirageScrollEvent(
+        scheduler.enqueue(try inputMessage(.keyDown(MirageInput.MirageKeyEvent(keyCode: 0x7E)), streamID: streamID))
+        scheduler.enqueue(try inputMessage(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 1,
             deltaY: 2,
             location: location,
@@ -33,7 +36,7 @@ struct HostInputMessageSchedulerScrollTests {
             isPrecise: true,
             timestamp: 1
         )), streamID: streamID))
-        scheduler.enqueue(try inputMessage(.scrollWheel(MirageScrollEvent(
+        scheduler.enqueue(try inputMessage(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 3,
             deltaY: 4,
             location: location,
@@ -57,21 +60,21 @@ struct HostInputMessageSchedulerScrollTests {
     func phaseLessScrollMessagesKeepReplacementBehaviorInsteadOfMerging() async throws {
         let streamID: StreamID = 702
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-scroll-phase-less", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
         let location = CGPoint(x: 0.5, y: 0.5)
 
-        scheduler.enqueue(try inputMessage(.keyDown(MirageKeyEvent(keyCode: 0x7E)), streamID: streamID))
-        scheduler.enqueue(try inputMessage(.scrollWheel(MirageScrollEvent(
+        scheduler.enqueue(try inputMessage(.keyDown(MirageInput.MirageKeyEvent(keyCode: 0x7E)), streamID: streamID))
+        scheduler.enqueue(try inputMessage(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 1,
             deltaY: 2,
             location: location,
             isPrecise: true,
             timestamp: 1
         )), streamID: streamID))
-        scheduler.enqueue(try inputMessage(.scrollWheel(MirageScrollEvent(
+        scheduler.enqueue(try inputMessage(.scrollWheel(MirageInput.MirageScrollEvent(
             deltaX: 3,
             deltaY: 4,
             location: location,
@@ -86,7 +89,7 @@ struct HostInputMessageSchedulerScrollTests {
         #expect(scrollEvents.count == 1)
         #expect(scrollEvents.first?.deltaX == 3)
         #expect(scrollEvents.first?.deltaY == 4)
-        #expect(scrollEvents.first?.phase == MirageScrollPhase.none)
+        #expect(scrollEvents.first?.phase == MirageInput.MirageScrollPhase.none)
         #expect(scrollEvents.first?.timestamp == 2)
     }
 
@@ -94,7 +97,7 @@ struct HostInputMessageSchedulerScrollTests {
     func discreteKeyboardMessagesSurvivePendingContinuousInputTrimming() async throws {
         let streamID: StreamID = 703
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-keyboard-protected", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
@@ -104,7 +107,7 @@ struct HostInputMessageSchedulerScrollTests {
             let event = makeMouseEvent(timestamp: TimeInterval(index))
             scheduler.enqueue(try inputMessage(index.isMultiple(of: 2) ? .mouseMoved(event) : .mouseDragged(event), streamID: streamID))
         }
-        scheduler.enqueue(try inputMessage(.keyDown(MirageKeyEvent(keyCode: keyCode)), streamID: streamID))
+        scheduler.enqueue(try inputMessage(.keyDown(MirageInput.MirageKeyEvent(keyCode: keyCode)), streamID: streamID))
         for index in 320 ..< 640 {
             let event = makeMouseEvent(timestamp: TimeInterval(index))
             scheduler.enqueue(try inputMessage(index.isMultiple(of: 2) ? .mouseMoved(event) : .mouseDragged(event), streamID: streamID))
@@ -114,7 +117,7 @@ struct HostInputMessageSchedulerScrollTests {
         try await waitForKeyboardEvent(events, keyCode: keyCode)
 
         let deliveredKeyboardEvents = events.read { events in
-            events.compactMap { event -> MirageKeyEvent? in
+            events.compactMap { event -> MirageInput.MirageKeyEvent? in
                 guard case let .keyDown(keyEvent) = event else { return nil }
                 return keyEvent
             }
@@ -126,7 +129,7 @@ struct HostInputMessageSchedulerScrollTests {
     func queuedMouseMovementSamplesCoalesceToLatestPendingSample() async throws {
         let streamID: StreamID = 704
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-mouse-latest", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
@@ -148,7 +151,7 @@ struct HostInputMessageSchedulerScrollTests {
     func pointerBoundaryDropsDelayedStaleMovement() async throws {
         let streamID: StreamID = 705
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-pointer-boundary", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
@@ -171,7 +174,7 @@ struct HostInputMessageSchedulerScrollTests {
     func pointerBoundaryAtEnqueueDropsOlderPendingMovement() async throws {
         let streamID: StreamID = 706
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-pointer-enqueue-boundary", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
@@ -194,23 +197,23 @@ struct HostInputMessageSchedulerScrollTests {
     func continuousScrollBatchPreservesPacketSamplesWithoutNativeMerging() async throws {
         let streamID: StreamID = 707
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-continuous-scroll", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
-        let batch = MirageContinuousInputBatch(
+        let batch = MirageInput.MirageContinuousInputBatch(
             streamID: streamID,
             kind: .scroll,
             scrollPhase: .changed,
             isPrecise: true,
             samples: [
-                MirageContinuousInputBatch.Sample(
+                MirageInput.MirageContinuousInputBatch.Sample(
                     timestamp: 1,
                     location: CGPoint(x: 0.5, y: 0.5),
                     valueX: 1,
                     valueY: 2
                 ),
-                MirageContinuousInputBatch.Sample(
+                MirageInput.MirageContinuousInputBatch.Sample(
                     timestamp: 2,
                     location: CGPoint(x: 0.5, y: 0.5),
                     valueX: 3,
@@ -234,19 +237,19 @@ struct HostInputMessageSchedulerScrollTests {
     func continuousPencilContactBatchesAreNotTrimmedUnderBacklogPressure() async throws {
         let streamID: StreamID = 708
         let queue = DispatchQueue(label: "com.mirage.tests.host-input-continuous-pencil", attributes: .initiallyInactive)
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
         }
 
         for index in 0 ..< 320 {
-            scheduler.enqueueContinuousBatch(MirageContinuousInputBatch(
+            scheduler.enqueueContinuousBatch(MirageInput.MirageContinuousInputBatch(
                 streamID: streamID,
                 kind: .pointerSampleBatch,
                 pointerPhase: .moved,
                 isButtonPressed: true,
                 samples: [
-                    MirageContinuousInputBatch.Sample(
+                    MirageInput.MirageContinuousInputBatch.Sample(
                         timestamp: TimeInterval(index),
                         location: CGPoint(x: CGFloat(index), y: 0.5),
                         pressure: 0.5,
@@ -269,17 +272,17 @@ struct HostInputMessageSchedulerScrollTests {
     }
 }
 
-private func inputMessage(_ event: MirageInputEvent, streamID: StreamID) throws -> ControlMessage {
-    let inputMessage = InputEventMessage(streamID: streamID, event: event)
-    return ControlMessage(type: .inputEvent, payload: try inputMessage.serializePayload())
+private func inputMessage(_ event: MirageInput.MirageInputEvent, streamID: StreamID) throws -> MirageWire.ControlMessage {
+    let inputMessage = MirageWire.InputEventMessage(streamID: streamID, event: event)
+    return MirageWire.ControlMessage(type: .inputEvent, payload: try inputMessage.serializePayload())
 }
 
-private func recordInputEvent(from message: ControlMessage, into events: Locked<[MirageInputEvent]>) {
-    guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else { return }
+private func recordInputEvent(from message: MirageWire.ControlMessage, into events: Locked<[MirageInput.MirageInputEvent]>) {
+    guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else { return }
     events.withLock { $0.append(inputMessage.event) }
 }
 
-private func deliveredScrollEvents(in events: Locked<[MirageInputEvent]>) -> [MirageScrollEvent] {
+private func deliveredScrollEvents(in events: Locked<[MirageInput.MirageInputEvent]>) -> [MirageInput.MirageScrollEvent] {
     events.read { events in
         events.compactMap { event in
             guard case let .scrollWheel(scrollEvent) = event else { return nil }
@@ -289,7 +292,7 @@ private func deliveredScrollEvents(in events: Locked<[MirageInputEvent]>) -> [Mi
 }
 
 private func waitForEvents(
-    _ events: Locked<[MirageInputEvent]>,
+    _ events: Locked<[MirageInput.MirageInputEvent]>,
     count: Int
 ) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
@@ -300,7 +303,7 @@ private func waitForEvents(
 }
 
 private func waitForKeyboardEvent(
-    _ events: Locked<[MirageInputEvent]>,
+    _ events: Locked<[MirageInput.MirageInputEvent]>,
     keyCode: UInt16
 ) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
@@ -317,15 +320,15 @@ private func waitForKeyboardEvent(
     Issue.record("Expected keyboard event with keyCode \(keyCode)")
 }
 
-private func makeMouseEvent(timestamp: TimeInterval) -> MirageMouseEvent {
-    MirageMouseEvent(
+private func makeMouseEvent(timestamp: TimeInterval) -> MirageInput.MirageMouseEvent {
+    MirageInput.MirageMouseEvent(
         location: CGPoint(x: 0.5, y: 0.5),
         timestamp: timestamp
     )
 }
 
-private func makePointerStylus() -> MirageStylusEvent {
-    MirageStylusEvent(
+private func makePointerStylus() -> MirageInput.MirageStylusEvent {
+    MirageInput.MirageStylusEvent(
         altitudeAngle: 0.8,
         azimuthAngle: 0.2,
         tiltX: 0.1,

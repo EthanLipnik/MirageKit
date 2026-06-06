@@ -11,6 +11,7 @@
 import MirageKit
 import Foundation
 import Testing
+import MirageCore
 
 #if os(macOS)
 @Suite("App Stream Window Retry")

@@ -1,5 +1,5 @@
 //
-//  MirageInputEvent+PlatformConversion.swift
+//  MirageInput.MirageInputEvent+PlatformConversion.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 5/13/26.
@@ -7,6 +7,13 @@
 //  Platform input conversion helpers for Mirage input events.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 // MARK: - macOS CGEvent Conversion Extensions
@@ -15,7 +22,7 @@ import Foundation
 import AppKit
 import Carbon.HIToolbox
 
-public extension MirageMouseButton {
+public extension MirageInput.MirageMouseButton {
     /// Convert to CGMouseButton for CGEvent creation.
     var cgMouseButton: CGMouseButton {
         switch self {
@@ -28,7 +35,7 @@ public extension MirageMouseButton {
     }
 }
 
-public extension MirageModifierFlags {
+public extension MirageInput.MirageModifierFlags {
     /// Convert to CGEventFlags for CGEvent creation.
     var cgEventFlags: CGEventFlags {
         var flags: CGEventFlags = []
@@ -44,7 +51,7 @@ public extension MirageModifierFlags {
 
     /// Create from NSEvent modifier flags.
     init(nsEventFlags: NSEvent.ModifierFlags) {
-        var flags = MirageModifierFlags()
+        var flags = MirageInput.MirageModifierFlags()
         if nsEventFlags.contains(.capsLock) { flags.insert(.capsLock) }
         if nsEventFlags.contains(.shift) { flags.insert(.shift) }
         if nsEventFlags.contains(.control) { flags.insert(.control) }
@@ -56,7 +63,7 @@ public extension MirageModifierFlags {
     }
 }
 
-public extension MirageScrollPhase {
+public extension MirageInput.MirageScrollPhase {
     /// Create from NSEvent.Phase for scroll wheel events.
     init(from nsPhase: NSEvent.Phase) {
         switch nsPhase {
@@ -77,10 +84,10 @@ public extension MirageScrollPhase {
 #if os(iOS) || os(visionOS)
 import UIKit
 
-public extension MirageModifierFlags {
+public extension MirageInput.MirageModifierFlags {
     /// Create from UIKeyModifierFlags from an external keyboard.
     init(uiKeyModifierFlags: UIKeyModifierFlags) {
-        var flags = MirageModifierFlags()
+        var flags = MirageInput.MirageModifierFlags()
         if uiKeyModifierFlags.contains(.alphaShift) { flags.insert(.capsLock) }
         if uiKeyModifierFlags.contains(.shift) { flags.insert(.shift) }
         if uiKeyModifierFlags.contains(.control) { flags.insert(.control) }
@@ -91,7 +98,7 @@ public extension MirageModifierFlags {
     }
 }
 
-public extension MirageKeyEvent {
+public extension MirageInput.MirageKeyEvent {
     /// Create from UIPress from an external keyboard.
     init?(press: UIPress, isRepeat: Bool = false) {
         guard let key = press.key else { return nil }
@@ -102,13 +109,13 @@ public extension MirageKeyEvent {
             keyCode: macKeyCode,
             characters: key.characters,
             charactersIgnoringModifiers: key.charactersIgnoringModifiers,
-            modifiers: MirageModifierFlags(uiKeyModifierFlags: key.modifierFlags),
+            modifiers: MirageInput.MirageModifierFlags(uiKeyModifierFlags: key.modifierFlags),
             isRepeat: isRepeat
         )
     }
 
     /// Create from UIPress with explicit modifiers tracked outside the press event.
-    init?(press: UIPress, modifiers: MirageModifierFlags, isRepeat: Bool = false) {
+    init?(press: UIPress, modifiers: MirageInput.MirageModifierFlags, isRepeat: Bool = false) {
         guard let key = press.key else { return nil }
 
         let macKeyCode = Self.hidToMacKeyCode(key.keyCode)
@@ -232,7 +239,7 @@ public extension MirageKeyEvent {
     }
 }
 
-public extension MirageScrollPhase {
+public extension MirageInput.MirageScrollPhase {
     /// Create from UIGestureRecognizer.State.
     init(gestureState: UIGestureRecognizer.State) {
         switch gestureState {

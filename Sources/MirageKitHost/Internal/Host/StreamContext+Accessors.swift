@@ -7,21 +7,29 @@
 //  Stream context accessors and handler registration.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 /// Actor-safe encoder settings needed by host service code outside `StreamContext`.
 struct EncoderSettingsSnapshot: Sendable {
     /// Requested output bit depth for the active encoder session.
-    let bitDepth: MirageVideoBitDepth
+    let bitDepth: MirageMedia.MirageVideoBitDepth
 
     /// Pixel format currently being fed into the encoder.
-    let pixelFormat: MiragePixelFormat
+    let pixelFormat: MirageMedia.MiragePixelFormat
 
     /// Color-space target associated with the encoder configuration.
-    let colorSpace: MirageColorSpace
+    let colorSpace: MirageMedia.MirageColorSpace
 
     /// Active encoder bitrate, or `nil` when the encoder uses its default rate.
     let bitrate: Int?
@@ -36,7 +44,7 @@ struct StreamStartSnapshot: Sendable {
     let targetFrameRate: Int
 
     /// Video codec selected for this stream.
-    let codec: MirageVideoCodec
+    let codec: MirageMedia.MirageVideoCodec
 
     /// Token that lets clients reject frames from older encoder dimensions.
     let dimensionToken: UInt16
@@ -47,8 +55,8 @@ struct StreamStartSnapshot: Sendable {
 
 /// Effective media path policy for a stream.
 struct StreamMediaPathSnapshot: Sendable {
-    let transportPathKind: MirageNetworkPathKind
-    let mediaPathProfile: MirageMediaPathProfile
+    let transportPathKind: MirageCore.MirageNetworkPathKind
+    let mediaPathProfile: MirageMedia.MirageMediaPathProfile
 }
 
 /// Actor-isolated state needed to rebuild a desktop media pipeline without
@@ -61,12 +69,12 @@ struct DesktopPipelineRestartSnapshot: Sendable {
     let encoderCatchUpQualityAdjustmentEnabled: Bool
     let disableResolutionCap: Bool
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
-    let latencyMode: MirageStreamLatencyMode
-    let requestedLatencyMode: MirageStreamLatencyMode
-    let hostBufferingPolicy: MirageHostBufferingPolicy
-    let requestedHostBufferingPolicy: MirageHostBufferingPolicy
-    let hostBufferDepth: MirageHostBufferDepth
-    let requestedHostBufferDepth: MirageHostBufferDepth
+    let latencyMode: MirageMedia.MirageStreamLatencyMode
+    let requestedLatencyMode: MirageMedia.MirageStreamLatencyMode
+    let hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
+    let requestedHostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
+    let hostBufferDepth: MirageMedia.MirageHostBufferDepth
+    let requestedHostBufferDepth: MirageMedia.MirageHostBufferDepth
     let enteredBitrate: Int?
     let explicitEnteredBitrate: Int?
     let bitrateAdaptationCeiling: Int?
@@ -74,8 +82,8 @@ struct DesktopPipelineRestartSnapshot: Sendable {
     let encoderMaxWidth: Int?
     let encoderMaxHeight: Int?
     let captureShowsCursor: Bool
-    let displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
-    let virtualDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
+    let displayP3CoverageStatusOverride: MirageMedia.MirageDisplayP3CoverageStatus?
+    let virtualDisplaySnapshot: MirageHostVirtualDisplaySnapshot?
     let usesDisplayRefreshCadence: Bool?
     let nextDimensionToken: UInt16
     let nextEpoch: UInt16
@@ -84,7 +92,7 @@ struct DesktopPipelineRestartSnapshot: Sendable {
 /// Virtual-display geometry captured as one actor-isolated snapshot for stream-setting updates.
 struct VirtualDisplayGeometrySnapshot: Sendable {
     /// Shared display backing the stream.
-    let display: SharedVirtualDisplayManager.DisplaySnapshot
+    let display: MirageHostVirtualDisplaySnapshot
 
     /// Visible bounds on the virtual display in host logical coordinates.
     let visibleBounds: CGRect
@@ -106,12 +114,16 @@ extension StreamContext {
         await encoder?.setMaximizePowerEfficiencyEnabled(enabled)
     }
 
-    func setMetricsUpdateHandler(_ handler: (@Sendable (StreamMetricsMessage) -> Void)?) {
+    func setMetricsUpdateHandler(_ handler: (@Sendable (MirageWire.StreamMetricsMessage) -> Void)?) {
         metricsUpdateHandler = handler
     }
 
     func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) async {
         onCapturedAudioBuffer = handler
+        if let captureSourceBackend,
+           await captureSourceBackend.setCapturedAudioHandler(handler) {
+            return
+        }
         if let captureEngine {
             await captureEngine.setCapturedAudioHandler(handler)
         }
@@ -119,6 +131,10 @@ extension StreamContext {
 
     func setCaptureStallStageHandler(_ handler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?) async {
         captureStallStageHandler = handler
+        if let captureSourceBackend,
+           await captureSourceBackend.setCaptureStallStageHandler(handler) {
+            return
+        }
         if let captureEngine {
             await captureEngine.setCaptureStallStageHandler(handler)
         }
@@ -129,6 +145,11 @@ extension StreamContext {
     }
 
     func restartCaptureForAudioRecovery(reason: String) async {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            await captureSourceBackend.restartCapture(reason: reason)
+            return
+        }
         guard let captureEngine else { return }
         await captureEngine.restartCapture(reason: reason)
     }
@@ -141,9 +162,61 @@ extension StreamContext {
 
     /// Refreshes the cached cadence from the active ScreenCaptureKit capture engine.
     func refreshCaptureCadence() async {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine,
+           let effectiveRate = await captureSourceBackend.minimumFrameIntervalRate() {
+            captureFrameRate = effectiveRate
+            return
+        }
         guard let captureEngine else { return }
         let effectiveRate = await captureEngine.minimumFrameIntervalRate
         captureFrameRate = effectiveRate
+    }
+
+    func updateActiveCaptureResolution(width: Int, height: Int) async throws {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            try await captureSourceBackend.updateResolution(width: width, height: height)
+            return
+        }
+        guard let captureEngine else { return }
+        try await captureEngine.updateResolution(width: width, height: height)
+    }
+
+    func updateActiveWindowCaptureDimensions(windowFrame: CGRect, outputScale: CGFloat) async throws {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            try await captureSourceBackend.updateDimensions(windowFrame: windowFrame, outputScale: outputScale)
+            return
+        }
+        guard let captureEngine else { return }
+        try await captureEngine.updateDimensions(windowFrame: windowFrame, outputScale: outputScale)
+    }
+
+    func updateActiveCaptureShowsCursor(_ showsCursor: Bool) async throws {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            try await captureSourceBackend.updateShowsCursor(showsCursor)
+            return
+        }
+        guard let captureEngine else { return }
+        try await captureEngine.updateShowsCursor(showsCursor)
+    }
+
+    func activeCapturePolicySnapshot() async -> WindowCaptureEngine.CapturePolicySnapshot? {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            return await captureSourceBackend.capturePolicySnapshot()
+        }
+        return await captureEngine?.capturePolicySnapshot
+    }
+
+    func consumeActiveCaptureTelemetrySnapshot() async -> CaptureStreamOutput.TelemetrySnapshot? {
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            return await captureSourceBackend.consumeCaptureTelemetrySnapshot()
+        }
+        return await captureEngine?.consumeCaptureTelemetrySnapshot()
     }
 
     var isUsingVirtualDisplay: Bool {
@@ -164,7 +237,7 @@ extension StreamContext {
     }
 
     func configureDesktopVirtualDisplayCapture(
-        snapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        snapshot: MirageHostVirtualDisplaySnapshot?,
         usesDisplayRefreshCadence: Bool?
     ) {
         virtualDisplayContext = snapshot
@@ -172,7 +245,7 @@ extension StreamContext {
         updateWindowCaptureVirtualDisplayState(snapshot)
     }
 
-    func setDisplayP3CoverageStatusOverride(_ status: MirageDisplayP3CoverageStatus?) {
+    func setDisplayP3CoverageStatusOverride(_ status: MirageMedia.MirageDisplayP3CoverageStatus?) {
         displayP3CoverageStatusOverride = status
     }
 
@@ -180,7 +253,7 @@ extension StreamContext {
         self.windowID = windowID
         if let ownerGeneration,
            let snapshot = virtualDisplayContext {
-            virtualDisplayContext = SharedVirtualDisplayManager.DisplaySnapshot(
+            virtualDisplayContext = MirageHostVirtualDisplaySnapshot(
                 displayID: snapshot.displayID,
                 spaceID: snapshot.spaceID,
                 resolution: snapshot.resolution,
@@ -202,7 +275,7 @@ extension StreamContext {
             return
         }
 
-        virtualDisplayContext = SharedVirtualDisplayManager.DisplaySnapshot(
+        virtualDisplayContext = MirageHostVirtualDisplaySnapshot(
             displayID: snapshot.displayID,
             spaceID: snapshot.spaceID,
             resolution: resolution,

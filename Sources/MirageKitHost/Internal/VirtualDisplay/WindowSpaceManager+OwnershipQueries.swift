@@ -7,8 +7,16 @@
 //  Pure ownership helpers for saved window state.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 extension WindowSpaceManager {
     nonisolated static func validateRestoreOwner(

@@ -8,9 +8,16 @@
 //
 
 import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Network
-
 #if os(macOS)
 @MainActor
 extension MirageHostService {
@@ -20,7 +27,7 @@ extension MirageHostService {
     func updateAdvertisedConnectionAvailability() {
         expireStaleSingleClientReservationIfNeeded()
 
-        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAvailability(
+        let updatedAdvertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingAvailability(
             advertisedConnectionAvailabilityReason,
             in: advertisedPeerAdvertisement
         )
@@ -34,7 +41,7 @@ extension MirageHostService {
 
     /// Updates whether the advertised host metadata includes reusable VPN access.
     public func updateAdvertisedVPNAccessEnabled(_ enabled: Bool) {
-        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingVPNAccessEnabled(
+        let updatedAdvertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingVPNAccessEnabled(
             enabled,
             in: advertisedPeerAdvertisement
         )
@@ -52,12 +59,12 @@ extension MirageHostService {
 
         expireStaleSingleClientReservationIfNeeded()
 
-        var updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAvailability(
+        var updatedAdvertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingAvailability(
             advertisedConnectionAvailabilityReason,
             in: advertisedPeerAdvertisement
         )
         let localNetworkSnapshot = localNetworkMonitor.snapshot
-        updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
+        updatedAdvertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
             localNetworkSnapshot,
             in: updatedAdvertisement
         )
@@ -106,16 +113,16 @@ extension MirageHostService {
     @_spi(HostApp) public func currentCloudKitPeerAdvertisement() -> LoomPeerAdvertisement {
         expireStaleSingleClientReservationIfNeeded()
 
-        var advertisement = MiragePeerAdvertisementMetadata.updatingAvailability(
+        var advertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingAvailability(
             advertisedConnectionAvailabilityReason,
             in: advertisedPeerAdvertisement
         )
         let localNetworkSnapshot = localNetworkMonitor.snapshot
-        advertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
+        advertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
             localNetworkSnapshot,
             in: advertisement
         )
-        return MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
+        return MirageConnectivity.MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
             localEndpointHosts: localNetworkMonitor.localEndpointHosts,
             localNetwork: localNetworkSnapshot,
             in: advertisement

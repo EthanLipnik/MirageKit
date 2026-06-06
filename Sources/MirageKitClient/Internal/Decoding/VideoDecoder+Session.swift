@@ -7,11 +7,19 @@
 //  HEVC decoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
-import MirageKit
 
 extension VideoDecoder {
     func createSession(formatDescription: CMFormatDescription) throws {
@@ -84,7 +92,7 @@ extension VideoDecoder {
             decompressionSessionOut: &session
         )
 
-        guard status == noErr, let session else { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
+        guard status == noErr, let session else { throw MirageCore.MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
 
         decoderHardwareStatusRefreshAttempts = 0
         usingHardwareDecoder = nil

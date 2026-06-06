@@ -7,8 +7,16 @@
 //  Application-level heartbeat for fast host disappearance detection.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Explains why the client heartbeat loop should send or skip a reachability ping.
 enum ClientHeartbeatProbeDecision: Equatable {

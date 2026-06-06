@@ -7,10 +7,18 @@
 //  HEVC encoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -47,7 +55,7 @@ struct EncodedOutputTelemetrySnapshot: Sendable, Equatable {
     let keyframeBytesP50: Int?
     let keyframeBytesP95: Int?
     let keyframeBytesP99: Int?
-    let rateControlStrategy: MirageEncoderRateControlStrategy
+    let rateControlStrategy: MirageMedia.MirageEncoderRateControlStrategy
     let rateLimitBytes: Int?
     let rateLimitWindowMs: Int?
 }
@@ -66,7 +74,7 @@ final class EncodedOutputTelemetryTracker: @unchecked Sendable {
     private let defaultWindowSeconds: CFAbsoluteTime = 2.0
     private var samples: [Sample] = []
     private var requestedBitrateBps: Int?
-    private var rateControlStrategy: MirageEncoderRateControlStrategy = .none
+    private var rateControlStrategy: MirageMedia.MirageEncoderRateControlStrategy = .none
     private var rateLimitBytes: Int?
     private var rateLimitWindowSeconds: Double?
 
@@ -83,7 +91,7 @@ final class EncodedOutputTelemetryTracker: @unchecked Sendable {
 
     func updateRateControl(
         requestedBitrateBps: Int?,
-        strategy: MirageEncoderRateControlStrategy,
+        strategy: MirageMedia.MirageEncoderRateControlStrategy,
         rateLimit: (bytes: Int, windowSeconds: Double)?
     ) {
         lock.lock()
@@ -100,7 +108,7 @@ final class EncodedOutputTelemetryTracker: @unchecked Sendable {
     ) -> EncodedOutputTelemetrySnapshot {
         let snapshotSamples: [Sample]
         let requestedBitrate: Int?
-        let strategy: MirageEncoderRateControlStrategy
+        let strategy: MirageMedia.MirageEncoderRateControlStrategy
         let limitBytes: Int?
         let limitWindowSeconds: Double?
         let lowerBound = startTime ?? (now - defaultWindowSeconds)

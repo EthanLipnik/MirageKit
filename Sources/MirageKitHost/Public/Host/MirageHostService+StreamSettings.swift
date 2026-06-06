@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -103,7 +111,7 @@ extension MirageHostService {
 
     /// Applies client-requested encoder setting changes for an active stream.
     func handleStreamEncoderSettingsChange(
-        _ request: StreamEncoderSettingsChangeMessage,
+        _ request: MirageWire.StreamEncoderSettingsChangeMessage,
         from clientContext: ClientContext? = nil
     ) async {
         let resolvedStream: (streamID: StreamID, context: StreamContext)? = if let clientContext {
@@ -131,7 +139,7 @@ extension MirageHostService {
         let shouldBroadcastStreamUpdate = !isAppAtlasMediaStream &&
             (hasColorDepthChange || hasScaleChange || hasFrameRateChange)
 
-        let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
+        let normalizedBitrate = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
         do {
             if request.streamID != resolvedStreamID {
                 MirageLogger.host(
@@ -183,7 +191,7 @@ extension MirageHostService {
     }
 
     /// Applies the client's desktop cursor presentation preference to the active desktop stream.
-    func handleDesktopCursorPresentationChange(_ request: DesktopCursorPresentationChangeMessage) async {
+    func handleDesktopCursorPresentationChange(_ request: MirageWire.DesktopCursorPresentationChangeMessage) async {
         guard request.streamID == desktopStreamID,
               let context = desktopStreamContext else {
             MirageLogger.debug(.host, "Ignoring desktop cursor presentation update for inactive stream: \(request.streamID)")
@@ -223,11 +231,11 @@ extension MirageHostService {
                 for: snapshot.resolution,
                 scaleFactor: max(1.0, snapshot.scaleFactor)
             )
-            let displayBounds = CGVirtualDisplayBridge.displayBounds(
+            let displayBounds = platformVirtualDisplayBackend.displayBounds(
                 snapshot.displayID,
                 knownResolution: logicalResolution
             )
-            displayVisibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+            displayVisibleBounds = platformVirtualDisplayBackend.displayVisibleBounds(
                 snapshot.displayID,
                 knownBounds: displayBounds
             )
@@ -235,7 +243,7 @@ extension MirageHostService {
             if displayVisibleBounds.isEmpty {
                 displayVisibleBounds = displayBounds
             }
-            captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
+            captureSourceRect = platformVirtualDisplayBackend.displayCaptureSourceRect(
                 snapshot.displayID,
                 knownBounds: displayBounds
             )
@@ -363,7 +371,7 @@ extension MirageHostService {
                     refreshTargetHz: streamStart.targetFrameRate
                 )
                 desktopPresentationGeneration &+= 1
-                var message = DesktopStreamStartedMessage(
+                var message = MirageWire.DesktopStreamStartedMessage(
                     streamID: streamID,
                     desktopSessionID: desktopSessionID,
                     width: Int(displayResolution.width),
@@ -415,7 +423,7 @@ extension MirageHostService {
         guard let session = activeSessionByStreamID[streamID] else { return }
         guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id }) else { return }
 
-        let message = StreamStartedMessage(
+        let message = MirageWire.StreamStartedMessage(
             streamID: streamID,
             windowID: session.window.id,
             width: streamStart.encodedDimensions.width,
@@ -462,7 +470,7 @@ extension MirageHostService {
             encodedPixelResolution: encodedResolution,
             refreshTargetHz: streamStart.targetFrameRate
         )
-        var message = DesktopStreamStartedMessage(
+        var message = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: Int(displayResolution.width),

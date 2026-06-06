@@ -7,8 +7,16 @@
 //  Stream encoding lifecycle and shutdown helpers.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension StreamContext {
@@ -217,7 +225,12 @@ extension StreamContext {
         isRunning = false
         disableStartupTransportProtection()
 
-        await captureEngine?.stopCapture()
+        if let captureSourceBackend {
+            await captureSourceBackend.stopCapture()
+            self.captureSourceBackend = nil
+        } else {
+            await captureEngine?.stopCapture()
+        }
         captureEngine = nil
         frameInbox.discardAll()
         cachedStartupFrame = nil
@@ -238,7 +251,7 @@ extension StreamContext {
             } else {
                 expectedOwner = nil
             }
-            await WindowSpaceManager.shared.restoreWindowSilently(
+            await virtualDisplayBackend.restoreWindowSilently(
                 windowID,
                 expectedOwner: expectedOwner
             )

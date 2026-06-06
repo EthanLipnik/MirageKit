@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/21/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Settings for app streaming on the host.
 public struct MirageStreamingSettings: Codable, Equatable {
@@ -14,7 +22,7 @@ public struct MirageStreamingSettings: Codable, Equatable {
     public var closeHostWindowOnClientWindowClose: Bool = false
 
     /// Preferred low-power policy for local host encoder sessions.
-    public var encoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto
+    public var encoderLowPowerModePreference: MirageMedia.MirageCodecLowPowerModePreference = .auto
 
     /// Per-app settings keyed by bundle identifier.
     public var perAppSettings: [String: MirageAppStreamingSettings] = [:]
@@ -22,7 +30,7 @@ public struct MirageStreamingSettings: Codable, Equatable {
     /// Creates host app-streaming settings.
     public init(
         closeHostWindowOnClientWindowClose: Bool = false,
-        encoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto,
+        encoderLowPowerModePreference: MirageMedia.MirageCodecLowPowerModePreference = .auto,
         perAppSettings: [String: MirageAppStreamingSettings] = [:]
     ) {
         self.closeHostWindowOnClientWindowClose = closeHostWindowOnClientWindowClose

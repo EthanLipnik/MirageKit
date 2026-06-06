@@ -9,24 +9,25 @@ import CoreMedia
 import Foundation
 @testable import MirageKit
 import Testing
+import MirageWire
 
 @Suite("MirageKit Stream Serialization")
 struct MirageKitStreamSerializationTests {
     @Test("Desktop cursor presentation change message serialization")
     func desktopCursorPresentationChangeSerialization() throws {
-        let request = DesktopCursorPresentationChangeMessage(
+        let request = MirageWire.DesktopCursorPresentationChangeMessage(
             streamID: 42,
-            cursorPresentation: MirageDesktopCursorPresentation(
+            cursorPresentation: MirageWire.MirageDesktopCursorPresentation(
                 source: .host,
                 lockClientCursorWhenUsingMirageCursor: false,
                 lockClientCursorWhenUsingHostCursor: true
             )
         )
 
-        let envelope = try ControlMessage(type: .desktopCursorPresentationChange, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .desktopCursorPresentationChange, content: request)
         let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(consumed == envelope.serialize().count)
-        let decoded = try decodedEnvelope.decode(DesktopCursorPresentationChangeMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.DesktopCursorPresentationChangeMessage.self)
         #expect(decoded.streamID == 42)
         #expect(decoded.cursorPresentation.source == .host)
         #expect(decoded.cursorPresentation.lockClientCursorWhenUsingMirageCursor == false)
@@ -36,7 +37,7 @@ struct MirageKitStreamSerializationTests {
     @Test("Stream ready desktop geometry contract serialization")
     func streamReadyDesktopGeometryContractSerialization() throws {
         let contractID = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000A0D1"))
-        let contract = StreamReadyDesktopGeometryContract(
+        let contract = MirageWire.StreamReadyDesktopGeometryContract(
             contractID: contractID,
             sceneIdentity: "scene-main",
             logicalWidth: 1376,
@@ -47,22 +48,22 @@ struct MirageKitStreamSerializationTests {
             encodedPixelHeight: 2064,
             refreshTargetHz: 60
         )
-        let ready = StreamReadyMessage(
+        let ready = MirageWire.StreamReadyMessage(
             streamID: 42,
             startupAttemptID: UUID(),
             kind: .desktop,
             desktopGeometryContract: contract
         )
 
-        let envelope = try ControlMessage(type: .streamReady, content: ready)
+        let envelope = try MirageWire.ControlMessage(type: .streamReady, content: ready)
         let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(consumed == envelope.serialize().count)
-        let decoded = try decodedEnvelope.decode(StreamReadyMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StreamReadyMessage.self)
         #expect(decoded.streamID == 42)
         #expect(decoded.kind == .desktop)
         #expect(decoded.desktopGeometryContract == contract)
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: 42,
             desktopSessionID: UUID(),
             width: 2752,
@@ -85,7 +86,7 @@ struct MirageKitStreamSerializationTests {
 
     @Test("Stream metrics validation payload serialization")
     func streamMetricsValidationPayloadSerialization() throws {
-        let captureCadence = StreamCaptureCadenceMetrics(
+        let captureCadence = MirageWire.StreamCaptureCadenceMetrics(
             wallClockGapWorstMs: 80,
             wallClockGapP95Ms: 40,
             wallClockGapP99Ms: 60,
@@ -112,7 +113,7 @@ struct MirageKitStreamSerializationTests {
             virtualDisplayScaleFactor: 2,
             virtualDisplayTimingSuspect: true
         )
-        let metrics = StreamMetricsMessage(
+        let metrics = MirageWire.StreamMetricsMessage(
             streamID: 1,
             encodedFPS: 58.0,
             idleEncodedFPS: 0.2,
@@ -206,9 +207,9 @@ struct MirageKitStreamSerializationTests {
             tenBitDisplayP3Validated: true
         )
 
-        let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
+        let envelope = try MirageWire.ControlMessage(type: .streamMetricsUpdate, content: metrics)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StreamMetricsMessage.self)
         #expect(decoded.averageEncodeMs == 13.2)
         #expect(decoded.encoderRequestedBitrateBps == 12_000_000)
         #expect(decoded.encoderActualBitrateBps == 18_500_000)
@@ -286,7 +287,7 @@ struct MirageKitStreamSerializationTests {
 
     @Test("Stream metrics validation mismatch serialization")
     func streamMetricsValidationMismatchSerialization() throws {
-        let metrics = StreamMetricsMessage(
+        let metrics = MirageWire.StreamMetricsMessage(
             streamID: 2,
             encodedFPS: 42.0,
             idleEncodedFPS: 0,
@@ -303,9 +304,9 @@ struct MirageKitStreamSerializationTests {
             tenBitDisplayP3Validated: false
         )
 
-        let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
+        let envelope = try MirageWire.ControlMessage(type: .streamMetricsUpdate, content: metrics)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StreamMetricsMessage.self)
         #expect(decoded.averageEncodeMs == nil)
         #expect(decoded.usingHardwareEncoder == nil)
         #expect(decoded.encoderGPURegistryID == nil)

@@ -8,6 +8,8 @@
 @testable import MirageKitClient
 import AppKit
 import Testing
+import MirageCore
+import MirageWire
 
 #if os(macOS)
 @MainActor
@@ -129,7 +131,7 @@ struct DesktopCursorLockLifecycleTests {
         _ = cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
         _ = cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.2, y: 0.8), isVisible: true)
 
-        var appliedCursorTypes: [MirageCursorType] = []
+        var appliedCursorTypes: [MirageWire.MirageCursorType] = []
         var mouseLocation = CGPoint.zero
         var warps: [CGPoint] = []
 
@@ -139,7 +141,7 @@ struct DesktopCursorLockLifecycleTests {
                 setAssociationEnabled: { _ in },
                 warpCursor: { warps.append($0) },
                 setCursor: { cursor in
-                    if let type = MirageCursorType(from: cursor) {
+                    if let type = MirageWire.MirageCursorType(from: cursor) {
                         appliedCursorTypes.append(type)
                     }
                 },
@@ -169,7 +171,7 @@ struct DesktopCursorLockLifecycleTests {
         let cursorStore = MirageClientCursorStore()
         _ = cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
 
-        var appliedCursorTypes: [MirageCursorType] = []
+        var appliedCursorTypes: [MirageWire.MirageCursorType] = []
         var mouseLocation = CGPoint.zero
 
         withCursorSystemHooks(
@@ -178,7 +180,7 @@ struct DesktopCursorLockLifecycleTests {
                 setAssociationEnabled: { _ in },
                 warpCursor: { _ in },
                 setCursor: { cursor in
-                    if let type = MirageCursorType(from: cursor) {
+                    if let type = MirageWire.MirageCursorType(from: cursor) {
                         appliedCursorTypes.append(type)
                     }
                 },
@@ -273,7 +275,7 @@ struct DesktopCursorLockLifecycleTests {
         let cursorStore = MirageClientCursorStore()
         _ = cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
 
-        var appliedCursorTypes: [MirageCursorType] = []
+        var appliedCursorTypes: [MirageWire.MirageCursorType] = []
         var mouseLocation = CGPoint.zero
 
         withCursorSystemHooks(
@@ -282,7 +284,7 @@ struct DesktopCursorLockLifecycleTests {
                 setAssociationEnabled: { _ in },
                 warpCursor: { _ in },
                 setCursor: { cursor in
-                    if let type = MirageCursorType(from: cursor) {
+                    if let type = MirageWire.MirageCursorType(from: cursor) {
                         appliedCursorTypes.append(type)
                     }
                 },

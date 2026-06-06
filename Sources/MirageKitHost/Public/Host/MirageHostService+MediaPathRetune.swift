@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 6/2/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -25,7 +32,7 @@ extension MirageHostService {
             var lastSignature: String?
             for await pathSnapshot in observer {
                 guard !Task.isCancelled else { break }
-                let classifiedSnapshot = MirageNetworkPathClassifier.classify(pathSnapshot)
+                let classifiedSnapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(pathSnapshot)
                 guard classifiedSnapshot.signature != lastSignature else { continue }
                 lastSignature = classifiedSnapshot.signature
                 await self?.handleMediaPathSnapshotUpdate(
@@ -44,7 +51,7 @@ extension MirageHostService {
     func handleMediaPathSnapshotUpdate(
         sessionID: UUID,
         clientID: UUID,
-        hostSnapshot: MirageNetworkPathSnapshot
+        hostSnapshot: MirageConnectivity.MirageNetworkPathSnapshot
     ) async {
         guard let clientContext = clientsBySessionID[sessionID],
               clientContext.client.id == clientID else {
@@ -66,10 +73,10 @@ extension MirageHostService {
 
     func retuneActiveMediaSendProfiles(
         clientContext: ClientContext,
-        hostSnapshot: MirageNetworkPathSnapshot
+        hostSnapshot: MirageConnectivity.MirageNetworkPathSnapshot
     ) async {
         for (streamID, context) in activeMediaContexts(for: clientContext) {
-            guard let videoStream = loomVideoStreamsByStreamID[streamID] else { continue }
+            guard let videoStream = videoMediaStreamsByStreamID[streamID] else { continue }
             let policy = effectiveMediaPathPolicyForActiveMediaRetune(
                 hostSnapshot: hostSnapshot,
                 streamID: streamID
@@ -77,7 +84,8 @@ extension MirageHostService {
             let newProfile = await clientContext.controlChannel.session.mirageMediaSendProfile(
                 resolvedMediaPathProfile: policy.mediaPathProfile,
                 streamID: streamID,
-                phase: "host_path_update"
+                phase: "host_path_update",
+                logHostEvent: { message in MirageLogger.host(message) }
             )
             let oldProfile = await context.activeMediaSendProfile()
             let pipelineClassChanged = context.mediaPathProfile.usesAwdlRadioPolicy !=
@@ -88,7 +96,7 @@ extension MirageHostService {
                 _ = await context.setMediaSendProfile(
                     newProfile,
                     diagnosticsProvider: { profile in
-                        await videoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+                        await videoStream.mirageQueuedUnreliableSendDiagnostics(profile: profile)
                     }
                 )
                 await videoStream.resetQueuedUnreliableSends(profile: oldProfile)
@@ -128,7 +136,7 @@ extension MirageHostService {
     }
 
     func effectiveMediaPathPolicyForActiveMediaRetune(
-        hostSnapshot: MirageNetworkPathSnapshot,
+        hostSnapshot: MirageConnectivity.MirageNetworkPathSnapshot,
         streamID: StreamID
     ) -> MirageEffectiveMediaPathPolicy {
         let clientEvidence = mediaPathClientEvidenceByStreamID[streamID]
@@ -163,9 +171,9 @@ extension MirageHostService {
         clientContext: ClientContext,
         streamID: StreamID,
         previousContext: StreamContext,
-        activeVideoStream: LoomMultiplexedStream,
+        activeVideoStream: any MirageQueuedUnreliableMediaStream,
         policy: MirageEffectiveMediaPathPolicy,
-        mediaSendProfile: LoomQueuedUnreliableSendProfile
+        mediaSendProfile: MirageMedia.MirageMediaSendProfile
     ) async -> Bool {
         guard streamID == desktopStreamID,
               desktopStreamClientContext?.sessionID == clientContext.sessionID,
@@ -199,7 +207,7 @@ extension MirageHostService {
                 fallbackEncodedSize: previousStartSnapshot.encodedDimensions
             )
             let activeAudioConfiguration = audioConfigurationByClientID[clientContext.client.id] ??
-                MirageAudioConfiguration(enabled: false)
+                MirageMedia.MirageAudioConfiguration(enabled: false)
             let replacementMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
                 requested: previousStartSnapshot.mediaMaxPacketSize,
                 mediaPathProfile: policy.mediaPathProfile,
@@ -283,7 +291,7 @@ extension MirageHostService {
             guard streamID == desktopStreamID,
                   desktopStreamClientContext?.sessionID == clientContext.sessionID,
                   desktopStreamClientContext?.client.id == clientContext.client.id else {
-                throw MirageError.protocolError("Desktop stream owner changed during media pipeline restart")
+                throw MirageCore.MirageError.protocolError("Desktop stream owner changed during media pipeline restart")
             }
 
             await previousContext.stop()
@@ -379,15 +387,20 @@ extension MirageHostService {
                 acceptedDisplayScaleFactor: fallback.scaleFactor
             )
         case .virtualDisplay:
-            let sharedDisplayID = await SharedVirtualDisplayManager.shared.displayID
+            let sharedDisplayID = await platformVirtualDisplayBackend.displayID
             guard let displayID = desktopVirtualDisplayID ?? sharedDisplayID else {
-                throw MirageError.protocolError("Desktop media pipeline restart missing active virtual display")
+                throw MirageCore.MirageError.protocolError("Desktop media pipeline restart missing active virtual display")
             }
-            let display = try await SharedVirtualDisplayManager.shared.findSCDisplay(
+            let captureDisplay = try await platformVirtualDisplayBackend.findCaptureDisplay(
                 displayID: displayID,
-                maxAttempts: 8
+                maxAttempts: 8,
+                startupBudget: nil
             )
-            let snapshot = await SharedVirtualDisplayManager.shared.displaySnapshot
+            let display = try await resolveSCDisplayWrapper(
+                for: captureDisplay,
+                label: "desktop media pipeline restart"
+            )
+            let snapshot = await platformVirtualDisplayBackend.displaySnapshot
             let fallbackSize = CGSize(width: fallbackEncodedSize.width, height: fallbackEncodedSize.height)
             let resolution: CGSize
             if let snapshotResolution = snapshot?.resolution {

@@ -7,10 +7,18 @@
 //  Capture color attachment enforcement before encode.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension StreamContext {
@@ -30,7 +38,7 @@ extension StreamContext {
 
     static func enforceCaptureColorAttachments(
         on pixelBuffer: CVPixelBuffer,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageMedia.MirageColorSpace
     ) {
         let expected = expectedCaptureColorAttachments(for: colorSpace)
         MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferColorPrimariesKey, value: expected.colorPrimaries)
@@ -41,7 +49,7 @@ extension StreamContext {
         }
     }
 
-    static func expectedCaptureColorAttachments(for colorSpace: MirageColorSpace) -> CaptureColorAttachments {
+    static func expectedCaptureColorAttachments(for colorSpace: MirageMedia.MirageColorSpace) -> CaptureColorAttachments {
         switch colorSpace {
         case .displayP3:
             return CaptureColorAttachments(

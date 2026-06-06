@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -95,11 +103,11 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
         return .windowPlacementFailed
     }
 
-    if error is MirageRuntimeConditionError {
+    if error is MirageCore.MirageRuntimeConditionError {
         return .runtimeConditionBlocked
     }
 
-    if let mirageError = error as? MirageError {
+    if let mirageError = error as? MirageCore.MirageError {
         switch mirageError {
         case .windowNotFound:
             return .windowNotFound

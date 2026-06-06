@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 5/4/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import ApplicationServices
 
 final class MacShortcutForwardingEventTap {
     private static let screenshotShortcutKeyCodes: Set<UInt16> = [0x14, 0x15, 0x17]
-    private static let allowedScreenshotShortcutModifiers: MirageModifierFlags = [
+    private static let allowedScreenshotShortcutModifiers: MirageInput.MirageModifierFlags = [
         .command,
         .shift,
         .control,
@@ -25,7 +33,7 @@ final class MacShortcutForwardingEventTap {
         .cgSessionEventTap,
     ]
 
-    var onInputEvent: ((MirageInputEvent) -> Void)?
+    var onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?
     var onForwardedShortcutKeyDown: (() -> Void)?
     var shouldForward: () -> Bool = { true }
 
@@ -137,10 +145,10 @@ final class MacShortcutForwardingEventTap {
 
     private func keyEvent(
         from event: CGEvent,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         isRepeat: Bool
-    ) -> MirageKeyEvent {
-        MirageKeyEvent(
+    ) -> MirageInput.MirageKeyEvent {
+        MirageInput.MirageKeyEvent(
             keyCode: keyCode(from: event),
             modifiers: modifiers,
             isRepeat: isRepeat
@@ -151,15 +159,15 @@ final class MacShortcutForwardingEventTap {
         UInt16(clamping: event.getIntegerValueField(.keyboardEventKeycode))
     }
 
-    private func modifiers(from event: CGEvent) -> MirageModifierFlags {
-        MirageModifierFlags(
+    private func modifiers(from event: CGEvent) -> MirageInput.MirageModifierFlags {
+        MirageInput.MirageModifierFlags(
             nsEventFlags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
         )
     }
 
     nonisolated static func shouldForwardShortcut(
         keyCode: UInt16,
-        modifiers: MirageModifierFlags
+        modifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         let shortcutModifiers = modifiers.normalizedForShortcutMatching
         guard !shortcutModifiers.isEmpty else { return false }
@@ -173,7 +181,7 @@ final class MacShortcutForwardingEventTap {
 
     private nonisolated static func isScreenshotShortcut(
         keyCode: UInt16,
-        modifiers: MirageModifierFlags
+        modifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         guard screenshotShortcutKeyCodes.contains(keyCode) else { return false }
         guard modifiers.isSuperset(of: [.command, .shift]) else { return false }

@@ -7,7 +7,15 @@
 //  Live dictation handling for iOS and visionOS client input.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import AVFAudio
 import Speech
@@ -201,7 +209,7 @@ extension InputCapturingView {
     }
 
     func sendDictationText(_ text: String) {
-        let modifiers: MirageModifierFlags = []
+        let modifiers: MirageInput.MirageModifierFlags = []
         for scalar in text {
             let character = String(scalar)
             if character == "\n" {

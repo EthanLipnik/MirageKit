@@ -11,6 +11,10 @@ import Foundation
 import Loom
 import Network
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageKit
+import MirageWire
 
 #if os(macOS)
 @Suite("Client Loom Control Plane", .serialized)
@@ -29,19 +33,19 @@ struct ClientLoomControlPlaneTests {
         let clientReceiver = ControlMessageReceiver(channel: clientControl)
         let serverReceiver = ControlMessageReceiver(channel: serverControl)
         do {
-            let bootstrapRequest = MirageSessionBootstrapRequest(
-                protocolVersion: Int(MirageKit.protocolVersion),
+            let bootstrapRequest = MirageWire.MirageSessionBootstrapRequest(
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 clientRequiresMediaEncryption: true
             )
             try await clientControl.send(.sessionBootstrapRequest, content: bootstrapRequest)
 
             let receivedBootstrapEnvelope = try await serverReceiver.next()
             #expect(receivedBootstrapEnvelope.type == .sessionBootstrapRequest)
-            let receivedBootstrapRequest = try receivedBootstrapEnvelope.decode(MirageSessionBootstrapRequest.self)
+            let receivedBootstrapRequest = try receivedBootstrapEnvelope.decode(MirageWire.MirageSessionBootstrapRequest.self)
             #expect(receivedBootstrapRequest.protocolVersion == bootstrapRequest.protocolVersion)
             #expect(receivedBootstrapRequest.clientRequiresMediaEncryption)
 
-            let bootstrapResponse = MirageSessionBootstrapResponse(
+            let bootstrapResponse = MirageWire.MirageSessionBootstrapResponse(
                 accepted: true,
                 hostID: UUID(),
                 hostName: "Loopback Host",
@@ -52,11 +56,11 @@ struct ClientLoomControlPlaneTests {
 
             let receivedBootstrapResponseEnvelope = try await clientReceiver.next()
             #expect(receivedBootstrapResponseEnvelope.type == .sessionBootstrapResponse)
-            let receivedBootstrapResponse = try receivedBootstrapResponseEnvelope.decode(MirageSessionBootstrapResponse.self)
+            let receivedBootstrapResponse = try receivedBootstrapResponseEnvelope.decode(MirageWire.MirageSessionBootstrapResponse.self)
             #expect(receivedBootstrapResponse.accepted == true)
             #expect(receivedBootstrapResponse.hostName == "Loopback Host")
 
-            let appListRequest = AppListRequestMessage(
+            let appListRequest = MirageWire.AppListRequestMessage(
                 forceRefresh: true,
                 priorityBundleIdentifiers: ["com.apple.Safari"],
                 requestID: UUID()
@@ -66,16 +70,16 @@ struct ClientLoomControlPlaneTests {
             let appListRequestID: UUID = try await {
                 let receivedAppListRequestEnvelope = try await serverReceiver.next()
                 #expect(receivedAppListRequestEnvelope.type == .appListRequest)
-                let receivedAppListRequest = try receivedAppListRequestEnvelope.decode(AppListRequestMessage.self)
+                let receivedAppListRequest = try receivedAppListRequestEnvelope.decode(MirageWire.AppListRequestMessage.self)
                 #expect(receivedAppListRequest.forceRefresh == true)
                 #expect(receivedAppListRequest.priorityBundleIdentifiers == ["com.apple.safari"])
                 return receivedAppListRequest.requestID
             }()
 
-            let appListProgress = AppListProgressMessage(
+            let appListProgress = MirageWire.AppListProgressMessage(
                 requestID: appListRequestID,
                 apps: [
-                    MirageInstalledApp(
+                    MirageWire.MirageInstalledApp(
                         bundleIdentifier: "com.apple.Safari",
                         name: "Safari",
                         path: "/Applications/Safari.app"
@@ -83,7 +87,7 @@ struct ClientLoomControlPlaneTests {
                 ]
             )
             try await serverControl.send(.appListProgress, content: appListProgress)
-            let appListComplete = AppListCompleteMessage(
+            let appListComplete = MirageWire.AppListCompleteMessage(
                 requestID: appListRequestID,
                 totalAppCount: 1
             )
@@ -92,23 +96,23 @@ struct ClientLoomControlPlaneTests {
             try await {
                 let receivedProgressEnvelope = try await clientReceiver.next()
                 #expect(receivedProgressEnvelope.type == .appListProgress)
-                let receivedProgress = try receivedProgressEnvelope.decode(AppListProgressMessage.self)
+                let receivedProgress = try receivedProgressEnvelope.decode(MirageWire.AppListProgressMessage.self)
                 #expect(receivedProgress.requestID == appListRequestID)
                 #expect(receivedProgress.apps.count == 1)
                 #expect(receivedProgress.apps.first?.bundleIdentifier == "com.apple.Safari")
 
                 let receivedCompleteEnvelope = try await clientReceiver.next()
                 #expect(receivedCompleteEnvelope.type == .appListComplete)
-                let receivedComplete = try receivedCompleteEnvelope.decode(AppListCompleteMessage.self)
+                let receivedComplete = try receivedCompleteEnvelope.decode(MirageWire.AppListCompleteMessage.self)
                 #expect(receivedComplete.requestID == appListRequestID)
                 #expect(receivedComplete.totalAppCount == 1)
             }()
 
-            try await clientControl.send(ControlMessage(type: .ping))
+            try await clientControl.send(MirageWire.ControlMessage(type: .ping))
             let receivedPing = try await serverReceiver.next()
             #expect(receivedPing.type == .ping)
 
-            try await serverControl.send(ControlMessage(type: .pong))
+            try await serverControl.send(MirageWire.ControlMessage(type: .pong))
             let receivedPong = try await clientReceiver.next()
             #expect(receivedPong.type == .pong)
 
@@ -141,7 +145,7 @@ struct ClientLoomControlPlaneTests {
 
         let expectedRequestID = UUID()
         let expectedIconData = Data(repeating: 0xA5, count: 256 * 1024)
-        let expectedStatus = HostSoftwareUpdateStatusMessage(
+        let expectedStatus = MirageWire.HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: true,
             isCheckingForUpdates: false,
             isInstallInProgress: false,
@@ -165,8 +169,8 @@ struct ClientLoomControlPlaneTests {
             lastCheckedAtMs: nil
         )
 
-        let receiveTask = Task<[ControlMessage], Error> {
-            var messages: [ControlMessage] = []
+        let receiveTask = Task<[MirageWire.ControlMessage], Error> {
+            var messages: [MirageWire.ControlMessage] = []
             messages.reserveCapacity(3)
             for _ in 0 ..< 3 {
                 try await messages.append(serverReceiver.next())
@@ -177,7 +181,7 @@ struct ClientLoomControlPlaneTests {
         do {
             async let sendIcon: Void = clientControl.send(
                 .hostHardwareIcon,
-                content: HostHardwareIconMessage(
+                content: MirageWire.HostHardwareIconMessage(
                     pngData: expectedIconData,
                     iconName: "test-hardware-icon",
                     hardwareModelIdentifier: "Mac16,5",
@@ -186,7 +190,7 @@ struct ClientLoomControlPlaneTests {
             )
             async let sendAppList: Void = clientControl.send(
                 .appListRequest,
-                content: AppListRequestMessage(
+                content: MirageWire.AppListRequestMessage(
                     forceRefresh: true,
                     forceIconReset: true,
                     priorityBundleIdentifiers: ["com.apple.Safari"],
@@ -205,17 +209,17 @@ struct ClientLoomControlPlaneTests {
                 #expect(receivedMessages.count == 3)
 
                 let iconEnvelope = try #require(receivedMessages.first { $0.type == .hostHardwareIcon })
-                let iconMessage = try iconEnvelope.decode(HostHardwareIconMessage.self)
+                let iconMessage = try iconEnvelope.decode(MirageWire.HostHardwareIconMessage.self)
                 #expect(iconMessage.pngData == expectedIconData)
                 #expect(iconMessage.iconName == "test-hardware-icon")
 
                 let appListEnvelope = try #require(receivedMessages.first { $0.type == .appListRequest })
-                let appListMessage = try appListEnvelope.decode(AppListRequestMessage.self)
+                let appListMessage = try appListEnvelope.decode(MirageWire.AppListRequestMessage.self)
                 #expect(appListMessage.requestID == expectedRequestID)
                 #expect(appListMessage.forceIconReset == true)
 
                 let statusEnvelope = try #require(receivedMessages.first { $0.type == .hostSoftwareUpdateStatus })
-                let statusMessage = try statusEnvelope.decode(HostSoftwareUpdateStatusMessage.self)
+                let statusMessage = try statusEnvelope.decode(MirageWire.HostSoftwareUpdateStatusMessage.self)
                 #expect(statusMessage.currentVersion == expectedStatus.currentVersion)
                 #expect(statusMessage.channel == expectedStatus.channel)
             }()
@@ -358,20 +362,20 @@ func collectPayloads(
 func nextDisconnectMessage(
     from receiver: ControlMessageReceiver,
     limit: Int = 4
-) async throws -> DisconnectMessage {
+) async throws -> MirageWire.DisconnectMessage {
     for _ in 0 ..< limit {
         let message = try await receiver.next()
         guard message.type == .disconnect else { continue }
-        return try message.decode(DisconnectMessage.self)
+        return try message.decode(MirageWire.DisconnectMessage.self)
     }
 
-    throw MirageError.protocolError("Disconnect notice was not received")
+    throw MirageCore.MirageError.protocolError("Disconnect notice was not received")
 }
 
 final class ControlMessageReceiver: @unchecked Sendable {
     private let lock = NSLock()
-    private var bufferedResults: [Result<ControlMessage, Error>] = []
-    private var waitingContinuations: [CheckedContinuation<Result<ControlMessage, Error>, Never>] = []
+    private var bufferedResults: [Result<MirageWire.ControlMessage, Error>] = []
+    private var waitingContinuations: [CheckedContinuation<Result<MirageWire.ControlMessage, Error>, Never>] = []
     private var receiveTask: Task<Void, Never> = Task {}
 
     init(channel: MirageControlChannel) {
@@ -389,7 +393,7 @@ final class ControlMessageReceiver: @unchecked Sendable {
             }
 
             self.enqueue(
-                .failure(MirageError.protocolError("Control stream closed before receiving a Mirage control message"))
+                .failure(MirageCore.MirageError.protocolError("Control stream closed before receiving a Mirage control message"))
             )
         }
     }
@@ -398,7 +402,7 @@ final class ControlMessageReceiver: @unchecked Sendable {
         receiveTask.cancel()
     }
 
-    func next() async throws -> ControlMessage {
+    func next() async throws -> MirageWire.ControlMessage {
         if let result = takeBufferedResult() {
             return try result.get()
         }
@@ -417,7 +421,7 @@ final class ControlMessageReceiver: @unchecked Sendable {
         return try result.get()
     }
 
-    private func enqueue(_ result: Result<ControlMessage, Error>) {
+    private func enqueue(_ result: Result<MirageWire.ControlMessage, Error>) {
         lock.lock()
         if let continuation = waitingContinuations.first {
             waitingContinuations.removeFirst()
@@ -429,7 +433,7 @@ final class ControlMessageReceiver: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func takeBufferedResult() -> Result<ControlMessage, Error>? {
+    private func takeBufferedResult() -> Result<MirageWire.ControlMessage, Error>? {
         lock.lock()
         defer { lock.unlock() }
         guard let result = bufferedResults.first else {

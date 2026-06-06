@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -24,15 +32,18 @@ extension MirageHostService {
         guard let session = await appStreamManager.session(bundleIdentifier: bundleIdentifier) else { return nil }
 
         let normalizedBundleID = bundleIdentifier.lowercased()
-        let catalog = try await AppStreamWindowCatalog.catalog(for: [bundleIdentifier])
+        let catalog = try await AppStreamWindowCatalog.catalog(
+            for: [bundleIdentifier],
+            captureContentProviderBackend: platformCaptureContentProviderBackend
+        )
         let allCandidates = (catalog[normalizedBundleID] ?? [])
             .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
         let candidates = AppStreamWindowCatalog.startupCandidateSelection(from: allCandidates)
 
-        let content = try await SCShareableContent.mirageHostContent()
+        let content = try await currentCaptureShareableContent()
         let liveWindows = Self.liveWindowsSnapshot(from: content)
 
-        let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+        let activeOwnerClaimedWindowIDs = await platformVirtualDisplayBackend.claimedWindowIDsForActiveOwners(
             activeStreamIDs: Set(activeSessionByStreamID.keys)
         )
         let reservedWindowIDs = appStreamStartupReservedWindowIDs.subtracting(allowedReservedWindowIDs)
@@ -54,7 +65,7 @@ extension MirageHostService {
 
     /// Discovers startup-eligible windows for an app after launch or activation.
     func discoverInitialAppWindowCandidates(
-        app: MirageInstalledApp,
+        app: MirageWire.MirageInstalledApp,
         clientContext: ClientContext,
         startupRequestID: UUID,
         launchOutcome: AppStreamLaunchOutcome,
@@ -72,7 +83,10 @@ extension MirageHostService {
             }
 
             do {
-                let catalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])
+                let catalog = try await AppStreamWindowCatalog.catalog(
+                    for: [app.bundleIdentifier],
+                    captureContentProviderBackend: platformCaptureContentProviderBackend
+                )
                 let allCandidates = (catalog[normalizedBundleID] ?? [])
                     .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
                 let auxiliaryCount = allCandidates.count(where: { $0.classification == .auxiliary })
@@ -88,7 +102,7 @@ extension MirageHostService {
                     break
                 }
 
-                let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+                let activeOwnerClaimedWindowIDs = await platformVirtualDisplayBackend.claimedWindowIDsForActiveOwners(
                     activeStreamIDs: Set(activeSessionByStreamID.keys)
                 )
                 let claimedWindowIDs = Set(activeStreamIDByWindowID.keys)

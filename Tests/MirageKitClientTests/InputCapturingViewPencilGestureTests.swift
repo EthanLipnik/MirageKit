@@ -10,6 +10,7 @@
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageInput
 
 @MainActor
 @Suite("Input Capturing View Pencil Gestures")
@@ -38,7 +39,7 @@ struct InputCapturingViewPencilGestureTests {
             squeeze: .secondaryClick
         )
 
-        var events: [MirageInputEvent] = []
+        var events: [MirageInput.MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
 
         view.performPencilGesture(.squeeze, hoverLocation: CGPoint(x: 50, y: 25))
@@ -74,7 +75,7 @@ struct InputCapturingViewPencilGestureTests {
     @Test("Pencil hover batch sender suppresses jitter below threshold")
     func pencilHoverBatchSenderSuppressesJitter() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 200, height: 100))
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 6,
             tiltX: 0.1,
@@ -85,7 +86,7 @@ struct InputCapturingViewPencilGestureTests {
         view.lastPencilHoverForwardLocation = CGPoint(x: 0.5, y: 0.5)
         view.lastPencilHoverForwardTime = 10
 
-        var events: [MirageInputEvent] = []
+        var events: [MirageInput.MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
 
         view.sendPencilHoverBatch(

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension FrameReassembler {
     func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
@@ -253,7 +261,7 @@ extension FrameReassembler {
         MirageLogger.log(.frameAssembly, "Epoch \(epoch) reset (\(reason)) for stream \(streamID)")
     }
 
-    func consumeCompletedFrameAckRanges() -> [MediaFeedbackFrameRange] {
+    func consumeCompletedFrameAckRanges() -> [MirageWire.MediaFeedbackFrameRange] {
         lock.lock()
         defer { lock.unlock() }
         guard !pendingCompletedFrameAckNumbers.isEmpty else { return [] }
@@ -262,14 +270,14 @@ extension FrameReassembler {
         return ranges
     }
 
-    func consumePFrameTimingSamples(limit: Int = 128) -> [ReceiverPFrameTimingSample] {
+    func consumePFrameTimingSamples(limit: Int = 128) -> [MirageWire.ReceiverPFrameTimingSample] {
         lock.lock()
         defer { lock.unlock() }
         guard !pendingPFrameTimingSamples.isEmpty else { return [] }
         let sampleLimit = max(1, limit)
         let now = Date()
         let samples = pendingPFrameTimingSamples.suffix(sampleLimit).map {
-            ReceiverPFrameTimingSample(
+            MirageWire.ReceiverPFrameTimingSample(
                 frameNumber: $0.frameNumber,
                 packetSpanMs: $0.packetSpanMs,
                 completionGapMs: $0.completionGapMs,
@@ -281,10 +289,10 @@ extension FrameReassembler {
         return samples
     }
 
-    static func completedFrameAckRanges(from frameNumbers: [UInt32]) -> [MediaFeedbackFrameRange] {
+    static func completedFrameAckRanges(from frameNumbers: [UInt32]) -> [MirageWire.MediaFeedbackFrameRange] {
         guard var rangeStart = frameNumbers.first else { return [] }
         var rangeEnd = rangeStart
-        var ranges: [MediaFeedbackFrameRange] = []
+        var ranges: [MirageWire.MediaFeedbackFrameRange] = []
 
         for frameNumber in frameNumbers.dropFirst() {
             if frameNumber == rangeEnd {
@@ -294,12 +302,12 @@ extension FrameReassembler {
                 rangeEnd = frameNumber
                 continue
             }
-            ranges.append(MediaFeedbackFrameRange(startFrame: rangeStart, endFrame: rangeEnd))
+            ranges.append(MirageWire.MediaFeedbackFrameRange(startFrame: rangeStart, endFrame: rangeEnd))
             rangeStart = frameNumber
             rangeEnd = frameNumber
         }
 
-        ranges.append(MediaFeedbackFrameRange(startFrame: rangeStart, endFrame: rangeEnd))
+        ranges.append(MirageWire.MediaFeedbackFrameRange(startFrame: rangeStart, endFrame: rangeEnd))
         return ranges
     }
 
@@ -626,7 +634,7 @@ extension FrameReassembler {
     }
 
     private var usesAwdlRadioPolicyLocked: Bool {
-        MirageMediaPathProfile.resolveRealtimeProfile(
+        MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile
         ).usesAwdlRadioPolicy

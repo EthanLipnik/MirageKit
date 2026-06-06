@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+BootstrapRejectionMapping.swift
 //  MirageKit
@@ -5,11 +14,10 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import MirageKit
 
 package extension MirageClientService.ProtocolMismatchInfo.Reason {
     /// Maps host bootstrap rejection reasons into protocol-mismatch UI state.
-    init(bootstrapRejectionReason reason: MirageSessionBootstrapRejectionReason?) {
+    init(bootstrapRejectionReason reason: MirageWire.MirageSessionBootstrapRejectionReason?) {
         switch reason {
         case .protocolVersionMismatch:
             self = .protocolVersionMismatch
@@ -29,11 +37,11 @@ package extension MirageClientService.ProtocolMismatchInfo.Reason {
     }
 }
 
-package extension MirageConnectionRejection.Reason {
+package extension MirageCore.MirageConnectionRejection.Reason {
     /// Maps host bootstrap rejection reasons into terminal connection-rejection state.
     init(
-        bootstrapRejectionReason reason: MirageSessionBootstrapRejectionReason?,
-        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil
+        bootstrapRejectionReason reason: MirageWire.MirageSessionBootstrapRejectionReason?,
+        authorizationFailureReason: MirageWire.MirageSessionBootstrapAuthorizationFailureReason? = nil
     ) {
         if authorizationFailureReason == .remoteAccessDisabled {
             self = .remoteAccessDisabled
@@ -59,9 +67,9 @@ package extension MirageConnectionRejection.Reason {
     }
 }
 
-package extension MirageHelloRejectionStepReason {
+package extension MirageDiagnostics.MirageHelloRejectionStepReason {
     /// Maps host bootstrap rejection reasons into diagnostics labels.
-    init(bootstrapRejectionReason reason: MirageSessionBootstrapRejectionReason?) {
+    init(bootstrapRejectionReason reason: MirageWire.MirageSessionBootstrapRejectionReason?) {
         switch reason {
         case .protocolVersionMismatch:
             self = .protocolVersionMismatch

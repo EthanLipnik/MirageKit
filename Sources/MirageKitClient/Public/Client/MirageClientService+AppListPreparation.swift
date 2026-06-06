@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import ImageIO
-import MirageKit
 
 extension MirageClientService {
     /// Reusable icon payload retained from an earlier app-list snapshot.
@@ -19,7 +27,7 @@ extension MirageClientService {
     /// Result of validating and normalizing app-list progress off the main actor.
     struct PreparedAppListProgress: Sendable {
         /// Apps ready to merge into the client's incremental app-list state.
-        let apps: [MirageInstalledApp]
+        let apps: [MirageWire.MirageInstalledApp]
 
         /// Icon payloads dropped during preparation because they were malformed.
         let rejectedIcons: [RejectedAppIconPayload]
@@ -49,7 +57,7 @@ extension MirageClientService {
     }
 
     /// Rebuilds the incremental app-list accumulator from a complete app snapshot.
-    func rebuildAvailableAppAccumulator(from apps: [MirageInstalledApp]) {
+    func rebuildAvailableAppAccumulator(from apps: [MirageWire.MirageInstalledApp]) {
         availableAppsByBundleIdentifier.removeAll(keepingCapacity: true)
         orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: true)
         activeAppListReceivedBundleIdentifiers.removeAll(keepingCapacity: true)
@@ -78,10 +86,10 @@ extension MirageClientService {
 
     /// Validates and merges app-list icon payloads off the main actor.
     nonisolated static func prepareAppListProgressApps(
-        _ apps: [MirageInstalledApp],
+        _ apps: [MirageWire.MirageInstalledApp],
         previousIconsByBundleIdentifier: [String: AppIconPayload]
     ) -> PreparedAppListProgress {
-        var preparedApps: [MirageInstalledApp] = []
+        var preparedApps: [MirageWire.MirageInstalledApp] = []
         preparedApps.reserveCapacity(apps.count)
         var rejectedIcons: [RejectedAppIconPayload] = []
 
@@ -125,9 +133,9 @@ extension MirageClientService {
     }
 
     nonisolated private static func appWithFallbackIconData(
-        _ app: MirageInstalledApp,
+        _ app: MirageWire.MirageInstalledApp,
         previousIcon: AppIconPayload?
-    ) -> MirageInstalledApp {
+    ) -> MirageWire.MirageInstalledApp {
         guard let previousIcon,
               isValidImagePayload(previousIcon.iconData) else {
             return appWithUpdatedIconData(app, iconData: nil)
@@ -139,10 +147,10 @@ extension MirageClientService {
     }
 
     nonisolated private static func appWithUpdatedIconData(
-        _ app: MirageInstalledApp,
+        _ app: MirageWire.MirageInstalledApp,
         iconData: Data?
-    ) -> MirageInstalledApp {
-        MirageInstalledApp(
+    ) -> MirageWire.MirageInstalledApp {
+        MirageWire.MirageInstalledApp(
             bundleIdentifier: app.bundleIdentifier,
             name: app.name,
             path: app.path,

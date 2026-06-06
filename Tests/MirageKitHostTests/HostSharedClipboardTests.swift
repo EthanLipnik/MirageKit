@@ -9,8 +9,12 @@
 @testable import MirageKit
 @testable import MirageKitHost
 import AppKit
+import Darwin
 import Foundation
+import MirageConnectivity
 import Testing
+import MirageMedia
+import MirageWire
 
 @Suite("Host Shared Clipboard", .serialized)
 struct HostSharedClipboardTests {
@@ -27,7 +31,7 @@ struct HostSharedClipboardTests {
         #expect(
             !MirageHostService.shouldEnableSharedClipboard(
                 settingEnabled: false,
-                sessionState: .ready,
+                sessionAvailability: .ready,
                 hasAppStreams: true,
                 hasDesktopStream: false
             )
@@ -35,7 +39,7 @@ struct HostSharedClipboardTests {
         #expect(
             !MirageHostService.shouldEnableSharedClipboard(
                 settingEnabled: true,
-                sessionState: .credentialsRequired,
+                sessionAvailability: .credentialsRequired,
                 hasAppStreams: true,
                 hasDesktopStream: false
             )
@@ -43,7 +47,7 @@ struct HostSharedClipboardTests {
         #expect(
             !MirageHostService.shouldEnableSharedClipboard(
                 settingEnabled: true,
-                sessionState: .ready,
+                sessionAvailability: .ready,
                 hasAppStreams: false,
                 hasDesktopStream: false
             )
@@ -51,7 +55,7 @@ struct HostSharedClipboardTests {
         #expect(
             MirageHostService.shouldEnableSharedClipboard(
                 settingEnabled: true,
-                sessionState: .ready,
+                sessionAvailability: .ready,
                 hasAppStreams: true,
                 hasDesktopStream: false
             )
@@ -59,7 +63,7 @@ struct HostSharedClipboardTests {
         #expect(
             MirageHostService.shouldEnableSharedClipboard(
                 settingEnabled: true,
-                sessionState: .ready,
+                sessionAvailability: .ready,
                 hasAppStreams: false,
                 hasDesktopStream: true
             )
@@ -69,6 +73,8 @@ struct HostSharedClipboardTests {
     @MainActor
     @Test("Host sends automatic shared clipboard payloads during active streams")
     func hostSendsAutomaticSharedClipboardPayloadsDuringActiveStreams() async throws {
+        let pasteboardLock = await PasteboardTestLock.acquire()
+        defer { pasteboardLock.release() }
         let pasteboardSnapshot = PasteboardSnapshot.capture()
         defer { pasteboardSnapshot.restore() }
 
@@ -107,7 +113,7 @@ struct HostSharedClipboardTests {
                 sessionID: sessionID,
                 client: client,
                 controlChannel: serverControl,
-                transferEngine: LoomTransferEngine(session: pair.server),
+                transferEngine: MirageTransferEngine(session: pair.server),
                 pathSnapshot: nil
             )
             let mediaSecurityContext = MirageMediaSecurityContext(
@@ -121,7 +127,7 @@ struct HostSharedClipboardTests {
             host.activeStreams = [
                 MirageStreamSession(
                     id: 9001,
-                    window: MirageWindow(
+                    window: MirageMedia.MirageWindow(
                         id: 42,
                         title: "Clipboard Test",
                         application: nil,
@@ -147,7 +153,7 @@ struct HostSharedClipboardTests {
             NSPasteboard.general.setString(clipboardText, forType: .string)
 
             let message = try await receiveTask.value
-            let update = try message.decode(SharedClipboardUpdateMessage.self)
+            let update = try message.decode(MirageWire.SharedClipboardUpdateMessage.self)
             let encryptedPayload = try #require(update.encryptedPayload)
             let decryptedPayload = try MirageMediaSecurity.decryptClipboardPayload(
                 encryptedPayload,
@@ -168,6 +174,40 @@ struct HostSharedClipboardTests {
         await serverControl.cancel()
         await clientControl.cancel()
         await pair.stop()
+    }
+}
+
+private final class PasteboardTestLock {
+    private var fileDescriptor: CInt = -1
+
+    private init(fileDescriptor: CInt) {
+        self.fileDescriptor = fileDescriptor
+    }
+
+    static func acquire() async -> PasteboardTestLock {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("mirage-pasteboard-tests.lock")
+            .path
+        while true {
+            let fileDescriptor = open(path, O_CREAT | O_RDWR, 0o600)
+            precondition(fileDescriptor >= 0, "Unable to open pasteboard test lock")
+            if flock(fileDescriptor, LOCK_EX | LOCK_NB) == 0 {
+                return PasteboardTestLock(fileDescriptor: fileDescriptor)
+            }
+            close(fileDescriptor)
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func release() {
+        guard fileDescriptor >= 0 else { return }
+        flock(fileDescriptor, LOCK_UN)
+        close(fileDescriptor)
+        fileDescriptor = -1
+    }
+
+    deinit {
+        release()
     }
 }
 

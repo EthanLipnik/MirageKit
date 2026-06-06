@@ -5,20 +5,28 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Starts capture for a resolved app window and binds it into the app session.
     func attemptStartInitialAppWindowStream(
-        app: MirageInstalledApp,
+        app: MirageWire.MirageInstalledApp,
         startupCandidate: AppStreamWindowCandidate,
-        preferredWindow: MirageWindow,
+        preferredWindow: MirageMedia.MirageWindow,
         preferredSlotIndex: Int,
         clientContext: ClientContext,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         requestedBitrateOverride: Int?,
         mediaMaxPacketSize: Int
@@ -82,7 +90,7 @@ extension MirageHostService {
                     existingStreamID: existingStreamID
                 )
             }
-            throw MirageError.protocolError(
+            throw MirageCore.MirageError.protocolError(
                 "Failed to bind startup window \(resolvedWindow.id) into slot \(preferredSlotIndex)"
             )
         }
@@ -120,11 +128,11 @@ extension MirageHostService {
     /// Queues a best-effort app selection error response for the requesting client.
     func sendAppSelectionError(
         to clientContext: ClientContext,
-        code: ErrorMessage.ErrorCode,
+        code: MirageWire.ErrorMessage.ErrorCode,
         message: String,
         bundleIdentifier: String? = nil
     ) {
-        let error = ErrorMessage(code: code, message: message, bundleIdentifier: bundleIdentifier)
+        let error = MirageWire.ErrorMessage(code: code, message: message, bundleIdentifier: bundleIdentifier)
         clientContext.queueBestEffort(.error, content: error)
     }
 }

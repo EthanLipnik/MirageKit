@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -107,15 +115,15 @@ extension MirageHostService {
 
     /// Sends the initial app-stream started response and starts session maintenance.
     func sendInitialAppStreamStarted(
-        app: MirageInstalledApp,
-        request: SelectAppMessage,
+        app: MirageWire.MirageInstalledApp,
+        request: MirageWire.SelectAppMessage,
         startupWindows: [InitialStartedAppWindow],
         clientContext: ClientContext
     ) async throws {
         await appStreamManager.markSessionStreaming(app.bundleIdentifier)
 
         let sortedStartupWindows = startupWindows.sorted { $0.streamID < $1.streamID }
-        let response = AppStreamStartedMessage(
+        let response = MirageWire.AppStreamStartedMessage(
             appSessionID: request.appSessionID,
             startupRequestID: request.startupRequestID,
             bundleIdentifier: app.bundleIdentifier,
@@ -123,7 +131,7 @@ extension MirageHostService {
             windows: sortedStartupWindows.map(\.asWireWindow),
             atlasLayouts: sortedStartupWindows.last?.atlasLayouts
         )
-        let responseMessage = try ControlMessage(type: .appStreamStarted, content: response)
+        let responseMessage = try MirageWire.ControlMessage(type: .appStreamStarted, content: response)
         clientContext.sendBestEffort(responseMessage)
         await sendAppWindowInventoryUpdate(
             bundleIdentifier: app.bundleIdentifier,
@@ -135,10 +143,10 @@ extension MirageHostService {
 
     /// Starts one additional visible stream for an existing app session.
     func startAdditionalStreamForExistingAppSession(
-        app: MirageInstalledApp,
+        app: MirageWire.MirageInstalledApp,
         session: MirageAppStreamSession,
         clientContext: ClientContext,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         mediaMaxPacketSize: Int
     ) async -> ExistingSessionWindowStartResult {
@@ -151,7 +159,10 @@ extension MirageHostService {
         }
         let catalog: [AppStreamWindowCandidate]
         do {
-            catalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])[normalizedBundleID] ?? []
+            catalog = try await AppStreamWindowCatalog.catalog(
+                for: [app.bundleIdentifier],
+                captureContentProviderBackend: platformCaptureContentProviderBackend
+            )[normalizedBundleID] ?? []
         } catch {
             return .failure("Failed to enumerate windows for \(app.name): \(error.localizedDescription)")
         }
@@ -184,7 +195,10 @@ extension MirageHostService {
             }
             let refreshedCatalog: [AppStreamWindowCandidate]
             do {
-                refreshedCatalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])[normalizedBundleID] ?? []
+                refreshedCatalog = try await AppStreamWindowCatalog.catalog(
+                    for: [app.bundleIdentifier],
+                    captureContentProviderBackend: platformCaptureContentProviderBackend
+                )[normalizedBundleID] ?? []
             } catch {
                 return .failure("Failed to enumerate windows for \(app.name): \(error.localizedDescription)")
             }
@@ -222,7 +236,7 @@ extension MirageHostService {
         catalog: [AppStreamWindowCandidate]
     ) async -> AppStreamWindowCandidate? {
         let visibleWindowIDs = Set(session.windowStreams.keys)
-        let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+        let activeOwnerClaimedWindowIDs = await platformVirtualDisplayBackend.claimedWindowIDsForActiveOwners(
             activeStreamIDs: Set(activeSessionByStreamID.keys)
         )
         let claimedWindowIDs = visibleWindowIDs.union(activeOwnerClaimedWindowIDs)
@@ -236,10 +250,10 @@ extension MirageHostService {
 
     /// Starts capture for a selected expansion candidate and registers it with the app session.
     func startAdditionalStreamForExistingAppSessionCandidate(
-        app: MirageInstalledApp,
+        app: MirageWire.MirageInstalledApp,
         session: MirageAppStreamSession,
         clientContext: ClientContext,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         mediaMaxPacketSize: Int,
         selectedCandidate: AppStreamWindowCandidate
@@ -348,7 +362,7 @@ extension MirageHostService {
             )
 
             return .success(
-                WindowAddedToStreamMessage(
+                MirageWire.WindowAddedToStreamMessage(
                     bundleIdentifier: app.bundleIdentifier,
                     appSessionID: session.id,
                     streamID: streamSession.id,

@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -17,7 +24,7 @@ func acceptedDesktopContractDisplayScaleFactor(
     presentationResolution: CGSize,
     fallbackScaleFactor: CGFloat
 ) -> CGFloat {
-    let normalizedPresentationResolution = MirageStreamGeometry.normalizedLogicalSize(presentationResolution)
+    let normalizedPresentationResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(presentationResolution)
     guard normalizedPresentationResolution.width > 0,
           normalizedPresentationResolution.height > 0,
           displayPixelResolution.width > 0,
@@ -87,7 +94,7 @@ extension MirageHostService {
             logDesktopVirtualDisplayAttempt(attempt)
 
             do {
-                let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+                let context = try await platformVirtualDisplayBackend.acquireDisplayForConsumer(
                     .desktopStream,
                     resolution: attempt.backingScale.pixelResolution,
                     refreshRate: attempt.refreshRate,
@@ -114,7 +121,7 @@ extension MirageHostService {
                 )
                 break acquisitionLoop
             } catch is DesktopVirtualDisplayMirroringTargetUnstable {
-                lastVirtualDisplayError = MirageError.protocolError("Display mirroring target did not stabilize")
+                lastVirtualDisplayError = MirageCore.MirageError.protocolError("Display mirroring target did not stabilize")
                 break acquisitionLoop
             } catch is DesktopVirtualDisplayStartupBudgetExceeded {
                 lastVirtualDisplayError = DesktopVirtualDisplayStartupBudgetExceeded()
@@ -248,7 +255,7 @@ extension MirageHostService {
             MirageLogger.host("Desktop virtual display acquisition produced no capture context; falling back to main display")
         }
 
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        await platformVirtualDisplayBackend.releaseDisplayForConsumer(.desktopStream)
         return try await acquireMainDisplayDesktopCaptureContext(
             request,
             reason: "virtual_display_startup_failed",
@@ -264,7 +271,7 @@ extension MirageHostService {
     func finishDesktopVirtualDisplayCaptureAcquisition(
         _ request: DesktopCaptureAcquisitionRequest,
         attempt: DesktopVirtualDisplayStartupAttempt,
-        displayContext context: SharedVirtualDisplayManager.DisplaySnapshot,
+        displayContext context: MirageHostVirtualDisplaySnapshot,
         config: MirageEncoderConfiguration,
         startupBudget: DesktopVirtualDisplayStartupBudget,
         logDesktopStartStep: (String) -> Void
@@ -315,7 +322,7 @@ extension MirageHostService {
                 "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
             )
         }
-        let cadenceValidation = await SharedVirtualDisplayManager.shared.validateDisplayCadence(
+        let cadenceValidation = await platformVirtualDisplayBackend.validateDisplayCadence(
             context,
             targetFrameRate: attempt.refreshRate
         )
@@ -361,12 +368,12 @@ extension MirageHostService {
     /// Caches desktop virtual-display geometry used by capture, input, and cursor mapping.
     func cacheDesktopVirtualDisplayGeometry(
         _ request: DesktopCaptureAcquisitionRequest,
-        displayContext context: SharedVirtualDisplayManager.DisplaySnapshot,
+        displayContext context: MirageHostVirtualDisplaySnapshot,
         logDesktopStartStep: (String) -> Void
     ) async throws {
         desktopVirtualDisplayID = context.displayID
         desktopCaptureSource = .virtualDisplay
-        var resolvedBounds = await SharedVirtualDisplayManager.shared.displayBounds
+        var resolvedBounds = await platformVirtualDisplayBackend.displayBounds
         try await ensureDesktopStreamSetupCanContinue(
             clientContext: request.clientContext,
             startupRequestID: request.startupRequestID,
@@ -375,10 +382,10 @@ extension MirageHostService {
         )
         if resolvedBounds == nil { resolvedBounds = resolveDesktopDisplayBounds() }
         guard let bounds = resolvedBounds else {
-            throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
+            throw MirageCore.MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
         }
         desktopDisplayBounds = bounds
-        sharedVirtualDisplayGeneration = await SharedVirtualDisplayManager.shared.currentDisplayGeneration
+        sharedVirtualDisplayGeneration = await platformVirtualDisplayBackend.currentDisplayGeneration
         sharedVirtualDisplayScaleFactor = max(1.0, context.scaleFactor)
         logDesktopStartStep("display bounds cached")
 
@@ -396,7 +403,7 @@ extension MirageHostService {
     /// Configures display mirroring for the acquired desktop virtual display.
     func configureDesktopVirtualDisplayMirroring(
         _ request: DesktopCaptureAcquisitionRequest,
-        displayContext context: SharedVirtualDisplayManager.DisplaySnapshot,
+        displayContext context: MirageHostVirtualDisplaySnapshot,
         logDesktopStartStep: (String) -> Void
     ) async throws -> Bool {
         if request.mode == .unified {
@@ -429,7 +436,7 @@ extension MirageHostService {
 
     /// Clears failed virtual-display acquisition state before retry or fallback.
     func resetFailedDesktopVirtualDisplayAcquisition(restoreHostResolution: Bool) async {
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        await platformVirtualDisplayBackend.releaseDisplayForConsumer(.desktopStream)
         desktopVirtualDisplayID = nil
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = 1.0

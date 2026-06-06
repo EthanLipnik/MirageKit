@@ -7,11 +7,19 @@
 //  Shared AVSampleBufferDisplayLayer presentation path for client platforms.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 @MainActor
 final class MirageSampleBufferPresenter: @unchecked Sendable {

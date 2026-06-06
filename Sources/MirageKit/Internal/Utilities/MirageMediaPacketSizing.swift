@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 3/31/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package let mirageDirectLocalMaxPacketSize: Int = 1400
@@ -12,7 +19,7 @@ package let mirageDirectWiFiMaxPacketSize: Int = 1320
 package let mirageDirectProximityMaxPacketSize: Int = 1120
 
 package func miragePreferredMediaMaxPacketSize(
-    for pathKind: MirageNetworkPathKind?
+    for pathKind: MirageCore.MirageNetworkPathKind?
 ) -> Int {
     switch pathKind {
     case .wired:
@@ -22,13 +29,13 @@ package func miragePreferredMediaMaxPacketSize(
     case .wifi:
         return mirageDirectWiFiMaxPacketSize
     default:
-        return mirageDefaultMaxPacketSize
+        return MirageWire.mirageDefaultMaxPacketSize
     }
 }
 
 package func miragePreferredMediaMaxPacketSize(
-    for mediaPathProfile: MirageMediaPathProfile?,
-    pathKind: MirageNetworkPathKind?
+    for mediaPathProfile: MirageMedia.MirageMediaPathProfile?,
+    pathKind: MirageCore.MirageNetworkPathKind?
 ) -> Int {
     switch mediaPathProfile {
     case .awdlRadio:
@@ -44,12 +51,12 @@ package func miragePreferredMediaMaxPacketSize(
 
 package func mirageNegotiatedMediaMaxPacketSize(
     requested: Int?,
-    pathKind: MirageNetworkPathKind?
+    pathKind: MirageCore.MirageNetworkPathKind?
 ) -> Int {
     let preferred = miragePreferredMediaMaxPacketSize(for: pathKind)
     let requestedSize = requested ?? preferred
     let clampedRequestedSize = max(
-        mirageDefaultMaxPacketSize,
+        MirageWire.mirageDefaultMaxPacketSize,
         min(mirageDirectLocalMaxPacketSize, requestedSize)
     )
     return min(preferred, clampedRequestedSize)
@@ -57,13 +64,13 @@ package func mirageNegotiatedMediaMaxPacketSize(
 
 package func mirageNegotiatedMediaMaxPacketSize(
     requested: Int?,
-    mediaPathProfile: MirageMediaPathProfile?,
-    pathKind: MirageNetworkPathKind?
+    mediaPathProfile: MirageMedia.MirageMediaPathProfile?,
+    pathKind: MirageCore.MirageNetworkPathKind?
 ) -> Int {
     let preferred = miragePreferredMediaMaxPacketSize(for: mediaPathProfile, pathKind: pathKind)
     let requestedSize = requested ?? preferred
     let clampedRequestedSize = max(
-        mirageDefaultMaxPacketSize,
+        MirageWire.mirageDefaultMaxPacketSize,
         min(mirageDirectLocalMaxPacketSize, requestedSize)
     )
     return min(preferred, clampedRequestedSize)

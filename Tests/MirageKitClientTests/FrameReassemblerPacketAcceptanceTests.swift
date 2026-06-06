@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Frame Reassembler Packet Acceptance")
@@ -47,7 +48,7 @@ struct FrameReassemblerPacketAcceptanceTests {
         let payload = Data([0x10, 0x20, 0x30])
         reassembler.processPacket(
             payload,
-            header: FrameHeader(
+            header: MirageWire.FrameHeader(
                 flags: [.keyframe, .endOfFrame],
                 streamID: 1,
                 sequenceNumber: 1,

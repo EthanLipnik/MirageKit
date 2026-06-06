@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 @Suite("App Stream Startup Timeout")
 struct AppStreamStartupTimeoutTests {
@@ -58,14 +59,14 @@ struct AppStreamStartupTimeoutTests {
             timeout: .milliseconds(80)
         )
 
-        let started = AppStreamStartedMessage(
+        let started = MirageWire.AppStreamStartedMessage(
             appSessionID: appSessionID,
             startupRequestID: service.pendingStreamSetupRequestID,
             bundleIdentifier: "com.example.Editor",
             appName: "Editor",
             windows: []
         )
-        service.handleAppStreamStarted(try ControlMessage(type: .appStreamStarted, content: started))
+        service.handleAppStreamStarted(try MirageWire.ControlMessage(type: .appStreamStarted, content: started))
         try await Task.sleep(for: .milliseconds(120))
 
         #expect(failure == nil)

@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 3/31/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// Tracks receiver-side health samples and chooses bitrate backoff or promotion probes.
@@ -92,7 +101,7 @@ public struct MirageReceiverHealthController: Sendable {
 
     /// Advances receiver-health policy using multiple stream snapshots.
     public mutating func advance(
-        snapshots: [MirageClientMetricsSnapshot],
+        snapshots: [MirageDiagnostics.MirageClientMetricsSnapshot],
         currentBitrateBps: Int,
         ceilingBps: Int,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
@@ -127,7 +136,7 @@ public struct MirageReceiverHealthController: Sendable {
 
     /// Advances receiver-health policy using one stream snapshot.
     public mutating func advance(
-        snapshot: MirageClientMetricsSnapshot?,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot?,
         currentBitrateBps: Int,
         ceilingBps: Int,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),

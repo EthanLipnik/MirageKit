@@ -5,13 +5,21 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 @MainActor
 extension MirageClientService {
     /// Applies a host-confirmed desktop resize transition to local stream state and decoder setup.
-    func handleDesktopResizeCommit(_ started: DesktopStreamStartedMessage) async -> Bool {
+    func handleDesktopResizeCommit(_ started: MirageWire.DesktopStreamStartedMessage) async -> Bool {
         let streamID = started.streamID
         var matchesActiveTransition = false
         var matchesGenerationContract = false

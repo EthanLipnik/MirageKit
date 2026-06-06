@@ -5,8 +5,10 @@
 //  Created by Ethan Lipnik on 6/21/26.
 //
 
-import Foundation
+import MirageCore
 import MirageKit
+import MirageMedia
+import Foundation
 
 #if os(macOS)
 

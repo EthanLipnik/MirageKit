@@ -11,6 +11,7 @@ import Foundation
 import Loom
 import Network
 import Testing
+import MirageKit
 
 extension ClientConnectionEndpointPlanningTests {
     @MainActor
@@ -24,7 +25,7 @@ extension ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("Vega"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: UUID(),
                 hostName: "Vega",
                 directTransports: [
@@ -58,7 +59,7 @@ extension ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: .ipv6(ulaAddress), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: UUID(),
                 hostName: "Vega",
                 directTransports: [
@@ -92,7 +93,7 @@ extension ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [

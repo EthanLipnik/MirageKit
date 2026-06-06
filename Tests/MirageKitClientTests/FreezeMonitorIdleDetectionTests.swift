@@ -9,6 +9,7 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import Foundation
+import MirageWire
 import Testing
 
 @Suite("Freeze Monitor Idle Detection")

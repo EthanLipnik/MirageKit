@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+MenuBar.swift
 //  MirageKit
@@ -7,7 +16,6 @@
 //  Menu bar passthrough requests.
 //
 
-import MirageKit
 
 @MainActor
 public extension MirageClientService {
@@ -17,7 +25,7 @@ public extension MirageClientService {
     ///   - actionPath: Path to the menu item [menuIndex, itemIndex, submenuIndex, ...].
     /// - Throws: If not connected or message encoding fails.
     func executeMenuAction(streamID: StreamID, actionPath: [Int]) async throws {
-        let request = MenuActionRequestMessage(streamID: streamID, actionPath: actionPath)
+        let request = MirageWire.MenuActionRequestMessage(streamID: streamID, actionPath: actionPath)
         try await sendControlMessage(.menuActionRequest, content: request)
     }
 }

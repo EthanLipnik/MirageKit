@@ -7,7 +7,15 @@
 //  App stream manager extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import Foundation
@@ -19,9 +27,9 @@ extension AppStreamManager {
     func installedApps(
         includeIcons: Bool = true,
         forceRefresh: Bool = false,
-        onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)? = nil
+        onAppDiscovered: (@Sendable (MirageWire.MirageInstalledApp) async -> Void)? = nil
     )
-    async -> [MirageInstalledApp] {
+    async -> [MirageWire.MirageInstalledApp] {
         if Task.isCancelled {
             let cached = includeIcons ? cachedAppsWithIcons : cachedAppsWithoutIcons
             return await refreshStatuses(for: cached)
@@ -140,8 +148,8 @@ extension AppStreamManager {
 
     /// Replays discovered apps to a progress callback from cached results.
     func replayInstalledApps(
-        _ apps: [MirageInstalledApp],
-        onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)?
+        _ apps: [MirageWire.MirageInstalledApp],
+        onAppDiscovered: (@Sendable (MirageWire.MirageInstalledApp) async -> Void)?
     ) async {
         guard let onAppDiscovered else { return }
         for app in apps {
@@ -183,7 +191,7 @@ extension AppStreamManager {
     }
 
     /// Refreshes running/streaming state for a list of installed apps.
-    private func refreshStatuses(for apps: [MirageInstalledApp]) async -> [MirageInstalledApp] {
+    private func refreshStatuses(for apps: [MirageWire.MirageInstalledApp]) async -> [MirageWire.MirageInstalledApp] {
         let currentStatusSnapshot = statusSnapshot
         return await applicationScanner.updateStatus(
             for: apps,

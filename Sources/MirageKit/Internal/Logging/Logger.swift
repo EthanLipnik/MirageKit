@@ -5,8 +5,14 @@
 //  Created by Ethan Lipnik on 1/5/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
-import Loom
 import os
 
 /// Centralized logging for Mirage using Apple's unified logging system (`Logger`)
@@ -20,7 +26,7 @@ import os
 /// - Not set - Default: essential logs only (host, client, appState)
 public struct MirageLogger: Sendable {
     public struct SignpostInterval {
-        let category: MirageLogCategory
+        let category: MirageDiagnostics.MirageLogCategory
         let name: StaticString
         let id: OSSignpostID
     }
@@ -29,37 +35,37 @@ public struct MirageLogger: Sendable {
     static let subsystem = "com.mirage"
 
     /// Cached system logger instances per category (created lazily)
-    private static let loggers: [MirageLogCategory: Logger] = {
-        var result: [MirageLogCategory: Logger] = [:]
-        for category in MirageLogCategory.allCases {
+    private static let loggers: [MirageDiagnostics.MirageLogCategory: Logger] = {
+        var result: [MirageDiagnostics.MirageLogCategory: Logger] = [:]
+        for category in MirageDiagnostics.MirageLogCategory.allCases {
             result[category] = Logger(subsystem: subsystem, category: category.rawValue)
         }
         return result
     }()
 
     /// Cached OSLog instances used for signposts.
-    static let signpostLogs: [MirageLogCategory: OSLog] = {
-        var result: [MirageLogCategory: OSLog] = [:]
-        for category in MirageLogCategory.allCases {
+    static let signpostLogs: [MirageDiagnostics.MirageLogCategory: OSLog] = {
+        var result: [MirageDiagnostics.MirageLogCategory: OSLog] = [:]
+        for category in MirageDiagnostics.MirageLogCategory.allCases {
             result[category] = OSLog(subsystem: subsystem, category: category.rawValue)
         }
         return result
     }()
 
     /// Enabled log categories (evaluated once at startup from env var)
-    public static let enabledCategories: Set<MirageLogCategory> = parsedEnabledCategories(
+    public static let enabledCategories: Set<MirageDiagnostics.MirageLogCategory> = parsedEnabledCategories(
         environmentValue: ProcessInfo.processInfo.environment["MIRAGE_LOG"]
     )
 
     /// Check if a category is enabled
-    public static func isEnabled(_ category: MirageLogCategory) -> Bool {
+    public static func isEnabled(_ category: MirageDiagnostics.MirageLogCategory) -> Bool {
         enabledCategories.contains(category)
     }
 
     /// Log a message if the category is enabled
     /// Uses @autoclosure to avoid string interpolation when logging is disabled
     public static func log(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ message: @autoclosure () -> String,
         fileID: String = #fileID,
         line: UInt = #line,
@@ -76,7 +82,7 @@ public struct MirageLogger: Sendable {
 
     /// Log a debug-level message (lower priority, filtered by default in Console.app)
     public static func debug(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ message: @autoclosure () -> String,
         fileID: String = #fileID,
         line: UInt = #line,
@@ -96,7 +102,7 @@ public struct MirageLogger: Sendable {
     /// Log a message unconditionally (for errors).
     /// Errors are always logged regardless of category enablement.
     public static func error(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ message: @autoclosure () -> String,
         fileID: String = #fileID,
         line: UInt = #line,
@@ -114,7 +120,7 @@ public struct MirageLogger: Sendable {
 
     /// Log and report a structured non-fatal error.
     public static func error(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         error: Error,
         message: String? = nil,
         fileID: String = #fileID,
@@ -128,20 +134,18 @@ public struct MirageLogger: Sendable {
                 if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return message
                 }
-                let metadata = LoomDiagnosticsErrorMetadata(error: error)
-                return "type=\(metadata.typeName) domain=\(metadata.domain) code=\(metadata.code)"
+                return diagnosticsMetadataDescription(for: error)
             },
             fileID: fileID,
             line: line,
             function: function,
-            underlyingError: error,
-            errorSource: .logger
+            underlyingError: error
         )
     }
 
     /// Log a fault-level message (critical errors that indicate bugs).
     public static func fault(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ message: @autoclosure () -> String,
         fileID: String = #fileID,
         line: UInt = #line,
@@ -159,7 +163,7 @@ public struct MirageLogger: Sendable {
 
     /// Log and report a structured fault.
     public static func fault(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         error: Error,
         message: String? = nil,
         fileID: String = #fileID,
@@ -173,19 +177,17 @@ public struct MirageLogger: Sendable {
                 if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return message
                 }
-                let metadata = LoomDiagnosticsErrorMetadata(error: error)
-                return "type=\(metadata.typeName) domain=\(metadata.domain) code=\(metadata.code)"
+                return diagnosticsMetadataDescription(for: error)
             },
             fileID: fileID,
             line: line,
             function: function,
-            underlyingError: error,
-            errorSource: .logger
+            underlyingError: error
         )
     }
 
     static func logInfo(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         message: () -> String,
         fileID: String,
         line: UInt,
@@ -203,14 +205,13 @@ public struct MirageLogger: Sendable {
     }
 
     private static func emit(
-        _ category: MirageLogCategory,
-        level: LoomLogLevel,
+        _ category: MirageDiagnostics.MirageLogCategory,
+        level: MirageDiagnosticsLogLevel,
         message: () -> String,
         fileID: String,
         line: UInt,
         function: String,
-        underlyingError: Error? = nil,
-        errorSource: LoomDiagnosticsErrorSource = .logger
+        underlyingError: Error? = nil
     ) {
         let rawMessage = message()
         let sourceMessage = "\(sourcePrefix(fileID: fileID, line: line, function: function)) \(rawMessage)"
@@ -227,34 +228,38 @@ public struct MirageLogger: Sendable {
         }
 
         let now = Date()
-        LoomDiagnostics.record(log: LoomDiagnosticsLogEvent(
+        MirageDiagnosticsRecorder.recordLog(
             date: now,
-            category: LoomLogCategory(rawValue: category.rawValue),
+            category: category,
             level: level,
             message: sourceMessage,
             fileID: fileID,
             line: line,
             function: function
-        ))
+        )
 
         switch level {
         case .error,
              .fault:
-            LoomDiagnostics.record(error: LoomDiagnosticsErrorEvent(
+            MirageDiagnosticsRecorder.recordLoggerError(
                 date: now,
-                category: LoomLogCategory(rawValue: category.rawValue),
+                category: category,
                 severity: level == .fault ? .fault : .error,
-                source: errorSource,
                 message: sourceMessage,
                 fileID: fileID,
                 line: line,
                 function: function,
-                metadata: underlyingError.map(LoomDiagnosticsErrorMetadata.init(error:))
-            ))
+                metadata: underlyingError.map(MirageDiagnostics.MirageDiagnosticsErrorMetadata.init(error:))
+            )
         case .info,
              .debug:
             break
         }
+    }
+
+    private static func diagnosticsMetadataDescription(for error: Error) -> String {
+        let metadata = MirageDiagnostics.MirageDiagnosticsErrorMetadata(error: error)
+        return "type=\(metadata.typeName) domain=\(metadata.domain) code=\(metadata.code)"
     }
 
     static func sourcePrefix(fileID: String, line: UInt, function: String) -> String {
@@ -262,7 +267,7 @@ public struct MirageLogger: Sendable {
     }
 
     /// Parse MIRAGE_LOG environment variable.
-    static func parsedEnabledCategories(environmentValue: String?) -> Set<MirageLogCategory> {
+    static func parsedEnabledCategories(environmentValue: String?) -> Set<MirageDiagnostics.MirageLogCategory> {
         guard let environmentValue else {
             return [.host, .client, .appState, .stream, .decoder, .renderer]
         }
@@ -271,12 +276,12 @@ public struct MirageLogger: Sendable {
         guard !tokens.isEmpty else { return [] }
         guard !tokens.contains("none") else { return [] }
         if tokens.contains("all") {
-            return Set(MirageLogCategory.allCases)
+            return Set(MirageDiagnostics.MirageLogCategory.allCases)
         }
 
-        var categories: Set<MirageLogCategory> = []
+        var categories: Set<MirageDiagnostics.MirageLogCategory> = []
         for token in tokens {
-            guard let category = MirageLogCategory.matchingLogToken(token) else { continue }
+            guard let category = MirageDiagnostics.MirageLogCategory.matchingLogToken(token) else { continue }
             categories.insert(category)
         }
         return categories
@@ -303,8 +308,8 @@ public struct MirageLogger: Sendable {
     }
 }
 
-private extension MirageLogCategory {
-    static func matchingLogToken(_ token: String) -> MirageLogCategory? {
+private extension MirageDiagnostics.MirageLogCategory {
+    static func matchingLogToken(_ token: String) -> MirageDiagnostics.MirageLogCategory? {
         allCases.first { category in
             MirageLogger.normalizeLogCategoryName(category.rawValue) == token
         }

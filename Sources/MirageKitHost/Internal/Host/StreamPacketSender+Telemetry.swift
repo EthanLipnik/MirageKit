@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
-import Loom
 
 #if os(macOS)
 
@@ -16,9 +24,9 @@ extension StreamPacketSender {
         telemetrySnapshot(queuedUnreliableDiagnostics: nil)
     }
 
-    /// Current telemetry counters with optional Loom queued-unreliable diagnostics.
+    /// Current telemetry counters with optional queued-unreliable diagnostics.
     func telemetrySnapshot(
-        queuedUnreliableDiagnostics: LoomQueuedUnreliableSendDiagnostics?
+        queuedUnreliableDiagnostics: MirageQueuedUnreliableSendDiagnostics?
     ) -> TelemetrySnapshot {
         let queueSnapshot = queueLock.withLock {
             let freshness = freshnessSnapshotLocked(now: CFAbsoluteTimeGetCurrent())
@@ -91,10 +99,10 @@ extension StreamPacketSender {
 
     /// Returns current telemetry with transport-owned queued-unreliable diagnostics and resets per-window counters.
     func consumeTelemetrySnapshot(
-        queuedUnreliableProfile: LoomQueuedUnreliableSendProfile?
+        queuedUnreliableProfile: MirageMedia.MirageMediaSendProfile?
     ) async -> TelemetrySnapshot {
-        let queuedDiagnostics: LoomQueuedUnreliableSendDiagnostics? = if let queuedUnreliableProfile,
-                                                                        let queuedUnreliableDiagnosticsProvider {
+        let queuedDiagnostics: MirageQueuedUnreliableSendDiagnostics? = if let queuedUnreliableProfile,
+                                                                           let queuedUnreliableDiagnosticsProvider {
             await queuedUnreliableDiagnosticsProvider(queuedUnreliableProfile)
         } else {
             nil

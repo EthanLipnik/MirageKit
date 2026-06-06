@@ -10,6 +10,7 @@ import MirageKit
 @testable import MirageKitClient
 import Testing
 import UIKit
+import MirageInput
 
 @MainActor
 @Suite("Input capturing responder recovery")
@@ -276,14 +277,14 @@ struct InputCapturingResponderRecoveryTests {
     @Test("Software keyboard input sends events while hardware keyboard is present")
     func softwareKeyboardInputSendsEventsWhileHardwareKeyboardIsPresent() {
         let view = InputCapturingView(frame: .zero)
-        var events: [MirageInputEvent] = []
+        var events: [MirageInput.MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
         view.updateHardwareKeyboardPresence(true)
 
         view.handleSoftwareKeyboardInsertText("a")
         view.handleSoftwareKeyboardDeleteBackward()
 
-        let keyEvents = events.compactMap { event -> MirageKeyEvent? in
+        let keyEvents = events.compactMap { event -> MirageInput.MirageKeyEvent? in
             switch event {
             case let .keyDown(key), let .keyUp(key):
                 key

@@ -5,11 +5,19 @@
 //  Created by Ethan Lipnik on 1/24/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Dispatch
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit

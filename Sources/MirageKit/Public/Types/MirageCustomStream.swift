@@ -5,67 +5,18 @@
 //  Created by Ethan Lipnik on 4/30/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
 
-/// Broad stream family used by MirageKit surfaces and session metadata.
-public enum MirageStreamKind: Hashable, Sendable, Codable {
-    /// Stream captures a host application window.
-    case app
-    /// Stream captures a host desktop or virtual display.
-    case desktop
-    /// Stream is supplied by application-defined custom media.
-    case custom
-}
-
-/// Host-published metadata for a custom stream source.
-///
-/// `kind` is the stable application-owned identifier used during negotiation,
-/// for example `dev.example.product-display.v1`. MirageKit treats it as an
-/// opaque string and does not attach product-specific meaning to it.
-public struct MirageCustomStreamDescriptor: Hashable, Sendable, Codable {
-    /// Stable app-defined stream kind identifier.
-    public let kind: String
-
-    /// User-facing name for the custom stream source.
-    public let displayName: String
-
-    /// App-defined metadata published with the source descriptor.
-    public let metadata: [String: String]
-
-    /// Default source width in pixels.
-    public let defaultWidth: Int
-
-    /// Default source height in pixels.
-    public let defaultHeight: Int
-
-    /// Default source frame rate.
-    public let defaultFrameRate: Int
-
-    /// Whether the source accepts client input events.
-    public let supportsInput: Bool
-
-    /// Creates a descriptor for an app-defined stream source.
-    public init(
-        kind: String,
-        displayName: String,
-        metadata: [String: String] = [:],
-        defaultWidth: Int,
-        defaultHeight: Int,
-        defaultFrameRate: Int = 60,
-        supportsInput: Bool = true
-    ) {
-        self.kind = kind
-        self.displayName = displayName
-        self.metadata = metadata
-        self.defaultWidth = max(1, defaultWidth)
-        self.defaultHeight = max(1, defaultHeight)
-        self.defaultFrameRate = max(1, min(120, defaultFrameRate))
-        self.supportsInput = supportsInput
-    }
-}
 
 /// Client-to-host custom stream request passed to app-provided sources.
 public struct MirageCustomStreamRequest: Hashable, Sendable, Codable {
@@ -183,7 +134,7 @@ public protocol MirageCustomStreamSession: Sendable {
 /// Host-app implementation that produces frames for an opaque custom stream kind.
 public protocol MirageCustomStreamSource: Sendable {
     /// Published descriptor for this source.
-    var descriptor: MirageCustomStreamDescriptor { get }
+    var descriptor: MirageMedia.MirageCustomStreamDescriptor { get }
 
     /// Starts producing frames for a client request.
     func startStream(
@@ -195,5 +146,5 @@ public protocol MirageCustomStreamSource: Sendable {
 /// Optional host-app input handler for a custom stream.
 public protocol MirageCustomStreamInputHandler: Sendable {
     /// Handles a client input event targeting the custom stream.
-    func handleInput(_ event: MirageInputEvent, streamID: StreamID) async
+    func handleInput(_ event: MirageInput.MirageInputEvent, streamID: StreamID) async
 }

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 public extension MirageClientService {
@@ -27,7 +35,7 @@ public extension MirageClientService {
             mediaStreamID: session.mediaStreamID
         )
 
-        let request = StopStreamMessage(
+        let request = MirageWire.StopStreamMessage(
             streamID: streamID,
             minimizeWindow: minimizeWindow,
             origin: origin?.controlMessageOrigin
@@ -54,7 +62,7 @@ extension MirageClientService {
                 "reason=\(failure.reason.logLabel), waitReason=\(waitReason)"
         )
 
-        let error = MirageError.protocolError(StreamController.TerminalStartupFailure.errorMessage)
+        let error = MirageCore.MirageError.protocolError(StreamController.TerminalStartupFailure.errorMessage)
 
         if desktopStreamID == streamID {
             if pendingLocalDesktopStopStreamID == streamID,
@@ -75,7 +83,7 @@ extension MirageClientService {
             }
 
             if let desktopSessionID {
-                let request = StopDesktopStreamMessage(
+                let request = MirageWire.StopDesktopStreamMessage(
                     streamID: streamID,
                     desktopSessionID: desktopSessionID
                 )
@@ -96,7 +104,7 @@ extension MirageClientService {
         if activeStreams.contains(where: { $0.id == streamID }) ||
             sessionStore.sessionByMediaStreamID(streamID) != nil ||
             controllersByStream[streamID] != nil {
-            let request = StopStreamMessage(
+            let request = MirageWire.StopStreamMessage(
                 streamID: streamID,
                 minimizeWindow: false,
                 origin: nil
@@ -331,7 +339,7 @@ public extension MirageClientService {
     func forceStopDesktopStreamLocally(
         streamID: StreamID,
         desktopSessionID expectedDesktopSessionID: UUID? = nil,
-        notifyStopReason: DesktopStreamStopReason? = nil
+        notifyStopReason: MirageWire.DesktopStreamStopReason? = nil
     ) async {
         if let expectedDesktopSessionID,
            let activeDesktopSessionID = desktopSessionID,
@@ -405,7 +413,7 @@ public extension MirageClientService {
 }
 
 private extension MirageClientService.StreamStopOrigin {
-    var controlMessageOrigin: StopStreamMessage.Origin {
+    var controlMessageOrigin: MirageWire.StopStreamMessage.Origin {
         switch self {
         case .clientWindowClosed:
             .clientWindowClosed

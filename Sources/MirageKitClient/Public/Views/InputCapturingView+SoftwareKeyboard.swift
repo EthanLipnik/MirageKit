@@ -7,7 +7,15 @@
 //  Software keyboard handling for streamed input.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -280,10 +288,10 @@ extension InputCapturingView {
         keyCode: UInt16,
         characters: String?,
         charactersIgnoringModifiers: String?,
-        modifiers: MirageModifierFlags
+        modifiers: MirageInput.MirageModifierFlags
     ) {
         hideCursorForTypingUntilPointerMovement()
-        let keyDown = MirageKeyEvent(
+        let keyDown = MirageInput.MirageKeyEvent(
             keyCode: keyCode,
             characters: characters,
             charactersIgnoringModifiers: charactersIgnoringModifiers,
@@ -291,7 +299,7 @@ extension InputCapturingView {
         )
         onInputEvent?(.keyDown(keyDown))
 
-        let keyUp = MirageKeyEvent(
+        let keyUp = MirageInput.MirageKeyEvent(
             keyCode: keyCode,
             characters: characters,
             charactersIgnoringModifiers: charactersIgnoringModifiers,
@@ -303,6 +311,6 @@ extension InputCapturingView {
 
 struct SoftwareModifierKey: Hashable {
     let title: String
-    let modifier: MirageModifierFlags
+    let modifier: MirageInput.MirageModifierFlags
 }
 #endif

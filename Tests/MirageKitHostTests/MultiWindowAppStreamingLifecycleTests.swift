@@ -10,6 +10,7 @@ import CoreGraphics
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
 
 #if os(macOS)
 extension MultiWindowAppStreamingStabilizationTests {

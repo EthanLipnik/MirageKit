@@ -7,7 +7,15 @@
 //  App stream manager session and slot bookkeeping.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import Foundation
@@ -119,7 +127,7 @@ extension AppStreamManager {
         isActive: Bool = true,
         capturedClusterWindowIDs: [WindowID] = [],
         mediaStreamID: StreamID,
-        atlasRegion: MirageAppAtlasRegion? = nil
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil
     ) -> Int? {
         let key = appSessionKey(for: bundleIdentifier)
         guard var session = sessions[key] else { return nil }
@@ -182,7 +190,7 @@ extension AppStreamManager {
         isResizable: Bool,
         capturedClusterWindowIDs: [WindowID] = [],
         mediaStreamID: StreamID,
-        atlasRegion: MirageAppAtlasRegion? = nil
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil
     ) {
         let key = appSessionKey(for: bundleIdentifier)
         guard var session = sessions[key] else { return }

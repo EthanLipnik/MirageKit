@@ -5,13 +5,21 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Thread-safe per-stream telemetry store used by client UI, diagnostics, and recovery policy.
 public final class MirageClientMetricsStore: @unchecked Sendable {
     private let lock = NSLock()
-    private var metricsByStream: [StreamID: MirageClientMetricsSnapshot] = [:]
+    private var metricsByStream: [StreamID: MirageDiagnostics.MirageClientMetricsSnapshot] = [:]
 
     /// Creates an empty metrics store.
     public init() {}
@@ -128,7 +136,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientFrameIntervalP99Ms = max(0, frameIntervalP99Ms)
             snapshot.decodeHealthy = decodeHealthy
             snapshot.clientDroppedFrames = droppedFrames
-            snapshot.clientDecodeBacklogFrames = max(0, decodeBacklogFrames)
+            snapshot.clientDecodeBacklogFrameCount = max(0, decodeBacklogFrames)
             snapshot.clientReassemblerPendingFrameCount = max(0, reassemblerPendingFrameCount)
             snapshot.clientReassemblerPendingKeyframeCount = max(0, reassemblerPendingKeyframeCount)
             snapshot.clientReassemblerPendingBytes = max(0, reassemblerPendingBytes)
@@ -154,7 +162,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
     }
 
     /// Returns the latest metrics snapshot for a stream.
-    public func snapshot(for streamID: StreamID) -> MirageClientMetricsSnapshot? {
+    public func snapshot(for streamID: StreamID) -> MirageDiagnostics.MirageClientMetricsSnapshot? {
         lock.lock()
         defer { lock.unlock() }
         return metricsByStream[streamID]
@@ -177,11 +185,11 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
     /// Mutates one stream snapshot while holding the store lock.
     func updateSnapshot(
         for streamID: StreamID,
-        _ update: (inout MirageClientMetricsSnapshot) -> Void
+        _ update: (inout MirageDiagnostics.MirageClientMetricsSnapshot) -> Void
     ) {
         lock.lock()
         defer { lock.unlock() }
-        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        var snapshot = metricsByStream[streamID] ?? MirageDiagnostics.MirageClientMetricsSnapshot()
         update(&snapshot)
         metricsByStream[streamID] = snapshot
     }

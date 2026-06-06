@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 4/7/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 private let desktopVirtualDisplayResizeTargetDefaultsPrefix = "MirageDesktopVirtualDisplayResizeTarget.v1"
@@ -16,7 +24,7 @@ struct DesktopVirtualDisplayResizeRequest: Equatable, Codable {
     let requestedPixelWidth: Int
     let requestedPixelHeight: Int
     let requestedRefreshRate: Int
-    let requestedColorSpace: MirageColorSpace
+    let requestedColorSpace: MirageMedia.MirageColorSpace
     let requestedHiDPI: Bool
 }
 
@@ -25,14 +33,14 @@ struct DesktopVirtualDisplayResizeCacheEntry: Equatable, Codable {
     let pixelHeight: Int
     let hiDPI: Bool
     let refreshRate: Int
-    let colorSpace: MirageColorSpace
+    let colorSpace: MirageMedia.MirageColorSpace
 }
 
 func desktopVirtualDisplayResizeRequest(
     pixelResolution: CGSize,
     refreshRate: Int,
     hiDPI: Bool,
-    colorSpace: MirageColorSpace
+    colorSpace: MirageMedia.MirageColorSpace
 ) -> DesktopVirtualDisplayResizeRequest {
     DesktopVirtualDisplayResizeRequest(
         requestedPixelWidth: Int(pixelResolution.width.rounded()),
@@ -74,7 +82,7 @@ func clearDesktopVirtualDisplayResizeTarget(
 }
 
 func recordDesktopVirtualDisplayResizeTargetSuccess(
-    snapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+    snapshot: MirageHostVirtualDisplaySnapshot,
     for request: DesktopVirtualDisplayResizeRequest
 ) {
     let effectiveTier: DesktopVirtualDisplayStartupTargetTier = if Int(snapshot.resolution.width.rounded()) == request.requestedPixelWidth,

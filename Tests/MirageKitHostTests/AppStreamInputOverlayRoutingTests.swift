@@ -10,6 +10,9 @@
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageCore
+import MirageInput
+import MirageMedia
 
 @Suite("App Stream Input Overlay Routing")
 struct AppStreamInputOverlayRoutingTests {
@@ -18,7 +21,7 @@ struct AppStreamInputOverlayRoutingTests {
         let parentWindow = makeWindow(id: 1)
         let overlayWindow = makeWindow(id: 2)
         let result = AppStreamInputOverlayRouting.route(
-            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.5, y: 0.5))),
+            event: .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.5, y: 0.5))),
             parentWindow: parentWindow,
             regions: [
                 AppStreamInputOverlayRegion(
@@ -44,7 +47,7 @@ struct AppStreamInputOverlayRoutingTests {
         let backOverlay = makeWindow(id: 2)
         let frontOverlay = makeWindow(id: 3)
         let result = AppStreamInputOverlayRouting.route(
-            event: .mouseDown(MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.4))),
+            event: .mouseDown(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.4))),
             parentWindow: parentWindow,
             regions: [
                 AppStreamInputOverlayRegion(
@@ -70,7 +73,7 @@ struct AppStreamInputOverlayRoutingTests {
         let parentWindow = makeWindow(id: 1)
         let modalOverlay = makeWindow(id: 2)
         let keyResult = AppStreamInputOverlayRouting.route(
-            event: .keyDown(MirageKeyEvent(keyCode: 36)),
+            event: .keyDown(MirageInput.MirageKeyEvent(keyCode: 36)),
             parentWindow: parentWindow,
             regions: [
                 AppStreamInputOverlayRegion(
@@ -103,7 +106,7 @@ struct AppStreamInputOverlayRoutingTests {
         let parentWindow = makeWindow(id: 1)
         let overlayWindow = makeWindow(id: 2)
         let result = AppStreamInputOverlayRouting.route(
-            event: .scrollWheel(MirageScrollEvent(deltaX: 0, deltaY: -12, location: CGPoint(x: 0.9, y: 0.9))),
+            event: .scrollWheel(MirageInput.MirageScrollEvent(deltaX: 0, deltaY: -12, location: CGPoint(x: 0.9, y: 0.9))),
             parentWindow: parentWindow,
             regions: [
                 AppStreamInputOverlayRegion(
@@ -118,11 +121,11 @@ struct AppStreamInputOverlayRoutingTests {
         #expect(result.window.id == parentWindow.id)
     }
 
-    private func makeWindow(id: WindowID) -> MirageWindow {
-        MirageWindow(
+    private func makeWindow(id: WindowID) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: "Window \(id)",
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 100,
                 bundleIdentifier: "com.example.app",
                 name: "Example"

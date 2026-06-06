@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -18,7 +26,7 @@ extension MirageHostService {
         expectedSpaceID: CGSSpaceID,
         state: WindowVirtualDisplayState
     ) -> String? {
-        let currentSpaceMembership = CGSWindowSpaceBridge.spaces(for: windowID)
+        let currentSpaceMembership = platformVirtualDisplayBackend.windowSpaces(for: windowID)
         if !currentSpaceMembership.isEmpty, !currentSpaceMembership.contains(expectedSpaceID) {
             return "space drift expected=\(expectedSpaceID) actual=\(currentSpaceMembership)"
         }
@@ -111,7 +119,7 @@ extension MirageHostService {
 
         let placementBounds = state.bounds
 
-        let resolvedSpaceID = CGVirtualDisplayBridge.space(for: state.displayID)
+        let resolvedSpaceID = platformVirtualDisplayBackend.space(for: state.displayID)
         guard resolvedSpaceID != 0 else {
             MirageLogger.host("Skipping placement reassert for window \(windowID): no active space for display \(state.displayID)")
             return false
@@ -135,11 +143,11 @@ extension MirageHostService {
         }
         lastWindowPlacementRepairAtByWindowID[windowID] = now
 
-        CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: resolvedSpaceID)
+        platformVirtualDisplayBackend.moveWindowToSpace(windowID, spaceID: resolvedSpaceID)
         let centeringBounds = state.displayVisibleBounds.width > 0 && state.displayVisibleBounds.height > 0
             ? state.displayVisibleBounds
             : placementBounds
-        await WindowSpaceManager.shared.centerWindow(windowID, on: centeringBounds)
+        await platformVirtualDisplayBackend.centerWindow(windowID, on: centeringBounds)
         do {
             try await Task.sleep(for: .milliseconds(force ? 40 : 20))
         } catch {

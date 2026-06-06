@@ -7,15 +7,24 @@
 //  Core control message handling.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Loom
 import Network
 
 @MainActor
 extension MirageClientService {
     /// Commits an accepted bootstrap response into connected-host identity and connection state.
     func finalizeAcceptedBootstrap(
-        _ response: MirageSessionBootstrapResponse,
+        _ response: MirageWire.MirageSessionBootstrapResponse,
         hostIdentityKeyID: String
     ) async -> LoomPeer {
         connectedHostIdentityKeyID = hostIdentityKeyID
@@ -28,7 +37,7 @@ extension MirageClientService {
             hostIdentityKeyID: hostIdentityKeyID
         )
         let provisionalHost = connectedHost
-        connectedHostIdentity = MirageConnectedHostIdentity(
+        connectedHostIdentity = MirageIdentity.MirageConnectedHostIdentity(
             acceptedHostID: response.hostID,
             identityKeyID: hostIdentityKeyID,
             provisionalHostID: provisionalHost?.deviceID,
@@ -69,7 +78,7 @@ extension MirageClientService {
                 ?? provisionalHost?.advertisement.deviceType
                 ?? .unknown
         let sourceAdvertisement = provisionalHost?.advertisement ??
-            LoomPeerAdvertisement(protocolVersion: Int(MirageKit.protocolVersion))
+            LoomPeerAdvertisement(protocolVersion: Int(MirageKit.discoveryProtocolVersion))
         let canonicalAdvertisement = LoomPeerAdvertisement(
             protocolVersion: sourceAdvertisement.protocolVersion,
             deviceID: hostID,
@@ -109,7 +118,7 @@ extension MirageClientService {
     }
 
     /// Extracts protocol mismatch metadata from a rejected bootstrap response.
-    func protocolMismatchInfo(from response: MirageSessionBootstrapResponse)
+    func protocolMismatchInfo(from response: MirageWire.MirageSessionBootstrapResponse)
     -> ProtocolMismatchInfo? {
         guard response.rejectionReason == .protocolVersionMismatch else {
             return nil
@@ -124,10 +133,10 @@ extension MirageClientService {
     }
 
     /// Converts a rejected bootstrap response into the client-facing connection rejection model.
-    func connectionRejection(from response: MirageSessionBootstrapResponse)
-    -> MirageConnectionRejection {
-        MirageConnectionRejection(
-            reason: MirageConnectionRejection.Reason(
+    func connectionRejection(from response: MirageWire.MirageSessionBootstrapResponse)
+    -> MirageCore.MirageConnectionRejection {
+        MirageCore.MirageConnectionRejection(
+            reason: MirageCore.MirageConnectionRejection.Reason(
                 bootstrapRejectionReason: response.rejectionReason,
                 authorizationFailureReason: response.authorizationFailureReason
             ),
@@ -143,7 +152,7 @@ extension MirageClientService {
 
     /// Produces the user-facing bootstrap rejection recovery hint.
     func bootstrapRejectionDescription(
-        for response: MirageSessionBootstrapResponse,
+        for response: MirageWire.MirageSessionBootstrapResponse,
         mismatchInfo: ProtocolMismatchInfo?
     ) -> String {
         if let mismatchInfo {
@@ -175,22 +184,22 @@ extension MirageClientService {
 
     /// Applies an accepted bootstrap response or throws the mapped rejection error.
     func handleBootstrapResponse(
-        _ response: MirageSessionBootstrapResponse,
+        _ response: MirageWire.MirageSessionBootstrapResponse,
         provisionalHost: LoomPeer,
         session: LoomAuthenticatedSession
     ) async throws {
         guard let context = await session.context else {
-            throw MirageError.protocolError("Loom session missing authenticated context")
+            throw MirageCore.MirageError.protocolError("Loom session missing authenticated context")
         }
 
         let peerIdentity = context.peerIdentity
         guard let hostIdentityKeyID = peerIdentity.identityKeyID else {
-            throw MirageError.protocolError(
+            throw MirageCore.MirageError.protocolError(
                 "Authenticated Loom session is missing host identity key"
             )
         }
         if let expectedHostIdentityKeyID, expectedHostIdentityKeyID != hostIdentityKeyID {
-            throw MirageError.protocolError("Host identity mismatch")
+            throw MirageCore.MirageError.protocolError("Host identity mismatch")
         }
 
         if response.accepted {
@@ -200,16 +209,16 @@ extension MirageClientService {
                     requireEncryptedMediaOnLocalNetwork: networkConfig
                         .requireEncryptedMediaOnLocalNetwork
                 ) else {
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Host media encryption disabled (client policy blocks unencrypted media)"
                 )
             }
             guard response.datagramRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
-                throw MirageError.protocolError("Invalid datagram registration token")
+                throw MirageCore.MirageError.protocolError("Invalid datagram registration token")
             }
 
             let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
-            let localIdentity = try resolvedIdentityManager.currentIdentity()
+            let localIdentity = try MirageKit.currentIdentitySnapshot(using: resolvedIdentityManager)
             let mediaContext = try MirageMediaSecurity.deriveContextForAuthenticatedSession(
                 identityManager: resolvedIdentityManager,
                 peerPublicKey: peerIdentity.identityPublicKey ?? Data(),
@@ -245,7 +254,7 @@ extension MirageClientService {
             }
 
             MirageLogger.client("Mirage bootstrap accepted by \(acceptedHost.name)")
-            MirageInstrumentation.record(.clientHelloAccepted)
+            MirageConnectivity.MirageInstrumentation.record(.clientHelloAccepted)
             if connectedHost == nil {
                 connectedHost = provisionalHost
             }
@@ -256,23 +265,23 @@ extension MirageClientService {
             }
             let rejection = connectionRejection(from: response)
             MirageLogger.client("Connection rejected by host: \(rejection.userFacingMessage)")
-            MirageInstrumentation.record(
+            MirageConnectivity.MirageInstrumentation.record(
                 .clientHelloRejected(
-                    MirageHelloRejectionStepReason(bootstrapRejectionReason: response.rejectionReason)
+                    MirageDiagnostics.MirageHelloRejectionStepReason(bootstrapRejectionReason: response.rejectionReason)
                 )
             )
-            throw MirageError.connectionRejected(rejection)
+            throw MirageCore.MirageError.connectionRejected(rejection)
         }
     }
 
     /// Stores a full host window snapshot unless control updates are currently suppressed.
-    func handleWindowList(_ message: ControlMessage) {
+    func handleWindowList(_ message: MirageWire.ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsWindowListRefresh = true
             return
         }
         do {
-            let windowList = try message.decode(WindowListMessage.self)
+            let windowList = try message.decode(MirageWire.WindowListMessage.self)
             MirageLogger.client("Received window list with \(windowList.windows.count) windows")
             for window in windowList.windows {
                 MirageLogger.client(
@@ -287,14 +296,14 @@ extension MirageClientService {
     }
 
     /// Applies incremental host window additions, removals, and metadata updates.
-    func handleWindowUpdate(_ message: ControlMessage) {
+    func handleWindowUpdate(_ message: MirageWire.ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsWindowListRefresh = true
             return
         }
-        let update: WindowUpdateMessage
+        let update: MirageWire.WindowUpdateMessage
         do {
-            update = try message.decode(WindowUpdateMessage.self)
+            update = try message.decode(MirageWire.WindowUpdateMessage.self)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode window update: ")
             return
@@ -313,10 +322,10 @@ extension MirageClientService {
     }
 
     /// Maps a host error message into pending-startup cleanup or delegate error delivery.
-    func handleErrorMessage(_ message: ControlMessage) {
-        let errorMessage: ErrorMessage
+    func handleErrorMessage(_ message: MirageWire.ControlMessage) {
+        let errorMessage: MirageWire.ErrorMessage
         do {
-            errorMessage = try message.decode(ErrorMessage.self)
+            errorMessage = try message.decode(MirageWire.ErrorMessage.self)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode error message: ")
             return
@@ -339,15 +348,15 @@ extension MirageClientService {
         if let runtimeCondition = errorMessage.code.runtimeConditionError {
             delegate?.didEncounterError(runtimeCondition)
         } else {
-            delegate?.didEncounterError(MirageError.protocolError(errorMessage.message))
+            delegate?.didEncounterError(MirageCore.MirageError.protocolError(errorMessage.message))
         }
     }
 
     /// Applies a host disconnect notice through the normal client disconnect path.
-    func handleDisconnectMessage(_ message: ControlMessage) async {
-        let disconnect: DisconnectMessage
+    func handleDisconnectMessage(_ message: MirageWire.ControlMessage) async {
+        let disconnect: MirageWire.DisconnectMessage
         do {
-            disconnect = try message.decode(DisconnectMessage.self)
+            disconnect = try message.decode(MirageWire.DisconnectMessage.self)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode disconnect message: "
@@ -362,15 +371,18 @@ extension MirageClientService {
     }
 
     /// Updates host login-session state and notifies the client delegate.
-    func handleSessionStateUpdate(_ message: ControlMessage) {
+    func handleSessionStateUpdate(_ message: MirageWire.ControlMessage) {
         do {
-            let update = try message.decode(SessionStateUpdateMessage.self)
+            let update = try message.decode(MirageWire.SessionStateUpdateMessage.self)
             MirageLogger.client(
                 "Host session state: \(update.state), requires username: \(update.requiresUserIdentifier)"
             )
-            hostSessionState = update.state
+            let loomState = update.state.loomAvailability
+            hostSessionState = loomState
+            hostSessionAvailability = update.state
             currentSessionToken = update.sessionToken
-            delegate?.hostSessionStateChanged(update.state)
+            delegate?.hostSessionAvailabilityChanged(update.state)
+            delegate?.hostSessionStateChanged(loomState)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode session state update: "

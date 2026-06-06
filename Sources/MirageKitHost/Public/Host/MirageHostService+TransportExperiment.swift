@@ -7,15 +7,23 @@
 //  AWDL radio transport recovery hooks.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     func handleVideoSendError(streamID: StreamID, error: Error) async {
         let transportWasAlreadyGone = !transportRegistry.hasVideoConnection(streamID: streamID)
         let fatalConnectionError = isFatalConnectionError(error)
-        let userDependentError = LoomDiagnosticsActionability.isLikelyUserDependent(error: error)
+        let userDependentError = MirageConnectionErrorClassifier.isLikelyUserDependent(error: error)
         let errorDescription = String(describing: error)
         let sendQueueCancelledDuringTeardown = errorDescription.contains("Unreliable send queue cancelled")
         let context = streamsByID[streamID]
@@ -61,7 +69,7 @@ extension MirageHostService {
             return
         }
 
-        let request = TransportRefreshRequestMessage(
+        let request = MirageWire.TransportRefreshRequestMessage(
             streamID: streamID,
             reason: reason
         )

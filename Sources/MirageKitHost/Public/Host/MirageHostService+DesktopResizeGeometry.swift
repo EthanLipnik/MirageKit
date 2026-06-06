@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -45,8 +53,8 @@ extension MirageHostService {
         } else {
             max(1.0, sharedVirtualDisplayScaleFactor)
         }
-        let width = CGFloat(MirageStreamGeometry.alignedEncodedDimension(logicalResolution.width * scale))
-        let height = CGFloat(MirageStreamGeometry.alignedEncodedDimension(logicalResolution.height * scale))
+        let width = CGFloat(MirageMedia.MirageStreamGeometry.alignedEncodedDimension(logicalResolution.width * scale))
+        let height = CGFloat(MirageMedia.MirageStreamGeometry.alignedEncodedDimension(logicalResolution.height * scale))
         return CGSize(width: width, height: height)
     }
 
@@ -54,7 +62,7 @@ extension MirageHostService {
     func resolvedDesktopResizeGeometry(
         request: DesktopResizeRequestState,
         context: StreamContext,
-        preResizeSnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
+        preResizeSnapshot: MirageHostVirtualDisplaySnapshot?
     )
     async -> DesktopResizeResolvedGeometry {
         let requestedDisplayScaleFactor = max(
@@ -86,7 +94,7 @@ extension MirageHostService {
         let encoderMaxWidth = request.encoderMaxWidth ?? currentEncoderMax.width
         let encoderMaxHeight = request.encoderMaxHeight ?? currentEncoderMax.height
         let disableResolutionCap = context.disableResolutionCap
-        let encodedPlan = MirageStreamGeometry.resolveEncodedPlan(
+        let encodedPlan = MirageMedia.MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: pixelResolution,
             requestedStreamScale: requestedStreamScale,
             encoderMaxWidth: encoderMaxWidth ?? Int(StreamContext.maxEncodedWidth),

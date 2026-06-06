@@ -7,9 +7,17 @@
 //  Host injection for batched high-rate stylus pointer samples.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -22,10 +30,10 @@ extension MirageHostInputController {
 
     /// Injects high-rate stylus pointer samples into a window stream.
     func injectPointerSampleBatch(
-        _ batch: MiragePointerSampleBatch,
+        _ batch: MirageInput.MiragePointerSampleBatch,
         windowFrame: CGRect,
         windowID: WindowID,
-        app: MirageApplication?
+        app: MirageMedia.MirageApplication?
     ) {
         let injectionStartedAt = Date.timeIntervalSinceReferenceDate
         defer {
@@ -92,7 +100,7 @@ extension MirageHostInputController {
     }
 
     /// Injects high-rate stylus pointer samples into a desktop stream.
-    func injectDesktopPointerSampleBatch(_ batch: MiragePointerSampleBatch, bounds: CGRect) {
+    func injectDesktopPointerSampleBatch(_ batch: MirageInput.MiragePointerSampleBatch, bounds: CGRect) {
         let injectionStartedAt = Date.timeIntervalSinceReferenceDate
         defer {
             let now = Date.timeIntervalSinceReferenceDate
@@ -140,7 +148,7 @@ extension MirageHostInputController {
     }
 
     /// Maps a batched pointer phase to the CoreGraphics event type to emit.
-    nonisolated static func pointerEventType(for batch: MiragePointerSampleBatch) -> CGEventType {
+    nonisolated static func pointerEventType(for batch: MirageInput.MiragePointerSampleBatch) -> CGEventType {
         switch batch.phase {
         case .hover:
             .mouseMoved
@@ -155,7 +163,7 @@ extension MirageHostInputController {
     }
 
     /// Maps a pressed Mirage mouse button to its CoreGraphics down event.
-    private nonisolated static func pointerDownEventType(for button: MirageMouseButton) -> CGEventType {
+    private nonisolated static func pointerDownEventType(for button: MirageInput.MirageMouseButton) -> CGEventType {
         switch button {
         case .left:
             .leftMouseDown
@@ -169,7 +177,7 @@ extension MirageHostInputController {
     }
 
     /// Maps a released Mirage mouse button to its CoreGraphics up event.
-    private nonisolated static func pointerUpEventType(for button: MirageMouseButton) -> CGEventType {
+    private nonisolated static func pointerUpEventType(for button: MirageInput.MirageMouseButton) -> CGEventType {
         switch button {
         case .left:
             .leftMouseUp
@@ -183,7 +191,7 @@ extension MirageHostInputController {
     }
 
     /// Maps a dragged Mirage mouse button to its CoreGraphics dragged event.
-    private nonisolated static func pointerDraggedEventType(for button: MirageMouseButton) -> CGEventType {
+    private nonisolated static func pointerDraggedEventType(for button: MirageInput.MirageMouseButton) -> CGEventType {
         switch button {
         case .left:
             .leftMouseDragged
@@ -197,14 +205,14 @@ extension MirageHostInputController {
     }
 
     /// Rejects stale hover-only samples so delayed packets do not move the host cursor later.
-    private nonisolated static func shouldRejectStaleHoverBatch(_ batch: MiragePointerSampleBatch) -> Bool {
+    private nonisolated static func shouldRejectStaleHoverBatch(_ batch: MirageInput.MiragePointerSampleBatch) -> Bool {
         guard batch.phase == .hover else { return false }
         let age = Date.timeIntervalSinceReferenceDate - batch.timestamp
         return age > staleHoverBatchInterval
     }
 }
 
-private extension MiragePointerSampleBatch {
+private extension MirageInput.MiragePointerSampleBatch {
     /// Whether the batch represents stylus hover leaving proximity.
     var isHoverExit: Bool {
         phase == .cancelled && samples.allSatisfy(\.stylus.isHovering)

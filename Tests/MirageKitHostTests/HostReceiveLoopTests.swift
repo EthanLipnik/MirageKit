@@ -10,22 +10,26 @@
 #if os(macOS)
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import MirageKit
 import Network
 import Testing
+import MirageCore
+import MirageInput
+import MirageWire
 
 @Suite("Host Receive Loop")
 struct HostReceiveLoopTests {
     @Test("Input ingress stays live while non-input control dispatch is in flight")
     func inputIngressStaysLiveWhileControlDispatchInFlight() async throws {
         let streamID: StreamID = 7
-        let control = try ControlMessage(
+        let control = try MirageWire.ControlMessage(
             type: .displayResolutionChange,
-            content: DisplayResolutionChangeMessage(streamID: streamID, displayWidth: 1280, displayHeight: 720)
+            content: MirageWire.DisplayResolutionChangeMessage(streamID: streamID, displayWidth: 1280, displayHeight: 720)
         )
-        let input = try ControlMessage(
+        let input = try MirageWire.ControlMessage(
             type: .inputEvent,
-            content: InputEventMessage(streamID: streamID, event: .keyDown(MirageKeyEvent(keyCode: 0x00)))
+            content: MirageWire.InputEventMessage(streamID: streamID, event: .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x00)))
         )
 
         struct ReceiveEvent {
@@ -91,21 +95,21 @@ struct HostReceiveLoopTests {
 
     @Test("Cancel setup lifecycle signal bypasses in-flight control dispatch")
     func cancelSetupLifecycleSignalBypassesInFlightControlDispatch() async throws {
-        let control = try ControlMessage(
+        let control = try MirageWire.ControlMessage(
             type: .displayResolutionChange,
-            content: DisplayResolutionChangeMessage(streamID: 7, displayWidth: 1280, displayHeight: 720)
+            content: MirageWire.DisplayResolutionChangeMessage(streamID: 7, displayWidth: 1280, displayHeight: 720)
         )
-        let cancel = try ControlMessage(
+        let cancel = try MirageWire.ControlMessage(
             type: .cancelStreamSetup,
-            content: CancelStreamSetupMessage(startupRequestID: UUID(), kind: .desktop, appSessionID: nil)
+            content: MirageWire.CancelStreamSetupMessage(startupRequestID: UUID(), kind: .desktop, appSessionID: nil)
         )
 
         var initialData = Data()
         initialData.append(control.serialize())
         initialData.append(cancel.serialize())
 
-        let dispatchedTypes = Locked<[ControlMessageType]>([])
-        let lifecycleTypes = Locked<[ControlMessageType]>([])
+        let dispatchedTypes = Locked<[MirageWire.ControlMessageType]>([])
+        let lifecycleTypes = Locked<[MirageWire.ControlMessageType]>([])
         let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
 
         let loop = HostReceiveLoop(
@@ -138,18 +142,18 @@ struct HostReceiveLoopTests {
     @Test("Stream ready lifecycle signal bypasses in-flight desktop start dispatch")
     func streamReadyLifecycleSignalBypassesInFlightDesktopStartDispatch() async throws {
         let streamID: StreamID = 7
-        let start = ControlMessage(type: .startDesktopStream)
-        let ready = try ControlMessage(
+        let start = MirageWire.ControlMessage(type: .startDesktopStream)
+        let ready = try MirageWire.ControlMessage(
             type: .streamReady,
-            content: StreamReadyMessage(
+            content: MirageWire.StreamReadyMessage(
                 streamID: streamID,
                 startupAttemptID: UUID(),
                 kind: .desktop
             )
         )
-        let trailing = try ControlMessage(
+        let trailing = try MirageWire.ControlMessage(
             type: .keyframeRequest,
-            content: KeyframeRequestMessage(streamID: streamID)
+            content: MirageWire.KeyframeRequestMessage(streamID: streamID)
         )
 
         var readyAndTrailing = Data()
@@ -166,8 +170,8 @@ struct HostReceiveLoopTests {
             ReceiveEvent(data: start.serialize(), isComplete: false, error: nil),
             ReceiveEvent(data: readyAndTrailing, isComplete: false, error: nil),
         ])
-        let dispatchedTypes = Locked<[ControlMessageType]>([])
-        let lifecycleTypes = Locked<[ControlMessageType]>([])
+        let dispatchedTypes = Locked<[MirageWire.ControlMessageType]>([])
+        let lifecycleTypes = Locked<[MirageWire.ControlMessageType]>([])
         let startCompletion = Locked<(@Sendable () -> Void)?>(nil)
 
         let loop = HostReceiveLoop(
@@ -216,9 +220,9 @@ struct HostReceiveLoopTests {
 
     @Test("Terminal lifecycle signal bypasses in-flight control dispatch")
     func terminalLifecycleSignalBypassesInFlightControlDispatch() async throws {
-        let control = try ControlMessage(
+        let control = try MirageWire.ControlMessage(
             type: .displayResolutionChange,
-            content: DisplayResolutionChangeMessage(streamID: 9, displayWidth: 1280, displayHeight: 720)
+            content: MirageWire.DisplayResolutionChangeMessage(streamID: 9, displayWidth: 1280, displayHeight: 720)
         )
 
         struct ReceiveEvent {
@@ -231,7 +235,7 @@ struct HostReceiveLoopTests {
             ReceiveEvent(data: control.serialize(), isComplete: false, error: nil),
             ReceiveEvent(data: nil, isComplete: true, error: nil),
         ])
-        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let dispatchedTypes = Locked<[MirageWire.ControlMessageType]>([])
         let lifecycleTerminalCount = Locked(0)
         let terminalCount = Locked(0)
         let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
@@ -279,10 +283,10 @@ struct HostReceiveLoopTests {
     @Test("Clipboard updates are an ordering barrier for following input")
     func clipboardUpdatesOrderBeforeFollowingInput() async throws {
         let streamID: StreamID = 9
-        let clipboardUpdate = ControlMessage(type: .sharedClipboardUpdate)
-        let input = try ControlMessage(
+        let clipboardUpdate = MirageWire.ControlMessage(type: .sharedClipboardUpdate)
+        let input = try MirageWire.ControlMessage(
             type: .inputEvent,
-            content: InputEventMessage(streamID: streamID, event: .keyDown(MirageKeyEvent(keyCode: 0x09)))
+            content: MirageWire.InputEventMessage(streamID: streamID, event: .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x09)))
         )
 
         var initialData = Data()
@@ -290,7 +294,7 @@ struct HostReceiveLoopTests {
         initialData.append(input.serialize())
 
         let inputCount = Locked(0)
-        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let dispatchedTypes = Locked<[MirageWire.ControlMessageType]>([])
         let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
 
         let loop = HostReceiveLoop(
@@ -325,20 +329,20 @@ struct HostReceiveLoopTests {
     @Test("Input queued behind clipboard is preserved when control backlog is full")
     func clipboardBarrierInputSurvivesFullControlBacklog() async throws {
         let streamID: StreamID = 10
-        let clipboardUpdate = ControlMessage(type: .sharedClipboardUpdate)
-        let input = try ControlMessage(
+        let clipboardUpdate = MirageWire.ControlMessage(type: .sharedClipboardUpdate)
+        let input = try MirageWire.ControlMessage(
             type: .inputEvent,
-            content: InputEventMessage(streamID: streamID, event: .mouseDown(
-                MirageMouseEvent(button: .left, location: CGPoint(x: 0.5, y: 0.5), clickCount: 1)
+            content: MirageWire.InputEventMessage(streamID: streamID, event: .mouseDown(
+                MirageInput.MirageMouseEvent(button: .left, location: CGPoint(x: 0.5, y: 0.5), clickCount: 1)
             ))
         )
 
         var initialData = Data()
         initialData.append(clipboardUpdate.serialize())
         for index in 0 ..< 8 {
-            let control = try ControlMessage(
+            let control = try MirageWire.ControlMessage(
                 type: .keyframeRequest,
-                content: KeyframeRequestMessage(streamID: StreamID(index + 1))
+                content: MirageWire.KeyframeRequestMessage(streamID: StreamID(index + 1))
             )
             initialData.append(control.serialize())
         }
@@ -383,33 +387,33 @@ struct HostReceiveLoopTests {
     func coalescedMessagesKeepLastPayloadAndDirectMessagesKeepOrder() async throws {
         let streamID: StreamID = 11
 
-        let messageA = try ControlMessage(
+        let messageA = try MirageWire.ControlMessage(
             type: .displayResolutionChange,
-            content: DisplayResolutionChangeMessage(streamID: streamID, displayWidth: 1000, displayHeight: 700)
+            content: MirageWire.DisplayResolutionChangeMessage(streamID: streamID, displayWidth: 1000, displayHeight: 700)
         )
-        let messageScale = try ControlMessage(
+        let messageScale = try MirageWire.ControlMessage(
             type: .streamScaleChange,
-            content: StreamScaleChangeMessage(streamID: streamID, streamScale: 0.75)
+            content: MirageWire.StreamScaleChangeMessage(streamID: streamID, streamScale: 0.75)
         )
-        let messageB = try ControlMessage(
+        let messageB = try MirageWire.ControlMessage(
             type: .displayResolutionChange,
-            content: DisplayResolutionChangeMessage(streamID: streamID, displayWidth: 1920, displayHeight: 1080)
+            content: MirageWire.DisplayResolutionChangeMessage(streamID: streamID, displayWidth: 1920, displayHeight: 1080)
         )
-        let messageKeyframe = try ControlMessage(
+        let messageKeyframe = try MirageWire.ControlMessage(
             type: .keyframeRequest,
-            content: KeyframeRequestMessage(streamID: streamID)
+            content: MirageWire.KeyframeRequestMessage(streamID: streamID)
         )
-        let messageRefresh60 = try ControlMessage(
+        let messageRefresh60 = try MirageWire.ControlMessage(
             type: .streamRefreshRateChange,
-            content: StreamRefreshRateChangeMessage(
+            content: MirageWire.StreamRefreshRateChangeMessage(
                 streamID: streamID,
                 maxRefreshRate: 60,
                 forceDisplayRefresh: false
             )
         )
-        let messageRefresh120 = try ControlMessage(
+        let messageRefresh120 = try MirageWire.ControlMessage(
             type: .streamRefreshRateChange,
-            content: StreamRefreshRateChangeMessage(
+            content: MirageWire.StreamRefreshRateChangeMessage(
                 streamID: streamID,
                 maxRefreshRate: 120,
                 forceDisplayRefresh: false
@@ -424,7 +428,7 @@ struct HostReceiveLoopTests {
         initialData.append(messageRefresh60.serialize())
         initialData.append(messageRefresh120.serialize())
 
-        let dispatched = Locked<[ControlMessage]>([])
+        let dispatched = Locked<[MirageWire.ControlMessage]>([])
         let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
 
         let loop = HostReceiveLoop(
@@ -457,11 +461,11 @@ struct HostReceiveLoopTests {
             .streamRefreshRateChange,
         ])
 
-        let resolvedDisplay = try dispatchedMessages[0].decode(DisplayResolutionChangeMessage.self)
+        let resolvedDisplay = try dispatchedMessages[0].decode(MirageWire.DisplayResolutionChangeMessage.self)
         #expect(resolvedDisplay.displayWidth == 1920)
         #expect(resolvedDisplay.displayHeight == 1080)
 
-        let resolvedRefresh = try dispatchedMessages[3].decode(StreamRefreshRateChangeMessage.self)
+        let resolvedRefresh = try dispatchedMessages[3].decode(MirageWire.StreamRefreshRateChangeMessage.self)
         #expect(resolvedRefresh.maxRefreshRate == 120)
 
         let reason = terminalReason.read { $0 }
@@ -473,17 +477,17 @@ struct HostReceiveLoopTests {
 
     @Test("Pong replies are consumed without entering generic control dispatch")
     func pongRepliesBypassGenericControlDispatch() async throws {
-        let pong = ControlMessage(type: .pong)
-        let keyframe = try ControlMessage(
+        let pong = MirageWire.ControlMessage(type: .pong)
+        let keyframe = try MirageWire.ControlMessage(
             type: .keyframeRequest,
-            content: KeyframeRequestMessage(streamID: 42)
+            content: MirageWire.KeyframeRequestMessage(streamID: 42)
         )
 
         var initialData = Data()
         initialData.append(pong.serialize())
         initialData.append(keyframe.serialize())
 
-        let dispatched = Locked<[ControlMessage]>([])
+        let dispatched = Locked<[MirageWire.ControlMessage]>([])
         let pingCount = Locked(0)
         let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
 

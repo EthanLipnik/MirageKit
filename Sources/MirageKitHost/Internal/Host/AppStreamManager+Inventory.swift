@@ -7,8 +7,16 @@
 //  App-stream window inventory queries and client-facing snapshots.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import Foundation
 
@@ -135,17 +143,17 @@ extension AppStreamManager {
     }
 
     /// Builds a client-facing inventory message for visible and hidden app windows.
-    func inventoryMessage(bundleIdentifier: String) -> AppWindowInventoryMessage? {
+    func inventoryMessage(bundleIdentifier: String) -> MirageWire.AppWindowInventoryMessage? {
         let key = appSessionKey(for: bundleIdentifier)
         guard let session = sessions[key] else { return nil }
 
-        let slots: [AppWindowInventoryMessage.Slot] = session.windowStreams
+        let slots: [MirageWire.AppWindowInventoryMessage.Slot] = session.windowStreams
             .map { windowID, info in
-                AppWindowInventoryMessage.Slot(
+                MirageWire.AppWindowInventoryMessage.Slot(
                     slotIndex: info.slotIndex,
                     streamID: info.streamID,
                     mediaStreamID: info.mediaStreamID,
-                    window: AppWindowInventoryMessage.WindowMetadata(
+                    window: MirageWire.AppWindowInventoryMessage.WindowMetadata(
                         windowID: windowID,
                         title: info.title,
                         width: info.width,
@@ -160,9 +168,9 @@ extension AppStreamManager {
                 return lhs.streamID < rhs.streamID
             }
 
-        let hiddenWindows: [AppWindowInventoryMessage.WindowMetadata] = session.hiddenWindows
+        let hiddenWindows: [MirageWire.AppWindowInventoryMessage.WindowMetadata] = session.hiddenWindows
             .map { windowID, info in
-                AppWindowInventoryMessage.WindowMetadata(
+                MirageWire.AppWindowInventoryMessage.WindowMetadata(
                     windowID: windowID,
                     title: info.title,
                     width: info.width,
@@ -172,7 +180,7 @@ extension AppStreamManager {
             }
             .sorted(by: hiddenInventoryWindowPrecedes)
 
-        return AppWindowInventoryMessage(
+        return MirageWire.AppWindowInventoryMessage(
             bundleIdentifier: session.bundleIdentifier,
             appSessionID: session.id,
             maxVisibleSlots: session.maxVisibleSlots,

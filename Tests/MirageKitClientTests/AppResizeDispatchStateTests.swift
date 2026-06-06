@@ -9,6 +9,7 @@
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageWire
 
 @Suite("App Resize Dispatch State")
 struct AppResizeDispatchStateTests {
@@ -109,10 +110,10 @@ struct AppResizeDispatchStateTests {
     private func resizeResult(
         requestedWidth: Int,
         requestedHeight: Int,
-        outcome: MirageAppWindowResizeResultOutcome,
+        outcome: MirageWire.MirageAppWindowResizeResultOutcome,
         reason: String? = nil
-    ) -> AppWindowResizeResultMessage {
-        AppWindowResizeResultMessage(
+    ) -> MirageWire.AppWindowResizeResultMessage {
+        MirageWire.AppWindowResizeResultMessage(
             streamID: 101,
             mediaStreamID: 100,
             windowID: 10101,

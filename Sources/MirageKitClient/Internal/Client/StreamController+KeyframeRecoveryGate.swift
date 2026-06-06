@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/24/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension StreamController {
     func enterKeyframeRecoveryIfNeeded(
@@ -180,16 +188,16 @@ extension StreamController {
         return duplicateKeyframeRequestGrace(for: snapshot)
     }
 
-    func duplicateKeyframeRequestGrace(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+    func duplicateKeyframeRequestGrace(for pathKind: MirageCore.MirageNetworkPathKind) -> CFAbsoluteTime {
         duplicateKeyframeRequestGrace(
-            for: MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
+            for: MirageMedia.MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
             pathKind: pathKind
         )
     }
 
     func duplicateKeyframeRequestGrace(
-        for mediaProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind
+        for mediaProfile: MirageMedia.MirageMediaPathProfile,
+        pathKind: MirageCore.MirageNetworkPathKind
     ) -> CFAbsoluteTime {
         if mediaProfile.usesAwdlRadioPolicy {
             return Self.localDuplicateKeyframeRequestGrace
@@ -212,8 +220,8 @@ extension StreamController {
     }
 
     func awaitingKeyframeNoProgressRetryGrace(
-        for mediaProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind
+        for mediaProfile: MirageMedia.MirageMediaPathProfile,
+        pathKind: MirageCore.MirageNetworkPathKind
     ) -> CFAbsoluteTime {
         if mediaProfile.usesAwdlRadioPolicy {
             return Self.localAwaitingKeyframeNoProgressRetryGrace
@@ -230,16 +238,16 @@ extension StreamController {
         hardRecoveryNoProgressFloor(for: snapshot.mediaPathProfile, pathKind: snapshot.transportPathKind)
     }
 
-    func hardRecoveryNoProgressFloor(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+    func hardRecoveryNoProgressFloor(for pathKind: MirageCore.MirageNetworkPathKind) -> CFAbsoluteTime {
         hardRecoveryNoProgressFloor(
-            for: MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
+            for: MirageMedia.MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
             pathKind: pathKind
         )
     }
 
     func hardRecoveryNoProgressFloor(
-        for mediaProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind
+        for mediaProfile: MirageMedia.MirageMediaPathProfile,
+        pathKind: MirageCore.MirageNetworkPathKind
     ) -> CFAbsoluteTime {
         if mediaProfile.usesAwdlRadioPolicy {
             return Self.localHardRecoveryNoProgressFloor
@@ -256,16 +264,16 @@ extension StreamController {
         packetProgressFreshThreshold(for: snapshot.mediaPathProfile, pathKind: snapshot.transportPathKind)
     }
 
-    func packetProgressFreshThreshold(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+    func packetProgressFreshThreshold(for pathKind: MirageCore.MirageNetworkPathKind) -> CFAbsoluteTime {
         packetProgressFreshThreshold(
-            for: MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
+            for: MirageMedia.MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
             pathKind: pathKind
         )
     }
 
     func packetProgressFreshThreshold(
-        for mediaProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind
+        for mediaProfile: MirageMedia.MirageMediaPathProfile,
+        pathKind: MirageCore.MirageNetworkPathKind
     ) -> CFAbsoluteTime {
         if mediaProfile.usesAwdlRadioPolicy {
             return 0.25

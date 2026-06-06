@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 @MainActor
 extension MirageClientService {
@@ -94,7 +102,7 @@ extension MirageClientService {
     ) async throws {
         let attemptIDText = connectionAttemptID?.uuidString.lowercased() ?? "none"
         connectionState = .handshaking(host: provisionalHost.name)
-        MirageInstrumentation.record(.clientHelloSent)
+        MirageConnectivity.MirageInstrumentation.record(.clientHelloSent)
         MirageLogger.client(
             "Sending Mirage bootstrap request attempt=\(attemptIDText) to \(provisionalHost.name)"
         )
@@ -116,12 +124,12 @@ extension MirageClientService {
             timeoutMessage: "Timed out waiting for host bootstrap response from \(provisionalHost.name)"
         )
         guard responseMessage.type == .sessionBootstrapResponse else {
-            throw MirageError.protocolError("Expected Mirage session bootstrap response")
+            throw MirageCore.MirageError.protocolError("Expected Mirage session bootstrap response")
         }
         MirageLogger.client(
             "Received Mirage bootstrap response attempt=\(attemptIDText) from \(provisionalHost.name)"
         )
-        let response = try responseMessage.decode(MirageSessionBootstrapResponse.self)
+        let response = try responseMessage.decode(MirageWire.MirageSessionBootstrapResponse.self)
         try await handleBootstrapResponse(
             response,
             provisionalHost: provisionalHost,
@@ -133,20 +141,20 @@ extension MirageClientService {
         from stream: AsyncStream<Data>,
         timeout: Duration? = nil,
         timeoutMessage: String? = nil
-    ) async throws -> ControlMessage {
+    ) async throws -> MirageWire.ControlMessage {
         if let timeout,
            let timeoutMessage {
-            return try await withThrowingTaskGroup(of: ControlMessage.self) { group in
+            return try await withThrowingTaskGroup(of: MirageWire.ControlMessage.self) { group in
                 group.addTask {
                     try await self.receiveSingleControlMessageUnbounded(from: stream)
                 }
                 group.addTask {
                     try await Task.sleep(for: timeout)
-                    throw MirageError.protocolError(timeoutMessage)
+                    throw MirageCore.MirageError.protocolError(timeoutMessage)
                 }
 
                 let message = try await group.next() ?? {
-                    throw MirageError.protocolError("Control message receive ended unexpectedly")
+                    throw MirageCore.MirageError.protocolError("Control message receive ended unexpectedly")
                 }()
                 group.cancelAll()
                 return message
@@ -158,14 +166,14 @@ extension MirageClientService {
 
     func receiveSingleControlMessageUnbounded(
         from stream: AsyncStream<Data>
-    ) async throws -> ControlMessage {
+    ) async throws -> MirageWire.ControlMessage {
         var buffer = Data()
 
         for await chunk in stream {
             guard !chunk.isEmpty else { continue }
             buffer.append(chunk)
 
-            switch ControlMessage.deserialize(from: buffer) {
+            switch MirageWire.ControlMessage.deserialize(from: buffer) {
             case let .success(message, consumed):
                 if consumed < buffer.count {
                     receiveBuffer = Data(buffer.dropFirst(consumed))
@@ -174,11 +182,11 @@ extension MirageClientService {
             case .needMoreData:
                 continue
             case let .invalidFrame(reason):
-                throw MirageError.protocolError("Invalid control frame: \(reason)")
+                throw MirageCore.MirageError.protocolError("Invalid control frame: \(reason)")
             }
         }
 
-        throw MirageError.protocolError("Control stream closed before receiving bootstrap response")
+        throw MirageCore.MirageError.protocolError("Control stream closed before receiving bootstrap response")
     }
 
     func installControlSessionObservers(_ session: LoomAuthenticatedSession) {
@@ -218,7 +226,7 @@ extension MirageClientService {
                 guard !Task.isCancelled else { break }
                 guard let service = serviceBox.value else { break }
                 guard await service.loomSession?.id == session.id else { break }
-                let snapshot = MirageNetworkPathClassifier.classify(pathSnapshot)
+                let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(pathSnapshot)
                 MirageLogger.client(
                     "Control path updated: session=\(session.id.uuidString) \(snapshot.signature)"
                 )

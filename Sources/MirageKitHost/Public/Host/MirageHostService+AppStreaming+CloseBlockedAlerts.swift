@@ -7,8 +7,17 @@
 //  Host-side close-attempt + actionable alert routing for client window close events.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import CoreGraphics
 
 #if os(macOS)
 
@@ -38,10 +47,13 @@ extension MirageHostService {
         session: MirageStreamSession,
         appSession: MirageAppStreamSession
     ) async {
-        let closeResult = await inputController.attemptCloseWindowAndExtractBlockingAlert(
-            windowID: session.window.id,
-            app: session.window.application
-        )
+        let closeResult: HostWindowCloseAttemptResult
+        do {
+            closeResult = try await platformInputInjectionBackend.closeWindow(session.window)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to close host window through input backend: ")
+            return
+        }
 
         switch closeResult {
         case .closed:
@@ -64,10 +76,10 @@ extension MirageHostService {
         actionID: String,
         presentingStreamID: StreamID,
         clientID: UUID
-    ) async -> AppWindowCloseAlertActionResultMessage {
+    ) async -> MirageWire.AppWindowCloseAlertActionResultMessage {
         let token = alertToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -76,7 +88,7 @@ extension MirageHostService {
         }
 
         guard let pending = pendingAppWindowCloseAlertTokensByToken[token] else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -85,7 +97,7 @@ extension MirageHostService {
         }
 
         guard pending.clientID == clientID else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -94,7 +106,7 @@ extension MirageHostService {
         }
 
         guard pending.presentingStreamID == presentingStreamID else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -103,7 +115,7 @@ extension MirageHostService {
         }
 
         guard activeStreams.contains(where: { $0.id == presentingStreamID && $0.client.id == clientID }) else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -112,7 +124,7 @@ extension MirageHostService {
         }
 
         guard let action = pending.actions.first(where: { $0.id == actionID }) else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -120,14 +132,19 @@ extension MirageHostService {
             )
         }
 
-        let pressed = await inputController.pressBlockingAlertAction(
-            windowID: pending.sourceWindowID,
-            app: pending.sourceApp,
-            actionIndex: action.index,
-            fallbackTitle: action.title
-        )
+        let pressed: Bool
+        do {
+            pressed = try await platformInputInjectionBackend.pressBlockingAlertAction(
+                in: Self.pendingCloseAlertWindow(for: pending),
+                actionIndex: action.index,
+                fallbackTitle: action.title
+            )
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to press host close-alert action: ")
+            pressed = false
+        }
         guard pressed else {
-            return AppWindowCloseAlertActionResultMessage(
+            return MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: alertToken,
                 actionID: actionID,
                 success: false,
@@ -136,7 +153,7 @@ extension MirageHostService {
         }
 
         pendingAppWindowCloseAlertTokensByToken.removeValue(forKey: token)
-        return AppWindowCloseAlertActionResultMessage(
+        return MirageWire.AppWindowCloseAlertActionResultMessage(
             alertToken: alertToken,
             actionID: actionID,
             success: true,
@@ -152,6 +169,19 @@ extension MirageHostService {
 
     func clearAllPendingAppWindowCloseAlertTokens() {
         pendingAppWindowCloseAlertTokensByToken.removeAll()
+    }
+
+    private nonisolated static func pendingCloseAlertWindow(
+        for pending: PendingAppWindowCloseAlertToken
+    ) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
+            id: pending.sourceWindowID,
+            title: nil,
+            application: pending.sourceApp,
+            frame: .zero,
+            isOnScreen: true,
+            windowLayer: 0
+        )
     }
 
     private func clearPendingAppWindowCloseAlertTokens(
@@ -201,7 +231,7 @@ extension MirageHostService {
             actions: mappedActions
         )
 
-        let message = AppWindowCloseBlockedAlertMessage(
+        let message = MirageWire.AppWindowCloseBlockedAlertMessage(
             bundleIdentifier: appSession.bundleIdentifier,
             sourceWindowID: session.window.id,
             presentingStreamID: presentingStreamID,
@@ -209,7 +239,7 @@ extension MirageHostService {
             title: alert.title,
             message: alert.message,
             actions: mappedActions.map { action in
-                AppWindowCloseBlockedAlertMessage.Action(
+                MirageWire.AppWindowCloseBlockedAlertMessage.Action(
                     id: action.id,
                     title: action.title,
                     isDestructive: action.isDestructive

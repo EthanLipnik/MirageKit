@@ -8,6 +8,7 @@
 @testable import MirageKitClient
 import MirageKit
 import Testing
+import MirageInput
 
 @Suite("Intercepted Shortcut Policy")
 struct MirageInterceptedShortcutPolicyTests {
@@ -37,7 +38,7 @@ struct MirageInterceptedShortcutPolicyTests {
 
     @Test("UIKit action names resolve to intercepted command shortcuts")
     func uiKitActionNamesResolveToInterceptedCommandShortcuts() throws {
-        let cases: [(actionName: String, input: String, modifiers: MirageModifierFlags)] = [
+        let cases: [(actionName: String, input: String, modifiers: MirageInput.MirageModifierFlags)] = [
             ("find:", "f", [.command]),
             ("findAndReplace:", "f", [.command, .shift]),
             ("findNext:", "g", [.command]),

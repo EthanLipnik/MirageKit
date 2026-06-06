@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -17,7 +25,7 @@ extension MirageHostService {
         _ resizeError: Error,
         streamID: StreamID,
         request: DesktopResizeRequestState,
-        preResizeSnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        preResizeSnapshot: MirageHostVirtualDisplaySnapshot?,
         latestShouldRestoreMirroring shouldRestoreMirroring: Bool,
         previousRequestedDisplayScaleFactor: CGFloat?,
         previousRequestedStreamScale: CGFloat,
@@ -25,7 +33,7 @@ extension MirageHostService {
     )
     async -> DesktopResizeFailureHandlingResult {
         var completionContext: StreamContext?
-        var outcome: MirageDesktopTransitionOutcome = .resized
+        var outcome: MirageWire.MirageDesktopTransitionOutcome = .resized
         var shouldStopStreamWithError = false
         var shouldRestoreMirroring = shouldRestoreMirroring
 
@@ -53,7 +61,7 @@ extension MirageHostService {
                         outcome = .rolledBack
                         if shouldRestoreMirroring,
                            desktopResizeRequiresMirroringRestoreSuccess(desktopStreamMode: desktopStreamMode),
-                           let restoredSnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot {
+                           let restoredSnapshot = await platformVirtualDisplayBackend.displaySnapshot {
                             let mirroringRestored = await restoreDisplayMirroringAfterResize(
                                 streamID: streamID,
                                 targetDisplayID: restoredSnapshot.displayID,
@@ -120,7 +128,7 @@ extension MirageHostService {
     func rollbackDesktopResolutionChange(
         streamID: StreamID,
         request: DesktopResizeRequestState,
-        snapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        snapshot: MirageHostVirtualDisplaySnapshot,
         context: StreamContext,
         requestedDisplayScaleFactor: CGFloat?,
         requestedStreamScale: CGFloat,
@@ -135,25 +143,25 @@ extension MirageHostService {
             hiDPI: snapshot.scaleFactor > 1.5,
             colorSpace: snapshot.colorSpace
         )
-        var updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+        var updateResult = try await platformVirtualDisplayBackend.updateDisplayResolution(
             for: .desktopStream,
             newResolution: snapshot.resolution,
             refreshRate: refreshRate,
-            resizeRequest: rollbackRequest,
+            resizeRequest: MirageHostVirtualDisplayResizeRequest(resizeRequest: rollbackRequest),
             allowRecreation: false
         )
         if updateResult.outcome == .requiresRecreation {
-            updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+            updateResult = try await platformVirtualDisplayBackend.updateDisplayResolution(
                 for: .desktopStream,
                 newResolution: snapshot.resolution,
                 refreshRate: refreshRate,
-                resizeRequest: rollbackRequest,
+                resizeRequest: MirageHostVirtualDisplayResizeRequest(resizeRequest: rollbackRequest),
                 allowRecreation: true
             )
         }
 
-        guard let restoredSnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot else {
-            throw MirageError.protocolError("Missing shared display snapshot after desktop resize rollback")
+        guard let restoredSnapshot = await platformVirtualDisplayBackend.displaySnapshot else {
+            throw MirageCore.MirageError.protocolError("Missing shared display snapshot after desktop resize rollback")
         }
 
         sharedVirtualDisplayScaleFactor = max(1.0, restoredSnapshot.scaleFactor)
@@ -217,12 +225,12 @@ extension MirageHostService {
         try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
         let fallback = try await mainDisplayDesktopCaptureFallback(reason: reason)
 
-        if let sharedDisplayID = await SharedVirtualDisplayManager.shared.displayID {
+        if let sharedDisplayID = await platformVirtualDisplayBackend.displayID {
             _ = await disableDisplayMirroring(displayID: sharedDisplayID)
         } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
             _ = await disableDisplayMirroring(displayID: fallback.displayID)
         }
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        await platformVirtualDisplayBackend.releaseDisplayForConsumer(.desktopStream)
 
         desktopVirtualDisplayID = nil
         desktopPrimaryPhysicalDisplayID = fallback.displayID
@@ -269,7 +277,7 @@ extension MirageHostService {
         streamID: StreamID,
         request: DesktopResizeRequestState,
         context: StreamContext,
-        outcome: MirageDesktopTransitionOutcome,
+        outcome: MirageWire.MirageDesktopTransitionOutcome,
         useCurrentGeometryForRequestContract: Bool = false
     )
     async {
@@ -340,7 +348,7 @@ extension MirageHostService {
         let codec = streamStartSnapshot.codec
         let acceptedMediaMaxPacketSize = streamStartSnapshot.mediaMaxPacketSize
         desktopPresentationGeneration &+= 1
-        var message = DesktopStreamStartedMessage(
+        var message = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: Int(displayResolution.width),
@@ -395,14 +403,14 @@ extension MirageHostService {
     /// Logs whether the resized desktop display and encoder pipeline still match color expectations.
     func logDesktopResizeColorPipelineValidation(
         streamID: StreamID,
-        displaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        displaySnapshot: MirageHostVirtualDisplaySnapshot,
         context: StreamContext
     )
     async {
         let settings = await context.encoderSettings
         let runtime = await context.encoder?.runtimeValidationSnapshot
 
-        let colorValidation = CGVirtualDisplayBridge.displayColorSpaceValidation(
+        let colorValidation = platformVirtualDisplayBackend.displayColorSpaceValidation(
             displayID: displaySnapshot.displayID,
             expectedColorSpace: settings.colorSpace
         )

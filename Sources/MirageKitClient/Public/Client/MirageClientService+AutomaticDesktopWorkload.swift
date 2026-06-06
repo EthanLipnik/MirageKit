@@ -7,9 +7,17 @@
 //  Client-driven automatic desktop workload reconfiguration.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 extension MirageClientService {
@@ -19,7 +27,7 @@ extension MirageClientService {
         target: MirageAutomaticDesktopWorkloadTier
     )
     async throws -> Bool {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
         guard let snapshot = metricsStore.snapshot(for: streamID),
               let encodedWidth = snapshot.hostEncodedWidth,
               let encodedHeight = snapshot.hostEncodedHeight,
@@ -37,7 +45,7 @@ extension MirageClientService {
         let scaleRatio = sqrt(targetPixels / currentPixels)
         let requestedScale = max(
             0.5,
-            MirageStreamGeometry.clampStreamScale((runtimeWorkloadSafetyScaleByStream[streamID] ?? resolutionScale) * scaleRatio)
+            MirageMedia.MirageStreamGeometry.clampStreamScale((runtimeWorkloadSafetyScaleByStream[streamID] ?? resolutionScale) * scaleRatio)
         )
         let currentFrameRate = runtimeWorkloadSafetyCurrentFrameRate(for: streamID)
         let requestedFrameRate = Self.runtimeWorkloadSafetyCappedFrameRate(

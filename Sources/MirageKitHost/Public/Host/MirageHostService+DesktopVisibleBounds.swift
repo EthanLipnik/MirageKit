@@ -5,9 +5,13 @@
 //  Created by Ethan Lipnik on 6/22/26.
 //
 
+import MirageCore
+import MirageDiagnostics
+import MirageKit
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 

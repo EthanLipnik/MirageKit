@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Network
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -33,14 +41,14 @@ extension MirageHostService {
     ]
 
     enum ExistingSessionWindowStartResult {
-        case success(WindowAddedToStreamMessage)
+        case success(MirageWire.WindowAddedToStreamMessage)
         case cancelled
         case failure(String)
     }
 
     enum AppWindowSwapContextResult {
         case success(AppWindowSwapContext)
-        case failure(AppWindowSwapResultMessage)
+        case failure(MirageWire.AppWindowSwapResultMessage)
     }
 
     struct AppWindowSwapContext {
@@ -61,10 +69,10 @@ extension MirageHostService {
     }
 
     struct SelectAppExistingSessionExpansionRequest {
-        let app: MirageInstalledApp
+        let app: MirageWire.MirageInstalledApp
         let client: MirageConnectedClient
         let clientContext: ClientContext
-        let selectRequest: SelectAppMessage
+        let selectRequest: MirageWire.SelectAppMessage
         let maxVisibleSlots: Int
         let targetFrameRate: Int
         let mediaMaxPacketSize: Int
@@ -122,7 +130,7 @@ extension MirageHostService {
     }
 
     func prepareWindowForStreamingIfNeeded(
-        _ window: MirageWindow,
+        _ window: MirageMedia.MirageWindow,
         reason: String
     ) async {
         let plan = Self.windowStreamingPreparationPlan(
@@ -136,7 +144,7 @@ extension MirageHostService {
         let didExitFullScreen = plan.shouldExitFullScreen
             ? WindowManager.exitFullScreen(window.id)
             : false
-        activateWindow(window)
+        await activateWindow(window)
         if plan.settleDelayMilliseconds > 0 {
             do {
                 try await Task.sleep(for: .milliseconds(plan.settleDelayMilliseconds))
@@ -183,7 +191,7 @@ extension MirageHostService {
 
     nonisolated static func resolveInitialAppWindowStartupBinding(
         candidates: [AppStreamWindowCandidate],
-        liveWindows: [MirageWindow],
+        liveWindows: [MirageMedia.MirageWindow],
         visibleWindowIDs: Set<WindowID>,
         claimedWindowIDs: Set<WindowID>,
         preferredWindowID: WindowID?,
@@ -282,13 +290,13 @@ extension MirageHostService {
         }
     }
 
-    nonisolated static func liveWindowsSnapshot(from content: SCShareableContent) -> [MirageWindow] {
-        content.windows.compactMap { window -> MirageWindow? in
+    nonisolated static func liveWindowsSnapshot(from content: SCShareableContent) -> [MirageMedia.MirageWindow] {
+        content.windows.compactMap { window -> MirageMedia.MirageWindow? in
             guard let app = window.owningApplication else { return nil }
-            return MirageWindow(
+            return MirageMedia.MirageWindow(
                 id: WindowID(window.windowID),
                 title: window.title,
-                application: MirageApplication(
+                application: MirageMedia.MirageApplication(
                     id: app.processID,
                     bundleIdentifier: app.bundleIdentifier,
                     name: app.applicationName

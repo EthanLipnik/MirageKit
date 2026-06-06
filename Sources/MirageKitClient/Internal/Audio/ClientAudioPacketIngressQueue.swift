@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 3/5/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Off-main audio packet ingress queue that decodes packets and discards stale generations.
 final class ClientAudioPacketIngressQueue: @unchecked Sendable {
@@ -51,7 +59,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
 
     /// Work captured at enqueue time so reset operations can invalidate older packets.
     private struct WorkItem: Sendable {
-        let header: AudioPacketHeader
+        let header: MirageWire.AudioPacketHeader
         let payload: Data
         let targetChannelCount: Int
         let generation: UInt64
@@ -99,7 +107,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
     }
 
     func enqueue(
-        header: AudioPacketHeader,
+        header: MirageWire.AudioPacketHeader,
         payload: Data,
         targetChannelCount: Int,
         generation: UInt64

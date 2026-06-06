@@ -5,20 +5,28 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     nonisolated static func shouldEnableSharedClipboard(
         settingEnabled: Bool,
-        sessionState: LoomSessionAvailability,
+        sessionAvailability: MirageWire.MirageHostSessionAvailability,
         hasAppStreams: Bool,
         hasDesktopStream: Bool
     ) -> Bool {
         guard settingEnabled else { return false }
-        guard sessionState == .ready else { return false }
+        guard sessionAvailability == .ready else { return false }
         return hasAppStreams || hasDesktopStream
     }
 
@@ -32,7 +40,7 @@ extension MirageHostService {
         for clientContext in clientsBySessionID.values {
             let enabled = Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,
-                sessionState: sessionState,
+                sessionAvailability: mirageSessionAvailability,
                 hasAppStreams: hasAppStreams,
                 hasDesktopStream: hasDesktopStream
             )
@@ -54,14 +62,14 @@ extension MirageHostService {
     }
 
     func handleSharedClipboardUpdate(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
         let client = clientContext.client
 
         guard Self.shouldEnableSharedClipboard(
             settingEnabled: sharedClipboardEnabled,
-            sessionState: sessionState,
+            sessionAvailability: mirageSessionAvailability,
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamID != nil
         ) else {
@@ -78,7 +86,7 @@ extension MirageHostService {
         let clientName = client.name
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let update = try message.decode(SharedClipboardUpdateMessage.self)
+                let update = try message.decode(MirageWire.SharedClipboardUpdateMessage.self)
                 let decryptedPayload: Data? = if let encryptedPayload = update.encryptedPayload {
                     try MirageMediaSecurity.decryptClipboardPayload(
                         encryptedPayload,
@@ -102,9 +110,9 @@ extension MirageHostService {
     }
 
     private func applyReceivedClipboardChunk(
-        representation: SharedClipboardRepresentation,
+        representation: MirageWire.SharedClipboardRepresentation,
         payload: Data?,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         sentAtMs: Int64,
         chunkIndex: Int,
         chunkCount: Int
@@ -164,7 +172,7 @@ extension MirageHostService {
         for clientContext in clientsBySessionID.values {
             guard Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,
-                sessionState: sessionState,
+                sessionAvailability: mirageSessionAvailability,
                 hasAppStreams: !activeStreams.isEmpty,
                 hasDesktopStream: desktopStreamID != nil
             ) else {
@@ -204,7 +212,7 @@ extension MirageHostService {
 
         let sent = clientContext.sendBestEffort(
             .sharedClipboardStatus,
-            content: SharedClipboardStatusMessage(enabled: enabled)
+            content: MirageWire.SharedClipboardStatusMessage(enabled: enabled)
         )
         guard sent else {
             MirageLogger.host("Failed to encode shared clipboard status for \(clientContext.client.name)")

@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 #if canImport(GameController)
@@ -162,7 +170,7 @@ extension InputCapturingView {
     }
 
     func configureInteractionDisplayLink(_ displayLink: CADisplayLink) {
-        let targetFPS = MirageInteractionCadence.targetFPS120
+        let targetFPS = MirageMedia.MirageInteractionCadence.targetFPS120
         let preferred = Float(targetFPS)
         displayLink.preferredFrameRateRange = CAFrameRateRange(
             minimum: preferred,
@@ -253,16 +261,16 @@ extension InputCapturingView {
 
     func sendLockedPointerMovementEvent(
         location: CGPoint,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         pressure: CGFloat = 1.0,
-        stylus: MirageStylusEvent? = nil
+        stylus: MirageInput.MirageStylusEvent? = nil
     ) {
         let eventLocation = if lockedPointerButtonDown {
             lockedCursorActionPosition()
         } else {
             location
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: eventLocation,
             modifiers: modifiers,

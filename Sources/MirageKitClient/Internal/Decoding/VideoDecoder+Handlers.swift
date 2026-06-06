@@ -7,14 +7,22 @@
 //  HEVC decoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
-import MirageKit
 
 extension VideoDecoder {
-    func setCodec(_ newCodec: MirageVideoCodec, streamDimensions: (width: Int, height: Int)? = nil) {
+    func setCodec(_ newCodec: MirageMedia.MirageVideoCodec, streamDimensions: (width: Int, height: Int)? = nil) {
         codec = newCodec
         proResStreamDimensions = streamDimensions
         MirageLogger.decoder("Decoder codec set to \(newCodec.rawValue)")
@@ -37,7 +45,7 @@ extension VideoDecoder {
         }
     }
 
-    func setPreferredOutputColorDepth(_ colorDepth: MirageStreamColorDepth) {
+    func setPreferredOutputColorDepth(_ colorDepth: MirageMedia.MirageStreamColorDepth) {
         let desiredPixelFormat = preferredOutputPixelFormat(for: colorDepth)
         let formatChanged = outputPixelFormat != desiredPixelFormat
         preferredOutputColorDepth = colorDepth

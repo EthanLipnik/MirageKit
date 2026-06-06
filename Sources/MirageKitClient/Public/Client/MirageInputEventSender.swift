@@ -7,8 +7,16 @@
 //  Dedicated input-event send path that stays off MainActor.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Serializes client input events and applies bounded coalescing before they enter the control channel.
 public final class MirageInputEventSender: @unchecked Sendable {
@@ -21,10 +29,10 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     /// Input work waiting for the non-blocking control-channel fallback queue.
     private enum PendingInput {
-        case event(MirageInputEvent, streamID: StreamID)
-        case continuousBatch(MirageContinuousInputBatch)
+        case event(MirageInput.MirageInputEvent, streamID: StreamID)
+        case continuousBatch(MirageInput.MirageContinuousInputBatch)
 
-        var event: MirageInputEvent? {
+        var event: MirageInput.MirageInputEvent? {
             guard case let .event(event, _) = self else { return nil }
             return event
         }
@@ -105,7 +113,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         currentPriorityRoute?.snapshot()
     }
 
-    func sendInput(_ event: MirageInputEvent, streamID: StreamID) async throws {
+    func sendInput(_ event: MirageInput.MirageInputEvent, streamID: StreamID) async throws {
         flushContinuousInputSynchronously(reason: "syncBoundary")
         recordInteractionIfNeeded(event)
         MirageInputLatencyTelemetry.shared.recordClientCapture(event: event, streamID: streamID)
@@ -126,11 +134,11 @@ public final class MirageInputEventSender: @unchecked Sendable {
             try await sendHandler(data, .reliable)
             return
         }
-        throw MirageError.protocolError("Not connected")
+        throw MirageCore.MirageError.protocolError("Not connected")
     }
 
     /// Enqueues an input event for best-effort delivery without blocking the caller.
-    public func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
+    public func sendInputFireAndForget(_ event: MirageInput.MirageInputEvent, streamID: StreamID) {
         recordInteractionIfNeeded(event)
         MirageInputLatencyTelemetry.shared.recordClientCapture(event: event, streamID: streamID)
         Self.logKeyboardDiagnosticIfNeeded(
@@ -202,7 +210,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         }
     }
 
-    private func sendOrEnqueueContinuousBatchLocked(_ batch: MirageContinuousInputBatch) {
+    private func sendOrEnqueueContinuousBatchLocked(_ batch: MirageInput.MirageContinuousInputBatch) {
         if let route = currentPriorityRoute {
             do {
                 recordContinuousBatchClientSend(batch, route: .priorityContinuousBatch)
@@ -327,7 +335,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
                     try await handler(data, .droppableRealtime)
                 }
             } catch {
-                if Self.isExpectedBestEffortSendFailure(error) {
+                if MirageConnectionErrorClassifier.isExpectedBestEffortInputSendFailure(error) {
                     MirageLogger.client("Dropped best-effort input because the stream closed: \(error.localizedDescription)")
                 } else {
                     MirageLogger.error(.client, error: error, message: "Failed to send input: ")
@@ -366,14 +374,14 @@ public final class MirageInputEventSender: @unchecked Sendable {
         return true
     }
 
-    private func makeInputMessageData(event: MirageInputEvent, streamID: StreamID) throws -> Data {
-        let inputMessage = InputEventMessage(streamID: streamID, event: event)
-        let message = try ControlMessage(type: .inputEvent, payload: inputMessage.serializePayload())
+    private func makeInputMessageData(event: MirageInput.MirageInputEvent, streamID: StreamID) throws -> Data {
+        let inputMessage = MirageWire.InputEventMessage(streamID: streamID, event: event)
+        let message = try MirageWire.ControlMessage(type: .inputEvent, payload: inputMessage.serializePayload())
         return message.serialize()
     }
 
-    private func makeContinuousInputFallbackData(batch: MirageContinuousInputBatch) throws -> Data {
-        let envelope = MiragePriorityInputEnvelope(
+    private func makeContinuousInputFallbackData(batch: MirageInput.MirageContinuousInputBatch) throws -> Data {
+        let envelope = MirageWire.MiragePriorityInputEnvelope(
             kind: .continuousInput,
             eventID: nextContinuousFallbackEventIDLocked(),
             streamID: batch.streamID,
@@ -381,7 +389,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
             sentAtUptime: ProcessInfo.processInfo.systemUptime,
             inputPayload: try batch.serialize()
         )
-        let message = try ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
+        let message = try MirageWire.ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
         return message.serialize()
     }
 
@@ -404,7 +412,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     private func recordContinuousBatchClientSend(
-        _ batch: MirageContinuousInputBatch,
+        _ batch: MirageInput.MirageContinuousInputBatch,
         route: MirageInputLatencyClientRoute
     ) {
         for event in batch.inputEvents() {
@@ -415,21 +423,6 @@ public final class MirageInputEventSender: @unchecked Sendable {
                 route: route
             )
         }
-    }
-
-    private static func isExpectedBestEffortSendFailure(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-
-        let nsError = error as NSError
-        if nsError.domain == "Loom.LoomError" {
-            return nsError.code == 0 || nsError.code == 3
-        }
-        if nsError.domain == NSPOSIXErrorDomain {
-            return [32, 54, 57, 89].contains(nsError.code)
-        }
-        return false
     }
 
     /// Current transport send closure protected by the sender connection lock.
@@ -463,7 +456,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         return elapsed < duration
     }
 
-    private func replaceableContinuousKind(for event: MirageInputEvent) -> ReplaceableContinuousInputKind? {
+    private func replaceableContinuousKind(for event: MirageInput.MirageInputEvent) -> ReplaceableContinuousInputKind? {
         switch event {
         case .mouseMoved:
             .mouseMoved
@@ -482,12 +475,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
         }
     }
 
-    private func droppableRealtimeKind(for event: MirageInputEvent) -> ReplaceableContinuousInputKind? {
+    private func droppableRealtimeKind(for event: MirageInput.MirageInputEvent) -> ReplaceableContinuousInputKind? {
         guard Self.deliveryMode(for: event) == .droppableRealtime else { return nil }
         return replaceableContinuousKind(for: event)
     }
 
-    private func isDroppablePointerMovement(_ event: MirageInputEvent) -> Bool {
+    private func isDroppablePointerMovement(_ event: MirageInput.MirageInputEvent) -> Bool {
         switch event {
         case .mouseMoved,
              .mouseDragged,
@@ -501,7 +494,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         }
     }
 
-    private static func deliveryMode(for event: MirageInputEvent) -> DeliveryMode {
+    private static func deliveryMode(for event: MirageInput.MirageInputEvent) -> DeliveryMode {
         switch event {
         case .mouseMoved,
              .mouseDragged,
@@ -516,7 +509,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     private static func logKeyboardDiagnosticIfNeeded(
-        _ event: MirageInputEvent,
+        _ event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         deliveryMode: DeliveryMode,
         path: String
@@ -535,7 +528,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     func recordInteractionIfNeeded(
-        _ event: MirageInputEvent,
+        _ event: MirageInput.MirageInputEvent,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) {
         guard event.shouldGateAutomaticProbe else { return }

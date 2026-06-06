@@ -7,19 +7,27 @@
 //  Per-window initial app-stream binding retries.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Starts one resolved initial app-window binding with bounded retries.
     func startInitialAppWindowBinding(
-        app: MirageInstalledApp,
+        app: MirageWire.MirageInstalledApp,
         binding: ResolvedAppWindowBinding,
         preferredSlotIndex: Int,
         clientContext: ClientContext,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         startupAtlasBitrateBudget: Int?,
         mediaMaxPacketSize: Int

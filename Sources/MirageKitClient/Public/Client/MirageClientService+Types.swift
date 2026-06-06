@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 extension MirageClientService {
     struct StreamStartAcknowledgement: Equatable {
@@ -25,69 +33,6 @@ public extension MirageClientService {
 
         /// Defer non-essential refreshes while an interactive stream is active.
         case interactiveStreaming
-    }
-
-    /// Lightweight snapshot of a foreground stream's receiver health.
-    struct ForegroundStreamHealthSnapshot: Sendable, Equatable {
-        /// Stream being sampled.
-        public let streamID: StreamID
-
-        /// Whether the stream still has an active controller.
-        public let hasController: Bool
-
-        /// Whether the stream still has an attached video media stream.
-        public let hasVideoMediaStream: Bool
-
-        /// Last observed packet time in absolute seconds.
-        public let latestPacketTime: CFAbsoluteTime
-
-        /// Latest submitted packet sequence observed by the receiver.
-        public let submittedSequence: UInt64
-
-        /// Wall-clock time for the latest submitted frame.
-        public let submittedTime: CFAbsoluteTime
-
-        /// Unique visible frame submissions observed over the current telemetry window.
-        public let visibleFrameFPS: Double
-
-        /// Number of frames currently queued for presentation.
-        public let pendingFrameCount: Int
-
-        /// Age of the oldest pending presentation frame in milliseconds.
-        public let pendingFrameAgeMs: Double
-
-        /// Whether decode cadence is healthy relative to the stream target.
-        public let decodeHealthy: Bool
-
-        /// Whether the receiver is waiting for a keyframe before decoding can continue.
-        public let isAwaitingKeyframe: Bool
-
-        /// Creates a foreground stream health snapshot.
-        public init(
-            streamID: StreamID,
-            hasController: Bool,
-            hasVideoMediaStream: Bool,
-            latestPacketTime: CFAbsoluteTime,
-            submittedSequence: UInt64,
-            submittedTime: CFAbsoluteTime = 0,
-            visibleFrameFPS: Double = 0,
-            pendingFrameCount: Int = 0,
-            pendingFrameAgeMs: Double = 0,
-            decodeHealthy: Bool = true,
-            isAwaitingKeyframe: Bool
-        ) {
-            self.streamID = streamID
-            self.hasController = hasController
-            self.hasVideoMediaStream = hasVideoMediaStream
-            self.latestPacketTime = latestPacketTime
-            self.submittedSequence = submittedSequence
-            self.submittedTime = submittedTime
-            self.visibleFrameFPS = visibleFrameFPS
-            self.pendingFrameCount = pendingFrameCount
-            self.pendingFrameAgeMs = pendingFrameAgeMs
-            self.decodeHealthy = decodeHealthy
-            self.isAwaitingKeyframe = isAwaitingKeyframe
-        }
     }
 
     /// Control refreshes deferred while non-essential updates are suppressed.
@@ -193,21 +138,6 @@ public extension MirageClientService {
             self.hostProtocolVersion = hostProtocolVersion
             self.clientProtocolVersion = clientProtocolVersion
         }
-    }
-
-    /// Trust and authorization state for the active or pending host connection.
-    enum AuthorizationState: String, Sendable, Codable, Equatable {
-        /// No host authorization flow is active.
-        case idle
-
-        /// The client is evaluating the host identity.
-        case verifyingTrust
-
-        /// The host is waiting for manual trust approval.
-        case awaitingManualApproval
-
-        /// The current host identity is trusted.
-        case approved
     }
 
     /// High-level client connection lifecycle state.

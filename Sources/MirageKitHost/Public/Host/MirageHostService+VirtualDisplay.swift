@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 1/11/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -96,13 +104,13 @@ extension MirageHostService {
         var resizeCompletionContext: StreamContext?
         var shouldStopDesktopStreamWithError = false
         var shouldResumeEncodingAfterResize = false
-        var preResizeSnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
-        var resizeOutcome: MirageDesktopTransitionOutcome = .resized
+        var preResizeSnapshot: MirageHostVirtualDisplaySnapshot?
+        var resizeOutcome: MirageWire.MirageDesktopTransitionOutcome = .resized
         let previousRequestedDisplayScaleFactor = desktopRequestedScaleFactor
         let previousRequestedStreamScale = await desktopContext.requestedStreamScale
         let previousEncoderMaxDimensions = await desktopContext.encoderMaxDimensions
         do {
-            preResizeSnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot
+            preResizeSnapshot = await platformVirtualDisplayBackend.displaySnapshot
             try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
             let geometry = await resolvedDesktopResizeGeometry(
                 request: request,
@@ -224,7 +232,7 @@ extension MirageHostService {
         }
 
         if shouldRestoreMirroring {
-            let restoreSnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot
+            let restoreSnapshot = await platformVirtualDisplayBackend.displaySnapshot
             let restoreDisplayID = restoreSnapshot?.displayID ?? suspendedMirroringDisplayID
             if let restoreDisplayID {
                 if shouldStopDesktopStreamWithError {

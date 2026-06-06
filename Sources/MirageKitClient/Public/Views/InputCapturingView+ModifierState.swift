@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 #if canImport(GameController)
@@ -16,8 +24,8 @@ import GameController
 
 extension InputCapturingView {
     /// Get current modifier state from held keyboard keys
-    var keyboardModifiers: MirageModifierFlags {
-        var modifiers: MirageModifierFlags = []
+    var keyboardModifiers: MirageInput.MirageModifierFlags {
+        var modifiers: MirageInput.MirageModifierFlags = []
         for keyCode in heldModifierKeys {
             if let modifier = Self.modifierKeyMap[keyCode] { modifiers.insert(modifier) }
         }
@@ -44,7 +52,7 @@ extension InputCapturingView {
         _ = refreshModifiersForInput()
     }
 
-    func sendModifierSnapshotIfNeeded(_ modifiers: MirageModifierFlags) {
+    func sendModifierSnapshotIfNeeded(_ modifiers: MirageInput.MirageModifierFlags) {
         guard modifiers != lastSentModifiers else { return }
         lastSentModifiers = modifiers
         updateSoftwareModifierButtons()
@@ -101,7 +109,7 @@ extension InputCapturingView {
     }
 
     func resyncModifierState(from modifierFlags: UIKeyModifierFlags) {
-        let flags = MirageModifierFlags(uiKeyModifierFlags: modifierFlags)
+        let flags = MirageInput.MirageModifierFlags(uiKeyModifierFlags: modifierFlags)
         var newHeldKeys = Set<UIKeyboardHIDUsage>()
         for (flag, keys) in Self.modifierFlagToKeys where flags.contains(flag) {
             let existingKeys = keys.filter { heldModifierKeys.contains($0) }
@@ -243,7 +251,7 @@ extension InputCapturingView {
     static let dragActivationMovementThresholdPoints: CGFloat = 10
 
     /// Modifier key HID codes and their corresponding flags
-    static let modifierKeyMap: [UIKeyboardHIDUsage: MirageModifierFlags] = [
+    static let modifierKeyMap: [UIKeyboardHIDUsage: MirageInput.MirageModifierFlags] = [
         .keyboardLeftShift: .shift,
         .keyboardRightShift: .shift,
         .keyboardLeftControl: .control,
@@ -256,7 +264,7 @@ extension InputCapturingView {
     ]
 
     /// Preferred key codes for modifier flag resync (preserve left/right when possible)
-    static let modifierFlagToKeys: [(flag: MirageModifierFlags, keys: [UIKeyboardHIDUsage])] = [
+    static let modifierFlagToKeys: [(flag: MirageInput.MirageModifierFlags, keys: [UIKeyboardHIDUsage])] = [
         (.shift, [.keyboardLeftShift, .keyboardRightShift]),
         (.control, [.keyboardLeftControl, .keyboardRightControl]),
         (.option, [.keyboardLeftAlt, .keyboardRightAlt]),
@@ -280,8 +288,8 @@ extension InputCapturingView {
     #if canImport(GameController)
     struct ModifiedKeyRepeatState {
         let keyCode: GCKeyCode
-        let keyEvent: MirageKeyEvent
-        let requiredModifiers: MirageModifierFlags
+        let keyEvent: MirageInput.MirageKeyEvent
+        let requiredModifiers: MirageInput.MirageModifierFlags
         var nextRepeatDeadline: TimeInterval
     }
     #endif

@@ -7,8 +7,16 @@
 //  Off-main audio ingest + jitter + decode sequencing for UDP audio packets.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 actor ClientAudioDecodePipeline {
     private let jitterBuffer: AudioJitterBuffer
@@ -25,7 +33,7 @@ actor ClientAudioDecodePipeline {
     }
 
     func ingestPacket(
-        header: AudioPacketHeader,
+        header: MirageWire.AudioPacketHeader,
         payload: Data,
         targetChannelCount: Int
     ) async -> [DecodedPCMFrame] {

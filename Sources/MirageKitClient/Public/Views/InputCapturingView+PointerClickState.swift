@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -108,7 +116,7 @@ extension InputCapturingView {
 
         let releaseLocation = pointerReleaseLocation()
         if pencilButtonDown, let stylus = pencilCurrentStylus {
-            let sample = MiragePointerSample(
+            let sample = MirageInput.MiragePointerSample(
                 location: releaseLocation,
                 pressure: 0,
                 stylus: stylus,
@@ -122,7 +130,7 @@ extension InputCapturingView {
                 samples: [sample]
             )
         } else {
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: releaseLocation,
                 clickCount: max(1, currentClickCount),

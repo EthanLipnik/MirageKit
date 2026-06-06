@@ -7,10 +7,18 @@
 //  Client connection lifecycle and Loom session bootstrap.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 #if canImport(UIKit)
 import UIKit.UIDevice
@@ -21,7 +29,7 @@ public extension MirageClientService {
     /// Builds the Loom hello request used to authenticate with a discovered host.
     func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {
         let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
-        let identity = try resolvedIdentityManager.currentIdentity()
+        let localIdentity = try MirageKit.currentIdentitySnapshot(using: resolvedIdentityManager)
         let deviceType: DeviceType = {
             #if os(macOS)
             return .mac
@@ -33,10 +41,10 @@ public extension MirageClientService {
             return .unknown
             #endif
         }()
-        let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
+        let advertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.makeClientAdvertisement(
             deviceID: deviceID,
             deviceType: deviceType,
-            identityKeyID: identity.keyID,
+            identityKeyID: localIdentity.keyID,
             additionalMetadata: additionalAdvertisementMetadata
         )
         return LoomSessionHelloRequest(
@@ -53,16 +61,17 @@ public extension MirageClientService {
         requestTakeoverIfBusy: Bool = false,
         protocolVersionOverride: Int? = nil,
         connectionAttemptID: UUID? = nil
-    ) -> MirageSessionBootstrapRequest {
-        MirageSessionBootstrapRequest(
-            protocolVersion: protocolVersionOverride ?? Int(MirageKit.protocolVersion),
+    ) -> MirageWire.MirageSessionBootstrapRequest {
+        MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: protocolVersionOverride ?? Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
             requestTakeoverIfBusy: requestTakeoverIfBusy,
             connectionAttemptID: connectionAttemptID,
             adaptiveGovernorRevision: MirageAdaptiveGovernorProtocol.revision,
             hostOwnedRuntimeSupport: true,
             adaptiveFeedbackClassesSupported: MirageAdaptiveGovernorProtocol.feedbackClasses,
-            adaptiveLegacyFallbackMode: MirageAdaptiveGovernorProtocol.legacyFallbackMode
+            adaptiveLegacyFallbackMode: MirageAdaptiveGovernorProtocol.legacyFallbackMode,
+            clientCapabilities: .currentFullFrameBaseline
         )
     }
 
@@ -98,12 +107,12 @@ public extension MirageClientService {
         requestTakeoverIfBusy: Bool = false
     ) async throws {
         guard connectionState.canConnect else {
-            throw MirageError.protocolError("Already connected or connecting")
+            throw MirageCore.MirageError.protocolError("Already connected or connecting")
         }
 
         let attemptID = beginConnectAttempt()
         beginConnectionStartupCriticalSection()
-        MirageInstrumentation.record(.clientConnectionRequested)
+        MirageConnectivity.MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name) using established session...")
         lastDisconnectReason = nil
         connectionState = .connecting
@@ -138,7 +147,7 @@ public extension MirageClientService {
 
             loomSession = session
             await rememberDirectEndpointHost(session.remoteEndpoint, for: host.deviceID)
-            transferEngine = LoomTransferEngine(session: session)
+            transferEngine = MirageTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
             await installInputSendHandler(controlChannel: controlChannel)
@@ -179,7 +188,7 @@ public extension MirageClientService {
                 MirageLogger.client("Connection failed before bootstrap completed: \(error.localizedDescription)")
             }
             if !isCancelledFailure {
-                MirageInstrumentation.record(.clientConnectionFailed)
+                MirageConnectivity.MirageInstrumentation.record(.clientConnectionFailed)
             }
             if shouldCleanUpFailedConnect {
                 await handleDisconnect(
@@ -210,12 +219,12 @@ public extension MirageClientService {
         bootstrapProtocolVersionOverride: Int?
     ) async throws {
         guard connectionState.canConnect else {
-            throw MirageError.protocolError("Already connected or connecting")
+            throw MirageCore.MirageError.protocolError("Already connected or connecting")
         }
 
         let attemptID = beginConnectAttempt()
         beginConnectionStartupCriticalSection()
-        MirageInstrumentation.record(.clientConnectionRequested)
+        MirageConnectivity.MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name)...")
         lastDisconnectReason = nil
         connectionState = .connecting
@@ -246,7 +255,7 @@ public extension MirageClientService {
             pendingChannel = controlChannel
             loomSession = session
             await rememberDirectEndpointHost(session.remoteEndpoint, for: host.deviceID)
-            transferEngine = LoomTransferEngine(session: session)
+            transferEngine = MirageTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
             await installInputSendHandler(controlChannel: controlChannel)
@@ -287,7 +296,7 @@ public extension MirageClientService {
                 MirageLogger.client("Connection failed before bootstrap completed: \(error.localizedDescription)")
             }
             if !isCancelledFailure {
-                MirageInstrumentation.record(.clientConnectionFailed)
+                MirageConnectivity.MirageInstrumentation.record(.clientConnectionFailed)
             }
             if shouldCleanUpFailedConnect {
                 await handleDisconnect(
@@ -308,13 +317,13 @@ public extension MirageClientService {
         suspendsUntilForeground: Bool = false
     ) {
         if let backgroundLeaseDuration {
-            let mode: ClientBackgroundLeaseMode
+            let mode: MirageWire.ClientBackgroundLeaseMode
             if suspendsUntilForeground {
                 mode = .suspendedUntilForeground
             } else {
                 mode = .timed
             }
-            let lease = ClientBackgroundLeaseMessage(
+            let lease = MirageWire.ClientBackgroundLeaseMessage(
                 durationSeconds: backgroundLeaseDuration,
                 mode: mode
             )
@@ -325,14 +334,14 @@ public extension MirageClientService {
             return
         }
 
-        queueControlMessageBestEffort(ControlMessage(type: .streamPauseAll))
+        queueControlMessageBestEffort(MirageWire.ControlMessage(type: .streamPauseAll))
         MirageLogger.client("Sent streamPauseAll to host")
     }
 
     /// Resume all streams after a pause.  The host forces a keyframe so
     /// the decoder can immediately begin presenting frames again.
     func resumeStreaming() {
-        queueControlMessageBestEffort(ControlMessage(type: .streamResumeAll))
+        queueControlMessageBestEffort(MirageWire.ControlMessage(type: .streamResumeAll))
         MirageLogger.client("Sent streamResumeAll to host")
     }
 
@@ -344,7 +353,7 @@ public extension MirageClientService {
         if let controlChannel, case .connected = connectionState {
             sendDisconnectNoticeInBackgroundBeforeTransportCancel(over: controlChannel)
             await handleDisconnect(
-                reason: DisconnectMessage.DisconnectReason.userRequested.rawValue,
+                reason: MirageWire.DisconnectMessage.DisconnectReason.userRequested.rawValue,
                 state: .disconnected,
                 notifyDelegate: false,
                 forceCleanup: true,
@@ -354,7 +363,7 @@ public extension MirageClientService {
         }
 
         await handleDisconnect(
-            reason: DisconnectMessage.DisconnectReason.userRequested.rawValue,
+            reason: MirageWire.DisconnectMessage.DisconnectReason.userRequested.rawValue,
             state: .disconnected,
             notifyDelegate: false,
             forceCleanup: true
@@ -367,7 +376,7 @@ public extension MirageClientService {
         invalidateCurrentConnectAttempt()
 
         await handleDisconnect(
-            reason: DisconnectMessage.DisconnectReason.userRequested.rawValue,
+            reason: MirageWire.DisconnectMessage.DisconnectReason.userRequested.rawValue,
             state: .disconnected,
             notifyDelegate: false,
             forceCleanup: true

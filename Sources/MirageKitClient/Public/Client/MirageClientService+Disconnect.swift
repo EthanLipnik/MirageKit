@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 @MainActor
 extension MirageClientService {
@@ -16,7 +24,7 @@ extension MirageClientService {
     public func queueDisconnectNoticeBestEffort() {
         _ = sendControlMessageBestEffort(
             .disconnect,
-            content: DisconnectMessage(reason: .userRequested)
+            content: MirageWire.DisconnectMessage(reason: .userRequested)
         )
     }
 
@@ -26,7 +34,7 @@ extension MirageClientService {
             do {
                 try await controlChannel.send(
                     .disconnect,
-                    content: DisconnectMessage(reason: .userRequested)
+                    content: MirageWire.DisconnectMessage(reason: .userRequested)
                 )
                 do {
                     try await controlChannel.closeStream()
@@ -82,7 +90,7 @@ extension MirageClientService {
             }
         }
 
-        MirageInstrumentation.record(.clientConnectionDisconnected)
+        MirageConnectivity.MirageInstrumentation.record(.clientConnectionDisconnected)
 
         let sessions = activeStreams
         let storedSessions = sessionStore.activeSessions
@@ -165,7 +173,7 @@ extension MirageClientService {
         controllersByStream.removeAll()
         startupAttemptIDByStream.removeAll()
         for continuation in customStreamStartedContinuations.values {
-            continuation.resume(throwing: MirageError.protocolError(reason))
+            continuation.resume(throwing: MirageCore.MirageError.protocolError(reason))
         }
         customStreamStartedContinuations.removeAll()
         customStreamDescriptorsByStreamID.removeAll()
@@ -229,11 +237,12 @@ extension MirageClientService {
         fastPathState.clearActiveStreamIDs()
 
         hostSessionState = nil
+        hostSessionAvailability = nil
         currentSessionToken = nil
         authorizationState = .idle
         pingTimeoutTask?.cancel()
         pingTimeoutTask = nil
-        failActivePingRequests(with: MirageError.protocolError(reason))
+        failActivePingRequests(with: MirageCore.MirageError.protocolError(reason))
         if let hostSupportLogArchiveContinuation {
             self.hostSupportLogArchiveContinuation = nil
             hostSupportLogArchiveRequestID = nil
@@ -305,7 +314,7 @@ extension MirageClientService {
 
         return [
             "reason=\(reason)",
-            "path=\(pathStatus?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)",
+            "path=\(pathStatus?.kind.rawValue ?? MirageCore.MirageNetworkPathKind.unknown.rawValue)",
             "interfaces=\(interfaces)",
             "local=\(localEndpoint)",
             "remote=\(remoteEndpoint)",
@@ -342,7 +351,7 @@ extension MirageClientService {
         let fallbackSender: @Sendable (Data, MirageInputEventSender.DeliveryMode) async throws -> Void = {
             [weak controlChannel, transportKind] data, deliveryMode in
             guard let controlChannel else {
-                throw MirageError.protocolError("Control channel unavailable")
+                throw MirageCore.MirageError.protocolError("Control channel unavailable")
             }
             if deliveryMode == .droppableRealtime,
                transportKind == .udp {

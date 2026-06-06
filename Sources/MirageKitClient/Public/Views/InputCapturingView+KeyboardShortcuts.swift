@@ -5,13 +5,21 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
-import MirageKit
 
 private struct ShortcutCommandIdentity: Hashable {
     let input: String
-    let modifiers: MirageModifierFlags
+    let modifiers: MirageInput.MirageModifierFlags
 }
 
 extension InputCapturingView {
@@ -197,7 +205,7 @@ extension InputCapturingView {
             ?? Self.keyCode(forKeyCommandInput: input) else {
             return
         }
-        let modifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
+        let modifiers = MirageInput.MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
         if let action = matchingAction(keyCode: keyCode, modifiers: modifiers) {
             performAction(action, source: .keyCommand)
             return
@@ -213,7 +221,7 @@ extension InputCapturingView {
         guard let input = command.input else { return }
         guard let shortcut = MirageInterceptedShortcutPolicy.shortcut(
             input: input,
-            modifiers: MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
         ) else {
             return
         }

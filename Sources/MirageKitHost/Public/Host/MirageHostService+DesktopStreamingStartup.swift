@@ -5,16 +5,23 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension MirageHostService {
     /// Verifies that the requesting client can still own a new desktop stream.
     func prepareForDesktopStreamStart(clientContext: ClientContext) async throws {
         guard findClientContext(sessionID: clientContext.sessionID)?.client.id == clientContext.client.id else {
-            throw MirageError.protocolError("Desktop stream client disconnected during startup")
+            throw MirageCore.MirageError.protocolError("Desktop stream client disconnected during startup")
         }
 
         deferredDesktopStartupDisplayCleanupTask?.cancel()
@@ -36,17 +43,17 @@ extension MirageHostService {
         }
 
         guard desktopStreamContext == nil else {
-            throw MirageError.protocolError("Desktop stream already active")
+            throw MirageCore.MirageError.protocolError("Desktop stream already active")
         }
         guard mediaSecurityByClientID[clientContext.client.id] != nil else {
-            throw MirageError.protocolError("Missing media security context for desktop stream client")
+            throw MirageCore.MirageError.protocolError("Missing media security context for desktop stream client")
         }
     }
 
     /// Logs when the negotiated color depth is lower than the client requested.
     nonisolated func logDesktopColorDepthDowngradeIfNeeded(
-        requested: MirageStreamColorDepth?,
-        resolved: MirageStreamColorDepth?
+        requested: MirageMedia.MirageStreamColorDepth?,
+        resolved: MirageMedia.MirageStreamColorDepth?
     ) {
         if let requested, let resolved, requested != resolved {
             MirageLogger.host(
@@ -60,7 +67,7 @@ extension MirageHostService {
         displayResolution: CGSize,
         virtualDisplayResolution: CGSize,
         resolvedClientScaleFactor: CGFloat?,
-        mode: MirageDesktopStreamMode
+        mode: MirageMedia.MirageDesktopStreamMode
     ) {
         if let resolvedClientScaleFactor {
             let scaleText = Double(resolvedClientScaleFactor).formatted(.number.precision(.fractionLength(3)))
@@ -118,7 +125,11 @@ extension MirageHostService {
             compressionQualityCeiling: request.compressionQualityCeiling,
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight,
-            captureShowsCursor: request.cursorPresentation.capturesHostCursor
+            captureShowsCursor: request.cursorPresentation.capturesHostCursor,
+            videoEncoderFactoryBackend: platformVideoEncoderFactoryBackend,
+            captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+            captureContentProviderBackend: platformCaptureContentProviderBackend,
+            virtualDisplayBackend: platformVirtualDisplayBackend
         )
         await streamContext.setHostAdaptiveDesktopGeometryUpdateHandler { [weak self] streamID in
             await self?.sendStreamScaleUpdate(streamID: streamID)
@@ -142,8 +153,8 @@ extension MirageHostService {
     func beginDesktopStreamStartupState(
         streamID: StreamID,
         desktopSessionID: UUID,
-        mode: MirageDesktopStreamMode,
-        cursorPresentation: MirageDesktopCursorPresentation,
+        mode: MirageMedia.MirageDesktopStreamMode,
+        cursorPresentation: MirageWire.MirageDesktopCursorPresentation,
         usesHostResolution: Bool,
         virtualDisplayResolution: CGSize
     ) async {
@@ -162,7 +173,7 @@ extension MirageHostService {
 
     /// Applies conservative encoder limits when startup falls back to main-display capture.
     nonisolated func applyMainDisplayFallbackProfileIfNeeded(
-        captureSource: MirageDesktopCaptureSource,
+        captureSource: MirageWire.MirageDesktopCaptureSource,
         config: inout MirageEncoderConfiguration
     ) {
         guard captureSource == .mainDisplayFallback else { return }
@@ -197,9 +208,9 @@ extension MirageHostService {
 
     /// Resolves desktop audio settings for the selected desktop stream mode.
     nonisolated func resolvedDesktopAudioConfiguration(
-        _ audioConfiguration: MirageAudioConfiguration,
-        mode: MirageDesktopStreamMode
-    ) -> MirageAudioConfiguration {
+        _ audioConfiguration: MirageMedia.MirageAudioConfiguration,
+        mode: MirageMedia.MirageDesktopStreamMode
+    ) -> MirageMedia.MirageAudioConfiguration {
         let resolvedAudioConfiguration = audioConfiguration.resolvedForDesktopStreamMode(mode)
         if resolvedAudioConfiguration != audioConfiguration {
             MirageLogger.host("Desktop stream audio disabled for secondary display mode")

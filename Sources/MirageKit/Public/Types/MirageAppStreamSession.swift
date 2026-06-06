@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 1/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
 
@@ -153,7 +160,7 @@ public struct WindowStreamInfo: Sendable {
     public var capturedClusterWindowIDs: [WindowID]
 
     /// Region for this logical window inside an app-atlas media stream.
-    public var atlasRegion: MirageAppAtlasRegion?
+    public var atlasRegion: MirageMedia.MirageAppAtlasRegion?
 
     /// When this stream started
     public let startTime: Date
@@ -170,7 +177,7 @@ public struct WindowStreamInfo: Sendable {
         isPaused: Bool = false,
         isActive: Bool = true,
         capturedClusterWindowIDs: [WindowID] = [],
-        atlasRegion: MirageAppAtlasRegion? = nil,
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil,
         startTime: Date = Date()
     ) {
         self.streamID = streamID

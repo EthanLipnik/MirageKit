@@ -7,12 +7,20 @@
 //  Encoder override helpers for stream requests.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
-    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartStreamMessage) {
+    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout MirageWire.StartStreamMessage) {
         if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
@@ -73,7 +81,7 @@ extension MirageClientService {
         }
     }
 
-    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout SelectAppMessage) {
+    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout MirageWire.SelectAppMessage) {
         if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
@@ -144,7 +152,7 @@ extension MirageClientService {
         }
     }
 
-    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartDesktopStreamMessage) {
+    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout MirageWire.StartDesktopStreamMessage) {
         if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
@@ -214,7 +222,7 @@ extension MirageClientService {
         }
     }
 
-    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartCustomStreamMessage) {
+    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout MirageWire.StartCustomStreamMessage) {
         if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
             request.keyFrameInterval = keyFrameInterval
         }

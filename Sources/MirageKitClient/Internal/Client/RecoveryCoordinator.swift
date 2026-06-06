@@ -7,8 +7,16 @@
 //  Episode-based client recovery pacing.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 struct RecoveryCoordinator: Equatable {
     enum Decision: Equatable {
@@ -41,7 +49,7 @@ struct RecoveryCoordinator: Equatable {
         return .dispatch(episodeID: episodeID, attempt: attemptCount)
     }
 
-    mutating func recordHostAck(_ ack: KeyframeRecoveryAckMessage, now: CFAbsoluteTime) {
+    mutating func recordHostAck(_ ack: MirageWire.KeyframeRecoveryAckMessage, now: CFAbsoluteTime) {
         guard activeReason != nil else { return }
         let ackDelay = CFAbsoluteTime(ack.deadlineMilliseconds) / 1000.0
         switch ack.state {

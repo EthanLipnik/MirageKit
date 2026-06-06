@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -167,10 +175,16 @@ extension ScrollPhysicsCapturingNSView {
     }
 
     var resolvedContainerSize: CGSize {
-        MirageStreamPresentationPolicy.containerSize(
+        let sizingMode: MiragePresentationContainerSizingMode = switch containerSizingMode {
+        case .contentLayout:
+            .contentLayout
+        case .viewBounds:
+            .viewBounds
+        }
+        return MirageKitClientPresentation.MirageStreamPresentationPolicy.containerSize(
             boundsSize: bounds.size,
             contentLayoutSize: window?.contentLayoutRect.size,
-            mode: containerSizingMode
+            mode: sizingMode
         )
     }
 
@@ -337,19 +351,19 @@ extension ScrollPhysicsCapturingNSView {
         modifierPollTimer = nil
     }
 
-    func syncModifierState(_ modifiers: MirageModifierFlags, force: Bool = false) {
+    func syncModifierState(_ modifiers: MirageInput.MirageModifierFlags, force: Bool = false) {
         guard force || modifiers != currentModifiers else { return }
         currentModifiers = modifiers
         onMouseEvent?(.flagsChanged(modifiers))
     }
 
     func syncModifierStateFromSystem(force: Bool = false) {
-        syncModifierState(MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags), force: force)
+        syncModifierState(MirageInput.MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags), force: force)
     }
 
     func pollModifierState() {
         guard isKeyboardInputActive else { return }
-        let modifiers = MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags)
+        let modifiers = MirageInput.MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags)
         if modifiers != currentModifiers {
             syncModifierState(modifiers, force: true)
             return

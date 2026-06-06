@@ -6,7 +6,10 @@
 //
 
 import Foundation
+import CryptoKit
 import Loom
+import MirageBootstrapShared
+import MirageIdentity
 import MirageKit
 import Testing
 
@@ -20,7 +23,7 @@ struct MirageHostSoftwareUpdateBootstrapCommandTests {
             deviceName: "Ethan's iPad",
             deviceType: .iPad,
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 identityKeyID: "client-key",
                 deviceType: .iPad,
@@ -28,9 +31,16 @@ struct MirageHostSoftwareUpdateBootstrapCommandTests {
             ),
             iCloudUserID: "icloud-user"
         )
+        let publicKey = P256.Signing.PrivateKey().publicKey.x963Representation
+        let keyID = MirageIdentityKeyID.keyID(for: publicKey)
+        let bootstrapPeer = MirageBootstrapAuthenticatedPeer(
+            keyID: keyID,
+            publicKey: publicKey,
+            endpointDescription: "127.0.0.1"
+        )
         let peer = LoomBootstrapControlPeer(
-            keyID: "authenticated-client-key",
-            publicKey: Data([1, 2, 3, 4]),
+            keyID: keyID,
+            publicKey: publicKey,
             endpoint: "127.0.0.1"
         )
 
@@ -40,6 +50,8 @@ struct MirageHostSoftwareUpdateBootstrapCommandTests {
             from: JSONEncoder().encode(command)
         )
         let identity = decoded.peerIdentity(authenticatedBy: peer)
+        let authenticatedIdentity = decoded.authenticatedPeerIdentity(authenticatedBy: bootstrapPeer)
+        let loomAuthenticatedIdentity = decoded.authenticatedPeerIdentity(authenticatedBy: peer)
 
         #expect(decoded.clientDeviceID == deviceID)
         #expect(decoded.clientName == "Ethan's iPad")
@@ -47,9 +59,14 @@ struct MirageHostSoftwareUpdateBootstrapCommandTests {
         #expect(decoded.clientICloudUserID == "icloud-user")
         #expect(decoded.advertisementMetadata == ["mirage.client": "1"])
         #expect(identity.deviceID == deviceID)
-        #expect(identity.identityKeyID == "authenticated-client-key")
-        #expect(identity.identityPublicKey == Data([1, 2, 3, 4]))
+        #expect(identity.identityKeyID == keyID)
+        #expect(identity.identityPublicKey == publicKey)
         #expect(identity.isIdentityAuthenticated)
         #expect(identity.endpoint == "127.0.0.1")
+        #expect(authenticatedIdentity.deviceID == deviceID)
+        #expect(authenticatedIdentity.identityKeyID == keyID)
+        #expect(authenticatedIdentity.identityPublicKey == publicKey)
+        #expect(authenticatedIdentity.hasConsistentAuthenticatedIdentityKey)
+        #expect(loomAuthenticatedIdentity == authenticatedIdentity)
     }
 }

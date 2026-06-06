@@ -13,6 +13,7 @@
 import CoreMedia
 import Foundation
 import MirageKit
+import MirageMedia
 import Testing
 
 @Suite("Host Audio Encoder")

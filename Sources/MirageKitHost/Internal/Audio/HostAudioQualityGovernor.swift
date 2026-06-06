@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 6/21/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -30,9 +38,9 @@ struct HostAudioQualityGovernor {
     private static let activityHangoverSeconds = 0.180
 
     private(set) var profile: ResolvedAudioStreamProfile?
-    private var configuration: MirageAudioConfiguration
-    private var transportPathKind: MirageNetworkPathKind
-    private var mediaPathProfile: MirageMediaPathProfile
+    private var configuration: MirageMedia.MirageAudioConfiguration
+    private var transportPathKind: MirageCore.MirageNetworkPathKind
+    private var mediaPathProfile: MirageMedia.MirageMediaPathProfile
     private var lastPressureTime: CFAbsoluteTime = 0
     private var lastReductionTime: CFAbsoluteTime = 0
     private var lastRecoveryTime: CFAbsoluteTime = 0
@@ -43,9 +51,9 @@ struct HostAudioQualityGovernor {
     private var gatedBufferCount: UInt64 = 0
 
     init(
-        configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) {
         self.configuration = configuration
         self.transportPathKind = transportPathKind
@@ -59,9 +67,9 @@ struct HostAudioQualityGovernor {
 
     @discardableResult
     mutating func updateConfiguration(
-        _ configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind? = nil,
-        mediaPathProfile: MirageMediaPathProfile? = nil
+        _ configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind? = nil,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> ResolvedAudioStreamProfile? {
         self.configuration = configuration
         if let transportPathKind {
@@ -157,7 +165,7 @@ struct HostAudioQualityGovernor {
         )
     }
 
-    mutating func recordReceiverFeedback(_ feedback: ReceiverMediaFeedbackMessage) -> ResolvedAudioStreamProfile? {
+    mutating func recordReceiverFeedback(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) -> ResolvedAudioStreamProfile? {
         guard canAdapt else { return nil }
         var severity = 0
         if feedback.decodeBacklogFrames > 1 || feedback.presentationBacklogFrames > 1 {
@@ -258,9 +266,9 @@ struct HostAudioQualityGovernor {
     }
 
     private static func resolveProfile(
-        configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile
+        configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> ResolvedAudioStreamProfile? {
         let profile = ResolvedAudioStreamProfile.resolve(
             configuration: configuration,

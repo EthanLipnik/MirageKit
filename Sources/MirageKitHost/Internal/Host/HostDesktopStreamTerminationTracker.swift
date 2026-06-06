@@ -7,8 +7,16 @@
 //  Persists desktop stream run markers to detect unexpected host termination.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 actor HostDesktopStreamTerminationTracker {
@@ -50,7 +58,9 @@ actor HostDesktopStreamTerminationTracker {
         return stage == .displaySetup || stage == .streamStarted
     }
 
-    func reportUncleanTerminationIfNeeded() {
+    func reportUncleanTerminationIfNeeded(
+        virtualDisplayBackend: any MirageHostVirtualDisplayBackend = MacOSHostVirtualDisplayBackend()
+    ) {
         guard Self.shouldTrackTerminationMarkers(bundleIdentifier: Bundle.main.bundleIdentifier) else {
             defaults.removeObject(forKey: Self.markerDefaultsKey)
             return
@@ -76,7 +86,7 @@ actor HostDesktopStreamTerminationTracker {
             return
         }
 
-        CGVirtualDisplayBridge.invalidateAllPersistentSerials()
+        virtualDisplayBackend.invalidateAllPersistentSerials()
 
         let ageSeconds = max(0, Int(Date().timeIntervalSince1970 - marker.startedAtUnix))
         MirageLogger.fault(

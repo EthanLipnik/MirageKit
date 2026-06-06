@@ -7,8 +7,16 @@
 //  Client-side display cadence and refresh-rate overrides.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -75,7 +83,7 @@ extension MirageClientService {
         let requestedLatencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
         let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
         let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
-        let target = MirageStreamCadenceTarget(
+        let target = MirageMedia.MirageStreamCadenceTarget(
             sourceFPS: targetFrameRate,
             displayFPS: targetFrameRate,
             latencyMode: latencyMode,
@@ -93,10 +101,10 @@ extension MirageClientService {
     }
 
     /// Returns the client playout hold for the current transport.
-    func resolvedStreamPlayoutDelayFrames(for latencyMode: MirageStreamLatencyMode?) -> Int {
+    func resolvedStreamPlayoutDelayFrames(for latencyMode: MirageMedia.MirageStreamLatencyMode?) -> Int {
         let latencyMode = latencyMode ?? .lowestLatency
         guard latencyMode != .lowestLatency else { return 0 }
-        return MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: latencyMode)
+        return MirageMedia.MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: latencyMode)
     }
 
     /// Sends a refresh-rate override to the host for an active stream.
@@ -106,13 +114,13 @@ extension MirageClientService {
         forceDisplayRefresh: Bool = false
     )
     async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
 
         let clamped = Self.runtimeWorkloadSafetyCappedFrameRate(
             maxRefreshRate,
             cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
-        let request = StreamRefreshRateChangeMessage(
+        let request = MirageWire.StreamRefreshRateChangeMessage(
             streamID: streamID,
             maxRefreshRate: clamped,
             forceDisplayRefresh: forceDisplayRefresh
@@ -123,7 +131,7 @@ extension MirageClientService {
         MirageLogger.client(
             "event=cadence_contract phase=refresh_change stream=\(streamID) requested=\(clamped) " +
                 "source=\(clamped) display=\(clamped) adaptiveFloor=\(adaptiveFloorFPS) " +
-                "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue) " +
+                "path=\(controlPathSnapshot?.kind.rawValue ?? MirageCore.MirageNetworkPathKind.unknown.rawValue) " +
                 "latency=\(latencyMode.rawValue) force=\(forceDisplayRefresh)"
         )
         try await sendControlMessage(.streamRefreshRateChange, content: request)

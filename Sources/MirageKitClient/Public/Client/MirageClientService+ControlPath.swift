@@ -7,8 +7,16 @@
 //  Client control-path telemetry and history.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -17,7 +25,7 @@ extension MirageClientService {
     // MARK: - Control Path Handling
 
     /// Stores the latest control path and records path switches.
-    func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
+    func handleControlPathUpdate(_ snapshot: MirageConnectivity.MirageNetworkPathSnapshot) {
         let previous = controlPathSnapshot
         controlPathSnapshot = snapshot
         currentControlPathKind = snapshot.kind
@@ -45,8 +53,8 @@ extension MirageClientService {
         let now = CFAbsoluteTimeGetCurrent()
         guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 1.0 else { return }
         lastAwdlTelemetryLogTime = now
-        let path = controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue
-        let media = controlPathSnapshot?.mediaProfile.rawValue ?? MirageMediaPathProfile.unknown.rawValue
+        let path = controlPathSnapshot?.kind.rawValue ?? MirageCore.MirageNetworkPathKind.unknown.rawValue
+        let media = controlPathSnapshot?.mediaProfile.rawValue ?? MirageMedia.MirageMediaPathProfile.unknown.rawValue
         if let metrics {
             let streamText = streamID.map { "\($0)" } ?? "-"
             let hostSnapshot = streamID.flatMap { metricsStore.snapshot(for: $0) }
@@ -90,12 +98,12 @@ extension MirageClientService {
                     "hostDeadlineDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostSenderLocalDeadlineDrops)) " +
                     "hostStaleDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostStalePacketDrops)) " +
                     "hostHoldDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostNonKeyframeHoldDrops)) " +
-                    "loomQueuedDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCount)) " +
-                    "loomDeadlineDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDeadlineExpiredDrops)) " +
-                    "loomQueueDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableQueueLimitDrops)) " +
-                    "loomSupersededDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableSupersededDrops)) " +
-                    "loomUnsupportedTransportDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableUnsupportedTransportDrops)) " +
-                    "loomClosedDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableClosedDrops)) " +
+                    "loomQueuedDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCounts?.total)) " +
+                    "loomDeadlineDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCounts?.deadlineExpired)) " +
+                    "loomQueueDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCounts?.queueLimit)) " +
+                    "loomSupersededDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCounts?.superseded)) " +
+                    "loomUnsupportedTransportDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCounts?.unsupportedTransport)) " +
+                    "loomClosedDrops=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableDropCounts?.closed)) " +
                     "loomPending=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliablePendingPackets)) " +
                     "loomOutstanding=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableOutstandingPackets)) " +
                     "loomQueuedBytes=\(formatAwdlOptionalInteger(hostSnapshot?.hostQueuedUnreliableQueuedBytes)) " +
@@ -194,7 +202,7 @@ extension MirageClientService {
         return "\(value)"
     }
 
-    private func formatAwdlResolution(_ snapshot: MirageClientMetricsSnapshot?) -> String {
+    private func formatAwdlResolution(_ snapshot: MirageDiagnostics.MirageClientMetricsSnapshot?) -> String {
         guard let width = snapshot?.hostEncodedWidth,
               let height = snapshot?.hostEncodedHeight,
               width > 0,
@@ -221,10 +229,10 @@ extension MirageClientService {
     }
 
     /// Overrides the stream policy path used for host budgeting while keeping raw path observations separate.
-    public func setStreamingPolicyPathKindOverride(_ pathKind: MirageNetworkPathKind?) {
+    public func setStreamingPolicyPathKindOverride(_ pathKind: MirageCore.MirageNetworkPathKind?) {
         streamingPolicyPathKindOverride = pathKind
         streamingPolicyMediaPathProfileOverride = pathKind.map {
-            MirageMediaPathProfile.classify(
+            MirageMedia.MirageMediaPathProfile.classify(
                 pathKind: $0,
                 interfaceNames: controlPathSnapshot?.interfaceNames ?? [],
                 usesWiFi: controlPathSnapshot?.usesWiFi ?? false,
@@ -254,7 +262,7 @@ extension MirageClientService {
         )
     }
 
-    func effectiveLatencyModeForCurrentMediaPath(_ latencyMode: MirageStreamLatencyMode?) -> MirageStreamLatencyMode? {
+    func effectiveLatencyModeForCurrentMediaPath(_ latencyMode: MirageMedia.MirageStreamLatencyMode?) -> MirageMedia.MirageStreamLatencyMode? {
         guard currentMediaPathUsesAwdlRadioPolicy,
               let mediaPathProfile = effectiveMediaPathProfileForCurrentPath else {
             return latencyMode
@@ -266,8 +274,8 @@ extension MirageClientService {
     }
 
     func effectiveHostBufferingPolicyForCurrentMediaPath(
-        _ policy: MirageHostBufferingPolicy?
-    ) -> MirageHostBufferingPolicy? {
+        _ policy: MirageMedia.MirageHostBufferingPolicy?
+    ) -> MirageMedia.MirageHostBufferingPolicy? {
         guard currentMediaPathUsesAwdlRadioPolicy else {
             return policy
         }
@@ -284,7 +292,7 @@ extension MirageClientService {
         )
     }
 
-    func applyCurrentClientPathFields(to request: inout StartDesktopStreamMessage) {
+    func applyCurrentClientPathFields(to request: inout MirageWire.StartDesktopStreamMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
@@ -292,7 +300,7 @@ extension MirageClientService {
         request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
-    func applyCurrentClientPathFields(to request: inout StartStreamMessage) {
+    func applyCurrentClientPathFields(to request: inout MirageWire.StartStreamMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
@@ -300,7 +308,7 @@ extension MirageClientService {
         request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
-    func applyCurrentClientPathFields(to request: inout SelectAppMessage) {
+    func applyCurrentClientPathFields(to request: inout MirageWire.SelectAppMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
@@ -308,7 +316,7 @@ extension MirageClientService {
         request.clientPolicyMediaPathProfile = streamingPolicyMediaPathProfileOverride
     }
 
-    func applyCurrentClientPathFields(to request: inout StartCustomStreamMessage) {
+    func applyCurrentClientPathFields(to request: inout MirageWire.StartCustomStreamMessage) {
         request.clientTransportPathKind = controlPathSnapshot?.kind
         request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
         request.clientPathSignature = controlPathSnapshot?.signature
@@ -318,7 +326,7 @@ extension MirageClientService {
 
     /// Appends a distinct control-path status sample, keeping only the most recent entries.
     func recordControlPathHistory(
-        _ snapshot: MirageNetworkPathSnapshot,
+        _ snapshot: MirageConnectivity.MirageNetworkPathSnapshot,
         observedAt: Date = Date()
     ) {
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
@@ -336,7 +344,7 @@ extension MirageClientService {
     }
 
     /// Reapplies transport-sensitive stream pacing after the control path changes.
-    private func refreshActiveStreamTransportProfiles(for snapshot: MirageNetworkPathSnapshot) {
+    private func refreshActiveStreamTransportProfiles(for snapshot: MirageConnectivity.MirageNetworkPathSnapshot) {
         for (streamID, controller) in controllersByStream {
             let requestedLatencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
             let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
@@ -380,16 +388,16 @@ extension MirageClientService {
 
     var currentMediaPathUsesAwdlRadioPolicy: Bool {
         guard let snapshot = controlPathSnapshot else { return false }
-        return MirageMediaPathProfile.resolveRealtimeProfile(
+        return MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: snapshot.kind,
             mediaPathProfile: snapshot.mediaProfile,
             interfaceNames: snapshot.interfaceNames
         ).usesAwdlRadioPolicy
     }
 
-    var effectiveMediaPathProfileForCurrentPath: MirageMediaPathProfile? {
+    var effectiveMediaPathProfileForCurrentPath: MirageMedia.MirageMediaPathProfile? {
         guard let snapshot = controlPathSnapshot else { return nil }
-        return MirageMediaPathProfile.resolveRealtimeProfile(
+        return MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: snapshot.kind,
             mediaPathProfile: snapshot.mediaProfile,
             interfaceNames: snapshot.interfaceNames

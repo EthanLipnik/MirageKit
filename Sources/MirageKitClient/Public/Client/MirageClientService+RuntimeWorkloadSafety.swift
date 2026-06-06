@@ -7,9 +7,17 @@
 //  Runtime workload safety policy for client memory pressure.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(iOS) && canImport(UIKit)
 import UIKit
@@ -422,8 +430,8 @@ extension MirageClientService {
 
     func runtimeWorkloadSafetyTransportIsClean(for streamID: StreamID) -> Bool {
         guard let snapshot = metricsStore.snapshot(for: streamID), snapshot.hasHostMetrics else { return false }
-        let assessment = MirageTransportPressure.assess(
-            sample: MirageTransportPressureSample(
+        let assessment = MirageDiagnostics.MirageTransportPressure.assess(
+            sample: MirageDiagnostics.MirageTransportPressureSample(
                 queueBytes: max(0, snapshot.hostSendQueueBytes ?? 0),
                 queueStressBytes: 800_000,
                 packetPacerAverageSleepMs: max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0),
@@ -432,7 +440,9 @@ extension MirageClientService {
                 sendStartDelayStressThresholdMs: 2.0,
                 sendCompletionAverageMs: max(0, snapshot.hostSendCompletionAverageMs ?? 0),
                 sendCompletionStressThresholdMs: 12.0,
-                transportDropCount: snapshot.hostTransportPressureDropCount
+                transportDropCount: (snapshot.hostStalePacketDrops ?? 0) +
+                    (snapshot.hostSenderLocalDeadlineDrops ?? 0) +
+                    (snapshot.hostQueuedUnreliableDropCounts?.total ?? 0)
             )
         )
         return !assessment.primaryStress && !assessment.isDelayOnlyBurst
@@ -488,7 +498,7 @@ extension MirageClientService {
     }
 
     nonisolated static func runtimeWorkloadSafetyNextScaleDownshift(currentScale: CGFloat) -> CGFloat? {
-        let normalizedScale = MirageStreamGeometry.clampStreamScale(currentScale)
+        let normalizedScale = MirageMedia.MirageStreamGeometry.clampStreamScale(currentScale)
         if normalizedScale > 0.75 {
             return 0.75
         }

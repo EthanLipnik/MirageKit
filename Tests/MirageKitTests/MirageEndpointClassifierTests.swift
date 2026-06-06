@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 6/3/26.
 //
 
+import MirageConnectivity
 import MirageKit
 import Network
 import Testing

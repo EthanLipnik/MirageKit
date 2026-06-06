@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -44,9 +52,9 @@ public struct MirageStreamContentView: View {
     /// Whether the session represents desktop streaming rather than app/window streaming.
     public let isDesktopStream: Bool
     /// Desktop stream mode when `isDesktopStream` is true.
-    public let desktopStreamMode: MirageDesktopStreamMode
+    public let desktopStreamMode: MirageMedia.MirageDesktopStreamMode
     /// Cursor presentation policy for desktop streams.
-    public let desktopCursorPresentation: MirageDesktopCursorPresentation
+    public let desktopCursorPresentation: MirageWire.MirageDesktopCursorPresentation
     /// Handler invoked when the user requests desktop-stream exit.
     public let onExitDesktopStream: (() -> Void)?
     /// Handler invoked when the dictation shortcut is triggered.
@@ -58,9 +66,9 @@ public struct MirageStreamContentView: View {
     /// Shortcut that toggles dictation.
     public let dictationShortcut: MirageClientShortcut
     /// Unified actions exposed through shortcuts, gestures, or stream controls.
-    public let actions: [MirageAction]
+    public let actions: [MirageInput.MirageAction]
     /// Handler invoked when a unified action is triggered.
-    public let onActionTriggered: ((MirageAction) -> Void)?
+    public let onActionTriggered: ((MirageInput.MirageAction) -> Void)?
     /// Handler invoked when hardware keyboard availability changes.
     public let onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
     /// Handler invoked when software keyboard visibility changes.
@@ -176,15 +184,15 @@ public struct MirageStreamContentView: View {
         sessionStore: MirageClientSessionStore,
         clientService: MirageClientService,
         isDesktopStream: Bool = false,
-        desktopStreamMode: MirageDesktopStreamMode = .unified,
-        desktopCursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
+        desktopStreamMode: MirageMedia.MirageDesktopStreamMode = .unified,
+        desktopCursorPresentation: MirageWire.MirageDesktopCursorPresentation = .simulatedCursor,
         onExitDesktopStream: (() -> Void)? = nil,
         onToggleDictationShortcut: (() -> Void)? = nil,
         desktopExitShortcut: MirageClientShortcut = .defaultDesktopExit,
         escapeRemapShortcut: MirageClientShortcut = .defaultEscapeRemap,
         dictationShortcut: MirageClientShortcut = .defaultDictationToggle,
-        actions: [MirageAction] = [],
-        onActionTriggered: ((MirageAction) -> Void)? = nil,
+        actions: [MirageInput.MirageAction] = [],
+        onActionTriggered: ((MirageInput.MirageAction) -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         inputEnabled: Bool = true,
@@ -761,7 +769,7 @@ extension MirageStreamContentView {
             clientService.appStreamStartAcknowledgementByStreamID[session.mediaStreamID]
     }
 
-    var appWindowResizeResult: AppWindowResizeResultMessage? {
+    var appWindowResizeResult: MirageWire.AppWindowResizeResultMessage? {
         clientService.appWindowResizeResultByStreamID[session.streamID]
     }
 
@@ -790,7 +798,7 @@ extension MirageStreamContentView {
         scheduleAppDisplayResolutionDispatchIfNeeded()
     }
 
-    func handleAppWindowResizeResult(_ result: AppWindowResizeResultMessage?) {
+    func handleAppWindowResizeResult(_ result: MirageWire.AppWindowResizeResultMessage?) {
         guard !isDesktopStream else { return }
         guard awaitingAppResizeAck else { return }
         guard let result else { return }

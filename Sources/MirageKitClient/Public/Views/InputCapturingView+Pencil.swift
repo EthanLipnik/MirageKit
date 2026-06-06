@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -201,7 +209,7 @@ extension InputCapturingView {
 
     func updatePencilInteraction(for touch: UITouch, event: UIEvent?) {
         let touches = event?.coalescedTouches(for: touch) ?? [touch]
-        var batchSamples: [MiragePointerSample] = []
+        var batchSamples: [MirageInput.MiragePointerSample] = []
         var moved = false
 
         for sampleTouch in touches {
@@ -318,7 +326,7 @@ extension InputCapturingView {
         resetPencilGestureState()
     }
 
-    func currentPencilModifiers() -> MirageModifierFlags {
+    func currentPencilModifiers() -> MirageInput.MirageModifierFlags {
         syncModifiersForInput()
         let snapshot = keyboardModifiers
         sendModifierSnapshotIfNeeded(snapshot)
@@ -342,7 +350,7 @@ extension InputCapturingView {
         return 1
     }
 
-    func stylusEvent(from touch: UITouch) -> MirageStylusEvent {
+    func stylusEvent(from touch: UITouch) -> MirageInput.MirageStylusEvent {
         let altitude = min(max(touch.altitudeAngle, 0), .pi / 2)
         let azimuth = touch.azimuthAngle(in: self)
         let azimuthUnitVector = touch.azimuthUnitVector(in: self)
@@ -356,7 +364,7 @@ extension InputCapturingView {
         rollAngle = nil
         #endif
 
-        return MirageStylusEvent(
+        return MirageInput.MirageStylusEvent(
             altitudeAngle: altitude,
             azimuthAngle: azimuth,
             tiltX: tiltX,
@@ -368,10 +376,10 @@ extension InputCapturingView {
     func pointerSampleForPencil(
         location: CGPoint,
         pressure: CGFloat,
-        stylus: MirageStylusEvent,
+        stylus: MirageInput.MirageStylusEvent,
         timestamp: TimeInterval = Date.timeIntervalSinceReferenceDate
-    ) -> MiragePointerSample {
-        MiragePointerSample(
+    ) -> MirageInput.MiragePointerSample {
+        MirageInput.MiragePointerSample(
             location: location,
             pressure: min(max(pressure, 0), 1),
             stylus: stylus,
@@ -380,14 +388,14 @@ extension InputCapturingView {
     }
 
     func sendPencilSampleBatch(
-        phase: MiragePointerSampleBatchPhase,
-        modifiers: MirageModifierFlags,
+        phase: MirageInput.MiragePointerSampleBatchPhase,
+        modifiers: MirageInput.MirageModifierFlags,
         clickCount: Int = 1,
         isButtonPressed: Bool,
-        samples: [MiragePointerSample]
+        samples: [MirageInput.MiragePointerSample]
     ) {
         guard !samples.isEmpty else { return }
-        let batch = MiragePointerSampleBatch(
+        let batch = MirageInput.MiragePointerSampleBatch(
             phase: phase,
             button: .left,
             modifiers: modifiers,

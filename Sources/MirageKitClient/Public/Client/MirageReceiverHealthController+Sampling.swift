@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 
 struct ReceiverHealthSample {
@@ -73,7 +82,7 @@ struct ReceiverTransportPressureContext {
 
 extension MirageReceiverHealthController {
     static func sample(
-        from snapshot: MirageClientMetricsSnapshot,
+        from snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         minimumHealthyFrameRate: Int? = nil,
         usesCadenceDeliveryPressure: Bool = true
     ) -> ReceiverHealthSample {
@@ -96,7 +105,9 @@ extension MirageReceiverHealthController {
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
-        let remoteTransportDropCount = snapshot.hostTransportPressureDropCount
+        let remoteTransportDropCount = (snapshot.hostStalePacketDrops ?? 0) +
+            (snapshot.hostSenderLocalDeadlineDrops ?? 0) +
+            (snapshot.hostQueuedUnreliableDropCounts?.total ?? 0)
         let transportDropCount = remoteTransportDropCount
         let clientIncompleteFrameTimeouts = snapshot.clientReassemblerIncompleteFrameTimeouts
         let clientIncompleteFrameNoProgressTimeouts =
@@ -291,7 +302,7 @@ extension MirageReceiverHealthController {
     }
 
     private static func receiverDeliveryPressure(
-        _ snapshot: MirageClientMetricsSnapshot,
+        _ snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         minimumHealthyFrameRate: Int?,
         usesCadenceDeliveryPressure: Bool
     ) -> (
@@ -487,10 +498,10 @@ extension MirageReceiverHealthController {
     }
 
     static func worstSnapshot(
-        from snapshots: [MirageClientMetricsSnapshot],
+        from snapshots: [MirageDiagnostics.MirageClientMetricsSnapshot],
         minimumHealthyFrameRate: Int?,
         usesCadenceDeliveryPressure: Bool = true
-    ) -> MirageClientMetricsSnapshot {
+    ) -> MirageDiagnostics.MirageClientMetricsSnapshot {
         guard let firstSnapshot = snapshots.first else {
             preconditionFailure("Receiver-health sampling requires at least one metrics snapshot.")
         }
@@ -509,7 +520,7 @@ extension MirageReceiverHealthController {
     }
 
     private static func healthPriority(
-        for snapshot: MirageClientMetricsSnapshot,
+        for snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         minimumHealthyFrameRate: Int?,
         usesCadenceDeliveryPressure: Bool
     ) -> Int {

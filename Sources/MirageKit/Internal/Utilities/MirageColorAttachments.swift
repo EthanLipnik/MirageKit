@@ -7,6 +7,13 @@
 //  Shared color attachment enforcement for encode and decode pipelines.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import CoreVideo
@@ -20,7 +27,7 @@ package enum MirageColorAttachments {
         let cgColorSpaceName: CFString
     }
 
-    static func expectedAttachments(for colorSpace: MirageColorSpace) -> VideoColorAttachments {
+    static func expectedAttachments(for colorSpace: MirageMedia.MirageColorSpace) -> VideoColorAttachments {
         switch colorSpace {
         case .displayP3:
             VideoColorAttachments(
@@ -40,7 +47,7 @@ package enum MirageColorAttachments {
     }
 
     /// Enforce color attachments on a pixel buffer, setting only when the existing value differs.
-    package static func enforceOnPixelBuffer(_ pixelBuffer: CVPixelBuffer, colorSpace: MirageColorSpace) {
+    package static func enforceOnPixelBuffer(_ pixelBuffer: CVPixelBuffer, colorSpace: MirageMedia.MirageColorSpace) {
         let expected = expectedAttachments(for: colorSpace)
         MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferColorPrimariesKey, value: expected.colorPrimaries)
         MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferTransferFunctionKey, value: expected.transferFunction)
@@ -51,7 +58,7 @@ package enum MirageColorAttachments {
     }
 
     /// Build a CFDictionary of color space extensions for CMVideoFormatDescription creation.
-    package static func formatDescriptionExtensions(for colorSpace: MirageColorSpace) -> CFDictionary {
+    package static func formatDescriptionExtensions(for colorSpace: MirageMedia.MirageColorSpace) -> CFDictionary {
         let expected = expectedAttachments(for: colorSpace)
         let extensions: [CFString: Any] = [
             kCMFormatDescriptionExtension_ColorPrimaries: expected.colorPrimaries,
