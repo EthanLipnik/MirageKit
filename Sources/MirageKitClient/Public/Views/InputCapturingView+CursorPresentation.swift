@@ -252,10 +252,52 @@ extension InputCapturingView {
         momentumPhase: MirageScrollPhase
     ) {
         guard case .directTouch = source else { return }
+        updateDirectTouchScrollMomentumState(phase: phase, momentumPhase: momentumPhase)
         let physicalScrollFinished = (phase == .ended || phase == .cancelled) && momentumPhase == .none
         let momentumFinished = momentumPhase == .ended || momentumPhase == .cancelled
         if physicalScrollFinished || momentumFinished {
             directTouchScrollAnchorLocation = nil
+        }
+    }
+
+    func endInterruptedDirectTouchMomentumIfNeeded(modifiers: MirageModifierFlags) {
+        guard directTouchScrollMomentumActive else { return }
+        guard let directTouchScrollAnchorLocation else {
+            directTouchScrollMomentumActive = false
+            return
+        }
+
+        guard let scrollEvent = makeScrollEvent(
+            deltaX: 0,
+            deltaY: 0,
+            location: directTouchScrollAnchorLocation,
+            phase: .none,
+            momentumPhase: .ended,
+            modifiers: modifiers,
+            isPrecise: true,
+            preservePhaseMetadata: true
+        ) else {
+            directTouchScrollMomentumActive = false
+            self.directTouchScrollAnchorLocation = nil
+            return
+        }
+        onInputEvent?(.scrollWheel(scrollEvent))
+        directTouchScrollMomentumActive = false
+        self.directTouchScrollAnchorLocation = nil
+    }
+
+    func updateDirectTouchScrollMomentumState(
+        phase: MirageScrollPhase,
+        momentumPhase: MirageScrollPhase
+    ) {
+        if momentumPhase == .began || momentumPhase == .changed {
+            directTouchScrollMomentumActive = true
+        }
+        if (phase == .ended || phase == .cancelled) && momentumPhase == .none {
+            directTouchScrollMomentumActive = false
+        }
+        if momentumPhase == .ended || momentumPhase == .cancelled {
+            directTouchScrollMomentumActive = false
         }
     }
 
@@ -266,10 +308,12 @@ extension InputCapturingView {
         phase: MirageScrollPhase = .none,
         momentumPhase: MirageScrollPhase = .none,
         modifiers: MirageModifierFlags,
-        isPrecise: Bool
+        isPrecise: Bool,
+        preservePhaseMetadata: Bool = false
     ) -> MirageScrollEvent? {
-        let resolvedPhase = usesNativeScrollEventMetadata ? phase : .none
-        let resolvedMomentumPhase = usesNativeScrollEventMetadata ? momentumPhase : .none
+        let shouldPreservePhaseMetadata = usesNativeScrollEventMetadata || preservePhaseMetadata
+        let resolvedPhase = shouldPreservePhaseMetadata ? phase : .none
+        let resolvedMomentumPhase = shouldPreservePhaseMetadata ? momentumPhase : .none
         guard deltaX != 0 || deltaY != 0 || resolvedPhase != .none || resolvedMomentumPhase != .none else {
             return nil
         }

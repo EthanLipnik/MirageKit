@@ -618,6 +618,14 @@ extension MirageClientService {
             ), let preferredBonjourHost {
                 return (preferredBonjourHost, "bonjour-proximity-connect")
             }
+            if preferWiFiBeforeAwdlProximity,
+               let preferred = localAddresses.first(where: { !Self.isAwdlRadioEndpointHost($0) }) {
+                return (preferred, "resolved-local-address")
+            }
+            if preferWiFiBeforeAwdlProximity,
+               let rememberedHost = rememberedDirectEndpointHost(for: host) {
+                return (rememberedHost, "remembered-direct-host")
+            }
             if let preferred = localAddresses.first {
                 return (preferred, "resolved-local-address")
             }
@@ -634,10 +642,7 @@ extension MirageClientService {
             return (endpointHost, "endpoint-host")
         }
 
-        if let rememberedHost = rememberedDirectEndpointHostByDeviceID[host.deviceID],
-           shouldPreferEndpointHostForDirectConnection(rememberedHost),
-           !Self.isOverlayCandidateHost(rememberedHost),
-           !awdlEndpointHostIsSuppressed(rememberedHost, for: host) {
+        if let rememberedHost = rememberedDirectEndpointHost(for: host) {
             return (rememberedHost, "remembered-direct-host")
         }
 
@@ -648,6 +653,16 @@ extension MirageClientService {
         let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !peerName.isEmpty else { return (nil, "none") }
         return (Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first, "peer-name-bonjour")
+    }
+
+    func rememberedDirectEndpointHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        guard let rememberedHost = rememberedDirectEndpointHostByDeviceID[host.deviceID],
+              shouldPreferEndpointHostForDirectConnection(rememberedHost),
+              !Self.isOverlayCandidateHost(rememberedHost),
+              !awdlEndpointHostIsSuppressed(rememberedHost, for: host) else {
+            return nil
+        }
+        return rememberedHost
     }
 
     func endpointPort(for endpoint: NWEndpoint) -> NWEndpoint.Port {
@@ -979,8 +994,20 @@ extension MirageClientService {
         return nil
     }
 
+    static func proximityRouteTier(forEndpointHost host: NWEndpoint.Host) -> ControlSessionRouteTier? {
+        guard let interfaceName = scopedLinkLocalIPv6InterfaceName(host) else { return nil }
+        return proximityRouteTier(forInterfaceName: interfaceName)
+    }
+
     static func proximityPriority(forInterfaceName name: String) -> Int? {
         proximityRouteTier(forInterfaceName: name)?.rank
+    }
+
+    static func isAwdlRadioEndpointHost(_ host: NWEndpoint.Host) -> Bool {
+        guard let routeTier = proximityRouteTier(forEndpointHost: host) else {
+            return false
+        }
+        return isAwdlRadioRouteTier(routeTier)
     }
 
     static func isScopeLessLinkLocalIPv6Name(_ value: String) -> Bool {

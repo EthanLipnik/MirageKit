@@ -7,12 +7,55 @@
 
 import Foundation
 import Loom
+import Network
 
 package enum MiragePeerAdvertisementMetadata {
     package enum AvailabilityReason: String, Sendable {
         case available
         case busy
         case softwareUpdate
+    }
+
+    private struct LocalEndpointHintsPayload: Codable {
+        let version: Int
+        let hints: [LocalEndpointHintPayload]
+
+        enum CodingKeys: String, CodingKey {
+            case version = "v"
+            case hints = "n"
+        }
+    }
+
+    private struct LocalEndpointHintPayload: Codable {
+        let wifiSubnetSignatures: [String]
+        let wiredSubnetSignatures: [String]
+        let hosts: [String]
+        let observedAt: TimeInterval
+
+        init(_ hint: MirageLocalNetworkEndpointHint) {
+            wifiSubnetSignatures = hint.network.wifiSubnetSignatures
+            wiredSubnetSignatures = hint.network.wiredSubnetSignatures
+            hosts = hint.hosts
+            observedAt = hint.observedAt.timeIntervalSince1970
+        }
+
+        var hint: MirageLocalNetworkEndpointHint {
+            MirageLocalNetworkEndpointHint(
+                network: MirageLocalNetworkSignatureContext(
+                    wifiSubnetSignatures: wifiSubnetSignatures,
+                    wiredSubnetSignatures: wiredSubnetSignatures
+                ),
+                hosts: hosts,
+                observedAt: Date(timeIntervalSince1970: observedAt)
+            )
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case wifiSubnetSignatures = "w"
+            case wiredSubnetSignatures = "r"
+            case hosts = "a"
+            case observedAt = "t"
+        }
     }
 
     private static let maxStreamsKey = "mirage.max-streams"
@@ -26,6 +69,10 @@ package enum MiragePeerAdvertisementMetadata {
     private static let maxFrameRateKey = "mirage.max-frame-rate"
     private static let wifiSubnetSignaturesKey = "mirage.net.wifi"
     private static let wiredSubnetSignaturesKey = "mirage.net.wired"
+    private static let localEndpointHintsKey = "mirage.net.lan-hints"
+    package static let localEndpointHintExpiration: TimeInterval = 30 * 24 * 60 * 60
+    package static let maxLocalEndpointHintNetworks = 3
+    package static let maxLocalEndpointHostsPerNetwork = 1
 
     package struct AdvertisedLocalNetworkContext: Sendable, Equatable {
         package let wifiSubnetSignatures: [String]
@@ -221,6 +268,159 @@ package enum MiragePeerAdvertisementMetadata {
         )
     }
 
+    package static func updatingLocalEndpointHints(
+        localEndpointHosts: [NWEndpoint.Host],
+        localNetwork: MirageLocalNetworkSnapshot,
+        observedAt: Date = Date(),
+        in advertisement: LoomPeerAdvertisement
+    ) -> LoomPeerAdvertisement {
+        let network = MirageLocalNetworkSignatureContext(localNetwork)
+        let currentHosts = normalizedLocalEndpointHosts(localEndpointHosts)
+        var hints = localEndpointHints(from: advertisement, now: observedAt)
+
+        if !network.isEmpty && !currentHosts.isEmpty {
+            let currentHint = MirageLocalNetworkEndpointHint(
+                network: network,
+                hosts: currentHosts,
+                observedAt: observedAt
+            )
+            hints.removeAll { $0.network.intersects(network) }
+            hints.append(currentHint)
+        }
+
+        return updatingLocalEndpointHints(hints, now: observedAt, in: advertisement)
+    }
+
+    package static func mergingLocalEndpointHints(
+        from previousAdvertisement: LoomPeerAdvertisement?,
+        into advertisement: LoomPeerAdvertisement,
+        now: Date = Date()
+    ) -> LoomPeerAdvertisement {
+        let existingHints = previousAdvertisement.map {
+            localEndpointHints(from: $0, now: now)
+        } ?? []
+        let currentHints = localEndpointHints(from: advertisement, now: now)
+        return updatingLocalEndpointHints(
+            currentHints + existingHints,
+            now: now,
+            in: advertisement
+        )
+    }
+
+    package static func localEndpointHints(
+        from advertisement: LoomPeerAdvertisement,
+        now: Date = Date()
+    ) -> [MirageLocalNetworkEndpointHint] {
+        guard let rawValue = advertisement.metadata[localEndpointHintsKey],
+              let data = rawValue.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(LocalEndpointHintsPayload.self, from: data),
+              payload.version == 1 else {
+            return []
+        }
+
+        return boundedLocalEndpointHints(
+            payload.hints.map(\.hint),
+            now: now
+        )
+    }
+
+    package static func bestLocalEndpointHost(
+        matching currentNetwork: MirageLocalNetworkSignatureContext,
+        in advertisement: LoomPeerAdvertisement,
+        now: Date = Date()
+    ) -> String? {
+        guard !currentNetwork.isEmpty else { return nil }
+        return localEndpointHints(from: advertisement, now: now)
+            .first { $0.matches(currentNetwork) }?
+            .hosts
+            .first
+    }
+
+    private static func updatingLocalEndpointHints(
+        _ hints: [MirageLocalNetworkEndpointHint],
+        now: Date,
+        in advertisement: LoomPeerAdvertisement
+    ) -> LoomPeerAdvertisement {
+        let boundedHints = boundedLocalEndpointHints(hints, now: now)
+        var metadata = advertisement.metadata
+        if let encodedHints = encodedLocalEndpointHints(boundedHints) {
+            metadata[localEndpointHintsKey] = encodedHints
+        } else {
+            metadata.removeValue(forKey: localEndpointHintsKey)
+        }
+        return rebuildingAdvertisement(advertisement, metadata: metadata)
+    }
+
+    private static func boundedLocalEndpointHints(
+        _ hints: [MirageLocalNetworkEndpointHint],
+        now: Date
+    ) -> [MirageLocalNetworkEndpointHint] {
+        var boundedHints: [MirageLocalNetworkEndpointHint] = []
+        let expirationDate = now.addingTimeInterval(-localEndpointHintExpiration)
+
+        for hint in hints.sorted(by: { $0.observedAt > $1.observedAt }) {
+            guard hint.observedAt >= expirationDate,
+                  !hint.network.isEmpty,
+                  !hint.hosts.isEmpty,
+                  !boundedHints.contains(where: { $0.network.intersects(hint.network) }) else {
+                continue
+            }
+            boundedHints.append(
+                MirageLocalNetworkEndpointHint(
+                    network: hint.network,
+                    hosts: Array(hint.hosts.prefix(maxLocalEndpointHostsPerNetwork)),
+                    observedAt: hint.observedAt
+                )
+            )
+            if boundedHints.count == maxLocalEndpointHintNetworks {
+                break
+            }
+        }
+
+        return boundedHints
+    }
+
+    private static func encodedLocalEndpointHints(
+        _ hints: [MirageLocalNetworkEndpointHint]
+    ) -> String? {
+        guard !hints.isEmpty else { return nil }
+        let payload = LocalEndpointHintsPayload(
+            version: 1,
+            hints: hints.map(LocalEndpointHintPayload.init)
+        )
+        guard let data = try? JSONEncoder().encode(payload) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func normalizedLocalEndpointHosts(_ hosts: [NWEndpoint.Host]) -> [String] {
+        var seenHosts = Set<String>()
+        var normalizedHosts: [String] = []
+        for host in hosts {
+            let hostString = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isUsableLocalEndpointHost(hostString),
+                  seenHosts.insert(hostString).inserted else {
+                continue
+            }
+            normalizedHosts.append(hostString)
+        }
+        return normalizedHosts
+    }
+
+    private static func isUsableLocalEndpointHost(_ hostString: String) -> Bool {
+        guard let address = IPv4Address(hostString),
+              MirageEndpointClassifier.classify(.ipv4(address)) == .privateLAN else {
+            return false
+        }
+
+        let rawValue = address.rawValue
+        guard rawValue.count >= 2 else { return false }
+        let firstOctet = rawValue[rawValue.startIndex]
+        let secondOctet = rawValue[rawValue.startIndex.advanced(by: 1)]
+        return firstOctet != 0 &&
+            firstOctet != 127 &&
+            !(firstOctet == 169 && secondOctet == 254)
+    }
+
     private static func intValue(
         _ key: String,
         from advertisement: LoomPeerAdvertisement,
@@ -295,5 +495,14 @@ package enum MiragePeerAdvertisementMetadata {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .sorted()
+    }
+}
+
+extension MirageLocalNetworkSignatureContext {
+    package init(_ snapshot: MirageLocalNetworkSnapshot) {
+        self.init(
+            wifiSubnetSignatures: snapshot.wifiSubnetSignatures,
+            wiredSubnetSignatures: snapshot.wiredSubnetSignatures
+        )
     }
 }

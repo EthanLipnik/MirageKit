@@ -74,4 +74,29 @@ public extension LoomPeerAdvertisement {
     var mirageMaxFrameRate: Int {
         MiragePeerAdvertisementMetadata.maxFrameRate(from: self)
     }
+
+    /// Bounded local-network endpoint hints advertised by the host.
+    var mirageLocalNetworkEndpointHints: [MirageLocalNetworkEndpointHint] {
+        MiragePeerAdvertisementMetadata.localEndpointHints(from: self)
+    }
+
+    /// Best saved local endpoint host for the supplied current network, if one still applies.
+    func mirageLocalEndpointHost(
+        matching currentNetwork: MirageLocalNetworkSignatureContext
+    ) -> String? {
+        MiragePeerAdvertisementMetadata.bestLocalEndpointHost(
+            matching: currentNetwork,
+            in: self
+        )
+    }
+
+    /// Returns this advertisement after preserving unexpired local-network hints from a previous publication.
+    func mirageMergingLocalNetworkEndpointHints(
+        from previousAdvertisement: LoomPeerAdvertisement?
+    ) -> LoomPeerAdvertisement {
+        MiragePeerAdvertisementMetadata.mergingLocalEndpointHints(
+            from: previousAdvertisement,
+            into: self
+        )
+    }
 }

@@ -114,4 +114,65 @@ struct StreamContentRecoveryPresentationTests {
         #expect(!store.isAwaitingPostResizeFirstFrame(for: streamID))
         #expect(view.presentationBlurRadius == 0)
     }
+
+    #if os(iOS) || os(visionOS)
+    @MainActor
+    @Test("Direct touch suppresses simulated desktop cursor overlay")
+    func directTouchSuppressesSimulatedDesktopCursorOverlay() throws {
+        let view = try makeDesktopContentView(
+            cursorPresentation: .simulatedCursor,
+            directTouchInputMode: .normal
+        )
+
+        #expect(!view.syntheticCursorEnabled)
+        #expect(view.desktopLocalCursorHidden)
+    }
+
+    @MainActor
+    @Test("Direct touch preserves client desktop cursor presentation")
+    func directTouchPreservesClientDesktopCursorPresentation() throws {
+        let view = try makeDesktopContentView(
+            cursorPresentation: MirageDesktopCursorPresentation(source: .client),
+            directTouchInputMode: .normal
+        )
+
+        #expect(!view.syntheticCursorEnabled)
+        #expect(!view.desktopLocalCursorHidden)
+    }
+
+    @MainActor
+    private func makeDesktopContentView(
+        cursorPresentation: MirageDesktopCursorPresentation,
+        directTouchInputMode: MirageDirectTouchInputMode
+    ) throws -> MirageStreamContentView {
+        let store = MirageClientSessionStore()
+        let service = MirageClientService()
+        let streamID: StreamID = 701
+        let sessionID = store.createSession(
+            streamID: streamID,
+            mediaStreamID: streamID,
+            window: MirageWindow(
+                id: 70101,
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 1280, height: 720),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            streamKind: .desktop,
+            minSize: nil
+        )
+        let session = try #require(store.session(for: sessionID))
+
+        return MirageStreamContentView(
+            session: session,
+            sessionStore: store,
+            clientService: service,
+            isDesktopStream: true,
+            desktopCursorPresentation: cursorPresentation,
+            directTouchInputMode: directTouchInputMode
+        )
+    }
+    #endif
 }

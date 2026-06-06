@@ -152,7 +152,6 @@ extension InputCapturingView {
 
         if gesture.state == .began {
             stopTouchScrollDeceleration()
-            moveTrackpadCursorToDirectScrollStartIfNeeded(rawLocation, modifiers: eventModifiers)
         }
 
         let location = updatePointerLocationForScrollInteraction(rawLocation)
@@ -174,7 +173,8 @@ extension InputCapturingView {
             location: location,
             phase: phase,
             modifiers: eventModifiers,
-            isPrecise: true
+            isPrecise: true,
+            preservePhaseMetadata: usesVirtualTrackpad
         ) {
             onInputEvent?(.scrollWheel(scrollEvent))
         }

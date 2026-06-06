@@ -107,6 +107,42 @@ struct HostDesktopPointerInputTests {
         #expect(!MirageHostInputController.shouldWarpDesktopPointerEvent(.keyDown))
     }
 
+    @Test("Scroll begin with explicit location reanchors the host cursor")
+    func scrollBeginWithExplicitLocationReanchorsHostCursor() {
+        let beganEvent = MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 0,
+            location: CGPoint(x: 0.4, y: 0.6),
+            phase: .began,
+            isPrecise: true
+        )
+        let changedEvent = MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 12,
+            location: CGPoint(x: 0.4, y: 0.6),
+            phase: .changed,
+            isPrecise: true
+        )
+        let nilLocationBeganEvent = MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 0,
+            phase: .began,
+            isPrecise: true
+        )
+        let momentumBeganEvent = MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 0,
+            location: CGPoint(x: 0.4, y: 0.6),
+            momentumPhase: .began,
+            isPrecise: true
+        )
+
+        #expect(MirageHostInputController.shouldReanchorCursorForScrollEvent(beganEvent))
+        #expect(!MirageHostInputController.shouldReanchorCursorForScrollEvent(changedEvent))
+        #expect(!MirageHostInputController.shouldReanchorCursorForScrollEvent(nilLocationBeganEvent))
+        #expect(!MirageHostInputController.shouldReanchorCursorForScrollEvent(momentumBeganEvent))
+    }
+
     @Test("Desktop right-click events reuse the current host cursor position")
     func desktopRightClickUsesCurrentHostCursorPosition() {
         let requestedPoint = CGPoint(x: 300, y: 200)

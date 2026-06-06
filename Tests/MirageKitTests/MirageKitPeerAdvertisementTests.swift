@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Network
 @testable import MirageKit
 import Testing
 
@@ -147,6 +148,180 @@ struct MirageKitPeerAdvertisementTests {
         #expect(decoded.directTransports == advertisement.directTransports)
         #expect(networkContext.wifiSubnetSignatures == ["24:wifi-a", "24:wifi-b"])
         #expect(networkContext.wiredSubnetSignatures == ["24:wired-a"])
+    }
+
+    @Test("Peer advertisement local endpoint hints round trip and match current network")
+    func peerAdvertisementLocalEndpointHintsRoundTripAndMatchCurrentNetwork() {
+        let observedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let advertisement = LoomPeerAdvertisement(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            deviceID: UUID(),
+            identityKeyID: "host-key",
+            deviceType: .mac,
+            hostName: "Altair.local",
+            directTransports: [
+                LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
+            ],
+            metadata: [
+                "mirage.accepting-connections": "1",
+            ]
+        )
+
+        let updated = MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
+            localEndpointHosts: [
+                NWEndpoint.Host("192.168.1.44"),
+                NWEndpoint.Host("100.64.12.1"),
+                NWEndpoint.Host("169.254.1.9"),
+            ],
+            localNetwork: MirageLocalNetworkSnapshot(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:wifi-home"],
+                wiredSubnetSignatures: []
+            ),
+            observedAt: observedAt,
+            in: advertisement
+        )
+        let decoded = LoomPeerAdvertisement.from(txtRecord: updated.toTXTRecord())
+        let currentNetwork = MirageLocalNetworkSignatureContext(
+            wifiSubnetSignatures: ["24:wifi-home"],
+            wiredSubnetSignatures: []
+        )
+        let hints = MiragePeerAdvertisementMetadata.localEndpointHints(from: decoded, now: observedAt)
+
+        #expect(hints.count == 1)
+        #expect(hints.first?.hosts == ["192.168.1.44"])
+        #expect(decoded.mirageLocalEndpointHost(matching: currentNetwork) == "192.168.1.44")
+        #expect(decoded.mirageLocalEndpointHost(
+            matching: MirageLocalNetworkSignatureContext(
+                wifiSubnetSignatures: ["24:wifi-office"],
+                wiredSubnetSignatures: []
+            )
+        ) == nil)
+    }
+
+    @Test("Peer advertisement local endpoint hints expire and stay bounded")
+    func peerAdvertisementLocalEndpointHintsExpireAndStayBounded() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let day: TimeInterval = 24 * 60 * 60
+        var advertisement = LoomPeerAdvertisement(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            deviceID: UUID(),
+            deviceType: .mac,
+            hostName: "Altair.local",
+            directTransports: [
+                LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
+            ]
+        )
+
+        for (index, signature, ageInDays) in [
+            (10, "24:expired", 31),
+            (11, "24:older", 4),
+            (12, "24:third", 3),
+            (13, "24:second", 2),
+            (14, "24:first", 1),
+        ] {
+            advertisement = MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
+                localEndpointHosts: [
+                    NWEndpoint.Host("192.168.1.\(index)"),
+                ],
+                localNetwork: MirageLocalNetworkSnapshot(
+                    currentPathKind: .wifi,
+                    wifiSubnetSignatures: [signature],
+                    wiredSubnetSignatures: []
+                ),
+                observedAt: now.addingTimeInterval(-TimeInterval(ageInDays) * day),
+                in: advertisement
+            )
+        }
+
+        let hints = MiragePeerAdvertisementMetadata.localEndpointHints(from: advertisement, now: now)
+
+        #expect(hints.count == 3)
+        #expect(hints.map(\.network.wifiSubnetSignatures.first) == ["24:first", "24:second", "24:third"])
+        #expect(MiragePeerAdvertisementMetadata.bestLocalEndpointHost(
+            matching: MirageLocalNetworkSignatureContext(
+                wifiSubnetSignatures: ["24:older"],
+                wiredSubnetSignatures: []
+            ),
+            in: advertisement,
+            now: now
+        ) == nil)
+        #expect(MiragePeerAdvertisementMetadata.bestLocalEndpointHost(
+            matching: MirageLocalNetworkSignatureContext(
+                wifiSubnetSignatures: ["24:expired"],
+                wiredSubnetSignatures: []
+            ),
+            in: advertisement,
+            now: now
+        ) == nil)
+    }
+
+    @Test("Peer advertisement merges previous CloudKit local endpoint hints")
+    func peerAdvertisementMergesPreviousCloudKitLocalEndpointHints() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let previousAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
+            localEndpointHosts: [
+                NWEndpoint.Host("192.168.10.20"),
+            ],
+            localNetwork: MirageLocalNetworkSnapshot(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:previous"],
+                wiredSubnetSignatures: []
+            ),
+            observedAt: now.addingTimeInterval(-60),
+            in: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: UUID(),
+                deviceType: .mac,
+                hostName: "Altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
+                ]
+            )
+        )
+        let currentAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
+            localEndpointHosts: [
+                NWEndpoint.Host("192.168.20.30"),
+            ],
+            localNetwork: MirageLocalNetworkSnapshot(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:current"],
+                wiredSubnetSignatures: []
+            ),
+            observedAt: now,
+            in: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: UUID(),
+                deviceType: .mac,
+                hostName: "Altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
+                ]
+            )
+        )
+
+        let merged = MiragePeerAdvertisementMetadata.mergingLocalEndpointHints(
+            from: previousAdvertisement,
+            into: currentAdvertisement,
+            now: now
+        )
+
+        #expect(MiragePeerAdvertisementMetadata.bestLocalEndpointHost(
+            matching: MirageLocalNetworkSignatureContext(
+                wifiSubnetSignatures: ["24:current"],
+                wiredSubnetSignatures: []
+            ),
+            in: merged,
+            now: now
+        ) == "192.168.20.30")
+        #expect(MiragePeerAdvertisementMetadata.bestLocalEndpointHost(
+            matching: MirageLocalNetworkSignatureContext(
+                wifiSubnetSignatures: ["24:previous"],
+                wiredSubnetSignatures: []
+            ),
+            in: merged,
+            now: now
+        ) == "192.168.10.20")
     }
 
     @Test("Host advertisement VPN access metadata serialization")

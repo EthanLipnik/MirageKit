@@ -237,16 +237,17 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(location == nil)
     }
 
-    @Test("Virtual cursor scroll reanchors to the swipe location")
-    func virtualCursorScrollReanchorsToTheSwipeLocation() {
+    @Test("Virtual cursor scroll keeps the existing cursor position")
+    func virtualCursorScrollKeepsExistingCursorPosition() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .dragCursor
+        view.updateVirtualCursorPosition(CGPoint(x: 0.2, y: 0.75), updateVisibility: true)
 
         let location = view.updatePointerLocationForScrollInteraction(CGPoint(x: 160, y: 60))
 
-        #expect(location == CGPoint(x: 0.5, y: 0.25))
-        #expect(view.virtualCursorPosition == CGPoint(x: 0.5, y: 0.25))
-        #expect(view.lastCursorPosition == CGPoint(x: 0.5, y: 0.25))
+        #expect(location == CGPoint(x: 0.2, y: 0.75))
+        #expect(view.virtualCursorPosition == CGPoint(x: 0.2, y: 0.75))
+        #expect(view.lastCursorPosition == CGPoint(x: 0.2, y: 0.75))
     }
 
     @Test("Cursor-locked drag cursor keeps trackpad gestures enabled")
@@ -358,6 +359,93 @@ struct ScrollPhysicsCapturingViewTests {
             return
         }
         #expect(mouseEvent.location == expectedLocation)
+    }
+
+    @Test("Normal direct scroll begin ends interrupted momentum before moving cursor")
+    func normalDirectScrollBeginEndsInterruptedMomentumBeforeMovingCursor() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.directTouchScrollAnchorLocation = CGPoint(x: 0.25, y: 0.25)
+        view.directTouchScrollMomentumActive = true
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        view.handleDirectTouchScrollBegan(at: CGPoint(x: 240, y: 120))
+
+        let expectedLocation = CGPoint(x: 0.75, y: 0.5)
+        #expect(view.directTouchScrollAnchorLocation == expectedLocation)
+        #expect(view.directTouchScrollMomentumActive == false)
+        #expect(events.count == 2)
+
+        guard case let .scrollWheel(endEvent) = events.first else {
+            Issue.record("Expected interrupted momentum end before cursor move")
+            return
+        }
+        #expect(endEvent.deltaX == 0)
+        #expect(endEvent.deltaY == 0)
+        #expect(endEvent.location == CGPoint(x: 0.25, y: 0.25))
+        #expect(endEvent.phase == .none)
+        #expect(endEvent.momentumPhase == .ended)
+
+        guard case let .mouseMoved(mouseEvent) = events.last else {
+            Issue.record("Expected direct scroll begin to emit mouseMoved after momentum end")
+            return
+        }
+        #expect(mouseEvent.location == expectedLocation)
+    }
+
+    @Test("Direct-touch scroll lifecycle tracks active momentum")
+    func directTouchScrollLifecycleTracksActiveMomentum() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.directTouchScrollAnchorLocation = CGPoint(x: 0.25, y: 0.25)
+
+        view.clearDirectTouchScrollAnchorIfNeeded(
+            source: .directTouch,
+            phase: .ended,
+            momentumPhase: .began
+        )
+
+        #expect(view.directTouchScrollMomentumActive)
+        #expect(view.directTouchScrollAnchorLocation == CGPoint(x: 0.25, y: 0.25))
+
+        view.clearDirectTouchScrollAnchorIfNeeded(
+            source: .directTouch,
+            phase: .none,
+            momentumPhase: .ended
+        )
+
+        #expect(view.directTouchScrollMomentumActive == false)
+        #expect(view.directTouchScrollAnchorLocation == nil)
+    }
+
+    @Test("Direct-touch scroll lifecycle metadata bypasses native scroll preference")
+    func directTouchScrollLifecycleMetadataBypassesNativeScrollPreference() throws {
+        let defaults = UserDefaults.standard
+        let previousValue = defaults.object(forKey: MirageNativeScrollEventMetadataPreference.defaultsKey)
+        defaults.set(false, forKey: MirageNativeScrollEventMetadataPreference.defaultsKey)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: MirageNativeScrollEventMetadataPreference.defaultsKey)
+            } else {
+                defaults.removeObject(forKey: MirageNativeScrollEventMetadataPreference.defaultsKey)
+            }
+        }
+
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let event = try #require(view.makeScrollEvent(
+            deltaX: 0,
+            deltaY: 0,
+            location: CGPoint(x: 0.5, y: 0.5),
+            phase: .began,
+            modifiers: [],
+            isPrecise: true,
+            preservePhaseMetadata: true
+        ))
+
+        #expect(event.phase == .began)
+        #expect(event.momentumPhase == .none)
     }
 
     @Test("Simulated trackpad scroll begin does not emit a direct cursor move")

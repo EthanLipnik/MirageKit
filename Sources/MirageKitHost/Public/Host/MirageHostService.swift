@@ -170,6 +170,9 @@ public final class MirageHostService {
     /// Callback fired when host connection availability changes.
     public var onConnectionAvailabilityChanged: (@MainActor @Sendable (Bool) -> Void)?
 
+    /// Callback fired when the CloudKit-only local endpoint hint changes.
+    @ObservationIgnored @_spi(HostApp) public var onCloudKitLocalEndpointHintChanged: (@MainActor @Sendable () -> Void)?
+
     /// STUN keepalive that refreshes the NAT mapping for the QUIC listener port.
     var stunKeepalive: LoomSTUNKeepalive?
 
@@ -185,6 +188,8 @@ public final class MirageHostService {
     public let loomNode: LoomNode
     /// Current host advertisement payload before Loom republishes it.
     var advertisedPeerAdvertisement: LoomPeerAdvertisement
+    /// Last local endpoint hint fingerprint that triggered a CloudKit registration refresh.
+    var lastCloudKitLocalEndpointHintFingerprint: String?
     /// Debounced task that republishes updated host advertisement metadata.
     var advertisementRefreshTask: Task<Void, Never>?
     /// QUIC/TCP control listener used for direct remote clients.

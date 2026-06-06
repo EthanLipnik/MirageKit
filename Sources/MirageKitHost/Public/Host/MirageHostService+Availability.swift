@@ -65,6 +65,7 @@ extension MirageHostService {
         }
 
         await loomNode.updateAdvertisement(updatedAdvertisement)
+        notifyCloudKitLocalEndpointHintChangedIfNeeded()
     }
 
     /// Updates host maintenance availability while a software update is active.
@@ -95,6 +96,47 @@ extension MirageHostService {
     func stopAdvertisementRefreshLoop() {
         advertisementRefreshTask?.cancel()
         advertisementRefreshTask = nil
+    }
+
+    /// Builds the host advertisement used for CloudKit registration, including bounded CloudKit-only local hints.
+    @_spi(HostApp) public func currentCloudKitPeerAdvertisement() -> LoomPeerAdvertisement {
+        expireStaleSingleClientReservationIfNeeded()
+
+        var advertisement = MiragePeerAdvertisementMetadata.updatingAvailability(
+            advertisedConnectionAvailabilityReason,
+            in: advertisedPeerAdvertisement
+        )
+        let localNetworkSnapshot = localNetworkMonitor.snapshot
+        advertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
+            localNetworkSnapshot,
+            in: advertisement
+        )
+        return MiragePeerAdvertisementMetadata.updatingLocalEndpointHints(
+            localEndpointHosts: localNetworkMonitor.localEndpointHosts,
+            localNetwork: localNetworkSnapshot,
+            in: advertisement
+        )
+    }
+
+    private func notifyCloudKitLocalEndpointHintChangedIfNeeded() {
+        let fingerprint = Self.cloudKitLocalEndpointHintFingerprint(currentCloudKitPeerAdvertisement())
+        guard fingerprint != lastCloudKitLocalEndpointHintFingerprint else { return }
+        lastCloudKitLocalEndpointHintFingerprint = fingerprint
+        guard fingerprint != nil else { return }
+        onCloudKitLocalEndpointHintChanged?()
+    }
+
+    private static func cloudKitLocalEndpointHintFingerprint(
+        _ advertisement: LoomPeerAdvertisement
+    ) -> String? {
+        guard let hint = advertisement.mirageLocalNetworkEndpointHints.first else {
+            return nil
+        }
+        return [
+            hint.network.wifiSubnetSignatures.joined(separator: ","),
+            hint.network.wiredSubnetSignatures.joined(separator: ","),
+            hint.hosts.joined(separator: ","),
+        ].joined(separator: "|")
     }
 
     static func advertisement(

@@ -230,6 +230,7 @@ extension MirageHostInputController {
         }
 
         if let scrollPoint {
+            reanchorCursorForScrollEventIfNeeded(event, at: scrollPoint)
             cgEvent.location = scrollPoint
         }
         cgEvent.flags = event.modifiers.cgEventFlags

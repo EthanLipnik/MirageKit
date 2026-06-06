@@ -364,6 +364,11 @@ public final class MirageClientService {
         localNetworkMonitor.snapshot.currentPathKind
     }
 
+    /// Current hashed Wi-Fi/wired subnet signatures observed by the client monitor.
+    public var currentLocalNetworkSignatureContext: MirageLocalNetworkSignatureContext {
+        MirageLocalNetworkSignatureContext(localNetworkMonitor.snapshot)
+    }
+
     /// Current network path kind used by the active control session.
     public internal(set) var currentControlPathKind: MirageNetworkPathKind?
 

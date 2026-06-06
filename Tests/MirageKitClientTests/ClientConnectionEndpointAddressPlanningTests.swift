@@ -313,6 +313,112 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
+    @Test("Wi-Fi preference chooses retained LAN address before fresh AWDL address")
+    func wifiPreferenceChoosesRetainedLANAddressBeforeFreshAwdlAddress() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61110))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61111))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61112))
+        let awdlAddress = try #require(IPv6Address("fe80::54d2:dfff:fe24:a4ea%awdl0"))
+        let wifiAddress = try #require(IPv4Address("192.168.50.164"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(awdlAddress),
+                .ipv4(wifiAddress),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+                LoomDiscoveredInterface(name: "en0", type: .wifi, index: 8),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.preferWiFiBeforeAwdlProximity = true
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+        let expectedWiFiEndpoint: NWEndpoint = .hostPort(host: .ipv4(wifiAddress), port: udpPort)
+
+        #expect(attempts[0].endpoint.debugDescription == expectedWiFiEndpoint.debugDescription)
+        #expect(attempts[0].routeTier == .wifiLAN)
+        #expect(attempts.prefix(3).allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(2).allSatisfy { $0.routeTier == .awdl })
+    }
+
+    @MainActor
+    @Test("Wi-Fi preference retries remembered direct endpoint before AWDL-only Bonjour result")
+    func wifiPreferenceRetriesRememberedDirectEndpointBeforeAwdlOnlyBonjourResult() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61113))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61114))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61115))
+        let awdlAddress = try #require(IPv6Address("fe80::54d2:dfff:fe24:a4ea%awdl0"))
+        let rememberedAddress = try #require(IPv4Address("192.168.50.164"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(awdlAddress),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.preferWiFiBeforeAwdlProximity = true
+        service.rememberDirectEndpointHost(
+            .hostPort(host: .ipv4(rememberedAddress), port: udpPort),
+            for: deviceID
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+        let expectedRememberedEndpoint: NWEndpoint = .hostPort(host: .ipv4(rememberedAddress), port: udpPort)
+
+        #expect(attempts[0].endpoint.debugDescription == expectedRememberedEndpoint.debugDescription)
+        #expect(attempts[0].routeTier == .wifiLAN)
+        #expect(attempts.prefix(3).allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(2).allSatisfy { $0.routeTier == .awdl })
+    }
+
+    @MainActor
     @Test("Client ranks same wired Ethernet before AWDL")
     func controlSessionAttemptsRankSameWiredEthernetBeforeAwdl() throws {
         let deviceID = UUID()

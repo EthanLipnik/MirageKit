@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -43,9 +44,15 @@ extension MirageHostInputController {
             return
         }
 
+        reanchorCursorForScrollEventIfNeeded(event, at: scrollPoint)
         cgEvent.location = scrollPoint
         cgEvent.flags = event.modifiers.cgEventFlags
         postEvent(cgEvent)
+    }
+
+    /// Returns whether a scroll event should move the host cursor before injection.
+    nonisolated static func shouldReanchorCursorForScrollEvent(_ event: MirageScrollEvent) -> Bool {
+        event.phase == .began && event.location != nil
     }
 
     /// Converts an optional normalized scroll location into a host-window screen point.
@@ -54,6 +61,19 @@ extension MirageHostInputController {
         return CGPoint(
             x: windowFrame.origin.x + resolvedLocation.x * windowFrame.width,
             y: windowFrame.origin.y + resolvedLocation.y * windowFrame.height
+        )
+    }
+
+    /// Moves the host cursor to the scroll begin point when the scroll lifecycle provides one.
+    func reanchorCursorForScrollEventIfNeeded(_ event: MirageScrollEvent, at point: CGPoint) {
+        guard Self.shouldReanchorCursorForScrollEvent(event) else { return }
+        let warpStartedAt = Date.timeIntervalSinceReferenceDate
+        CGWarpMouseCursorPosition(point)
+        let now = Date.timeIntervalSinceReferenceDate
+        MirageInputLatencyTelemetry.shared.recordHostCursorWarp(
+            eventClass: .scroll,
+            durationMs: max(0, now - warpStartedAt) * 1000,
+            now: now
         )
     }
 }

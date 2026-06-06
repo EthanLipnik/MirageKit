@@ -6,6 +6,7 @@
 //
 
 import CryptoKit
+import Darwin
 import Foundation
 import Network
 
@@ -59,6 +60,14 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
             currentPathKind: pathKind,
             interfaceTypesByName: interfaceTypesByName
         )
+    }
+
+    /// Latest usable private LAN endpoint hosts observed on Wi-Fi or wired interfaces.
+    package var localEndpointHosts: [NWEndpoint.Host] {
+        let interfaceTypesByName = stateQueue.sync {
+            self.interfaceTypesByName
+        }
+        return Self.localEndpointHosts(interfaceTypesByName: interfaceTypesByName)
     }
 
     package static func makeSnapshot(
@@ -213,6 +222,49 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         return signatures.sorted()
     }
 
+    private static func localEndpointHosts(
+        interfaceTypesByName: [String: NWInterface.InterfaceType]
+    ) -> [NWEndpoint.Host] {
+        var hosts = Set<String>()
+        var pointer: UnsafeMutablePointer<ifaddrs>?
+
+        guard getifaddrs(&pointer) == 0, let first = pointer else {
+            return []
+        }
+        defer {
+            freeifaddrs(pointer)
+        }
+
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let current = cursor {
+            let interface = current.pointee
+            cursor = interface.ifa_next
+
+            let name = String(cString: interface.ifa_name).lowercased()
+            guard let interfaceType = interfaceTypesByName[name],
+                  interfaceType == .wifi || interfaceType == .wiredEthernet else {
+                continue
+            }
+
+            let flags = Int32(interface.ifa_flags)
+            guard (flags & IFF_UP) != 0,
+                  (flags & IFF_LOOPBACK) == 0,
+                  (flags & IFF_POINTOPOINT) == 0 else {
+                continue
+            }
+
+            guard let address = interface.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_INET),
+                  let endpointHost = privateIPv4EndpointHost(address: address) else {
+                continue
+            }
+
+            hosts.insert(String(describing: endpointHost))
+        }
+
+        return hosts.sorted().map { NWEndpoint.Host($0) }
+    }
+
     private static func subnetSignature(
         address: UnsafePointer<sockaddr>,
         netmask: UnsafePointer<sockaddr>
@@ -242,5 +294,30 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         let digest = SHA256.hash(data: data)
         let truncatedHex = digest.prefix(6).map { String(format: "%02x", $0) }.joined()
         return "\(prefixLength):\(truncatedHex)"
+    }
+
+    private static func privateIPv4EndpointHost(address: UnsafePointer<sockaddr>) -> NWEndpoint.Host? {
+        var ipv4Address = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+            $0.pointee.sin_addr
+        }
+
+        let addressValue = UInt32(bigEndian: ipv4Address.s_addr)
+        let firstOctet = UInt8((addressValue >> 24) & 0xFF)
+        let secondOctet = UInt8((addressValue >> 16) & 0xFF)
+        if firstOctet == 0 || firstOctet == 127 || (firstOctet == 169 && secondOctet == 254) {
+            return nil
+        }
+
+        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        guard inet_ntop(AF_INET, &ipv4Address, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil else {
+            return nil
+        }
+
+        let hostBytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        let host = NWEndpoint.Host(String(decoding: hostBytes, as: UTF8.self))
+        guard MirageEndpointClassifier.classify(host) == .privateLAN else {
+            return nil
+        }
+        return host
     }
 }

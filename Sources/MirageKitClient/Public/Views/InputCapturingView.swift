@@ -541,6 +541,8 @@ public class InputCapturingView: UIView {
     var lastCursorPosition: CGPoint?
     /// Normalized contact anchor used while native direct-touch scrolling is active.
     var directTouchScrollAnchorLocation: CGPoint?
+    /// Whether a direct-touch scroll momentum sequence is active on the host.
+    var directTouchScrollMomentumActive = false
 
     // Track keyboard modifier state - single source of truth
     // Gesture events read modifiers directly from gesture.modifierFlags at event time

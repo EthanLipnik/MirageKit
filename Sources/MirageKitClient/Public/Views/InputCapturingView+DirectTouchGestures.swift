@@ -15,11 +15,13 @@ extension InputCapturingView {
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
 
         let location = normalizedLocation(rawLocation)
-        updatePointerLocationForLocalContact(location)
-        directTouchScrollAnchorLocation = cursorLockEnabled ? lockedCursorPosition : location
         syncModifiersForInput()
         let eventModifiers = keyboardModifiers
         sendModifierSnapshotIfNeeded(eventModifiers)
+        endInterruptedDirectTouchMomentumIfNeeded(modifiers: eventModifiers)
+
+        updatePointerLocationForLocalContact(location)
+        directTouchScrollAnchorLocation = cursorLockEnabled ? lockedCursorPosition : location
 
         let mouseEvent = MirageMouseEvent(
             button: .left,

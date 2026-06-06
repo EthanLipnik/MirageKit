@@ -342,6 +342,7 @@ extension InputCapturingView {
     func stopTouchScrollDeceleration() {
         scrollPhysicsView?.cancelDirectTouchScrolling()
         directTouchScrollAnchorLocation = nil
+        directTouchScrollMomentumActive = false
         touchScrollDecelerationLink?.invalidate()
         touchScrollDecelerationLink = nil
         touchScrollDecelerationVelocity = .zero
@@ -365,7 +366,8 @@ extension InputCapturingView {
                 phase: .none,
                 momentumPhase: .changed,
                 modifiers: keyboardModifiers,
-                isPrecise: true
+                isPrecise: true,
+                preservePhaseMetadata: true
             ) else { return }
             onInputEvent?(.scrollWheel(scrollEvent))
         }
@@ -383,7 +385,8 @@ extension InputCapturingView {
                 phase: .none,
                 momentumPhase: .ended,
                 modifiers: keyboardModifiers,
-                isPrecise: true
+                isPrecise: true,
+                preservePhaseMetadata: true
             ) else { return }
             onInputEvent?(.scrollWheel(endEvent))
         }

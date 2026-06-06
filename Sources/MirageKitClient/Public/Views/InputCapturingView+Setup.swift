@@ -67,7 +67,8 @@ extension InputCapturingView {
                 phase: phase,
                 momentumPhase: momentumPhase,
                 modifiers: modifiers,
-                isPrecise: true
+                isPrecise: true,
+                preservePhaseMetadata: source == .directTouch
             )
             if let scrollEvent {
                 onInputEvent?(.scrollWheel(scrollEvent))
