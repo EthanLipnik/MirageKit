@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/5/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import AppKit
@@ -81,11 +89,11 @@ public final class WindowActivator {
 
     /// Activate an application and optionally raise a specific window
     /// - Parameters:
-    ///   - app: The MirageApplication to activate
+    ///   - app: The MirageMedia.MirageApplication to activate
     ///   - axWindow: Pre-fetched AXUIElement for the window (optional, avoids re-lookup)
     /// - Returns: Result indicating which method succeeded or all failures
     public func activate(
-        app: MirageApplication,
+        app: MirageMedia.MirageApplication,
         axWindow: AXUIElement? = nil
     )
     -> ActivationResult {
@@ -122,7 +130,7 @@ public final class WindowActivator {
 
     private func tryMethod(
         _ method: ActivationMethod,
-        app: MirageApplication,
+        app: MirageMedia.MirageApplication,
         runningApp: NSRunningApplication,
         axWindow: AXUIElement?
     )
@@ -166,7 +174,7 @@ public final class WindowActivator {
 
     /// Method 2: Set AXFrontmost attribute on app element
     private func tryAXFrontmostActivation(
-        app: MirageApplication,
+        app: MirageMedia.MirageApplication,
         axWindow: AXUIElement?
     )
     -> ActivationResult {
@@ -201,7 +209,7 @@ public final class WindowActivator {
 
     /// Method 3: Raise window and set as focused
     private func tryAXRaiseAndFocus(
-        app: MirageApplication,
+        app: MirageMedia.MirageApplication,
         axWindow: AXUIElement?
     )
     -> ActivationResult {
@@ -237,7 +245,7 @@ public final class WindowActivator {
     }
 
     /// Method 4: NSWorkspace.open with activation configuration
-    private func tryNSWorkspaceActivation(app: MirageApplication) -> ActivationResult {
+    private func tryNSWorkspaceActivation(app: MirageMedia.MirageApplication) -> ActivationResult {
         guard let bundleID = app.bundleIdentifier,
               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
             return .failure(method: "NSWorkspace", error: "Cannot find app URL")

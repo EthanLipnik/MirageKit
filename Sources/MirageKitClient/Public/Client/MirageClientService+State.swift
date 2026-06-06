@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+State.swift
 //  MirageKit
@@ -7,7 +16,6 @@
 //  Stream state helpers and thread-safe snapshots.
 //
 
-import MirageKit
 
 @MainActor
 extension MirageClientService {

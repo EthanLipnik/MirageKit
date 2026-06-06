@@ -7,8 +7,16 @@
 //  Thread-safe accumulation for quality test UDP packets.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 final class QualityTestAccumulator: @unchecked Sendable {
     struct ReceivedMetrics: Equatable {
@@ -54,7 +62,7 @@ final class QualityTestAccumulator: @unchecked Sendable {
     }
 
     func record(
-        header: QualityTestPacketHeader,
+        header: MirageWire.QualityTestPacketHeader,
         payloadBytes: Int,
         receivedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) {

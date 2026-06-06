@@ -6,10 +6,15 @@
 //
 
 @testable import Loom
+@testable import MirageConnectivity
 @testable import MirageKit
 @testable import MirageKitClient
 import Network
+import Foundation
 import Testing
+import MirageCore
+import MirageKit
+import MirageWire
 
 @Suite("Client Bootstrap State")
 struct ClientHelloHandshakeStateTests {
@@ -21,7 +26,7 @@ struct ClientHelloHandshakeStateTests {
         let port = try #require(NWEndpoint.Port(rawValue: 9848))
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61020))
         let provisionalAdvertisement = LoomPeerAdvertisement(
-            protocolVersion: Int(MirageKit.protocolVersion),
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             deviceID: provisionalHostID,
             identityKeyID: "bonjour-key",
             deviceType: .mac,
@@ -50,7 +55,7 @@ struct ClientHelloHandshakeStateTests {
         service.connectionState = .handshaking(host: provisionalHost.name)
         service.authorizationState = .awaitingManualApproval
 
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: true,
             hostID: acceptedHostID,
             hostName: "Accepted Host",
@@ -102,7 +107,7 @@ struct ClientHelloHandshakeStateTests {
                 timeoutMessage: "Timed out waiting for host bootstrap response from Test Host"
             )
             Issue.record("Expected bootstrap response wait to time out, received \(message.type).")
-        } catch let MirageError.protocolError(message) {
+        } catch let MirageCore.MirageError.protocolError(message) {
             #expect(message == "Timed out waiting for host bootstrap response from Test Host")
         } catch {
             Issue.record("Unexpected timeout error: \(error.localizedDescription)")
@@ -116,7 +121,7 @@ struct ClientHelloHandshakeStateTests {
         let base = ContinuousClock.now
 
         await tracker.record(
-            LoomAuthenticatedSessionBootstrapProgress(phase: .trustPendingApproval),
+            MirageSessionBootstrapProgress(phase: .trustPendingApproval),
             now: base
         )
 

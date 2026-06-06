@@ -7,8 +7,16 @@
 //  Client host software update requests.
 //
 
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Loom
 import Network
 
 public enum MirageIncompatibleHostSoftwareUpdateRequestPath: Sendable, Equatable {
@@ -21,13 +29,13 @@ public extension MirageClientService {
     /// Requests host software update status from the active host connection.
     /// - Parameter forceRefresh: When true, host refreshes update metadata before replying.
     func requestHostSoftwareUpdateStatus(forceRefresh: Bool = false) async throws {
-        let request = HostSoftwareUpdateStatusRequestMessage(forceRefresh: forceRefresh)
+        let request = MirageWire.HostSoftwareUpdateStatusRequestMessage(forceRefresh: forceRefresh)
         try await sendControlMessage(.hostSoftwareUpdateStatusRequest, content: request)
     }
 
     /// Requests host software update installation from the active host connection.
     func requestHostSoftwareUpdateInstall() async throws {
-        try await sendControlMessage(ControlMessage(type: .hostSoftwareUpdateInstallRequest))
+        try await sendControlMessage(MirageWire.ControlMessage(type: .hostSoftwareUpdateInstallRequest))
     }
 
     /// Requests an update install from an outdated host using bootstrap control when available.
@@ -44,9 +52,9 @@ public extension MirageClientService {
             return .bootstrapControl
         }
 
-        let hostProtocolVersion = host.advertisement.protocolVersion
+        let hostProtocolVersion = host.advertisement.mirageControlProtocolVersion
         guard hostProtocolVersion > 0 else {
-            throw MirageError.protocolError("Host did not advertise a usable Mirage protocol version.")
+            throw MirageCore.MirageError.protocolError("Host did not advertise a usable Mirage protocol version.")
         }
 
         try await connect(
@@ -61,58 +69,29 @@ public extension MirageClientService {
         _ host: LoomPeer,
         bootstrapMetadata: LoomBootstrapMetadata
     ) async throws -> Bool {
-        guard bootstrapMetadata.enabled,
-              bootstrapMetadata.controlCapabilities.contains(.commands),
-              let controlPort = bootstrapMetadata.controlPort,
-              let controlAuthSecret = bootstrapMetadata.controlAuthSecret?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !controlAuthSecret.isEmpty else {
-            return false
-        }
-
-        let endpoints = LoomBootstrapEndpointResolver.resolve(bootstrapMetadata.endpoints)
-        guard let endpoint = endpoints.first ?? fallbackBootstrapControlEndpoint(for: host) else {
-            throw MirageError.protocolError("Host does not advertise a usable update control endpoint.")
-        }
-
         let helloRequest = try makeSessionHelloRequest()
         let commandBody = MirageHostSoftwareUpdateBootstrapCommand(helloRequest: helloRequest)
         let bodyData = try JSONEncoder().encode(commandBody)
-        let command = LoomBootstrapControlCommandPayload(
-            identifier: MirageBootstrapControlCommandIdentifier.hostSoftwareUpdateInstall,
-            body: bodyData
-        )
-        let client = LoomDefaultBootstrapControlClient(
-            identityManager: identityManager ?? MirageKit.identityManager
-        )
-        _ = try await client.requestCommand(
-            endpoint: endpoint,
-            controlPort: controlPort,
-            controlAuthSecret: controlAuthSecret,
-            command: command,
+        return try await MirageBootstrapControlCommandPlanner.requestCommandIfAvailable(
+            metadata: bootstrapMetadata,
+            fallbackEndpoint: fallbackBootstrapControlEndpoint(for: host),
+            commandIdentifier: MirageBootstrapControlCommandIdentifier.hostSoftwareUpdateInstall,
+            commandBody: bodyData,
+            identityManager: identityManager ?? MirageKit.identityManager,
             timeout: .seconds(5)
         )
-        return true
     }
 
-    private func fallbackBootstrapControlEndpoint(for host: LoomPeer) -> LoomBootstrapEndpoint? {
-        if let resolvedHost = host.resolvedAddresses.first {
-            return LoomBootstrapEndpoint(
-                host: String(describing: resolvedHost),
-                port: 22,
-                source: .auto
-            )
-        }
-
-        switch host.endpoint {
+    private func fallbackBootstrapControlEndpoint(for host: LoomPeer) -> MirageBootstrapControlEndpoint? {
+        let endpointHostDescription: String? = switch host.endpoint {
         case let .hostPort(host, _):
-            return LoomBootstrapEndpoint(
-                host: String(describing: host),
-                port: 22,
-                source: .auto
-            )
+            String(describing: host)
         default:
-            return nil
+            nil
         }
+        return MirageBootstrapControlCommandPlanner.fallbackEndpoint(
+            resolvedAddressDescriptions: host.resolvedAddresses.map { String(describing: $0) },
+            endpointHostDescription: endpointHostDescription
+        )
     }
 }

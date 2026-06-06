@@ -9,6 +9,7 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageDiagnostics
 
 #if os(macOS)
 @Suite("Receiver Health Controller")
@@ -753,7 +754,7 @@ struct ReceiverHealthControllerTests {
             now: 0
         )
         var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.clientDecodeBacklogFrames = 36
+        snapshot.clientDecodeBacklogFrameCount = 36
 
         let beforeWatchdogDecision = controller.advance(
             snapshots: [snapshot],
@@ -854,8 +855,8 @@ struct ReceiverHealthControllerTests {
         #expect(secondInWindow != nil)
     }
 
-    func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {
-        var snapshot = MirageClientMetricsSnapshot(
+    func healthySnapshot(activeQuality: Double) -> MirageDiagnostics.MirageClientMetricsSnapshot {
+        var snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(
             decodedFPS: 60,
             receivedFPS: 60,
             submittedFPS: 60,
@@ -883,7 +884,7 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    private func severeTransportSnapshot() -> MirageClientMetricsSnapshot {
+    private func severeTransportSnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostSendQueueBytes = 2_500_000
         snapshot.hostSendStartDelayAverageMs = 9
@@ -893,14 +894,14 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    private func delayOnlySnapshot() -> MirageClientMetricsSnapshot {
+    private func delayOnlySnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostSendStartDelayAverageMs = 4.5
         snapshot.hostSendCompletionAverageMs = 20
         return snapshot
     }
 
-    private func startupQueueSpikeSnapshot() -> MirageClientMetricsSnapshot {
+    private func startupQueueSpikeSnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostSendQueueBytes = 2_500_000
         snapshot.hostSendStartDelayAverageMs = 9
@@ -911,7 +912,7 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    private func decodeStalledButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+    private func decodeStalledButTransportHealthySnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.decodedFPS = 0
         snapshot.submittedFPS = 0
@@ -920,7 +921,7 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    func remoteKeyframeStarvedSnapshot() -> MirageClientMetricsSnapshot {
+    func remoteKeyframeStarvedSnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.receivedFPS = 0
         snapshot.decodedFPS = 0
@@ -932,7 +933,7 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    private func captureBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+    private func captureBoundButTransportHealthySnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.70)
         snapshot.hostCaptureIngressFPS = 44
         snapshot.hostCaptureFPS = 43
@@ -945,7 +946,7 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    private func presentationBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+    private func presentationBoundButTransportHealthySnapshot() -> MirageDiagnostics.MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.submittedFPS = 43
         snapshot.uniqueSubmittedFPS = 43

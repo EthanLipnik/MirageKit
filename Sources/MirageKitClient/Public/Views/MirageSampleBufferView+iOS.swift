@@ -7,7 +7,15 @@
 //  AVSampleBufferDisplayLayer-backed stream view on iOS and visionOS.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import AVFoundation
 import QuartzCore

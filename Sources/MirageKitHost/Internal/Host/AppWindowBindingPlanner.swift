@@ -7,8 +7,16 @@
 //  Deterministic one-to-one app-window binding for multi-window startup.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import Foundation
 
@@ -17,7 +25,7 @@ struct ResolvedAppWindowBinding {
     /// Client-requested candidate that needs an app stream.
     let candidate: AppStreamWindowCandidate
     /// Current host window that should back the requested stream.
-    let resolvedWindow: MirageWindow
+    let resolvedWindow: MirageMedia.MirageWindow
 }
 
 /// Result of matching requested app-window streams against the host's current window inventory.
@@ -33,7 +41,7 @@ enum AppWindowBindingPlanner {
     /// Matches each candidate to an unclaimed live window from the same process or bundle.
     static func plan(
         candidates: [AppStreamWindowCandidate],
-        liveWindows: [MirageWindow],
+        liveWindows: [MirageMedia.MirageWindow],
         claimedWindowIDs: Set<WindowID>
     ) -> AppWindowBindingPlan {
         var claimed = claimedWindowIDs
@@ -54,7 +62,7 @@ enum AppWindowBindingPlanner {
                 continue
             }
 
-            let resolvedWindow: MirageWindow
+            let resolvedWindow: MirageMedia.MirageWindow
             if let direct = compatible.first(where: { $0.id == candidate.window.id }) {
                 resolvedWindow = direct
             } else if let bestCompatibleWindow = compatible.min(by: { lhs, rhs in
@@ -84,8 +92,8 @@ enum AppWindowBindingPlanner {
 
     /// Scores lower for windows that look more like the requested candidate.
     static func captureCandidateScore(
-        _ candidate: MirageWindow,
-        requestedWindow: MirageWindow
+        _ candidate: MirageMedia.MirageWindow,
+        requestedWindow: MirageMedia.MirageWindow
     ) -> Int {
         captureCandidateScore(
             candidateIsOnScreen: candidate.isOnScreen,
@@ -150,10 +158,10 @@ enum AppWindowBindingPlanner {
     }
 
     private static func compatibleLiveWindows(
-        for requestedWindow: MirageWindow,
-        from liveWindows: [MirageWindow],
+        for requestedWindow: MirageMedia.MirageWindow,
+        from liveWindows: [MirageMedia.MirageWindow],
         claimedWindowIDs: Set<WindowID>
-    ) -> [MirageWindow] {
+    ) -> [MirageMedia.MirageWindow] {
         let requestedBundleID = requestedWindow.application?.bundleIdentifier?.lowercased()
         let requestedPID = requestedWindow.application?.id
         return liveWindows.filter { candidate in

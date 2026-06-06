@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -54,7 +62,7 @@ extension InputCapturingView {
         updatePointerLocationForLocalContact(location)
         directTouchScrollAnchorLocation = cursorLockEnabled ? lockedCursorPosition : location
 
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: cursorLockEnabled ? lockedCursorPosition : location,
             modifiers: eventModifiers
@@ -77,7 +85,7 @@ extension InputCapturingView {
         currentClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             clickCount: clickCount,
@@ -127,7 +135,7 @@ extension InputCapturingView {
                 return
             }
             if !directLongPressButtonDown {
-                let mouseEvent = MirageMouseEvent(
+                let mouseEvent = MirageInput.MirageMouseEvent(
                     button: .left,
                     location: lastPanLocation,
                     clickCount: 1,
@@ -140,7 +148,7 @@ extension InputCapturingView {
                 stopTouchScrollDeceleration()
                 revealCursorAfterPointerMovement()
                 isDragging = true
-                let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
+                let mouseEvent = MirageInput.MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
                 onInputEvent?(.mouseDragged(mouseEvent))
                 lastPanLocation = location
             }
@@ -154,7 +162,7 @@ extension InputCapturingView {
                     let now = CACurrentMediaTime()
                     let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
                     currentRightClickCount = clickCount
-                    let mouseEvent = MirageMouseEvent(
+                    let mouseEvent = MirageInput.MirageMouseEvent(
                         button: .right,
                         location: location,
                         clickCount: clickCount,
@@ -168,7 +176,7 @@ extension InputCapturingView {
                 return
             }
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: 1,
@@ -219,7 +227,7 @@ extension InputCapturingView {
             isDragging = false
             lastPanLocation = startLocation
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: startLocation,
                 clickCount: currentClickCount,
@@ -230,7 +238,7 @@ extension InputCapturingView {
                 updatePointerLocationForLocalContact(location)
                 revealCursorAfterPointerMovement()
                 isDragging = true
-                let dragEvent = MirageMouseEvent(
+                let dragEvent = MirageInput.MirageMouseEvent(
                     button: .left,
                     location: location,
                     clickCount: currentClickCount,
@@ -247,7 +255,7 @@ extension InputCapturingView {
                 if !isDragging { resetPrimaryClickTracking() }
                 revealCursorAfterPointerMovement()
                 isDragging = true
-                let mouseEvent = MirageMouseEvent(
+                let mouseEvent = MirageInput.MirageMouseEvent(
                     button: .left,
                     location: location,
                     clickCount: currentClickCount,
@@ -265,7 +273,7 @@ extension InputCapturingView {
                 return
             }
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: max(1, currentClickCount),
@@ -302,7 +310,7 @@ extension InputCapturingView {
         currentRightClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: clickCount,
@@ -341,7 +349,7 @@ extension InputCapturingView {
             directTwoFingerDragButtonDown = true
             lastPanLocation = location
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: 1,
@@ -353,7 +361,7 @@ extension InputCapturingView {
             guard directTwoFingerDragButtonDown else { return }
             if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
                 revealCursorAfterPointerMovement()
-                let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
+                let mouseEvent = MirageInput.MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
                 onInputEvent?(.mouseDragged(mouseEvent))
                 lastPanLocation = location
             }
@@ -366,7 +374,7 @@ extension InputCapturingView {
                 return
             }
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: 1,

@@ -7,9 +7,17 @@
 //  Host input controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -21,7 +29,7 @@ extension MirageHostInputController {
     /// Activates the owning app and raises the requested host window.
     func activateWindow(
         windowID: WindowID,
-        app: MirageApplication?
+        app: MirageMedia.MirageApplication?
     ) {
         guard let app,
               let runningApp = NSRunningApplication(processIdentifier: app.id) else {
@@ -48,7 +56,7 @@ extension MirageHostInputController {
     /// Hides traffic-light buttons while a direct window stream is active.
     func beginTrafficLightProtection(
         windowID: WindowID,
-        app: MirageApplication?,
+        app: MirageMedia.MirageApplication?,
         usesVirtualDisplay: Bool
     ) {
         accessibilityQueue.async { [weak self] in
@@ -108,7 +116,7 @@ extension MirageHostInputController {
     /// Computes the protected traffic-light cluster size from live AX button frames.
     func dynamicTrafficLightClusterSize(
         windowID: WindowID,
-        app: MirageApplication?,
+        app: MirageMedia.MirageApplication?,
         windowFrame: CGRect
     ) -> CGSize? {
         guard let axWindow = resolveAXWindow(windowID: windowID, app: app) else { return nil }
@@ -139,7 +147,7 @@ extension MirageHostInputController {
     }
 
     /// Resolves an accessibility window by CG window ID.
-    func resolveAXWindow(windowID: WindowID, app: MirageApplication?) -> AXUIElement? {
+    func resolveAXWindow(windowID: WindowID, app: MirageMedia.MirageApplication?) -> AXUIElement? {
         HostAccessibilityWindowLookup.resolveWindow(windowID: windowID, processID: app?.id)
     }
 

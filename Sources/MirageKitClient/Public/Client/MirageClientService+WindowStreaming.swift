@@ -7,9 +7,17 @@
 //  Per-window stream lifecycle and controller setup.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 public extension MirageClientService {
@@ -24,15 +32,15 @@ public extension MirageClientService {
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - audioConfiguration: Optional per-stream audio overrides.
     func startViewing(
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
-        audioConfiguration: MirageAudioConfiguration? = nil
+        audioConfiguration: MirageMedia.MirageAudioConfiguration? = nil
     )
     async throws -> ClientStreamSession {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
         await cancelActiveQualityTest(
             reason: "interactive app stream startup",
             notifyHost: true
@@ -40,14 +48,14 @@ public extension MirageClientService {
         _ = await refreshCurrentControlPathKind()
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
-        var request = StartStreamMessage(
+        var request = MirageWire.StartStreamMessage(
             windowID: window.id,
             targetFrameRate: effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
         )
         request.mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
-        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(displayResolution ?? mainDisplayResolution)
+        let effectiveDisplayResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(displayResolution ?? mainDisplayResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
-            throw MirageError.protocolError("Display size unavailable for window streaming")
+            throw MirageCore.MirageError.protocolError("Display size unavailable for window streaming")
         }
 
         // Include display resolution for virtual display sizing.
@@ -89,7 +97,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
+            requestedStreamScale: MirageMedia.MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight,
             disableResolutionCap: request.disableResolutionCap == true
@@ -134,7 +142,7 @@ public extension MirageClientService {
     func setupControllerForStream(
         _ streamID: StreamID,
         beginPostResizeTransition: Bool = false,
-        codec: MirageVideoCodec = .hevc,
+        codec: MirageMedia.MirageVideoCodec = .hevc,
         streamDimensions: (width: Int, height: Int)? = nil,
         mediaMaxPacketSize: Int? = nil,
         dimensionToken: UInt16? = nil,
@@ -143,14 +151,14 @@ public extension MirageClientService {
     async {
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
-        let payloadSize = miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
+        let payloadSize = MirageWire.miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
         let resolvedTargetFrameRate = resolvedStreamCadenceFrameRate(
             for: streamID,
             fallback: targetFrameRate
         )
 
         if let existingController = controllersByStream[streamID] {
-            let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
+            let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? MirageWire.mirageDefaultMaxPacketSize
             guard previousMediaMaxPacketSize == acceptedMediaMaxPacketSize else {
                 await existingController.stop()
                 controllersByStream.removeValue(forKey: streamID)
@@ -266,7 +274,7 @@ public extension MirageClientService {
 
     func prepareControllerForDesktopResize(
         _ streamID: StreamID,
-        codec: MirageVideoCodec,
+        codec: MirageMedia.MirageVideoCodec,
         streamDimensions: (width: Int, height: Int)?,
         mediaMaxPacketSize: Int?,
         dimensionToken: UInt16?,
@@ -274,7 +282,7 @@ public extension MirageClientService {
     )
     async {
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
-        let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
+        let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? MirageWire.mirageDefaultMaxPacketSize
         let resolvedTargetFrameRate = resolvedStreamCadenceFrameRate(
             for: streamID,
             fallback: targetFrameRate
@@ -345,7 +353,7 @@ public extension MirageClientService {
 
     func applyRenderLatencyMode(
         to streamID: StreamID,
-        preferredLatencyMode: MirageStreamLatencyMode? = nil
+        preferredLatencyMode: MirageMedia.MirageStreamLatencyMode? = nil
     ) {
         let requestedLatencyMode = preferredLatencyMode ??
             renderLatencyModeByStream[streamID] ??
@@ -376,7 +384,7 @@ public extension MirageClientService {
         )
     }
 
-    func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageStreamColorDepth {
+    func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageMedia.MirageStreamColorDepth {
         decoderCompatibilityCurrentColorDepthByStream[streamID] ??
             decoderCompatibilityBaselineColorDepthByStream[streamID] ??
             .standard
@@ -390,7 +398,7 @@ public extension MirageClientService {
     }
 
     /// Applies host-issued stream policies to active controllers.
-    func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
+    func applyHostStreamPolicies(_ policies: [MirageWire.MirageStreamPolicy], epoch: UInt64) async {
         for policy in policies {
             guard let controller = controllersByStream[policy.streamID] else { continue }
             let requestedLatencyMode = renderLatencyModeByStream[policy.streamID]

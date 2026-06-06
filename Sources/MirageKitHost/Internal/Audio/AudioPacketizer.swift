@@ -7,8 +7,16 @@
 //  Audio packet fragmentation for UDP transport.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -48,15 +56,15 @@ actor AudioPacketizer {
                 guard payloadCount > 0 else { continue }
                 let payloadBytes = UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end])
                 let checksum: UInt32 = if mediaSecurityKey == nil {
-                    CRC32.calculate(payloadBytes)
+                    MirageWire.CRC32.calculate(payloadBytes)
                 } else {
                     0
                 }
-                var flags: AudioPacketFlags = []
+                var flags: MirageWire.AudioPacketFlags = []
                 if discontinuity, fragmentIndex == 0 { flags.insert(.discontinuity) }
                 if mediaSecurityKey != nil { flags.insert(.encryptedPayload) }
 
-                let header = AudioPacketHeader(
+                let header = MirageWire.AudioPacketHeader(
                     codec: frame.codec,
                     flags: flags,
                     streamID: streamID,
@@ -83,7 +91,7 @@ actor AudioPacketizer {
                             direction: .hostToClient
                         )
                         var packet = header.serialize()
-                        packet.reserveCapacity(mirageAudioHeaderSize + wirePayload.count)
+                        packet.reserveCapacity(MirageWire.mirageAudioHeaderSize + wirePayload.count)
                         packet.append(wirePayload)
                         packets.append(packet)
                     } catch {
@@ -97,7 +105,7 @@ actor AudioPacketizer {
                         continue
                     }
                     var packet = header.serialize()
-                    packet.reserveCapacity(mirageAudioHeaderSize + payloadCount)
+                    packet.reserveCapacity(MirageWire.mirageAudioHeaderSize + payloadCount)
                     packet.append(payloadBase, count: payloadCount)
                     packets.append(packet)
                 }

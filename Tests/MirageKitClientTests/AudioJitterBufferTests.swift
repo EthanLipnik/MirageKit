@@ -9,7 +9,9 @@
 
 @testable import MirageKitClient
 import MirageKit
+import Foundation
 import Testing
+import MirageWire
 
 @Suite("Audio Jitter Buffer")
 struct AudioJitterBufferTests {
@@ -117,8 +119,8 @@ struct AudioJitterBufferTests {
         fragmentIndex: UInt16 = 0,
         fragmentCount: UInt16 = 1,
         samplesPerFrame: UInt16 = 960
-    ) -> AudioPacketHeader {
-        AudioPacketHeader(
+    ) -> MirageWire.AudioPacketHeader {
+        MirageWire.AudioPacketHeader(
             codec: .aacLC,
             streamID: 5,
             sequenceNumber: frameNumber,

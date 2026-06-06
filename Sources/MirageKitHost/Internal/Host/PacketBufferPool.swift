@@ -7,8 +7,16 @@
 //  Reusable packet buffers for UDP send paths.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Fixed-capacity packet buffer pool used by host send paths to reduce per-packet allocation churn.

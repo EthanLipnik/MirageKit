@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/21/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import ApplicationServices
@@ -67,7 +75,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     var lastActivatedWindowID: WindowID?
     var inputWindowFrameCacheByWindowID: [WindowID: CachedInputWindowFrame] = [:]
     var activeRelativeResizeTaskByWindowID: [WindowID: Task<Void, any Error>] = [:]
-    var systemActionInFlightUntilByAction: [MirageHostSystemAction: CFAbsoluteTime] = [:]
+    var systemActionInFlightUntilByAction: [MirageInput.MirageHostSystemAction: CFAbsoluteTime] = [:]
 
     let inputWindowFrameRefreshInterval: CFAbsoluteTime = 0.05
     let inputWindowFrameCacheTTL: CFAbsoluteTime = 2.0
@@ -90,10 +98,10 @@ public final class MirageHostInputController: @unchecked Sendable {
     // MARK: - Modifier State Tracking (accessed from accessibilityQueue only)
 
     /// Track the last event time per modifier flag for individual staleness detection.
-    var modifierLastEventTimes: [MirageModifierFlags: TimeInterval] = [:]
+    var modifierLastEventTimes: [MirageInput.MirageModifierFlags: TimeInterval] = [:]
 
     /// Track the last sent modifier state (for detecting stuck modifiers).
-    var lastSentModifiers: MirageModifierFlags = []
+    var lastSentModifiers: MirageInput.MirageModifierFlags = []
 
     /// Track which modifier key codes are currently held (for injecting keyUp on release).
     var heldModifierKeyCodes: Set<CGKeyCode> = []
@@ -117,7 +125,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     let pointerUnexpectedModifierCheckIntervalSeconds: TimeInterval = 0.25
 
     /// Mapping from modifier flags to their corresponding virtual key codes.
-    static let modifierKeyCodes: [(flag: MirageModifierFlags, keyCode: CGKeyCode)] = [
+    static let modifierKeyCodes: [(flag: MirageInput.MirageModifierFlags, keyCode: CGKeyCode)] = [
         (.shift, 0x38),
         (.control, 0x3B),
         (.option, 0x3A),
@@ -126,7 +134,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     ]
 
     /// Recovery key codes used to clear potentially-stuck modifier state.
-    static let modifierRecoveryKeyCodes: [(flag: MirageModifierFlags, keyCodes: [CGKeyCode])] = [
+    static let modifierRecoveryKeyCodes: [(flag: MirageInput.MirageModifierFlags, keyCodes: [CGKeyCode])] = [
         (.shift, [0x38, 0x3C]),
         (.control, [0x3B, 0x3E]),
         (.option, [0x3A, 0x3D]),
@@ -134,8 +142,8 @@ public final class MirageHostInputController: @unchecked Sendable {
         (.capsLock, [0x39]),
     ]
 
-    /// Mapping from CGEventFlags to MirageModifierFlags for system state comparison.
-    static let cgFlagToMirageFlag: [(cgFlag: CGEventFlags, mirageFlag: MirageModifierFlags)] = [
+    /// Mapping from CGEventFlags to MirageInput.MirageModifierFlags for system state comparison.
+    static let cgFlagToMirageFlag: [(cgFlag: CGEventFlags, mirageFlag: MirageInput.MirageModifierFlags)] = [
         (.maskShift, .shift),
         (.maskControl, .control),
         (.maskAlternate, .option),
@@ -163,8 +171,8 @@ public final class MirageHostInputController: @unchecked Sendable {
 
     /// Computes modifier key presses and releases for a requested modifier transition.
     static func modifierTransitionPlan(
-        from previousModifiers: MirageModifierFlags,
-        to nextModifiers: MirageModifierFlags
+        from previousModifiers: MirageInput.MirageModifierFlags,
+        to nextModifiers: MirageInput.MirageModifierFlags
     )
     -> ModifierTransitionPlan {
         var newlyPressed: [CGKeyCode] = []
@@ -206,14 +214,14 @@ public final class MirageHostInputController: @unchecked Sendable {
     /// - Parameters:
     ///   - event: The input event received from the client.
     ///   - window: The target window for the input event.
-    public func handleInputEvent(_ event: MirageInputEvent, window: MirageWindow) {
+    public func handleInputEvent(_ event: MirageInput.MirageInputEvent, window: MirageMedia.MirageWindow) {
         handleInputEvent(event, window: window, deferredInjectionValidator: nil)
     }
 
     /// Handles an input event with an optional validator for deferred injection.
     func handleInputEvent(
-        _ event: MirageInputEvent,
-        window: MirageWindow,
+        _ event: MirageInput.MirageInputEvent,
+        window: MirageMedia.MirageWindow,
         deferredInjectionValidator: (@Sendable () -> Bool)?
     ) {
         if window.id == 0 {

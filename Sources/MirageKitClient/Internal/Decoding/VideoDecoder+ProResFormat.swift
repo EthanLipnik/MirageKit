@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
 import VideoToolbox
-import MirageKit
 
 extension VideoDecoder {
     /// Creates or refreshes a ProRes 4444 format description and returns the original frame data.

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 
@@ -15,8 +23,8 @@ extension CGVirtualDisplayBridge {
         let display: AnyObject
         let displayID: CGDirectDisplayID
         let refreshRate: Double
-        let colorSpace: MirageColorSpace
-        let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
+        let colorSpace: MirageMedia.MirageColorSpace
+        let displayP3CoverageStatus: MirageMedia.MirageDisplayP3CoverageStatus
     }
 
     enum P3D65Primaries {

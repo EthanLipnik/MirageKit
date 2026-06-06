@@ -7,10 +7,18 @@
 //  Stream controller decisions, metrics, and frame carriers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import Foundation
-import MirageKit
 
 extension StreamController {
     /// Maximum recovery keyframe requests over the sliding pressure window.
@@ -157,7 +165,7 @@ extension StreamController {
     }
 
     struct TerminalStartupFailure: Equatable {
-        static let errorMessage = MirageKit.firstFramePresentationFailureTerminalMessage
+        static let errorMessage = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.firstFramePresentationFailureTerminalMessage
 
         let reason: RecoveryReason
         let hardRecoveryAttempts: Int

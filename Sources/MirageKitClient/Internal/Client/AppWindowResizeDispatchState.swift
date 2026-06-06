@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 6/4/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 /// Coalesces client-driven app-window resize requests so only one host resize is in flight.
 struct AppWindowResizeDispatchState: Equatable {
@@ -24,7 +32,7 @@ struct AppWindowResizeDispatchState: Equatable {
     private(set) var backoffUntil: CFAbsoluteTime = 0
 
     private var lastCompletedTarget: CGSize?
-    private var lastCompletedOutcome: MirageAppWindowResizeResultOutcome?
+    private var lastCompletedOutcome: MirageWire.MirageAppWindowResizeResultOutcome?
 
     var hasInFlightResize: Bool {
         inFlightTarget != nil
@@ -86,7 +94,7 @@ struct AppWindowResizeDispatchState: Equatable {
         return target
     }
 
-    mutating func complete(result: AppWindowResizeResultMessage, now: CFAbsoluteTime) -> Bool {
+    mutating func complete(result: MirageWire.AppWindowResizeResultMessage, now: CFAbsoluteTime) -> Bool {
         if let observedWidth = result.observedWidth,
            let observedHeight = result.observedHeight,
            observedWidth > 0,
@@ -146,7 +154,7 @@ struct AppWindowResizeDispatchState: Equatable {
 
     private mutating func completeCurrentResize(
         target: CGSize,
-        outcome: MirageAppWindowResizeResultOutcome,
+        outcome: MirageWire.MirageAppWindowResizeResultOutcome,
         reason: String?,
         now: CFAbsoluteTime
     ) {
@@ -166,11 +174,11 @@ struct AppWindowResizeDispatchState: Equatable {
     }
 
     private func normalizedTarget(_ target: CGSize) -> CGSize {
-        MirageStreamGeometry.normalizedLogicalSize(target)
+        MirageMedia.MirageStreamGeometry.normalizedLogicalSize(target)
     }
 
     private static func result(
-        _ result: AppWindowResizeResultMessage,
+        _ result: MirageWire.AppWindowResizeResultMessage,
         matches target: CGSize
     ) -> Bool {
         Int(target.width) == result.requestedWidth &&
@@ -178,7 +186,7 @@ struct AppWindowResizeDispatchState: Equatable {
     }
 
     private static func countsAsFailure(
-        outcome: MirageAppWindowResizeResultOutcome,
+        outcome: MirageWire.MirageAppWindowResizeResultOutcome,
         reason: String?
     ) -> Bool {
         guard outcome == .failed else { return false }

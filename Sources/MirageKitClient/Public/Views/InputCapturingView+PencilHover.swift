@@ -5,12 +5,20 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
 extension InputCapturingView {
-    func stylusHoverEvent(from gesture: UIHoverGestureRecognizer) -> MirageStylusEvent? {
+    func stylusHoverEvent(from gesture: UIHoverGestureRecognizer) -> MirageInput.MirageStylusEvent? {
         guard gesture.zOffset > 0 else { return nil }
 
         let altitude = min(max(gesture.altitudeAngle, 0), .pi / 2)
@@ -26,7 +34,7 @@ extension InputCapturingView {
         rollAngle = nil
         #endif
 
-        return MirageStylusEvent(
+        return MirageInput.MirageStylusEvent(
             altitudeAngle: altitude,
             azimuthAngle: azimuth,
             tiltX: tiltX,
@@ -39,8 +47,8 @@ extension InputCapturingView {
 
     func sendPencilHoverBatch(
         location: CGPoint,
-        stylus: MirageStylusEvent,
-        modifiers: MirageModifierFlags,
+        stylus: MirageInput.MirageStylusEvent,
+        modifiers: MirageInput.MirageModifierFlags,
         now: CFTimeInterval = CFAbsoluteTimeGetCurrent()
     ) {
         lastPencilHoverLocation = location
@@ -48,13 +56,13 @@ extension InputCapturingView {
 
         guard shouldForwardPencilHover(location: location, now: now) else { return }
         let timestamp = Date.timeIntervalSinceReferenceDate
-        let sample = MiragePointerSample(
+        let sample = MirageInput.MiragePointerSample(
             location: location,
             pressure: 0,
             stylus: stylus,
             timestamp: timestamp
         )
-        let batch = MiragePointerSampleBatch(
+        let batch = MirageInput.MiragePointerSampleBatch(
             phase: .hover,
             button: .left,
             modifiers: modifiers,
@@ -90,10 +98,10 @@ extension InputCapturingView {
         }
 
         let timestamp = Date.timeIntervalSinceReferenceDate
-        let sample = MiragePointerSample(
+        let sample = MirageInput.MiragePointerSample(
             location: location,
             pressure: 0,
-            stylus: MirageStylusEvent(
+            stylus: MirageInput.MirageStylusEvent(
                 altitudeAngle: stylus.altitudeAngle,
                 azimuthAngle: stylus.azimuthAngle,
                 tiltX: stylus.tiltX,
@@ -104,7 +112,7 @@ extension InputCapturingView {
             ),
             timestamp: timestamp
         )
-        let batch = MiragePointerSampleBatch(
+        let batch = MirageInput.MiragePointerSampleBatch(
             phase: .cancelled,
             button: .left,
             modifiers: keyboardModifiers,

@@ -10,7 +10,10 @@
 @testable import MirageKitHost
 import CoreMedia
 import MirageKit
+import Foundation
 import Testing
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 @Suite("Host Audio Pipeline Freshness")
@@ -51,15 +54,15 @@ struct HostAudioPipelineFreshnessTests {
         let packets = await packetizer.packetize(frame: frame, streamID: 7, discontinuity: true)
 
         #expect(packets.count == 3)
-        let firstHeader = try #require(AudioPacketHeader.deserialize(from: packets[0]))
-        let secondHeader = try #require(AudioPacketHeader.deserialize(from: packets[1]))
+        let firstHeader = try #require(MirageWire.AudioPacketHeader.deserialize(from: packets[0]))
+        let secondHeader = try #require(MirageWire.AudioPacketHeader.deserialize(from: packets[1]))
         #expect(firstHeader.flags.contains(.discontinuity))
         #expect(!secondHeader.flags.contains(.discontinuity))
     }
 
     @Test("Adaptive audio budget reduces progressively when queue drops")
     func adaptiveAudioBudgetReducesProgressivelyWhenQueueDrops() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,
@@ -81,7 +84,7 @@ struct HostAudioPipelineFreshnessTests {
 
     @Test("Adaptive audio budget treats configured bitrate as ceiling")
     func adaptiveAudioBudgetTreatsConfiguredBitrateAsCeiling() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,
@@ -98,7 +101,7 @@ struct HostAudioPipelineFreshnessTests {
 
     @Test("Adaptive audio budget can recover toward explicit ceiling")
     func adaptiveAudioBudgetCanRecoverTowardExplicitCeiling() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,
@@ -116,7 +119,7 @@ struct HostAudioPipelineFreshnessTests {
 
     @Test("Adaptive audio budget applies constrained path startup")
     func adaptiveAudioBudgetAppliesConstrainedPathStartup() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,
@@ -136,7 +139,7 @@ struct HostAudioPipelineFreshnessTests {
 
     @Test("Adaptive audio budget reduces when client reports audio drops")
     func adaptiveAudioBudgetReducesWhenClientReportsAudioDrops() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,
@@ -169,8 +172,8 @@ struct HostAudioPipelineFreshnessTests {
     private func receiverFeedback(
         audioDroppedFrameCount: UInt64? = nil,
         audioGateActive: Bool? = nil
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 1,
             sequence: 1,
             sentAtUptime: 0,

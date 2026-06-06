@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
 
@@ -13,7 +20,7 @@ import Foundation
 /// Configuration for video encoding on the host.
 public struct MirageEncoderConfiguration: Sendable {
     /// Video codec to use
-    public var codec: MirageVideoCodec
+    public var codec: MirageMedia.MirageVideoCodec
 
     /// Target frame rate
     public var targetFrameRate: Int
@@ -22,19 +29,19 @@ public struct MirageEncoderConfiguration: Sendable {
     public var keyFrameInterval: Int
 
     /// User-selected stream color depth preset.
-    public var colorDepth: MirageStreamColorDepth
+    public var colorDepth: MirageMedia.MirageStreamColorDepth
 
     /// Internal derived stream bit depth.
-    package var bitDepth: MirageVideoBitDepth
+    package var bitDepth: MirageMedia.MirageVideoBitDepth
 
     /// Color space for encoding.
-    package var colorSpace: MirageColorSpace
+    package var colorSpace: MirageMedia.MirageColorSpace
 
     /// Scale factor for retina displays
     public var scaleFactor: CGFloat
 
     /// Pixel format for capture and encode.
-    package var pixelFormat: MiragePixelFormat
+    package var pixelFormat: MirageMedia.MiragePixelFormat
     /// Capture queue depth override for ScreenCaptureKit (nil uses adaptive defaults)
     public var captureQueueDepth: Int?
 
@@ -47,10 +54,10 @@ public struct MirageEncoderConfiguration: Sendable {
 
     /// Creates an encoder configuration and derives pixel format/color settings from the selected color depth.
     public init(
-        codec: MirageVideoCodec = .hevc,
+        codec: MirageMedia.MirageVideoCodec = .hevc,
         targetFrameRate: Int = 60,
         keyFrameInterval: Int = 1800,
-        colorDepth: MirageStreamColorDepth = .standard,
+        colorDepth: MirageMedia.MirageStreamColorDepth = .standard,
         scaleFactor: CGFloat = 2.0,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil
@@ -71,13 +78,13 @@ public struct MirageEncoderConfiguration: Sendable {
     }
 
     package init(
-        codec: MirageVideoCodec = .hevc,
+        codec: MirageMedia.MirageVideoCodec = .hevc,
         targetFrameRate: Int = 60,
         keyFrameInterval: Int = 1800,
-        colorDepth: MirageStreamColorDepth,
-        colorSpace: MirageColorSpace,
+        colorDepth: MirageMedia.MirageStreamColorDepth,
+        colorSpace: MirageMedia.MirageColorSpace,
         scaleFactor: CGFloat = 2.0,
-        pixelFormat: MiragePixelFormat,
+        pixelFormat: MirageMedia.MiragePixelFormat,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil
     ) {
@@ -113,7 +120,7 @@ public struct MirageEncoderConfiguration: Sendable {
     /// Use this for full client control over encoding parameters
     public func withOverrides(
         keyFrameInterval: Int? = nil,
-        colorDepth: MirageStreamColorDepth? = nil,
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil
     )
@@ -130,10 +137,10 @@ public struct MirageEncoderConfiguration: Sendable {
 
     package func withInternalOverrides(
         keyFrameInterval: Int? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        colorSpace: MirageColorSpace? = nil,
-        bitDepth: MirageVideoBitDepth? = nil,
-        colorDepth: MirageStreamColorDepth? = nil,
+        pixelFormat: MirageMedia.MiragePixelFormat? = nil,
+        colorSpace: MirageMedia.MirageColorSpace? = nil,
+        bitDepth: MirageMedia.MirageVideoBitDepth? = nil,
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil
     ) -> MirageEncoderConfiguration {
@@ -163,7 +170,7 @@ public struct MirageEncoderConfiguration: Sendable {
         return config
     }
 
-    package mutating func apply(colorDepth: MirageStreamColorDepth) {
+    package mutating func apply(colorDepth: MirageMedia.MirageStreamColorDepth) {
         let descriptor = Self.descriptor(for: colorDepth)
         self.colorDepth = colorDepth
         bitDepth = descriptor.bitDepth
@@ -183,24 +190,24 @@ public struct MirageEncoderConfiguration: Sendable {
         }
     }
 
-    package static func descriptor(for colorDepth: MirageStreamColorDepth) -> MirageColorDepthDescriptor {
+    package static func descriptor(for colorDepth: MirageMedia.MirageStreamColorDepth) -> MirageMedia.MirageColorDepthDescriptor {
         switch colorDepth {
         case .standard:
-            MirageColorDepthDescriptor(
+            MirageMedia.MirageColorDepthDescriptor(
                 colorDepth: .standard,
                 bitDepth: .eightBit,
                 colorSpace: .sRGB,
                 capturePixelFormats: [.nv12, .bgra8]
             )
         case .pro:
-            MirageColorDepthDescriptor(
+            MirageMedia.MirageColorDepthDescriptor(
                 colorDepth: .pro,
                 bitDepth: .tenBit,
                 colorSpace: .displayP3,
                 capturePixelFormats: [.p010, .bgr10a2]
             )
         case .ultra:
-            MirageColorDepthDescriptor(
+            MirageMedia.MirageColorDepthDescriptor(
                 colorDepth: .ultra,
                 bitDepth: .tenBit,
                 colorSpace: .displayP3,
@@ -209,7 +216,7 @@ public struct MirageEncoderConfiguration: Sendable {
         }
     }
 
-    package static func descriptor(for pixelFormat: MiragePixelFormat) -> MirageColorDepthDescriptor {
+    package static func descriptor(for pixelFormat: MirageMedia.MiragePixelFormat) -> MirageMedia.MirageColorDepthDescriptor {
         switch pixelFormat {
         case .xf44,
              .ayuv16:
@@ -223,21 +230,21 @@ public struct MirageEncoderConfiguration: Sendable {
         }
     }
 
-    package static func pixelFormat(for bitDepth: MirageVideoBitDepth) -> MiragePixelFormat {
+    package static func pixelFormat(for bitDepth: MirageMedia.MirageVideoBitDepth) -> MirageMedia.MiragePixelFormat {
         switch bitDepth {
         case .eightBit: .nv12
         case .tenBit: .p010
         }
     }
 
-    package static func colorSpace(for bitDepth: MirageVideoBitDepth) -> MirageColorSpace {
+    package static func colorSpace(for bitDepth: MirageMedia.MirageVideoBitDepth) -> MirageMedia.MirageColorSpace {
         switch bitDepth {
         case .eightBit: .sRGB
         case .tenBit: .displayP3
         }
     }
 
-    package static func bitDepth(for pixelFormat: MiragePixelFormat) -> MirageVideoBitDepth {
+    package static func bitDepth(for pixelFormat: MirageMedia.MiragePixelFormat) -> MirageMedia.MirageVideoBitDepth {
         switch pixelFormat {
         case .p010, .bgr10a2, .xf44, .ayuv16:
             .tenBit
@@ -246,7 +253,7 @@ public struct MirageEncoderConfiguration: Sendable {
         }
     }
 
-    package static func defaultColorDepth(for bitDepth: MirageVideoBitDepth) -> MirageStreamColorDepth {
+    package static func defaultColorDepth(for bitDepth: MirageMedia.MirageVideoBitDepth) -> MirageMedia.MirageStreamColorDepth {
         switch bitDepth {
         case .eightBit:
             .standard
@@ -265,13 +272,13 @@ public struct MirageEncoderConfiguration: Sendable {
 }
 
 /// Optional overrides for encoder settings supplied by the client.
-public struct MirageEncoderOverrides: Sendable, Codable {
+public struct MirageEncoderOverrides: Sendable, Codable, Equatable {
     /// Preferred video codec.
-    public var codec: MirageVideoCodec?
+    public var codec: MirageMedia.MirageVideoCodec?
     /// Preferred keyframe interval in frames.
     public var keyFrameInterval: Int?
     /// Preferred stream color depth preset.
-    public var colorDepth: MirageStreamColorDepth?
+    public var colorDepth: MirageMedia.MirageStreamColorDepth?
     /// Capture queue depth requested for the stream.
     public var captureQueueDepth: Int?
     /// Client-entered bitrate budget before any desktop geometry scaling.
@@ -282,9 +289,9 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     /// Effective target bitrate sent to the host.
     public var bitrate: Int?
     /// Preferred latency policy for the stream.
-    public var latencyMode: MirageStreamLatencyMode?
+    public var latencyMode: MirageMedia.MirageStreamLatencyMode?
     /// Preferred host-side capture-to-encode buffering policy.
-    public var hostBufferingPolicy: MirageHostBufferingPolicy?
+    public var hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy?
     /// Whether the host may adjust quality while the stream is running.
     public var allowRuntimeQualityAdjustment: Bool?
     /// Whether the host may temporarily lower quality when encoding falls behind.
@@ -302,18 +309,18 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     /// Maximum encoded height in pixels.
     public var encoderMaxHeight: Int?
     /// Client-requested MetalFX upscaling mode.
-    public var upscalingMode: MirageUpscalingMode?
+    public var upscalingMode: MirageMedia.MirageUpscalingMode?
 
     /// Creates a partial encoder override payload for runtime or stream-start updates.
     public init(
-        codec: MirageVideoCodec? = nil,
+        codec: MirageMedia.MirageVideoCodec? = nil,
         keyFrameInterval: Int? = nil,
-        colorDepth: MirageStreamColorDepth? = nil,
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
         enteredBitrate: Int? = nil,
         bitrate: Int? = nil,
-        latencyMode: MirageStreamLatencyMode? = nil,
-        hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
+        latencyMode: MirageMedia.MirageStreamLatencyMode? = nil,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         allowEncoderCatchUpQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
@@ -321,7 +328,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
-        upscalingMode: MirageUpscalingMode? = nil
+        upscalingMode: MirageMedia.MirageUpscalingMode? = nil
     ) {
         self.codec = codec
         self.keyFrameInterval = keyFrameInterval

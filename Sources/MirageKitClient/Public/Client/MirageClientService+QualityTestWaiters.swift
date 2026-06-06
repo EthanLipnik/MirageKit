@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -14,7 +22,7 @@ extension MirageClientService {
     func awaitQualityTestBenchmark(
         testID: UUID,
         timeout: Duration
-    ) async -> QualityTestBenchmarkMessage? {
+    ) async -> MirageWire.QualityTestBenchmarkMessage? {
         if let pending = qualityTestPendingTestID, pending != testID {
             completeQualityTestBenchmarkWaiter(result: nil)
             completeQualityTestStageCompletionWaiter(result: nil)
@@ -49,7 +57,7 @@ extension MirageClientService {
         testID: UUID,
         stageID: Int,
         timeout: Duration
-    ) async -> QualityTestStageCompleteMessage? {
+    ) async -> MirageWire.QualityTestStageCompleteMessage? {
         if let pending = qualityTestPendingTestID, pending != testID {
             completeQualityTestBenchmarkWaiter(result: nil)
             completeQualityTestStageCompletionWaiter(result: nil)
@@ -88,7 +96,7 @@ extension MirageClientService {
     func completeQualityTestBenchmarkWaiter(
         expectedWaiterID: UInt64? = nil,
         expectedTestID: UUID? = nil,
-        result: QualityTestBenchmarkMessage?
+        result: MirageWire.QualityTestBenchmarkMessage?
     ) {
         if let expectedWaiterID, qualityTestBenchmarkWaiterID != expectedWaiterID { return }
         if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }
@@ -103,7 +111,7 @@ extension MirageClientService {
     func completeQualityTestStageCompletionWaiter(
         expectedWaiterID: UInt64? = nil,
         expectedTestID: UUID? = nil,
-        result: QualityTestStageCompleteMessage?
+        result: MirageWire.QualityTestStageCompleteMessage?
     ) {
         if let expectedWaiterID, qualityTestStageCompletionWaiterID != expectedWaiterID { return }
         if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }

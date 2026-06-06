@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -70,8 +78,8 @@ extension MirageHostService {
         priorityBundleIdentifiers: [String],
         knownIconBundleIdentifiers: [String]
     ) {
-        let normalizedPriorityBundleIdentifiers = mirageNormalizedBundleIdentifiers(priorityBundleIdentifiers)
-        let normalizedKnownIconBundleIdentifiers = mirageNormalizedBundleIdentifiers(knownIconBundleIdentifiers)
+        let normalizedPriorityBundleIdentifiers = MirageWire.mirageNormalizedBundleIdentifiers(priorityBundleIdentifiers)
+        let normalizedKnownIconBundleIdentifiers = MirageWire.mirageNormalizedBundleIdentifiers(knownIconBundleIdentifiers)
         if var pending = pendingAppListRequest, pending.clientID == clientID {
             pending.requestID = requestID
             pending.requestedForceRefresh = pending.requestedForceRefresh || requestedForceRefresh
@@ -105,12 +113,12 @@ extension MirageHostService {
         }
 
         appListRequestTask?.cancel()
-        if sessionState != .ready {
-            MirageLogger.host("Session is \(sessionState); deferring app list request until ready")
+        if mirageSessionAvailability != .ready {
+            MirageLogger.host("Session is \(mirageSessionAvailability.rawValue); deferring app list request until ready")
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await refreshSessionStateIfNeeded()
-                if sessionState == .ready {
+                if mirageSessionAvailability == .ready {
                     sendPendingAppListRequestIfPossible()
                     return
                 }
@@ -171,7 +179,7 @@ extension MirageHostService {
         clientContext: ClientContext
     ) async {
         do {
-            let response = AppListCompleteMessage(
+            let response = MirageWire.AppListCompleteMessage(
                 requestID: requestID,
                 totalAppCount: appCount
             )
@@ -190,7 +198,7 @@ extension MirageHostService {
 
     /// Streams app-list progress batches to the requesting client.
     func sendAppListProgress(
-        apps: [MirageInstalledApp],
+        apps: [MirageWire.MirageInstalledApp],
         requestID: UUID,
         clientID: UUID,
         token: UUID,
@@ -198,7 +206,7 @@ extension MirageHostService {
         knownIconBundleIdentifiers: [String]
     ) async {
         let knownIconBundleIdentifierSet = Set(knownIconBundleIdentifiers)
-        var batch: [MirageInstalledApp] = []
+        var batch: [MirageWire.MirageInstalledApp] = []
         batch.reserveCapacity(8)
 
         for (index, app) in apps.enumerated() {
@@ -238,7 +246,7 @@ extension MirageHostService {
 
     /// Sends one app-list progress batch if the request is still current.
     func sendAppListProgressBatch(
-        _ apps: [MirageInstalledApp],
+        _ apps: [MirageWire.MirageInstalledApp],
         requestID: UUID,
         clientID: UUID,
         token: UUID
@@ -249,7 +257,7 @@ extension MirageHostService {
             return
         }
         do {
-            let progress = AppListProgressMessage(
+            let progress = MirageWire.AppListProgressMessage(
                 requestID: requestID,
                 apps: apps
             )
@@ -267,10 +275,10 @@ extension MirageHostService {
 
     /// Returns an app-list entry with icon data when the client needs it.
     func appListProgressApp(
-        _ app: MirageInstalledApp,
+        _ app: MirageWire.MirageInstalledApp,
         forceIconReset: Bool,
         knownIconBundleIdentifiers: Set<String>
-    ) async -> MirageInstalledApp {
+    ) async -> MirageWire.MirageInstalledApp {
         let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
         if !forceIconReset,
            knownIconBundleIdentifiers.contains(normalizedBundleIdentifier) {
@@ -292,7 +300,7 @@ extension MirageHostService {
             return Self.metadataOnlyApp(app)
         }
 
-        return MirageInstalledApp(
+        return MirageWire.MirageInstalledApp(
             bundleIdentifier: app.bundleIdentifier,
             name: app.name,
             path: app.path,
@@ -305,21 +313,21 @@ extension MirageHostService {
 
     /// Orders app-list progress so priority apps and missing icons are delivered first.
     func orderedAppsForAppListProgress(
-        _ apps: [MirageInstalledApp],
+        _ apps: [MirageWire.MirageInstalledApp],
         priorityBundleIdentifiers: [String],
         knownIconBundleIdentifiers: [String] = []
-    ) -> [MirageInstalledApp] {
+    ) -> [MirageWire.MirageInstalledApp] {
         guard !apps.isEmpty else { return [] }
 
-        let knownIconBundleIdentifierSet = Set(mirageNormalizedBundleIdentifiers(knownIconBundleIdentifiers))
-        var appsByBundleIdentifier: [String: MirageInstalledApp] = [:]
+        let knownIconBundleIdentifierSet = Set(MirageWire.mirageNormalizedBundleIdentifiers(knownIconBundleIdentifiers))
+        var appsByBundleIdentifier: [String: MirageWire.MirageInstalledApp] = [:]
         appsByBundleIdentifier.reserveCapacity(apps.count)
         for app in apps {
             appsByBundleIdentifier[app.bundleIdentifier.lowercased()] = app
         }
 
         var emittedBundleIdentifiers: Set<String> = []
-        var orderedApps: [MirageInstalledApp] = []
+        var orderedApps: [MirageWire.MirageInstalledApp] = []
         orderedApps.reserveCapacity(apps.count)
 
         for bundleIdentifier in priorityBundleIdentifiers {
@@ -343,8 +351,8 @@ extension MirageHostService {
     }
 
     /// Returns an installed-app payload without icon data.
-    static func metadataOnlyApp(_ app: MirageInstalledApp) -> MirageInstalledApp {
-        MirageInstalledApp(
+    static func metadataOnlyApp(_ app: MirageWire.MirageInstalledApp) -> MirageWire.MirageInstalledApp {
+        MirageWire.MirageInstalledApp(
             bundleIdentifier: app.bundleIdentifier,
             name: app.name,
             path: app.path,

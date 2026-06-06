@@ -10,6 +10,7 @@ import CoreGraphics
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageWire
 
 @Suite("Host Stream Ready Geometry Contract")
 struct HostStreamReadyGeometryContractTests {
@@ -279,8 +280,8 @@ struct HostStreamReadyGeometryContractTests {
         ))
     }
 
-    private func makeContract(width: Int) throws -> StreamReadyDesktopGeometryContract {
-        StreamReadyDesktopGeometryContract(
+    private func makeContract(width: Int) throws -> MirageWire.StreamReadyDesktopGeometryContract {
+        MirageWire.StreamReadyDesktopGeometryContract(
             contractID: try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000A0D1")),
             sceneIdentity: "scene-main",
             logicalWidth: 1376,
@@ -297,8 +298,8 @@ struct HostStreamReadyGeometryContractTests {
         displayID: CGDirectDisplayID,
         resolution: CGSize,
         generation: UInt64
-    ) -> SharedVirtualDisplayManager.DisplaySnapshot {
-        SharedVirtualDisplayManager.DisplaySnapshot(
+    ) -> MirageHostVirtualDisplaySnapshot {
+        MirageHostVirtualDisplaySnapshot(
             displayID: displayID,
             spaceID: 1,
             resolution: resolution,

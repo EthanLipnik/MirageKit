@@ -5,8 +5,17 @@
 //  Created by Ethan Lipnik on 4/13/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -16,7 +25,7 @@ extension MirageClientService {
         displayScaleFactor explicitDisplayScaleFactor: CGFloat? = nil
     )
     -> DesktopResizeCoordinator.RequestGeometry? {
-        let logicalResolution = MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
+        let logicalResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
         guard logicalResolution.width > 0, logicalResolution.height > 0 else { return nil }
 
         let displayScaleFactor = resolvedDisplayScaleFactor(
@@ -38,7 +47,7 @@ extension MirageClientService {
             refreshTargetHz: effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate),
             logicalResolution: logicalResolution,
             displayScaleFactor: displayScaleFactor,
-            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
+            requestedStreamScale: MirageMedia.MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
         )

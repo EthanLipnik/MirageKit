@@ -7,12 +7,20 @@
 //  Resolves the host's primary display wallpaper into a compressed transfer payload.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
-import MirageKit
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
@@ -65,15 +73,22 @@ enum MirageHostWallpaperResolver {
 
     static func payload(
         preferredMaxPixelWidth: Int,
-        preferredMaxPixelHeight: Int
+        preferredMaxPixelHeight: Int,
+        virtualDisplayBackend: any MirageHostVirtualDisplayBackend = MacOSHostVirtualDisplayBackend(),
+        captureContentProviderBackend: any MirageHostCaptureContentProviderBackend =
+            MacOSHostCaptureContentProviderBackend()
     ) async -> Payload? {
-        guard let primaryDisplayID = resolvedPrimaryPhysicalDisplayID() else {
+        guard let primaryDisplayID = resolvedPrimaryPhysicalDisplayID(
+            onlineDisplayIDs: virtualDisplayBackend.onlineDisplayIDs(),
+            isVirtualDisplay: { virtualDisplayBackend.isVirtualDisplay($0) }
+        ) else {
             return nil
         }
 
         let content: SCShareableContent
         do {
-            content = try await SCShareableContent.mirageHostContent()
+            let contentWrapper = try await captureContentProviderBackend.shareableContent()
+            content = contentWrapper.content
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to resolve shareable content for host wallpaper: ")
             return nil
@@ -122,8 +137,8 @@ enum MirageHostWallpaperResolver {
 
     nonisolated static func resolvedPrimaryPhysicalDisplayID(
         mainDisplayID: CGDirectDisplayID = CGMainDisplayID(),
-        onlineDisplayIDs: [CGDirectDisplayID] = onlineDisplayIDs(),
-        isVirtualDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isVirtualDisplay($0) }
+        onlineDisplayIDs: [CGDirectDisplayID] = MacOSHostVirtualDisplayBackend().onlineDisplayIDs(),
+        isVirtualDisplay: (CGDirectDisplayID) -> Bool = { MacOSHostVirtualDisplayBackend().isVirtualDisplay($0) }
     ) -> CGDirectDisplayID? {
         if !isVirtualDisplay(mainDisplayID) {
             return mainDisplayID
@@ -202,16 +217,6 @@ enum MirageHostWallpaperResolver {
         return nil
     }
 
-    nonisolated private static func onlineDisplayIDs() -> [CGDirectDisplayID] {
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return [] }
-
-        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displayIDs, &displayCount)
-        return Array(displayIDs.prefix(Int(displayCount)))
-    }
-
     nonisolated package static func resolvedMaxOutputSize(
         sourcePixelWidth: Int,
         sourcePixelHeight: Int,
@@ -279,7 +284,7 @@ enum MirageHostWallpaperResolver {
 
                     guard let image else {
                         continuation.resume(
-                            throwing: MirageError.protocolError("Wallpaper screenshot capture returned no image")
+                            throwing: MirageCore.MirageError.protocolError("Wallpaper screenshot capture returned no image")
                         )
                         return
                     }
@@ -386,7 +391,7 @@ enum MirageHostWallpaperResolver {
         pixelWidth: Int,
         pixelHeight: Int
     ) -> Bool {
-        let message = HostWallpaperMessage(
+        let message = MirageWire.HostWallpaperMessage(
             requestID: UUID(),
             imageData: imageData,
             pixelWidth: pixelWidth,
@@ -399,7 +404,7 @@ enum MirageHostWallpaperResolver {
             MirageLogger.error(.host, error: error, message: "Failed to encode host wallpaper size probe: ")
             return false
         }
-        return encoded.count <= LoomMessageLimits.maxInlineAssetPayloadBytes
+        return encoded.count <= MirageControlMessageLimits.maxInlineAssetPayloadBytes
     }
 }
 #endif

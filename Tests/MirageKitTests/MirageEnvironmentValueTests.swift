@@ -8,6 +8,7 @@
 @testable import MirageKit
 import Foundation
 import Testing
+import MirageDiagnostics
 
 @Suite("Mirage environment values")
 struct MirageEnvironmentValueTests {
@@ -40,8 +41,8 @@ struct MirageEnvironmentValueTests {
 
     @Test
     func mirageLogAllEnablesEveryCategory() {
-        #expect(MirageLogger.parsedEnabledCategories(environmentValue: "all") == Set(MirageLogCategory.allCases))
-        #expect(MirageLogger.parsedEnabledCategories(environmentValue: " client, all ") == Set(MirageLogCategory.allCases))
+        #expect(MirageLogger.parsedEnabledCategories(environmentValue: "all") == Set(MirageDiagnostics.MirageLogCategory.allCases))
+        #expect(MirageLogger.parsedEnabledCategories(environmentValue: " client, all ") == Set(MirageDiagnostics.MirageLogCategory.allCases))
         #expect(MirageLogger.fullVerboseLoggingRequested(environmentValue: " metrics;all ") == true)
     }
 
@@ -51,7 +52,7 @@ struct MirageEnvironmentValueTests {
             environmentValue: "appState, window-filter bootstrap_handoff"
         )
 
-        #expect(categories == Set([MirageLogCategory.appState, .windowFilter, .bootstrapHandoff]))
+        #expect(categories == Set([MirageDiagnostics.MirageLogCategory.appState, .windowFilter, .bootstrapHandoff]))
     }
 
     @Test

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 3/26/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -74,11 +82,11 @@ extension MirageClientService {
     func sendStreamReadyAck(
         streamID: StreamID,
         startupAttemptID: UUID,
-        kind: MirageStartupStreamKind,
-        desktopGeometryContract: StreamReadyDesktopGeometryContract? = nil
+        kind: MirageWire.MirageStartupStreamKind,
+        desktopGeometryContract: MirageWire.StreamReadyDesktopGeometryContract? = nil
     ) async {
         do {
-            let ready = StreamReadyMessage(
+            let ready = MirageWire.StreamReadyMessage(
                 streamID: streamID,
                 startupAttemptID: startupAttemptID,
                 kind: kind,

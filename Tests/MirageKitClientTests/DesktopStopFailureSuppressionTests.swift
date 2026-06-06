@@ -13,6 +13,10 @@ import CoreGraphics
 import Foundation
 import Loom
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 @Suite("Desktop Stop Failure Suppression")
@@ -53,7 +57,7 @@ struct DesktopStopFailureSuppressionTests {
         let service = MirageClientService(deviceName: "Test Device")
         service.handleControlPathUpdate(Self.manualSnapshot(kind: .awdl, mediaProfile: .awdlRadio))
 
-        #expect(throws: MirageError.self) {
+        #expect(throws: MirageCore.MirageError.self) {
             try service.resolvedDesktopStartupBaseResolution(
                 displayResolution: nil,
                 useHostResolution: false
@@ -81,14 +85,14 @@ struct DesktopStopFailureSuppressionTests {
         let previousContractID = try #require(UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789"))
         service.handleControlPathUpdate(Self.manualSnapshot(kind: .awdl, mediaProfile: .awdlRadio))
 
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 2,
             displayWidth: 1376,
             displayHeight: 1032,
             targetFrameRate: 120,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: false,
             mediaMaxPacketSize: 1180,
@@ -119,14 +123,14 @@ struct DesktopStopFailureSuppressionTests {
     func terminalStartupDesktopRestartPreservesRequestContract() async throws {
         let originalRequestID = try #require(UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"))
         let restartRequestID = try #require(UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: originalRequestID,
             scaleFactor: 2,
             displayWidth: 2732,
             displayHeight: 2048,
             targetFrameRate: 120,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: true),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: true),
             dataPort: 7341,
             useHostResolution: false,
             mediaMaxPacketSize: 1180
@@ -148,7 +152,7 @@ struct DesktopStopFailureSuppressionTests {
         request.upscalingMode = .spatial
         request.codec = .hevc
 
-        let restarted = StartDesktopStreamMessage(copying: request, startupRequestID: restartRequestID)
+        let restarted = MirageWire.StartDesktopStreamMessage(copying: request, startupRequestID: restartRequestID)
 
         #expect(restarted.startupRequestID == restartRequestID)
         #expect(restarted.startupRequestID != request.startupRequestID)
@@ -184,14 +188,14 @@ struct DesktopStopFailureSuppressionTests {
     func terminalStartupDesktopRestartRebuildsGeometryContract() throws {
         let service = MirageClientService(deviceName: "Test Device")
         let staleContractID = try #require(UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"))
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 1,
             displayWidth: 1,
             displayHeight: 1,
             targetFrameRate: 120,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: false,
             mediaMaxPacketSize: 1180,
@@ -206,7 +210,7 @@ struct DesktopStopFailureSuppressionTests {
         request.encoderMaxHeight = 2064
 
         let rebuilt = try #require(service.rebuiltDesktopRestartRequest(from: request))
-        let currentResolution = MirageStreamGeometry.normalizedLogicalSize(service.mainDisplayResolution)
+        let currentResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(service.mainDisplayResolution)
 
         #expect(rebuilt.startupRequestID != request.startupRequestID)
         #expect(rebuilt.desktopGeometryContractID != staleContractID)
@@ -244,14 +248,14 @@ struct DesktopStopFailureSuppressionTests {
         )
         service.desktopResizeCoordinator.queueLatestTarget(pendingTarget)
 
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 2,
             displayWidth: 1512,
             displayHeight: 982,
             targetFrameRate: 60,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: false,
             mediaMaxPacketSize: 1180,
@@ -287,14 +291,14 @@ struct DesktopStopFailureSuppressionTests {
         let previousContractID = try #require(UUID(uuidString: "12345678-1234-1234-1234-123456789ABC"))
         service.desktopResizeCoordinator.lastSentTarget = nil
 
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 2,
             displayWidth: 1376,
             displayHeight: 1032,
             targetFrameRate: 45,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: false,
             mediaMaxPacketSize: 1180,
@@ -343,14 +347,14 @@ struct DesktopStopFailureSuppressionTests {
         )
         service.desktopResizeCoordinator.lastSentTarget = staleLastSentTarget
 
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 2,
             displayWidth: 1376,
             displayHeight: 1032,
             targetFrameRate: 45,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: false,
             mediaMaxPacketSize: 1180,
@@ -388,14 +392,14 @@ struct DesktopStopFailureSuppressionTests {
             encoderMaxHeight: 2064
         )
 
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 2,
             displayWidth: 2732,
             displayHeight: 2048,
             targetFrameRate: 60,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: true,
             mediaMaxPacketSize: 1180,
@@ -430,14 +434,14 @@ struct DesktopStopFailureSuppressionTests {
     func terminalStartupDesktopRestartIsBoundedToOneAttempt() async {
         let service = MirageClientService(deviceName: "Test Device")
         let streamID: StreamID = 56
-        let request = StartDesktopStreamMessage(
+        let request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: 2,
             displayWidth: 2732,
             displayHeight: 2048,
             targetFrameRate: 120,
             streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false),
             dataPort: nil,
             useHostResolution: false,
             mediaMaxPacketSize: 1180
@@ -521,10 +525,10 @@ struct DesktopStopFailureSuppressionTests {
     }
 
     private static func manualSnapshot(
-        kind: MirageNetworkPathKind,
-        mediaProfile: MirageMediaPathProfile
-    ) -> MirageNetworkPathSnapshot {
-        MirageNetworkPathSnapshot(
+        kind: MirageCore.MirageNetworkPathKind,
+        mediaProfile: MirageMedia.MirageMediaPathProfile
+    ) -> MirageConnectivity.MirageNetworkPathSnapshot {
+        MirageConnectivity.MirageNetworkPathSnapshot(
             kind: kind,
             mediaProfile: mediaProfile,
             status: "satisfied",
@@ -560,11 +564,11 @@ private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {
     func hostSessionStateChanged(_: LoomSessionAvailability) {}
 }
 
-private func testWindow(bundleIdentifier: String) -> MirageWindow {
-    MirageWindow(
+private func testWindow(bundleIdentifier: String) -> MirageMedia.MirageWindow {
+    MirageMedia.MirageWindow(
         id: 1,
         title: "Terminal",
-        application: MirageApplication(
+        application: MirageMedia.MirageApplication(
             id: 1,
             bundleIdentifier: bundleIdentifier,
             name: "Terminal"

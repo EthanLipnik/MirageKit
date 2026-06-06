@@ -7,9 +7,17 @@
 //  Queue/lock bridge helpers used by the host hot path.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Dispatch
 import Foundation
-import MirageKit
 
 #if os(macOS)
 

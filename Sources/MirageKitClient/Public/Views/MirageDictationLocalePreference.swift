@@ -7,6 +7,15 @@
 //  Dictation locale selection and supported-locale matching.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// User preference for dictation locale selection.

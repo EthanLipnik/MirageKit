@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 import Foundation
@@ -112,9 +120,9 @@ public actor ApplicationScanner {
         includeIcons: Bool = true,
         runningApps: Set<String> = [],
         streamingApps: Set<String> = [],
-        onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)? = nil
+        onAppDiscovered: (@Sendable (MirageWire.MirageInstalledApp) async -> Void)? = nil
     )
-    async -> [MirageInstalledApp] {
+    async -> [MirageWire.MirageInstalledApp] {
         logger.debug("Starting application scan")
         let startTime = Date()
 
@@ -131,7 +139,7 @@ public actor ApplicationScanner {
         }
         if Task.isCancelled { return [] }
 
-        var apps: [MirageInstalledApp] = []
+        var apps: [MirageWire.MirageInstalledApp] = []
         for candidate in candidates {
             if Task.isCancelled { return [] }
             guard let app = await installedApp(
@@ -158,13 +166,13 @@ public actor ApplicationScanner {
         includeIcons: Bool,
         runningApps: Set<String>,
         streamingApps: Set<String>
-    ) async -> MirageInstalledApp? {
+    ) async -> MirageWire.MirageInstalledApp? {
         guard let bundleIdentifier = candidate.bundleIdentifier else { return nil }
 
         let iconData: Data? = includeIcons ? await generateIconPNG(for: candidate.url) : nil
         if Task.isCancelled { return nil }
 
-        return MirageInstalledApp(
+        return MirageWire.MirageInstalledApp(
             bundleIdentifier: bundleIdentifier,
             name: candidate.name,
             path: candidate.path,
@@ -177,11 +185,11 @@ public actor ApplicationScanner {
 
     /// Updates running and streaming status on an existing app list without rescanning the filesystem.
     public func updateStatus(
-        for apps: [MirageInstalledApp],
+        for apps: [MirageWire.MirageInstalledApp],
         runningApps: Set<String>,
         streamingApps: Set<String>
     )
-    -> [MirageInstalledApp] {
+    -> [MirageWire.MirageInstalledApp] {
         apps.map { app in
             var updated = app
             updated.isRunning = runningApps.contains(app.bundleIdentifier.lowercased())

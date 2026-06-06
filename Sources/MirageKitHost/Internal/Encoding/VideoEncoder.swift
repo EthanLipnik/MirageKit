@@ -5,11 +5,19 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 
@@ -33,7 +41,7 @@ actor VideoEncoder {
     /// Runtime VideoToolbox and color-pipeline state reported to clients for diagnostics.
     struct RuntimeValidationSnapshot {
         /// Pixel format requested for encoder input.
-        let pixelFormat: MiragePixelFormat
+        let pixelFormat: MirageMedia.MiragePixelFormat
 
         /// VideoToolbox profile name observed for the active session.
         let profileName: String?
@@ -54,7 +62,7 @@ actor VideoEncoder {
         let yCbCrMatrix: String?
 
         /// Chroma sampling parsed from the encoded bitstream.
-        let encodedChromaSampling: MirageStreamChromaSampling?
+        let encodedChromaSampling: MirageMedia.MirageStreamChromaSampling?
 
         /// Whether 10-bit Display P3 output passed runtime validation.
         let tenBitDisplayP3Validated: Bool
@@ -65,15 +73,15 @@ actor VideoEncoder {
 
     var compressionSession: VTCompressionSession?
     var configuration: MirageEncoderConfiguration
-    let codec: MirageVideoCodec
-    let latencyMode: MirageStreamLatencyMode
+    let codec: MirageMedia.MirageVideoCodec
+    let latencyMode: MirageMedia.MirageStreamLatencyMode
     let streamKind: StreamKind
-    let mediaPathProfile: MirageMediaPathProfile
+    let mediaPathProfile: MirageMedia.MirageMediaPathProfile
 
     var isProRes: Bool { codec == .proRes4444 }
-    var activePixelFormat: MiragePixelFormat
+    var activePixelFormat: MirageMedia.MiragePixelFormat
     var activeProfileLevel: CFString?
-    var lastEncodedChromaSampling: MirageStreamChromaSampling?
+    var lastEncodedChromaSampling: MirageMedia.MirageStreamChromaSampling?
     var usingHardwareEncoder: Bool?
     var encoderGPURegistryID: UInt64?
     var hardwareStatusRefreshAttempts: Int = 0
@@ -122,9 +130,9 @@ actor VideoEncoder {
 
     init(
         configuration: MirageEncoderConfiguration,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
         streamKind: StreamKind = .window,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         inFlightLimit: Int? = nil,
         maximizePowerEfficiencyEnabled: Bool = false
     ) {
@@ -164,7 +172,7 @@ actor VideoEncoder {
     }
 
     /// HEVC profile candidates ordered from most specific to most compatible.
-    static func requestedProfileLevels(for pixelFormat: MiragePixelFormat) -> [CFString] {
+    static func requestedProfileLevels(for pixelFormat: MirageMedia.MiragePixelFormat) -> [CFString] {
         switch pixelFormat {
         case .xf44, .ayuv16:
             []

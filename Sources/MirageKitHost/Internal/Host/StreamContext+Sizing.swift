@@ -7,9 +7,17 @@
 //  Capture sizing and queue limit calculations.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 /// Actor-local stream sizing state captured before a resize so failures can restore the pipeline.
@@ -24,7 +32,7 @@ struct StreamResizeRollbackSnapshot: Sendable {
     let currentCaptureSize: CGSize
 
     /// Pixel format active before the resize attempt.
-    let activePixelFormat: MiragePixelFormat
+    let activePixelFormat: MirageMedia.MiragePixelFormat
 
     /// Last compositor frame observed for the streamed window.
     let lastWindowFrame: CGRect
@@ -112,21 +120,19 @@ extension StreamContext {
         await packetSender?.bumpGeneration(reason: "\(logLabel) rollback")
         resetPipelineStateForReconfiguration(reason: "\(logLabel) rollback")
 
-        if let captureEngine {
-            switch snapshot.captureMode {
-            case .display:
-                let width = Int(captureSize.width)
-                let height = Int(captureSize.height)
-                if width > 0, height > 0 {
-                    try await captureEngine.updateResolution(width: width, height: height)
-                }
-            case .window:
-                if !effectiveWindowFrame.isEmpty {
-                    try await captureEngine.updateDimensions(
-                        windowFrame: effectiveWindowFrame,
-                        outputScale: snapshot.streamScale
-                    )
-                }
+        switch snapshot.captureMode {
+        case .display:
+            let width = Int(captureSize.width)
+            let height = Int(captureSize.height)
+            if width > 0, height > 0 {
+                try await updateActiveCaptureResolution(width: width, height: height)
+            }
+        case .window:
+            if !effectiveWindowFrame.isEmpty {
+                try await updateActiveWindowCaptureDimensions(
+                    windowFrame: effectiveWindowFrame,
+                    outputScale: snapshot.streamScale
+                )
             }
         }
 
@@ -156,7 +162,7 @@ extension StreamContext {
         let effectiveEncoderMaxHeight = disableResolutionCap
             ? nil
             : encoderMaxHeight ?? Int(Self.maxEncodedHeight)
-        return MirageStreamGeometry.resolveEncodedPlan(
+        return MirageMedia.MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: baseSize,
             requestedStreamScale: streamScale,
             encoderMaxWidth: effectiveEncoderMaxWidth,

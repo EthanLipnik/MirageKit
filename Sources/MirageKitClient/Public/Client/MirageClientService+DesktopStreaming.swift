@@ -7,9 +7,17 @@
 //  Desktop streaming requests.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 public extension MirageClientService {
@@ -24,15 +32,15 @@ public extension MirageClientService {
     func startDesktopStream(
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
-        mode: MirageDesktopStreamMode = .unified,
-        cursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
+        mode: MirageMedia.MirageDesktopStreamMode = .unified,
+        cursorPresentation: MirageWire.MirageDesktopCursorPresentation = .simulatedCursor,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
-        audioConfiguration: MirageAudioConfiguration? = nil,
+        audioConfiguration: MirageMedia.MirageAudioConfiguration? = nil,
         useHostResolution: Bool = false
     )
     async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
         await cancelActiveQualityTest(
             reason: "interactive desktop stream startup",
             notifyHost: true
@@ -44,11 +52,11 @@ public extension MirageClientService {
             useHostResolution: useHostResolution
         )
         guard baseResolution.width > 0, baseResolution.height > 0 else {
-            throw MirageError.protocolError("Display size unavailable")
+            throw MirageCore.MirageError.protocolError("Display size unavailable")
         }
-        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(baseResolution)
+        let effectiveDisplayResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(baseResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
-            throw MirageError.protocolError("Invalid display resolution")
+            throw MirageCore.MirageError.protocolError("Invalid display resolution")
         }
         let targetFrameRate = effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
         desktopStreamMode = mode
@@ -70,7 +78,7 @@ public extension MirageClientService {
         pendingStreamSetupKind = .desktop
         pendingStreamSetupAppSessionID = nil
 
-        var encoderRequest = StartDesktopStreamMessage(
+        var encoderRequest = MirageWire.StartDesktopStreamMessage(
             startupRequestID: startupRequestID,
             scaleFactor: nil,
             displayWidth: Int(effectiveDisplayResolution.width),
@@ -94,7 +102,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
+            requestedStreamScale: MirageMedia.MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: encoderRequest.encoderMaxWidth,
             encoderMaxHeight: encoderRequest.encoderMaxHeight,
             disableResolutionCap: encoderRequest.disableResolutionCap == true
@@ -124,7 +132,7 @@ public extension MirageClientService {
             bitrateAdaptationCeilingBps: encoderRequest.bitrateAdaptationCeiling,
             displayResolution: effectiveDisplayResolution
         )
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: startupRequestID,
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: encoderRequest.displayWidth,
@@ -189,7 +197,7 @@ public extension MirageClientService {
         let ceilingText = request.bitrateAdaptationCeiling.map(mirageFormattedMegabitRate) ?? "none"
         let requestedCadence = max(1, request.targetFrameRate)
         let adaptiveFloorFPS = requestedCadence >= 90 ? 60 : requestedCadence
-        let pathKind = controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue
+        let pathKind = controlPathSnapshot?.kind.rawValue ?? MirageCore.MirageNetworkPathKind.unknown.rawValue
         let requestLatencyMode = request.latencyMode ?? .lowestLatency
         MirageLogger.client(
             "Desktop bitrate contract requested: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText) " +
@@ -224,11 +232,11 @@ public extension MirageClientService {
     /// Sends the client's preferred desktop cursor presentation mode for a stream.
     func sendDesktopCursorPresentationChange(
         streamID: StreamID,
-        cursorPresentation: MirageDesktopCursorPresentation
+        cursorPresentation: MirageWire.MirageDesktopCursorPresentation
     )
     async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-        let request = DesktopCursorPresentationChangeMessage(
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
+        let request = MirageWire.DesktopCursorPresentationChangeMessage(
             streamID: streamID,
             cursorPresentation: cursorPresentation
         )
@@ -255,14 +263,14 @@ public extension MirageClientService {
             cancelStreamSetup()
             clearPendingDesktopStreamStartState()
             delegate?.didEncounterError(
-                MirageError.protocolError("Desktop stream start timed out. The host may be busy or unreachable.")
+                MirageCore.MirageError.protocolError("Desktop stream start timed out. The host may be busy or unreachable.")
             )
         }
     }
 
     /// Stop the current desktop stream.
     func stopDesktopStream() async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
 
         guard let streamID = desktopStreamID else {
             cancelDesktopStreamStopTimeout()
@@ -271,10 +279,10 @@ public extension MirageClientService {
         }
 
         guard let desktopSessionID else {
-            throw MirageError.protocolError("Desktop stream missing session identifier")
+            throw MirageCore.MirageError.protocolError("Desktop stream missing session identifier")
         }
 
-        let request = StopDesktopStreamMessage(
+        let request = MirageWire.StopDesktopStreamMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID
         )
@@ -332,11 +340,11 @@ extension MirageClientService {
                 "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
                 "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
                 "contract=\(restartRequest.desktopGeometryContractID?.uuidString ?? "nil"), " +
-                "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)"
+                "path=\(controlPathSnapshot?.kind.rawValue ?? MirageCore.MirageNetworkPathKind.unknown.rawValue)"
         )
 
         if let failedDesktopSessionID {
-            let stopRequest = StopDesktopStreamMessage(
+            let stopRequest = MirageWire.StopDesktopStreamMessage(
                 streamID: failedStreamID,
                 desktopSessionID: failedDesktopSessionID
             )
@@ -429,9 +437,9 @@ extension MirageClientService {
     }
 
     package func rebuiltDesktopRestartRequest(
-        from previousRequest: StartDesktopStreamMessage,
+        from previousRequest: MirageWire.StartDesktopStreamMessage,
         requiresFreshAwdlGeometry: Bool = false
-    ) -> StartDesktopStreamMessage? {
+    ) -> MirageWire.StartDesktopStreamMessage? {
         let usesHostResolution = previousRequest.useHostResolution == true
         let usesAwdlRadioPolicy = currentMediaPathUsesAwdlRadioPolicy
         let previousRequestResolution = CGSize(
@@ -462,7 +470,7 @@ extension MirageClientService {
             mainDisplayResolution
         }
         guard baseResolution.width > 0, baseResolution.height > 0 else { return nil }
-        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(baseResolution)
+        let effectiveDisplayResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(baseResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else { return nil }
 
         let pathTargetFrameRate = effectiveFrameRateForCurrentMediaPath(screenMaxRefreshRate)
@@ -471,7 +479,7 @@ extension MirageClientService {
             pathTargetFrameRate
         let requestedDisplayScaleFactor = liveAwdlGeometryTarget?.displayScaleFactor ?? previousRequest.scaleFactor
         let requestedStreamScale = liveAwdlGeometryTarget?.requestedStreamScale ??
-            MirageStreamGeometry.clampStreamScale(previousRequest.streamScale ?? resolutionScale)
+            MirageMedia.MirageStreamGeometry.clampStreamScale(previousRequest.streamScale ?? resolutionScale)
         let encoderMaxWidth = liveAwdlGeometryTarget?.encoderMaxWidth ?? previousRequest.encoderMaxWidth
         let encoderMaxHeight = liveAwdlGeometryTarget?.encoderMaxHeight ?? previousRequest.encoderMaxHeight
         let disableResolutionCap = liveAwdlGeometryTarget?.disableResolutionCap ??
@@ -547,7 +555,7 @@ extension MirageClientService {
                 previousRequest.lowLatencyHighResolutionCompressionBoost
             )
 
-        var request = StartDesktopStreamMessage(
+        var request = MirageWire.StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: Int(effectiveDisplayResolution.width),
@@ -593,7 +601,7 @@ extension MirageClientService {
             desktopResizeCoordinator.queuedTarget,
             desktopResizeCoordinator.latestRequestedTarget
         ].compactMap({ $0 }) {
-            let normalized = MirageStreamGeometry.normalizedLogicalSize(target.logicalResolution)
+            let normalized = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(target.logicalResolution)
             if normalized.width > 0, normalized.height > 0 {
                 return target
             }
@@ -612,7 +620,7 @@ extension MirageClientService {
             MirageLogger.client(
                 "Desktop startup suppressed on proximity media path because no scene-local display size was supplied"
             )
-            throw MirageError.protocolError("Current display size unavailable for desktop startup")
+            throw MirageCore.MirageError.protocolError("Current display size unavailable for desktop startup")
         }
         return mainDisplayResolution
     }
@@ -623,7 +631,7 @@ extension MirageClientService {
         guard case .connected = connectionState else { return }
         queueControlMessageBestEffort(
             .cancelStreamSetup,
-            content: CancelStreamSetupMessage(
+            content: MirageWire.CancelStreamSetupMessage(
                 startupRequestID: pendingStreamSetupRequestID,
                 kind: pendingStreamSetupKind,
                 appSessionID: pendingStreamSetupAppSessionID

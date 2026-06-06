@@ -10,12 +10,14 @@
 @testable import MirageKitClient
 import MirageKit
 import Testing
+import MirageConnectivity
+import MirageMedia
 
 @Suite("Client Network Path Status")
 struct ClientNetworkPathStatusTests {
     @Test("Wi-Fi path flags win over available AWDL interface names")
     func wifiPathFlagsWinOverAvailableAwdlInterfaceNames() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0", "awdl0"],
             usesWiFi: true,
             usesWired: false,
@@ -39,7 +41,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Scoped AWDL endpoint wins over Wi-Fi path flags")
     func scopedAwdlEndpointWinsOverWiFiPathFlags() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0", "awdl0"],
             usesWiFi: true,
             usesWired: false,
@@ -65,7 +67,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Selected Wi-Fi path wins over passive tunnel interface names")
     func selectedWiFiPathWinsOverPassiveTunnelInterfaceNames() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0", "utun4"],
             usesWiFi: true,
             usesWired: false,
@@ -86,7 +88,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Tunnel-only paths use VPN presentation")
     func tunnelOnlyPathsUseVPNPresentation() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["utun4"],
             usesWiFi: false,
             usesWired: false,
@@ -107,7 +109,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Active tunnel path wins over Wi-Fi flags")
     func activeTunnelPathWinsOverWiFiFlags() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["utun4"],
             usesWiFi: true,
             usesWired: false,
@@ -131,7 +133,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Apple private proximity interfaces use proximity-class path presentation")
     func applePrivateProximityClassifierUsesProximityPresentation() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["anpi0"],
             usesWiFi: false,
             usesWired: false,
@@ -158,7 +160,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Apple private proximity interface wins media policy when AWDL is also present")
     func applePrivateProximityClassifierWinsMediaPolicyWhenAwdlIsAlsoPresent() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["awdl0", "anpi0"],
             usesWiFi: false,
             usesWired: false,
@@ -184,7 +186,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Bridge interface wins media policy when AWDL is also present")
     func bridgeClassifierWinsMediaPolicyWhenAwdlIsAlsoPresent() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["awdl0", "bridge100"],
             usesWiFi: false,
             usesWired: false,
@@ -210,7 +212,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Low-latency wireless interfaces use AWDL realtime display policy")
     func lowLatencyWirelessClassifierUsesAwdlRealtimeDisplayPolicy() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["llw0"],
             usesWiFi: true,
             usesWired: false,
@@ -235,7 +237,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Wi-Fi baseline uses local Wi-Fi media policy")
     func wifiBaselineUsesLocalWiFiMediaPolicy() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0"],
             usesWiFi: true,
             usesWired: false,
@@ -259,7 +261,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Bridge-only baseline uses wired media policy")
     func bridgeOnlyBaselineUsesWiredMediaPolicy() {
-        let snapshot = MirageNetworkPathClassifier.classify(
+        let snapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["bridge100"],
             usesWiFi: false,
             usesWired: false,
@@ -284,7 +286,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Legacy AWDL path kind defaults to radio media policy")
     func legacyAwdlPathKindDefaultsToRadioMediaPolicy() {
-        let profile = MirageMediaPathProfile.classify(
+        let profile = MirageMedia.MirageMediaPathProfile.classify(
             pathKind: .awdl,
             interfaceNames: []
         )
@@ -294,13 +296,13 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Scoped AWDL path kind wins over passive wired flags")
     func scopedAwdlPathKindWinsOverPassiveWiredFlags() {
-        let profile = MirageMediaPathProfile.classify(
+        let profile = MirageMedia.MirageMediaPathProfile.classify(
             pathKind: .awdl,
             interfaceNames: ["awdl0", "en3"],
             usesWired: true,
             usesLoopback: true
         )
-        let resolved = MirageMediaPathProfile.resolveRealtimeProfile(
+        let resolved = MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: .awdl,
             mediaPathProfile: .wired,
             interfaceNames: ["awdl0", "en3"]
@@ -312,7 +314,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Wi-Fi media profile wins over available AWDL interface name")
     func wifiMediaProfileWinsOverAvailableAwdlInterfaceName() {
-        let profile = MirageMediaPathProfile.classify(
+        let profile = MirageMedia.MirageMediaPathProfile.classify(
             pathKind: .wifi,
             interfaceNames: ["en0", "awdl0"],
             usesWiFi: true
@@ -323,7 +325,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Tunnel-only media profile wins over leaked Wi-Fi flags")
     func tunnelOnlyMediaProfileWinsOverLeakedWiFiFlags() {
-        let profile = MirageMediaPathProfile.classify(
+        let profile = MirageMedia.MirageMediaPathProfile.classify(
             pathKind: .wifi,
             interfaceNames: ["utun4"],
             usesWiFi: true,
@@ -335,7 +337,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route keeps Wi-Fi ahead of available tunnel interfaces")
     func localDefaultRouteKeepsWiFiAheadOfAvailableTunnelInterfaces() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["en0", "utun4"],
             usesWiFi: true,
             usesWired: false,
@@ -349,7 +351,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route uses VPN when tunnel is the only active interface")
     func localDefaultRouteUsesVPNWhenTunnelIsTheOnlyActiveInterface() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["utun4"],
             usesWiFi: true,
             usesWired: false,
@@ -363,7 +365,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route keeps wired ahead of available tunnel interfaces")
     func localDefaultRouteKeepsWiredAheadOfAvailableTunnelInterfaces() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["en7", "utun4"],
             usesWiFi: false,
             usesWired: true,
@@ -377,7 +379,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route still recognizes AWDL when it is the only peer path")
     func localDefaultRouteRecognizesAwdlWhenItIsTheOnlyPeerPath() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["awdl0"],
             usesWiFi: false,
             usesWired: false,
@@ -391,7 +393,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route recognizes low-latency wireless as peer path")
     func localDefaultRouteRecognizesLowLatencyWirelessAsPeerPath() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["llw0"],
             usesWiFi: true,
             usesWired: false,
@@ -405,7 +407,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route treats USB-C proximity as wired-like")
     func localDefaultRouteTreatsUSBCProximityAsWiredLike() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["anpi0"],
             usesWiFi: false,
             usesWired: false,
@@ -419,7 +421,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Local default route treats USB-C plus AWDL as wired-like")
     func localDefaultRouteTreatsUSBCPlusAwdlAsWiredLike() {
-        let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let kind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: ["awdl0", "anpi0"],
             usesWiFi: false,
             usesWired: false,

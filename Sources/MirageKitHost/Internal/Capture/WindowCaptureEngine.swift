@@ -5,11 +5,19 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import os
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -21,8 +29,8 @@ actor WindowCaptureEngine {
     var streamOutput: CaptureStreamOutput?
     var configuration: MirageEncoderConfiguration
     let capturePressureProfile: CapturePressureProfile
-    let latencyMode: MirageStreamLatencyMode
-    let hostBufferingPolicy: MirageHostBufferingPolicy
+    let latencyMode: MirageMedia.MirageStreamLatencyMode
+    let hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
     var currentFrameRate: Int
     let usesDisplayRefreshCadence: Bool
     var currentDisplayRefreshRate: Int?
@@ -97,8 +105,8 @@ actor WindowCaptureEngine {
     init(
         configuration: MirageEncoderConfiguration,
         capturePressureProfile: CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame,
         captureFrameRate: Int? = nil,
         usesDisplayRefreshCadence: Bool = false
     ) {
@@ -277,7 +285,7 @@ actor WindowCaptureEngine {
                     }
                     guard let image else {
                         continuation.resume(
-                            throwing: MirageError.protocolError(
+                            throwing: MirageCore.MirageError.protocolError(
                                 "Display startup screenshot capture returned no image"
                             )
                         )

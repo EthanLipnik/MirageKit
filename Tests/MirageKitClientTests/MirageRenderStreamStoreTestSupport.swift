@@ -7,6 +7,8 @@
 
 @testable import MirageKitClient
 import Foundation
+import MirageKitClientPresentation
+import MirageCore
 
 #if os(macOS)
 extension MirageRenderStreamStore {

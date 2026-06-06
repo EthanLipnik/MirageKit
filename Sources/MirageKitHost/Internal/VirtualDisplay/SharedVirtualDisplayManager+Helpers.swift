@@ -7,7 +7,15 @@
 //  Shared virtual display manager extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 import Foundation
@@ -15,9 +23,9 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
-    func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
+    func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageMedia.MirageColorSpace) -> [MirageMedia.MirageColorSpace] {
         var ordered = [requestedColorSpace]
-        for candidate in MirageColorSpace.allCases where candidate != requestedColorSpace {
+        for candidate in MirageMedia.MirageColorSpace.allCases where candidate != requestedColorSpace {
             ordered.append(candidate)
         }
         return ordered
@@ -25,7 +33,7 @@ extension SharedVirtualDisplayManager {
 
     private func creationAttempts(
         resolution: CGSize,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         policy: DisplayCreationPolicy
     ) -> [DisplayCreationAttempt] {
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
@@ -126,7 +134,7 @@ extension SharedVirtualDisplayManager {
         display: ManagedDisplayContext,
         newResolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageMedia.MirageColorSpace
     )
     async -> ManagedDisplayContext? {
         guard display.colorSpace == colorSpace else { return nil }
@@ -183,7 +191,7 @@ extension SharedVirtualDisplayManager {
     func updateDisplayInPlace(
         newResolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageMedia.MirageColorSpace
     )
     async -> Bool {
         guard let display = sharedDisplay else { return false }
@@ -203,7 +211,7 @@ extension SharedVirtualDisplayManager {
     func createDisplay(
         resolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         displayNameOverride: String? = nil,
         creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil
@@ -406,7 +414,7 @@ extension SharedVirtualDisplayManager {
     func recreateDisplay(
         newResolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         preferFastRecreate: Bool = false,
         creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil

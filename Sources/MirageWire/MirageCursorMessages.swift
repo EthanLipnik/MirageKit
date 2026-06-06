@@ -1,0 +1,47 @@
+//
+//  MirageCursorMessages.swift
+//  MirageWire
+//
+//  Created by Ethan Lipnik on 6/5/26.
+//
+
+import Foundation
+import MirageCore
+
+// MARK: - Cursor Messages
+
+/// Cursor state update sent from host to client when cursor appearance changes.
+package struct CursorUpdateMessage: Codable {
+    /// The stream this cursor update applies to.
+    package let streamID: StreamID
+    /// The current cursor type on the host.
+    package let cursorType: MirageCursorType
+    /// Whether the cursor is currently within the streamed window bounds.
+    package let isVisible: Bool
+
+    package init(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) {
+        self.streamID = streamID
+        self.cursorType = cursorType
+        self.isVisible = isVisible
+    }
+}
+
+/// Cursor position update sent from host to client for secondary display sync.
+package struct CursorPositionUpdateMessage: Codable {
+    /// The stream this cursor position applies to.
+    package let streamID: StreamID
+    /// Normalized cursor position in top-left-origin stream space.
+    /// Secondary desktop streams may temporarily exceed `0...1`
+    /// when the host cursor crosses onto another display.
+    package let normalizedX: Float
+    package let normalizedY: Float
+    /// Whether the cursor is currently within the streamed window bounds.
+    package let isVisible: Bool
+
+    package init(streamID: StreamID, normalizedX: Float, normalizedY: Float, isVisible: Bool) {
+        self.streamID = streamID
+        self.normalizedX = normalizedX
+        self.normalizedY = normalizedY
+        self.isVisible = isVisible
+    }
+}

@@ -8,7 +8,9 @@
 @testable import MirageKitClient
 import CoreGraphics
 import MirageKit
+import MirageKitClientPresentation
 import Testing
+import MirageCore
 
 #if os(macOS)
 private final class PendingFrameState: @unchecked Sendable {
@@ -107,6 +109,7 @@ struct RenderPresentationSchedulerTests {
         let scheduler = MirageRenderPresentationScheduler(
             referenceTimeProvider: { 99 },
             submit: { _ in
+                guard pendingState.hasPendingAfterFirstSubmit else { return .noPendingFrame }
                 submitCount += 1
                 pendingState.hasPendingAfterFirstSubmit = false
                 return .submitted

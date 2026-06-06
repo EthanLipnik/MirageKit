@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -28,12 +36,12 @@ extension MirageHostService {
         let width: Int
         let height: Int
         let isResizable: Bool
-        let atlasRegion: MirageAppAtlasRegion?
-        let atlasLayouts: [MirageAppAtlasLayout]
+        let atlasRegion: MirageMedia.MirageAppAtlasRegion?
+        let atlasLayouts: [MirageMedia.MirageAppAtlasLayout]
 
         /// Wire representation sent to clients in the app stream start response.
-        var asWireWindow: AppStreamStartedMessage.AppStreamWindow {
-            AppStreamStartedMessage.AppStreamWindow(
+        var asWireWindow: MirageWire.AppStreamStartedMessage.AppStreamWindow {
+            MirageWire.AppStreamStartedMessage.AppStreamWindow(
                 streamID: streamID,
                 mediaStreamID: mediaStreamID,
                 windowID: windowID,
@@ -73,9 +81,9 @@ extension MirageHostService {
 
     /// Starts the initial visible app-window capture streams for a selected app.
     func startInitialAppWindowStreams(
-        app: MirageInstalledApp,
+        app: MirageWire.MirageInstalledApp,
         client: MirageConnectedClient,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         mediaMaxPacketSize: Int,
         launchOutcome: AppStreamLaunchOutcome
@@ -110,9 +118,9 @@ extension MirageHostService {
 
         let bindingPlan: AppWindowBindingPlan
         do {
-            let content = try await SCShareableContent.mirageHostContent()
+            let content = try await currentCaptureShareableContent()
             let liveWindows = Self.liveWindowsSnapshot(from: content)
-            let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+            let activeOwnerClaimedWindowIDs = await platformVirtualDisplayBackend.claimedWindowIDsForActiveOwners(
                 activeStreamIDs: Set(activeSessionByStreamID.keys)
             )
             let claimedWindowIDs = Set(activeStreamIDByWindowID.keys)

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/2/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 /// Packs multiple logical app windows into one encoder-aligned app-atlas video surface.
@@ -54,14 +62,14 @@ enum AppAtlasLayout {
             mediaStreamID: StreamID,
             layoutEpoch: UInt64,
             focusedWindowID: WindowID? = nil
-        ) -> MirageAppAtlasLayout {
-            MirageAppAtlasLayout(
+        ) -> MirageMedia.MirageAppAtlasLayout {
+            MirageMedia.MirageAppAtlasLayout(
                 mediaStreamID: mediaStreamID,
                 layoutEpoch: layoutEpoch,
                 width: Int(canvasSize.width),
                 height: Int(canvasSize.height),
                 regions: placements.enumerated().map { index, placement in
-                    MirageAppAtlasRegion(
+                    MirageMedia.MirageAppAtlasRegion(
                         windowID: placement.id,
                         x: Int(placement.destinationRect.minX),
                         y: Int(placement.destinationRect.minY),

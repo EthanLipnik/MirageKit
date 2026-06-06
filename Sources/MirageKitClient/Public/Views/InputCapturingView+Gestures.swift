@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -222,7 +230,7 @@ extension InputCapturingView {
 
     /// Get combined modifiers from a gesture (at event time) and keyboard state
     /// Polls hardware keyboard for accurate modifier state to avoid stuck modifiers
-    func modifiers(from gesture: UIGestureRecognizer) -> MirageModifierFlags {
+    func modifiers(from gesture: UIGestureRecognizer) -> MirageInput.MirageModifierFlags {
         let hardwareAvailable = refreshModifiersForInput()
         if hardwareAvailable {
             let snapshot = keyboardModifiers
@@ -230,7 +238,7 @@ extension InputCapturingView {
             return snapshot
         }
 
-        let gestureModifiers = MirageModifierFlags(uiKeyModifierFlags: gesture.modifierFlags)
+        let gestureModifiers = MirageInput.MirageModifierFlags(uiKeyModifierFlags: gesture.modifierFlags)
         resyncModifierState(from: gesture.modifierFlags)
         let snapshot = gestureModifiers.union(keyboardModifiers)
         sendModifierSnapshotIfNeeded(snapshot)
@@ -238,6 +246,21 @@ extension InputCapturingView {
     }
 
     // MARK: - Gesture Handlers
+
+    func moveTrackpadCursorToDirectScrollStartIfNeeded(
+        _ rawLocation: CGPoint,
+        modifiers: MirageInput.MirageModifierFlags
+    ) {
+        guard usesVirtualTrackpad else { return }
+
+        let location = normalizedLocation(rawLocation)
+        let previousLocation = trackpadCursorPosition()
+        updateTrackpadCursorPosition(location, updateVisibility: true)
+
+        if hypot(location.x - previousLocation.x, location.y - previousLocation.y) > 0.0001 {
+            sendTrackpadMovementEvent(modifiers: modifiers)
+        }
+    }
 
     func updatePointerLocationForScrollInteraction(_ rawLocation: CGPoint) -> CGPoint {
         let location = normalizedLocation(rawLocation)
@@ -385,13 +408,13 @@ extension InputCapturingView {
         let actionID: String
         switch gesture.direction {
         case .left:
-            actionID = MirageAction.spaceRightID // macOS trackpad convention
+            actionID = MirageInput.MirageAction.spaceRightID // macOS trackpad convention
         case .right:
-            actionID = MirageAction.spaceLeftID
+            actionID = MirageInput.MirageAction.spaceLeftID
         case .up:
-            actionID = MirageAction.missionControlID
+            actionID = MirageInput.MirageAction.missionControlID
         case .down:
-            actionID = MirageAction.appExposeID
+            actionID = MirageInput.MirageAction.appExposeID
         default:
             return
         }

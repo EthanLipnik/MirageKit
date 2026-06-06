@@ -9,6 +9,7 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageDiagnostics
 
 @Suite("Quality Test Transport")
 struct QualityTestTransportTests {
@@ -24,7 +25,7 @@ struct QualityTestTransportTests {
 
     @Test("Zero-packet stage metrics fail validation instead of reporting synthetic loss")
     func zeroPacketStageMetricsFailValidation() throws {
-        let stageResult = MirageQualityTestSummary.StageResult(
+        let stageResult = MirageDiagnostics.MirageQualityTestSummary.StageResult(
             stageID: 1,
             probeKind: .transport,
             targetBitrateBps: 8_000_000,
@@ -52,7 +53,7 @@ struct QualityTestTransportTests {
 
     @Test("Delivery-window misses are treated as unstable even without packet loss")
     func deliveryWindowMissMarksStageUnstableWithoutLoss() {
-        let stage = MirageQualityTestSummary.StageResult(
+        let stage = MirageDiagnostics.MirageQualityTestSummary.StageResult(
             stageID: 8,
             probeKind: .transport,
             targetBitrateBps: 1_024_000_000,
@@ -79,7 +80,7 @@ struct QualityTestTransportTests {
 
     @Test("Connection-limit sweep stops at one percent loss")
     func connectionLimitSweepStopsAtOnePercentLoss() {
-        let belowThreshold = MirageQualityTestSummary.StageResult(
+        let belowThreshold = MirageDiagnostics.MirageQualityTestSummary.StageResult(
             stageID: 4,
             probeKind: .transport,
             targetBitrateBps: 512_000_000,
@@ -91,7 +92,7 @@ struct QualityTestTransportTests {
             sentPayloadBytes: 80_000_000,
             receivedPayloadBytes: 79_200_000
         )
-        let atThreshold = MirageQualityTestSummary.StageResult(
+        let atThreshold = MirageDiagnostics.MirageQualityTestSummary.StageResult(
             stageID: 5,
             probeKind: .transport,
             targetBitrateBps: 1_024_000_000,
@@ -112,7 +113,7 @@ struct QualityTestTransportTests {
     func streamingReplaySummaryCanFallBelowTransportHeadroom() {
         let payloadBytes = 1_122
         let stageResults = [
-            MirageQualityTestSummary.StageResult(
+            MirageDiagnostics.MirageQualityTestSummary.StageResult(
                 stageID: 1,
                 probeKind: .transport,
                 targetBitrateBps: 256_000_000,
@@ -124,7 +125,7 @@ struct QualityTestTransportTests {
                 sentPayloadBytes: 45_000_000,
                 receivedPayloadBytes: 44_500_000
             ),
-            MirageQualityTestSummary.StageResult(
+            MirageDiagnostics.MirageQualityTestSummary.StageResult(
                 stageID: 2,
                 probeKind: .streamingReplay,
                 targetBitrateBps: 181_000_000,
@@ -162,7 +163,7 @@ struct QualityTestTransportTests {
     func connectionLimitSummaryRejectsDeliveryWindowMisses() {
         let payloadBytes = 1_122
         let stageResults = [
-            MirageQualityTestSummary.StageResult(
+            MirageDiagnostics.MirageQualityTestSummary.StageResult(
                 stageID: 1,
                 probeKind: .transport,
                 targetBitrateBps: 256_000_000,
@@ -174,7 +175,7 @@ struct QualityTestTransportTests {
                 sentPayloadBytes: 45_000_000,
                 receivedPayloadBytes: 44_500_000
             ),
-            MirageQualityTestSummary.StageResult(
+            MirageDiagnostics.MirageQualityTestSummary.StageResult(
                 stageID: 2,
                 probeKind: .transport,
                 targetBitrateBps: 512_000_000,
@@ -207,7 +208,7 @@ struct QualityTestTransportTests {
     func connectionLimitSummaryRejectsOnePercentLossStages() {
         let payloadBytes = 1_122
         let stageResults = [
-            MirageQualityTestSummary.StageResult(
+            MirageDiagnostics.MirageQualityTestSummary.StageResult(
                 stageID: 1,
                 probeKind: .transport,
                 targetBitrateBps: 256_000_000,
@@ -219,7 +220,7 @@ struct QualityTestTransportTests {
                 sentPayloadBytes: 45_000_000,
                 receivedPayloadBytes: 44_500_000
             ),
-            MirageQualityTestSummary.StageResult(
+            MirageDiagnostics.MirageQualityTestSummary.StageResult(
                 stageID: 2,
                 probeKind: .transport,
                 targetBitrateBps: 512_000_000,
@@ -251,7 +252,7 @@ struct QualityTestTransportTests {
     func connectionLimitSummaryRejectsUnstableCandidateFallback() {
         let transportSummary = MirageClientService.summarizeQualityTestPhase(
             stageResults: [
-                MirageQualityTestSummary.StageResult(
+                MirageDiagnostics.MirageQualityTestSummary.StageResult(
                     stageID: 7,
                     probeKind: .transport,
                     targetBitrateBps: 1_024_000_000,

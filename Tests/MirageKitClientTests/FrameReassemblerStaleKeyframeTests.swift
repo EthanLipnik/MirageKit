@@ -11,6 +11,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Frame Reassembler Stale Keyframe")
@@ -569,7 +570,7 @@ struct FrameReassemblerStaleKeyframeTests {
 }
 
 func makeHeader(
-    flags: FrameFlags,
+    flags: MirageWire.FrameFlags,
     frameNumber: UInt32,
     payload: Data,
     fragmentIndex: UInt16,
@@ -578,8 +579,8 @@ func makeHeader(
     fecBlockSize: UInt8 = 0,
     dimensionToken: UInt16 = 0
 )
--> FrameHeader {
-    FrameHeader(
+-> MirageWire.FrameHeader {
+    MirageWire.FrameHeader(
         flags: flags,
         streamID: 1,
         sequenceNumber: frameNumber,

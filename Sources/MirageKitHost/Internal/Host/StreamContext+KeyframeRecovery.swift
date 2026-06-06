@@ -7,13 +7,21 @@
 //  Explicit keyframe recovery requests.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension StreamContext {
     /// Request a keyframe from the encoder.
-    func requestKeyframe(recoveryCause: MirageMediaFeedbackRecoveryCause = .none) async -> KeyframeRecoveryAckMessage {
+    func requestKeyframe(recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause = .none) async -> MirageWire.KeyframeRecoveryAckMessage {
         latestReceiverRecoveryCause = recoveryCause
         let accepted = await requestKeyframeRecovery(recoveryCause: recoveryCause)
         return keyframeRecoveryAck(accepted: accepted)
@@ -25,7 +33,7 @@ extension StreamContext {
         await completeAcceptedKeyframeRecoveryRequest(now: CFAbsoluteTimeGetCurrent(), reason: "Keyframe request")
     }
 
-    private func requestKeyframeRecovery(recoveryCause: MirageMediaFeedbackRecoveryCause) async -> Bool {
+    private func requestKeyframeRecovery(recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause) async -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
         let reason = "Keyframe request"
         let queued = queueKeyframeRecoveryRequest(recoveryCause: recoveryCause)
@@ -35,7 +43,7 @@ extension StreamContext {
         return true
     }
 
-    private func queueKeyframeRecoveryRequest(recoveryCause: MirageMediaFeedbackRecoveryCause = .none) -> Bool {
+    private func queueKeyframeRecoveryRequest(recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause = .none) -> Bool {
         let reason = "Keyframe request"
         guard recoveryCause.allowsExplicitKeyframeRequest else {
             MirageLogger.stream(
@@ -93,7 +101,7 @@ extension StreamContext {
     }
 
     private func shouldSuppressDuplicateExplicitKeyframeRequest(
-        recoveryCause: MirageMediaFeedbackRecoveryCause,
+        recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause,
         now: CFAbsoluteTime
     ) -> Bool {
         guard lastAcceptedExplicitKeyframeRequestTime > 0,
@@ -104,7 +112,7 @@ extension StreamContext {
     }
 
     private func recordAcceptedExplicitKeyframeRequest(
-        recoveryCause: MirageMediaFeedbackRecoveryCause,
+        recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause,
         now: CFAbsoluteTime
     ) {
         lastAcceptedExplicitKeyframeRequestCause = recoveryCause
@@ -112,7 +120,7 @@ extension StreamContext {
     }
 
     private func shouldCoalesceAwdlRecoveryKeyframeRequest(
-        recoveryCause: MirageMediaFeedbackRecoveryCause,
+        recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause,
         requiresImmediateChainRepair: Bool
     ) -> Bool {
         guard mediaPathProfile.usesAwdlRadioPolicy,
@@ -141,10 +149,10 @@ extension StreamContext {
             )
     }
 
-    private func keyframeRecoveryAck(accepted: Bool) -> KeyframeRecoveryAckMessage {
+    private func keyframeRecoveryAck(accepted: Bool) -> MirageWire.KeyframeRecoveryAckMessage {
         let now = CFAbsoluteTimeGetCurrent()
         let deadlineMs: Int
-        let state: KeyframeRecoveryAckState
+        let state: MirageWire.KeyframeRecoveryAckState
         if keyframeSendDeadline > now {
             deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded(.up))
             state = accepted ? .accepted : .inFlight
@@ -155,7 +163,7 @@ extension StreamContext {
             deadlineMs = Int((activeKeyframeRequestCooldown * 1000).rounded(.up))
             state = accepted ? .accepted : .cooldown
         }
-        return KeyframeRecoveryAckMessage(
+        return MirageWire.KeyframeRecoveryAckMessage(
             streamID: streamID,
             deadlineMilliseconds: deadlineMs,
             accepted: accepted,
@@ -164,7 +172,7 @@ extension StreamContext {
     }
 }
 
-private extension MirageMediaFeedbackRecoveryCause {
+private extension MirageWire.MirageMediaFeedbackRecoveryCause {
     var allowsExplicitKeyframeRequest: Bool {
         switch self {
         case .decodeError,

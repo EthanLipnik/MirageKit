@@ -9,6 +9,7 @@
 
 @testable import MirageKit
 @testable import MirageKitHost
+import Loom
 import Network
 import Testing
 

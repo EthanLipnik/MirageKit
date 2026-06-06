@@ -7,6 +7,13 @@
 //  Redacted keyboard input diagnostics shared by client and host targets.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// Redacted keyboard diagnostic payload that never includes typed characters.
@@ -32,7 +39,7 @@ package struct MirageKeyboardInputDiagnosticEvent: Sendable, Equatable {
 /// Shared keyboard-input diagnostic classifier for client send paths and host receive/post paths.
 package enum MirageKeyboardInputDiagnostics {
     /// Returns a redacted diagnostic event for keyboard input, or nil for non-keyboard input.
-    package static func diagnosticEvent(for event: MirageInputEvent) -> MirageKeyboardInputDiagnosticEvent? {
+    package static func diagnosticEvent(for event: MirageInput.MirageInputEvent) -> MirageKeyboardInputDiagnosticEvent? {
         switch event {
         case let .keyDown(keyEvent):
             MirageKeyboardInputDiagnosticEvent(
@@ -56,7 +63,7 @@ package enum MirageKeyboardInputDiagnostics {
 
     /// Maps a hardware key code into a coarse category that is safe to log.
     package static func keyCodeCategory(_ keyCode: UInt16) -> String {
-        if keyCode == MirageKeyEvent.unicodeScalarFallbackKeyCode {
+        if keyCode == MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode {
             return "unicode_fallback"
         }
 

@@ -7,9 +7,17 @@
 //  Host input controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -63,7 +71,7 @@ extension MirageHostInputController {
 
     /// Dispatches a desktop-stream input event into host input injection.
     func handleDesktopInputEvent(
-        _ event: MirageInputEvent,
+        _ event: MirageInput.MirageInputEvent,
         bounds: CGRect,
         deferredInjectionValidator: (@Sendable () -> Bool)?
     ) {
@@ -150,7 +158,7 @@ extension MirageHostInputController {
     /// Injects a desktop pointer event after resolving host cursor positioning rules.
     private func injectDesktopPointerEvent(
         _ type: CGEventType,
-        _ event: MirageMouseEvent,
+        _ event: MirageInput.MirageMouseEvent,
         requestedPoint: CGPoint
     ) {
         let currentCursorPosition = Self.desktopInjectionCursorPosition(
@@ -176,7 +184,7 @@ extension MirageHostInputController {
     }
 
     /// Injects a mouse event at a specific desktop screen point.
-    func injectDesktopMouseEvent(_ type: CGEventType, _ event: MirageMouseEvent, at point: CGPoint) {
+    func injectDesktopMouseEvent(_ type: CGEventType, _ event: MirageInput.MirageMouseEvent, at point: CGPoint) {
         let injectionStartedAt = Date.timeIntervalSinceReferenceDate
         defer {
             let now = Date.timeIntervalSinceReferenceDate
@@ -205,7 +213,7 @@ extension MirageHostInputController {
     }
 
     /// Injects a scroll event in desktop screen coordinates.
-    private func injectDesktopScrollEvent(_ event: MirageScrollEvent, bounds: CGRect) {
+    private func injectDesktopScrollEvent(_ event: MirageInput.MirageScrollEvent, bounds: CGRect) {
         let scrollPoint: CGPoint? = if let normalizedLocation = event.location {
             screenPoint(normalizedLocation, in: bounds)
         } else {

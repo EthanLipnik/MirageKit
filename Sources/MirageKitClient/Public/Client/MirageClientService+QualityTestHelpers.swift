@@ -7,37 +7,45 @@
 //  Helper routines for connection quality tests.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
     nonisolated static let qualityTestObjectTransferStageCompletionTimeout: Duration = .seconds(5)
 
     nonisolated static func validatedQualityTestStageResult(
-        _ stageResult: MirageQualityTestSummary.StageResult,
+        _ stageResult: MirageDiagnostics.MirageQualityTestSummary.StageResult,
         metrics: (
             sentPayloadBytes: Int,
             receivedPayloadBytes: Int,
             sentPacketCount: Int,
             receivedPacketCount: Int
         )
-    ) throws -> MirageQualityTestSummary.StageResult {
+    ) throws -> MirageDiagnostics.MirageQualityTestSummary.StageResult {
         guard metrics.sentPacketCount > 0, metrics.sentPayloadBytes > 0 else {
-            throw MirageError.protocolError("Connection test failed: the host did not send any quality-test packets.")
+            throw MirageCore.MirageError.protocolError("Connection test failed: the host did not send any quality-test packets.")
         }
         guard metrics.receivedPacketCount > 0, metrics.receivedPayloadBytes > 0 else {
-            throw MirageError.protocolError("Connection test failed: no quality-test packets were received.")
+            throw MirageCore.MirageError.protocolError("Connection test failed: no quality-test packets were received.")
         }
         return stageResult
     }
 
-    nonisolated func handleQualityTestPacket(_ header: QualityTestPacketHeader, data: Data) {
+    nonisolated func handleQualityTestPacket(_ header: MirageWire.QualityTestPacketHeader, data: Data) {
         let context = fastPathState.qualityTestContext
         let accumulator = context.accumulator
         let activeTestID = context.testID
         guard let accumulator, activeTestID == header.testID else { return }
-        let payloadBytes = min(Int(header.payloadLength), max(0, data.count - mirageQualityTestHeaderSize))
+        let payloadBytes = min(Int(header.payloadLength), max(0, data.count - MirageWire.mirageQualityTestHeaderSize))
         accumulator.record(header: header, payloadBytes: payloadBytes)
     }
 
@@ -56,7 +64,7 @@ extension MirageClientService {
             do {
                 try await sendControlMessage(
                     .qualityTestCancel,
-                    content: QualityTestCancelMessage(testID: testID)
+                    content: MirageWire.QualityTestCancelMessage(testID: testID)
                 )
             } catch {
                 MirageLogger.error(.client, error: error, message: "Failed to send qualityTestCancel: ")
@@ -88,13 +96,13 @@ extension MirageClientService {
 
     func runQualityTestSession(
         testID: UUID,
-        plan: MirageQualityTestPlan,
+        plan: MirageDiagnostics.MirageQualityTestPlan,
         payloadBytes: Int,
         mediaMaxPacketSize: Int,
         mode: MirageQualityTestMode,
         stopAfterFirstBreach: Bool,
         onStageUpdate: (@MainActor (MirageQualityTestProgressUpdate) -> Void)? = nil
-    ) async throws -> [MirageQualityTestSummary.StageResult] {
+    ) async throws -> [MirageDiagnostics.MirageQualityTestSummary.StageResult] {
         let accumulator = QualityTestAccumulator(testID: testID)
         fastPathState.setQualityTestAccumulator(accumulator, testID: testID)
         qualityTestPendingTestID = testID
@@ -105,7 +113,7 @@ extension MirageClientService {
             qualityTestStageCompletionBuffer.removeAll()
         }
 
-        let request = QualityTestRequestMessage(
+        let request = MirageWire.QualityTestRequestMessage(
             testID: testID,
             plan: plan,
             payloadBytes: payloadBytes,
@@ -115,7 +123,7 @@ extension MirageClientService {
         )
         try await sendControlMessage(.qualityTestRequest, content: request)
 
-        var results: [MirageQualityTestSummary.StageResult] = []
+        var results: [MirageDiagnostics.MirageQualityTestSummary.StageResult] = []
         for (index, stage) in plan.stages.enumerated() {
             onStageUpdate?(
                 MirageQualityTestProgressUpdate(
@@ -140,9 +148,9 @@ extension MirageClientService {
                     reason: "stage \(stage.id) timed out",
                     notifyHost: true
                 )
-                throw MirageError.protocolError("Connection test failed: timed out waiting for stage \(stage.id) to finish.")
+                throw MirageCore.MirageError.protocolError("Connection test failed: timed out waiting for stage \(stage.id) to finish.")
             }
-            let stageResult: MirageQualityTestSummary.StageResult
+            let stageResult: MirageDiagnostics.MirageQualityTestSummary.StageResult
             do {
                 stageResult = try buildQualityTestStageResult(
                     stage,
@@ -227,19 +235,19 @@ extension MirageClientService {
         payloadBytes: Int,
         mediaMaxPacketSize: Int,
         onStageUpdate: (@MainActor (MirageQualityTestProgressUpdate) -> Void)? = nil
-    ) async throws -> [MirageQualityTestSummary.StageResult] {
+    ) async throws -> [MirageDiagnostics.MirageQualityTestSummary.StageResult] {
         guard let transferEngine else {
-            throw MirageError.protocolError("Missing authenticated Loom transfer engine for connection test")
+            throw MirageCore.MirageError.protocolError("Missing authenticated Loom transfer engine for connection test")
         }
 
-        let stage = MirageQualityTestPlan.Stage(
+        let stage = MirageDiagnostics.MirageQualityTestPlan.Stage(
             id: MirageQualityTestTransfer.stageID,
             probeKind: .transport,
             targetBitrateBps: 0,
             durationMs: 0,
             settleGraceMs: 0
         )
-        let plan = MirageQualityTestPlan(stages: [stage])
+        let plan = MirageDiagnostics.MirageQualityTestPlan(stages: [stage])
         let transferBox = QualityTestOutgoingTransferBox()
 
         return try await withTaskCancellationHandler {
@@ -250,7 +258,7 @@ extension MirageClientService {
                 qualityTestStageCompletionBuffer.removeAll()
             }
 
-            let request = QualityTestRequestMessage(
+            let request = MirageWire.QualityTestRequestMessage(
                 testID: testID,
                 plan: plan,
                 payloadBytes: payloadBytes,
@@ -272,16 +280,7 @@ extension MirageClientService {
                 )
             )
 
-            let source = MirageQualityTestNoiseSource()
-            let outgoingTransfer = try await transferEngine.offerTransfer(
-                LoomTransferOffer(
-                    logicalName: MirageQualityTestTransfer.logicalName,
-                    byteLength: MirageQualityTestTransfer.byteCount,
-                    contentType: "application/octet-stream",
-                    metadata: MirageQualityTestTransfer.metadata(testID: testID)
-                ),
-                source: source
-            )
+            let outgoingTransfer = try await transferEngine.offerQualityTestNoiseTransfer(testID: testID)
             transferBox.store(outgoingTransfer)
 
             let progressTask = Task { @MainActor in
@@ -313,7 +312,7 @@ extension MirageClientService {
             case .cancelled, .declined:
                 throw CancellationError()
             default:
-                throw MirageError.protocolError("Connection test transfer did not complete.")
+                throw MirageCore.MirageError.protocolError("Connection test transfer did not complete.")
             }
 
             guard let completion = await awaitQualityTestStageCompletion(
@@ -321,7 +320,7 @@ extension MirageClientService {
                 stageID: stage.id,
                 timeout: Self.qualityTestObjectTransferStageCompletionTimeout
             ) else {
-                throw MirageError.protocolError("Connection test failed: timed out waiting for transfer completion.")
+                throw MirageCore.MirageError.protocolError("Connection test failed: timed out waiting for transfer completion.")
             }
             let stageResult = try buildQualityTestTransferStageResult(completion)
             onStageUpdate?(
@@ -348,13 +347,13 @@ extension MirageClientService {
     func runQualityTestStage(
         testID: UUID,
         stageID: Int,
-        probeKind: MirageQualityTestPlan.ProbeKind = .transport,
+        probeKind: MirageDiagnostics.MirageQualityTestPlan.ProbeKind = .transport,
         targetBitrateBps: Int,
         durationMs: Int,
         payloadBytes: Int,
         mediaMaxPacketSize: Int
-    ) async throws -> MirageQualityTestSummary.StageResult {
-        let stage = MirageQualityTestPlan.Stage(
+    ) async throws -> MirageDiagnostics.MirageQualityTestSummary.StageResult {
+        let stage = MirageDiagnostics.MirageQualityTestPlan.Stage(
             id: stageID,
             probeKind: probeKind,
             targetBitrateBps: targetBitrateBps,
@@ -365,31 +364,31 @@ extension MirageClientService {
         )
         let results = try await runQualityTestSession(
             testID: testID,
-            plan: MirageQualityTestPlan(stages: [stage]),
+            plan: MirageDiagnostics.MirageQualityTestPlan(stages: [stage]),
             payloadBytes: payloadBytes,
             mediaMaxPacketSize: mediaMaxPacketSize,
             mode: .automaticSelection,
             stopAfterFirstBreach: false
         )
         guard let result = results.first else {
-            throw MirageError.protocolError("Connection test failed: no quality-test results were produced.")
+            throw MirageCore.MirageError.protocolError("Connection test failed: no quality-test results were produced.")
         }
         return result
     }
 
     func buildQualityTestStageResult(
-        _ stage: MirageQualityTestPlan.Stage,
-        completion: QualityTestStageCompleteMessage,
+        _ stage: MirageDiagnostics.MirageQualityTestPlan.Stage,
+        completion: MirageWire.QualityTestStageCompleteMessage,
         accumulator: QualityTestAccumulator
-    ) throws -> MirageQualityTestSummary.StageResult {
+    ) throws -> MirageDiagnostics.MirageQualityTestSummary.StageResult {
         guard completion.testID == accumulator.testID else {
-            throw MirageError.protocolError("Connection test failed: received stage completion for the wrong test.")
+            throw MirageCore.MirageError.protocolError("Connection test failed: received stage completion for the wrong test.")
         }
         guard completion.stageID == stage.id else {
-            throw MirageError.protocolError("Connection test failed: received stage completion for stage \(completion.stageID) while waiting for \(stage.id).")
+            throw MirageCore.MirageError.protocolError("Connection test failed: received stage completion for stage \(completion.stageID) while waiting for \(stage.id).")
         }
         guard completion.probeKind == stage.probeKind else {
-            throw MirageError.protocolError("Connection test failed: stage \(stage.id) changed probe kinds mid-session.")
+            throw MirageCore.MirageError.protocolError("Connection test failed: stage \(stage.id) changed probe kinds mid-session.")
         }
 
         let receivedMetrics = accumulator.receivedMetrics(for: stage.id)
@@ -407,7 +406,7 @@ extension MirageClientService {
             )
             : 0
 
-        let result = MirageQualityTestSummary.StageResult(
+        let result = MirageDiagnostics.MirageQualityTestSummary.StageResult(
             stageID: stage.id,
             probeKind: stage.probeKind,
             targetBitrateBps: stage.targetBitrateBps,
@@ -436,16 +435,16 @@ extension MirageClientService {
     }
 
     func buildQualityTestTransferStageResult(
-        _ completion: QualityTestStageCompleteMessage
-    ) throws -> MirageQualityTestSummary.StageResult {
+        _ completion: MirageWire.QualityTestStageCompleteMessage
+    ) throws -> MirageDiagnostics.MirageQualityTestSummary.StageResult {
         guard completion.stageID == MirageQualityTestTransfer.stageID else {
-            throw MirageError.protocolError("Connection test failed: received transfer completion for stage \(completion.stageID).")
+            throw MirageCore.MirageError.protocolError("Connection test failed: received transfer completion for stage \(completion.stageID).")
         }
         guard completion.probeKind == .transport else {
-            throw MirageError.protocolError("Connection test failed: transfer completion used \(completion.probeKind.rawValue).")
+            throw MirageCore.MirageError.protocolError("Connection test failed: transfer completion used \(completion.probeKind.rawValue).")
         }
         guard completion.sentPayloadBytes > 0, completion.sentPacketCount > 0 else {
-            throw MirageError.protocolError("Connection test failed: no transfer bytes were reported.")
+            throw MirageCore.MirageError.protocolError("Connection test failed: no transfer bytes were reported.")
         }
 
         let actualDurationMs = max(
@@ -455,7 +454,7 @@ extension MirageClientService {
         let throughputBps = Int(
             Double(completion.sentPayloadBytes * 8) / (Double(actualDurationMs) / 1000.0)
         )
-        return MirageQualityTestSummary.StageResult(
+        return MirageDiagnostics.MirageQualityTestSummary.StageResult(
             stageID: MirageQualityTestTransfer.stageID,
             probeKind: .transport,
             targetBitrateBps: 0,
@@ -478,9 +477,9 @@ extension MirageClientService {
 
 private final class QualityTestOutgoingTransferBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var transfer: LoomOutgoingTransfer?
+    private var transfer: MirageOutgoingTransfer?
 
-    func store(_ transfer: LoomOutgoingTransfer) {
+    func store(_ transfer: MirageOutgoingTransfer) {
         lock.lock()
         self.transfer = transfer
         lock.unlock()
@@ -495,7 +494,7 @@ private final class QualityTestOutgoingTransferBox: @unchecked Sendable {
         await transfer?.cancel()
     }
 
-    private func takeTransfer() -> LoomOutgoingTransfer? {
+    private func takeTransfer() -> MirageOutgoingTransfer? {
         lock.lock()
         defer { lock.unlock() }
         let transfer = transfer

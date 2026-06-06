@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/3/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 import AppKit
@@ -32,7 +40,7 @@ func streamTargetDimensions(windowFrame: CGRect) -> StreamTargetDimensions {
 
 /// Returns encoder-aligned pixel dimensions for a host window with an explicit backing scale.
 func streamTargetDimensions(windowFrame: CGRect, scaleFactor: CGFloat) -> StreamTargetDimensions {
-    let encodedSize = MirageStreamGeometry.alignedEncodedSize(
+    let encodedSize = MirageMedia.MirageStreamGeometry.alignedEncodedSize(
         CGSize(width: windowFrame.width * scaleFactor, height: windowFrame.height * scaleFactor)
     )
     return StreamTargetDimensions(

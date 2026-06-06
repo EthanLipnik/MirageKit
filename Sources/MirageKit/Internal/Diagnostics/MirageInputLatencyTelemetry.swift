@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/16/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package enum MirageInputLatencyEventClass: String, Sendable, CaseIterable {
@@ -27,7 +34,7 @@ package enum MirageInputLatencyClientRoute: String, Sendable, CaseIterable {
     case priorityFallback
 }
 
-package extension MirageInputEvent {
+package extension MirageInput.MirageInputEvent {
     var latencyEventClass: MirageInputLatencyEventClass {
         switch self {
         case .mouseMoved,
@@ -269,7 +276,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientSourceForward(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID?,
         source: String,
         sourceTimestamp: TimeInterval,
@@ -307,7 +314,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientContinuousBatchFlush(
-        _ batch: MirageContinuousInputBatch,
+        _ batch: MirageInput.MirageContinuousInputBatch,
         reason: String,
         scheduledAt: TimeInterval? = nil,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
@@ -333,7 +340,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientPrioritySendCompletion(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         durationMs: Double,
         error: Error?,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
@@ -354,7 +361,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientCapture(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
@@ -373,7 +380,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientSend(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
@@ -393,7 +400,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientRoute(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         route: MirageInputLatencyClientRoute,
         priorityRouteState: String? = nil,
@@ -418,7 +425,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientFallback(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
@@ -434,26 +441,26 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordClientFallback(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         if envelope.kind == .continuousInput,
-           let batch = try? MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
+           let batch = try? MirageInput.MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
             for event in batch.inputEvents() {
                 recordClientFallback(event: event, streamID: batch.streamID, now: now)
             }
             return
         }
-        guard let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else { return }
+        guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(envelope.inputPayload) else { return }
         recordClientFallback(event: inputMessage.event, streamID: inputMessage.streamID, now: now)
     }
 
     package func recordHostReceive(
-        message: ControlMessage,
+        message: MirageWire.ControlMessage,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         guard MirageLatencyOptions.latencyDiagnosticsEnabled(),
-              let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+              let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else {
             return
         }
         lock.lock()
@@ -469,7 +476,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordHostContinuousBatchReceive(
-        _ batch: MirageContinuousInputBatch,
+        _ batch: MirageInput.MirageContinuousInputBatch,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
@@ -489,12 +496,12 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordHostSchedulerDepth(
-        message: ControlMessage,
+        message: MirageWire.ControlMessage,
         depth: Int,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         guard MirageLatencyOptions.latencyDiagnosticsEnabled(),
-              let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+              let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else {
             return
         }
         lock.lock()
@@ -507,13 +514,13 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordHostPost(
-        message: ControlMessage,
+        message: MirageWire.ControlMessage,
         enqueuedAt: TimeInterval,
         schedulerDepth: Int,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         guard MirageLatencyOptions.latencyDiagnosticsEnabled(),
-              let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+              let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else {
             return
         }
         lock.lock()
@@ -528,7 +535,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     package func recordHostAccessibilityDwell(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         enqueuedAt: TimeInterval,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
@@ -691,7 +698,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
         return fragments.isEmpty ? "--" : fragments.joined(separator: ",")
     }
 
-    private static func eventClass(for batch: MirageContinuousInputBatch) -> MirageInputLatencyEventClass {
+    private static func eventClass(for batch: MirageInput.MirageContinuousInputBatch) -> MirageInputLatencyEventClass {
         switch batch.kind {
         case .mouseMoved,
              .mouseDragged,
@@ -708,12 +715,12 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
         }
     }
 
-    private static func eventClass(for envelope: MiragePriorityInputEnvelope) -> MirageInputLatencyEventClass? {
+    private static func eventClass(for envelope: MirageWire.MiragePriorityInputEnvelope) -> MirageInputLatencyEventClass? {
         if envelope.kind == .continuousInput,
-           let batch = try? MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
+           let batch = try? MirageInput.MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
             return eventClass(for: batch)
         }
-        guard let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else {
+        guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(envelope.inputPayload) else {
             return nil
         }
         return inputMessage.event.latencyEventClass

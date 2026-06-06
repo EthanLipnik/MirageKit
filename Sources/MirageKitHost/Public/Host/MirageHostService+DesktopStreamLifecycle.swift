@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -30,7 +37,7 @@ extension MirageHostService {
         let encodedDimensions = streamStart.encodedDimensions
         let startupAttemptID = UUID()
         desktopPresentationGeneration &+= 1
-        let message = DesktopStreamStartedMessage(
+        let message = MirageWire.DesktopStreamStartedMessage(
             streamID: notification.streamID,
             desktopSessionID: notification.desktopSessionID,
             width: Int(startedDisplayResolution.width),
@@ -88,7 +95,7 @@ extension MirageHostService {
             await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
             MirageLogger.error(.host, error: error, message: "Failed to send desktopStreamStarted: ")
             logDesktopStartStep("desktopStreamStarted send failed")
-            throw MirageError.protocolError("Desktop stream startup acknowledgement could not be delivered to the client")
+            throw MirageCore.MirageError.protocolError("Desktop stream startup acknowledgement could not be delivered to the client")
         }
     }
 
@@ -97,7 +104,7 @@ extension MirageHostService {
         streamID: StreamID,
         clientSessionID: UUID,
         startupRequestID: UUID,
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         stage: String
     )
     async throws {
@@ -110,12 +117,12 @@ extension MirageHostService {
                     cleanupReason: "desktop_startup_cancelled_\(stage)"
                 )
             }
-            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+            throw MirageCore.MirageError.protocolError("Desktop stream setup cancelled by client")
         }
 
         guard desktopStreamID == streamID, desktopStreamContext != nil else {
             MirageLogger.host("Desktop stream startup stopped \(stage)")
-            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+            throw MirageCore.MirageError.protocolError("Desktop stream setup cancelled by client")
         }
     }
 
@@ -123,7 +130,7 @@ extension MirageHostService {
     func ensureDesktopStreamSetupCanContinue(
         clientContext: ClientContext,
         startupRequestID: UUID,
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         stage: String
     )
     async throws {
@@ -134,7 +141,7 @@ extension MirageHostService {
                 deferDisplayTeardown: true,
                 cleanupReason: "desktop_setup_cancelled_\(stage)"
             )
-            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+            throw MirageCore.MirageError.protocolError("Desktop stream setup cancelled by client")
         }
 
         guard !disconnectingClientIDs.contains(clientContext.client.id),
@@ -145,13 +152,13 @@ extension MirageHostService {
                 deferDisplayTeardown: true,
                 cleanupReason: "desktop_setup_client_disconnected_\(stage)"
             )
-            throw MirageError.protocolError("Desktop stream client disconnected during startup")
+            throw MirageCore.MirageError.protocolError("Desktop stream client disconnected during startup")
         }
     }
 
     /// Cleans up virtual display and mirroring state after a failed desktop stream startup.
     func cleanupFailedDesktopStreamStartup(
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         deferDisplayTeardown: Bool = false,
         cleanupReason: String = "failed_desktop_startup_cleanup"
     ) async {
@@ -167,7 +174,7 @@ extension MirageHostService {
             streamStartupBaseTimes.removeValue(forKey: failedStreamID)
             streamStartupRegistrationLogged.remove(failedStreamID)
             transportSendErrorReported.remove(failedStreamID)
-            if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: failedStreamID) {
+            if let videoStream = videoMediaStreamsByStreamID.removeValue(forKey: failedStreamID) {
                 closeRemovedMediaStream(videoStream, streamID: failedStreamID, kind: "video")
             }
             transportRegistry.unregisterVideoStream(streamID: failedStreamID)
@@ -201,7 +208,7 @@ extension MirageHostService {
                 if mode == .unified {
                     _ = await disableDisplayMirroring(displayID: vdID)
                 }
-                await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+                await platformVirtualDisplayBackend.releaseDisplayForConsumer(.desktopStream)
             } else if !desktopMirroringSnapshot.isEmpty {
                 _ = await disableDisplayMirroring(displayID: failedPrimaryDisplayID ?? CGMainDisplayID())
             }
@@ -232,7 +239,7 @@ extension MirageHostService {
 
     /// Schedules delayed display cleanup so system display transitions can settle first.
     func scheduleDeferredDesktopStartupDisplayCleanup(
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         failedVirtualDisplayID: CGDirectDisplayID?,
         failedPrimaryDisplayID: CGDirectDisplayID?,
         reason: String
@@ -256,7 +263,7 @@ extension MirageHostService {
 
     /// Performs delayed display cleanup for a failed desktop stream startup.
     func performDeferredDesktopStartupDisplayCleanup(
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         failedVirtualDisplayID: CGDirectDisplayID?,
         failedPrimaryDisplayID: CGDirectDisplayID?,
         reason: String
@@ -276,7 +283,7 @@ extension MirageHostService {
                 deferredDesktopStartupDisplayCleanupTask = nil
                 return
             }
-            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+            await platformVirtualDisplayBackend.releaseDisplayForConsumer(.desktopStream)
         } else if !desktopMirroringSnapshot.isEmpty {
             _ = await disableDisplayMirroring(displayID: failedPrimaryDisplayID ?? CGMainDisplayID())
         }
@@ -299,7 +306,7 @@ extension MirageHostService {
     }
 
     func scheduleDeferredDesktopDisplayCleanup(
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         sharedDisplayID: CGDirectDisplayID?,
         primaryDisplayID: CGDirectDisplayID?,
         hadMirroringSnapshot: Bool,
@@ -329,7 +336,7 @@ extension MirageHostService {
     }
 
     func performDeferredDesktopDisplayCleanup(
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         sharedDisplayID: CGDirectDisplayID?,
         primaryDisplayID: CGDirectDisplayID?,
         hadMirroringSnapshot: Bool,
@@ -364,7 +371,7 @@ extension MirageHostService {
             return
         }
 
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        await platformVirtualDisplayBackend.releaseDisplayForConsumer(.desktopStream)
 
         guard shouldContinueDeferredDesktopDisplayCleanup(generation: generation) else {
             MirageLogger.host("Deferred desktop display cleanup cancelled after display release")
@@ -406,7 +413,7 @@ extension MirageHostService {
 
     /// Stops the active desktop stream and restores host display state.
     func stopDesktopStream(
-        reason: DesktopStreamStopReason = .clientRequested,
+        reason: MirageWire.DesktopStreamStopReason = .clientRequested,
         triggeredByExplicitStreamStop: Bool = true
     ) async {
         inputController.clearAllModifiers()
@@ -438,7 +445,7 @@ extension MirageHostService {
         desktopDisplayTopologyRefreshTask?.cancel()
         desktopDisplayTopologyRefreshTask = nil
 
-        let sharedDisplayID = await SharedVirtualDisplayManager.shared.displayID
+        let sharedDisplayID = await platformVirtualDisplayBackend.displayID
 
         cancelPendingStartupAttempt(streamID: streamID)
         desktopStreamContext = nil
@@ -451,7 +458,7 @@ extension MirageHostService {
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
         transportSendErrorReported.remove(streamID)
-        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+        if let videoStream = videoMediaStreamsByStreamID.removeValue(forKey: streamID) {
             closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
         }
         transportRegistry.unregisterVideoStream(streamID: streamID)
@@ -461,7 +468,7 @@ extension MirageHostService {
 
         if let clientContext = stoppedClientContext,
            let stoppedDesktopSessionID {
-            let message = DesktopStreamStoppedMessage(
+            let message = MirageWire.DesktopStreamStoppedMessage(
                 streamID: streamID,
                 desktopSessionID: stoppedDesktopSessionID,
                 reason: reason

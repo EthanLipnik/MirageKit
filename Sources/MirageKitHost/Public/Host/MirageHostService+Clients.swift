@@ -7,8 +7,16 @@
 //  Client disconnection and cleanup.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -45,7 +53,7 @@ extension MirageHostService {
         _ client: MirageConnectedClient,
         sessionID expectedSessionID: UUID?,
         notifyClient: Bool,
-        reason: DisconnectMessage.DisconnectReason = .userRequested
+        reason: MirageWire.DisconnectMessage.DisconnectReason = .userRequested
     )
     async {
         if let expectedSessionID,
@@ -62,7 +70,7 @@ extension MirageHostService {
             controlChannelSendFailureReported.remove(client.id)
         }
 
-        MirageInstrumentation.record(.hostClientDisconnected)
+        MirageConnectivity.MirageInstrumentation.record(.hostClientDisconnected)
 
         inputController.clearAllModifiers()
 
@@ -187,7 +195,7 @@ extension MirageHostService {
         await stopAudioForDisconnectedClient(client.id)
 
         transportRegistry.unregisterAllStreams(clientID: client.id)
-        if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: client.id) {
+        if let audioStream = audioMediaStreamsByClientID.removeValue(forKey: client.id) {
             closeRemovedMediaStream(audioStream, streamID: 0, kind: "audio")
         }
 
@@ -226,7 +234,7 @@ extension MirageHostService {
     private func closeClientControlSession(
         _ clientContext: ClientContext,
         notifyClient: Bool,
-        reason: DisconnectMessage.DisconnectReason
+        reason: MirageWire.DisconnectMessage.DisconnectReason
     )
     async {
         if notifyClient {
@@ -240,11 +248,11 @@ extension MirageHostService {
 
     private func sendDisconnectNoticeBeforeTeardown(
         _ clientContext: ClientContext,
-        reason: DisconnectMessage.DisconnectReason
+        reason: MirageWire.DisconnectMessage.DisconnectReason
     ) async {
         let waiter = HostDisconnectNoticeWaiter()
         let sendTask = Task { @MainActor in
-            let disconnect = DisconnectMessage(reason: reason)
+            let disconnect = MirageWire.DisconnectMessage(reason: reason)
             do {
                 try await clientContext.send(.disconnect, content: disconnect)
                 do {
@@ -282,11 +290,11 @@ extension MirageHostService {
     private func cleanupSharedVirtualDisplayIfIdle() async {
         guard activeStreams.isEmpty, desktopStreamContext == nil else { return }
 
-        let stats = await SharedVirtualDisplayManager.shared.statistics
+        let stats = await platformVirtualDisplayBackend.statistics
         guard stats.hasDisplay || stats.dedicatedDisplayCount > 0 else { return }
 
         MirageLogger.host("No active streams or clients; destroying managed virtual displays")
-        await SharedVirtualDisplayManager.shared.destroyAllAndClear()
+        await platformVirtualDisplayBackend.destroyAllAndClear()
     }
 }
 

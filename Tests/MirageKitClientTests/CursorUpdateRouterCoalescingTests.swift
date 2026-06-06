@@ -11,6 +11,9 @@
 import MirageKit
 import Foundation
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 @Suite("Cursor Update Router Coalescing")
@@ -21,7 +24,7 @@ struct CursorUpdateRouterCoalescingTests {
         let burstCount = 1_000
         let sequence = SharedSequence()
         let router = MirageCursorUpdateRouter(
-            flushInterval: MirageInteractionCadence.frameInterval120Duration
+            flushInterval: MirageMedia.MirageInteractionCadence.frameInterval120Duration
         )
         let probe = await MainActor.run {
             CursorRefreshProbe(sequenceSource: sequence)
@@ -60,7 +63,7 @@ struct CursorUpdateRouterCoalescingTests {
         let streamID: StreamID = 77
         let sequence = SharedSequence()
         let router = MirageCursorUpdateRouter(
-            flushInterval: MirageInteractionCadence.frameInterval120Duration
+            flushInterval: MirageMedia.MirageInteractionCadence.frameInterval120Duration
         )
         let probe = await MainActor.run {
             CursorRefreshProbe(sequenceSource: sequence)
@@ -98,7 +101,7 @@ struct CursorUpdateRouterCoalescingTests {
         let updateCount = 200
         let store = MirageClientCursorStore()
         let router = MirageCursorUpdateRouter(
-            flushInterval: MirageInteractionCadence.frameInterval120Duration
+            flushInterval: MirageMedia.MirageInteractionCadence.frameInterval120Duration
         )
         let probe = await MainActor.run {
             CursorStoreRefreshProbe(store: store, streamID: streamID)
@@ -113,7 +116,7 @@ struct CursorUpdateRouterCoalescingTests {
         }
 
         for index in 0 ..< updateCount {
-            let cursorType: MirageCursorType = index == updateCount - 1 ? .resizeNWSE : .arrow
+            let cursorType: MirageWire.MirageCursorType = index == updateCount - 1 ? .resizeNWSE : .arrow
             _ = store.updateCursor(streamID: streamID, cursorType: cursorType, isVisible: true)
             router.notify(streamID: streamID)
         }
@@ -188,7 +191,7 @@ private final class CursorStoreRefreshProbe: MirageCursorUpdateHandling {
     private let store: MirageClientCursorStore
     private let streamID: StreamID
     private(set) var refreshCount: Int = 0
-    private(set) var lastCursorType: MirageCursorType?
+    private(set) var lastCursorType: MirageWire.MirageCursorType?
     private(set) var lastSequence: UInt64 = 0
 
     init(store: MirageClientCursorStore, streamID: StreamID) {

@@ -5,10 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
-import Loom
-import Network
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Network
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -35,7 +42,7 @@ func desktopMirroringRestoreContinuationDecision(
     requestedStreamID: StreamID,
     activeDesktopStreamID: StreamID?,
     hasDesktopContext: Bool,
-    desktopStreamMode: MirageDesktopStreamMode
+    desktopStreamMode: MirageMedia.MirageDesktopStreamMode
 )
 -> DesktopMirroringRestoreContinuationDecision {
     guard requestedStreamID == activeDesktopStreamID, hasDesktopContext else {
@@ -113,14 +120,14 @@ extension MirageHostService {
         let activeClientContext: ClientContext
         let streamContext: StreamContext
         let captureResolution: CGSize
-        let captureSource: MirageDesktopCaptureSource
+        let captureSource: MirageWire.MirageDesktopCaptureSource
         let allowsClientResize: Bool
         let presentationResolution: CGSize
         let acceptedDisplayScaleFactor: CGFloat?
         let desktopGeometryContractID: UUID?
         let desktopGeometrySceneIdentity: String?
         let desktopGeometryRefreshTargetHz: Int?
-        let presentationRole: MirageDesktopPresentationRole?
+        let presentationRole: MirageWire.MirageDesktopPresentationRole?
         let associatedAppSessionID: UUID?
         let associatedAppStartupRequestID: UUID?
         let associatedBundleIdentifier: String?
@@ -131,14 +138,14 @@ extension MirageHostService {
             activeClientContext: ClientContext,
             streamContext: StreamContext,
             captureResolution: CGSize,
-            captureSource: MirageDesktopCaptureSource,
+            captureSource: MirageWire.MirageDesktopCaptureSource,
             allowsClientResize: Bool,
             presentationResolution: CGSize,
             acceptedDisplayScaleFactor: CGFloat?,
             desktopGeometryContractID: UUID?,
             desktopGeometrySceneIdentity: String?,
             desktopGeometryRefreshTargetHz: Int?,
-            presentationRole: MirageDesktopPresentationRole? = nil,
+            presentationRole: MirageWire.MirageDesktopPresentationRole? = nil,
             associatedAppSessionID: UUID? = nil,
             associatedAppStartupRequestID: UUID? = nil,
             associatedBundleIdentifier: String? = nil
@@ -167,8 +174,8 @@ extension MirageHostService {
         let clientContext: ClientContext
         let streamContext: StreamContext
         let requestedScaleFactor: CGFloat
-        let audioConfiguration: MirageAudioConfiguration
-        let mode: MirageDesktopStreamMode
+        let audioConfiguration: MirageMedia.MirageAudioConfiguration
+        let mode: MirageMedia.MirageDesktopStreamMode
         let startupRequestID: UUID
         let captureDisplay: SCDisplayWrapper
         let captureResolution: CGSize
@@ -176,18 +183,18 @@ extension MirageHostService {
 
     struct DesktopStreamActivationResult {
         let activeClientContext: ClientContext
-        let audioConfiguration: MirageAudioConfiguration
+        let audioConfiguration: MirageMedia.MirageAudioConfiguration
     }
 
     struct DesktopCaptureContext {
         let display: SCDisplayWrapper
         let resolution: CGSize
-        let p3CoverageStatus: MirageDisplayP3CoverageStatus?
-        let colorSpace: MirageColorSpace?
-        let captureSource: MirageDesktopCaptureSource
+        let p3CoverageStatus: MirageMedia.MirageDisplayP3CoverageStatus?
+        let colorSpace: MirageMedia.MirageColorSpace?
+        let captureSource: MirageWire.MirageDesktopCaptureSource
         let allowsClientResize: Bool
         let presentationResolution: CGSize
-        let virtualDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
+        let virtualDisplaySnapshot: MirageHostVirtualDisplaySnapshot?
         let usesDisplayRefreshCadence: Bool?
         let acceptedDisplayScaleFactor: CGFloat?
     }
@@ -203,7 +210,7 @@ extension MirageHostService {
     struct DesktopCaptureAcquisitionRequest {
         let clientContext: ClientContext
         let startupRequestID: UUID
-        let mode: MirageDesktopStreamMode
+        let mode: MirageMedia.MirageDesktopStreamMode
         let displayResolution: CGSize
         let virtualDisplayResolution: CGSize
         let startupPlan: DesktopVirtualDisplayStartupPlan
@@ -213,15 +220,15 @@ extension MirageHostService {
 
     struct DesktopEncoderConfigurationRequest {
         let keyFrameInterval: Int?
-        let colorDepth: MirageStreamColorDepth?
+        let colorDepth: MirageMedia.MirageStreamColorDepth?
         let captureQueueDepth: Int?
         let bitrate: Int?
-        let codec: MirageVideoCodec?
-        let latencyMode: MirageStreamLatencyMode
-        let hostBufferingPolicy: MirageHostBufferingPolicy
+        let codec: MirageMedia.MirageVideoCodec?
+        let latencyMode: MirageMedia.MirageStreamLatencyMode
+        let hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
         let allowRuntimeQualityAdjustment: Bool?
         let allowEncoderCatchUpQualityAdjustment: Bool?
-        let upscalingMode: MirageUpscalingMode?
+        let upscalingMode: MirageMedia.MirageUpscalingMode?
         let targetFrameRate: Int?
         let disableResolutionCap: Bool
     }
@@ -230,26 +237,26 @@ extension MirageHostService {
         let streamID: StreamID
         let config: MirageEncoderConfiguration
         let streamScale: CGFloat
-        let audioConfiguration: MirageAudioConfiguration
+        let audioConfiguration: MirageMedia.MirageAudioConfiguration
         let mediaMaxPacketSize: Int
         let allowRuntimeQualityAdjustment: Bool?
         let allowEncoderCatchUpQualityAdjustment: Bool?
         let lowLatencyHighResolutionCompressionBoost: Bool
         let disableResolutionCap: Bool
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
-        let latencyMode: MirageStreamLatencyMode
-        let hostBufferingPolicy: MirageHostBufferingPolicy
-        let transportPathKind: MirageNetworkPathKind
-        let mediaPathProfile: MirageMediaPathProfile
+        let latencyMode: MirageMedia.MirageStreamLatencyMode
+        let hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
+        let transportPathKind: MirageCore.MirageNetworkPathKind
+        let mediaPathProfile: MirageMedia.MirageMediaPathProfile
         let mediaPathDiagnosticSummary: String?
         let enteredBitrate: Int?
         let bitrateAdaptationCeiling: Int?
         let encoderMaxWidth: Int?
         let encoderMaxHeight: Int?
-        let cursorPresentation: MirageDesktopCursorPresentation
+        let cursorPresentation: MirageWire.MirageDesktopCursorPresentation
         let desktopStartTime: CFAbsoluteTime
-        let captureDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus?
-        let virtualDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
+        let captureDisplayP3CoverageStatus: MirageMedia.MirageDisplayP3CoverageStatus?
+        let virtualDisplaySnapshot: MirageHostVirtualDisplaySnapshot?
         let usesDisplayRefreshCadence: Bool?
     }
 }

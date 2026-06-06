@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Recovery Coordinator")
@@ -28,7 +29,7 @@ struct RecoveryCoordinatorTests {
         }
 
         coordinator.recordHostAck(
-            KeyframeRecoveryAckMessage(
+            MirageWire.KeyframeRecoveryAckMessage(
                 streamID: 1,
                 deadlineMilliseconds: 750
             ),
@@ -60,7 +61,7 @@ struct RecoveryCoordinatorTests {
         #expect(firstAttempt == 1)
 
         coordinator.recordHostAck(
-            KeyframeRecoveryAckMessage(
+            MirageWire.KeyframeRecoveryAckMessage(
                 streamID: 1,
                 deadlineMilliseconds: 750,
                 accepted: false,
@@ -82,7 +83,7 @@ struct RecoveryCoordinatorTests {
         var coordinator = RecoveryCoordinator()
         _ = coordinator.requestAction(now: 10, reason: "frame-loss", targetFPS: 120)
         coordinator.recordHostAck(
-            KeyframeRecoveryAckMessage(
+            MirageWire.KeyframeRecoveryAckMessage(
                 streamID: 1,
                 deadlineMilliseconds: 0,
                 accepted: false,

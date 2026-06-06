@@ -7,8 +7,16 @@
 //  Host audio stream lifecycle and packet transport.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -25,7 +33,7 @@ extension MirageHostService {
         clientID: UUID,
         expectedSessionID: UUID? = nil,
         sourceStreamID: StreamID,
-        configuration: MirageAudioConfiguration
+        configuration: MirageMedia.MirageAudioConfiguration
     )
     async throws {
         let previousSourceStreamID = audioSourceStreamByClientID[clientID]
@@ -69,12 +77,12 @@ extension MirageHostService {
         if let expectedSessionID {
             guard let currentClientContext = findClientContext(sessionID: expectedSessionID),
                   currentClientContext.client.id == clientID else {
-                throw MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
+                throw MirageCore.MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
             }
             clientContext = currentClientContext
         } else {
             guard let currentClientContext = findClientContext(clientID: clientID) else {
-                throw MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
+                throw MirageCore.MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
             }
             clientContext = currentClientContext
         }
@@ -99,7 +107,7 @@ extension MirageHostService {
             sourceStreamID: sourceStreamID,
             clientContext: clientContext
         )
-        let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
+        let payloadSize = MirageWire.miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
         if let pipeline = audioPipelinesByClientID[clientID] {
             await pipeline.updateConfiguration(
                 configuration,
@@ -108,7 +116,7 @@ extension MirageHostService {
             )
             await pipeline.updateSourceStreamID(sourceStreamID)
         } else {
-            let pipeline = HostAudioPipeline(
+            let pipeline = platformAudioPipelineFactoryBackend.makeAudioPipeline(
                 sourceStreamID: sourceStreamID,
                 audioConfiguration: configuration,
                 transportPathKind: audioMediaPath.transportPathKind,
@@ -237,7 +245,7 @@ extension MirageHostService {
     }
 
     /// Stops a client's audio pipeline and notifies the client if audio had started.
-    func stopAudioPipeline(for clientID: UUID, reason: AudioStreamStopReason) async {
+    func stopAudioPipeline(for clientID: UUID, reason: MirageWire.AudioStreamStopReason) async {
         cancelAudioFirstSampleWatchdog(for: clientID)
         audioFirstSampleRetryAttemptedByClientID.remove(clientID)
         audioLastSampleTimeByClientID.removeValue(forKey: clientID)
@@ -253,7 +261,7 @@ extension MirageHostService {
         let hadStartedMessage = audioStartedMessageByClientID.removeValue(forKey: clientID) != nil
         if streamID > 0, hadStartedMessage || reason == .error {
             await sendAudioStreamStopped(
-                AudioStreamStoppedMessage(streamID: streamID, reason: reason),
+                MirageWire.AudioStreamStoppedMessage(streamID: streamID, reason: reason),
                 toClientID: clientID
             )
         }
@@ -271,7 +279,7 @@ extension MirageHostService {
 
     /// Closes the Loom audio stream and unregisters audio transport state for a client.
     func closeAudioTransportIfNeeded(for clientID: UUID) async {
-        if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: clientID) {
+        if let audioStream = audioMediaStreamsByClientID.removeValue(forKey: clientID) {
             do {
                 try await audioStream.close()
             } catch {
@@ -312,7 +320,7 @@ extension MirageHostService {
         } catch {
             if isExpectedLifecycleControlSendFailure(error) ||
                 isFatalConnectionError(error) ||
-                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageConnectionErrorClassifier.isLikelyUserDependent(error: error) {
                 MirageLogger.host("Audio transport reopen stopped because the client connection closed: \(error)")
             } else {
                 MirageLogger.error(.host, error: error, message: "Failed reopening audio transport: ")
@@ -355,13 +363,17 @@ extension MirageHostService {
         sourceStreamID: StreamID,
         clientContext: ClientContext
     ) async throws {
-        guard loomAudioStreamsByClientID[clientID] == nil else { return }
+        guard audioMediaStreamsByClientID[clientID] == nil else { return }
         let audioStream = try await clientContext.controlChannel.session.openStream(
             label: "audio/\(sourceStreamID)"
         )
         let mediaSendProfile = await clientContext.controlChannel.session.mirageAudioSendProfile()
-        loomAudioStreamsByClientID[clientID] = audioStream
-        transportRegistry.registerAudioStream(audioStream, clientID: clientID, profile: mediaSendProfile)
+        audioMediaStreamsByClientID[clientID] = audioStream
+        transportRegistry.registerAudioStream(
+            audioStream,
+            clientID: clientID,
+            profile: mediaSendProfile
+        )
         audioSendErrorReportedByClientID.remove(clientID)
         _ = await sendPendingAudioStartedIfPossible(clientID: clientID)
         MirageLogger.host("Opened Loom audio stream for client \(clientID), sendProfile=\(mediaSendProfile.rawValue)")
@@ -373,7 +385,7 @@ extension MirageHostService {
         encodedFrame: EncodedAudioFrame
     )
     async -> Bool {
-        let message = AudioStreamStartedMessage(
+        let message = MirageWire.AudioStreamStartedMessage(
             streamID: streamID,
             codec: encodedFrame.codec,
             sampleRate: encodedFrame.sampleRate,
@@ -406,7 +418,7 @@ extension MirageHostService {
         return activeStreams.first(where: { $0.client.id == clientID && $0.id != streamID })?.id
     }
 
-    private func sendAudioStreamStarted(_ message: AudioStreamStartedMessage, toClientID clientID: UUID) async -> Bool {
+    private func sendAudioStreamStarted(_ message: MirageWire.AudioStreamStartedMessage, toClientID clientID: UUID) async -> Bool {
         guard let clientContext = findClientContext(clientID: clientID) else { return false }
         do {
             try await clientContext.send(.audioStreamStarted, content: message)
@@ -417,7 +429,7 @@ extension MirageHostService {
         }
     }
 
-    private func sendAudioStreamStopped(_ message: AudioStreamStoppedMessage, toClientID clientID: UUID) async {
+    private func sendAudioStreamStopped(_ message: MirageWire.AudioStreamStoppedMessage, toClientID clientID: UUID) async {
         guard let clientContext = findClientContext(clientID: clientID) else { return }
         do {
             try await clientContext.send(.audioStreamStopped, content: message)
@@ -427,30 +439,7 @@ extension MirageHostService {
     }
 
     private nonisolated func isRecoverableAudioSendPressure(_ error: Error) -> Bool {
-        if let loomError = error as? LoomError {
-            switch loomError {
-            case let .connectionFailed(underlyingError):
-                return isRecoverableAudioSendPressure(underlyingError)
-            default:
-                return false
-            }
-        }
-
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case let .connectionFailed(underlyingError):
-                return isRecoverableAudioSendPressure(underlyingError)
-            default:
-                return false
-            }
-        }
-
-        if let failure = error as? LoomConnectionFailure {
-            return failure.posixCode == .ECANCELED ||
-                failure.detail == "Unreliable send queue cancelled."
-        }
-
-        return false
+        MirageConnectionErrorClassifier.isRecoverableAudioSendPressure(error)
     }
 }
 

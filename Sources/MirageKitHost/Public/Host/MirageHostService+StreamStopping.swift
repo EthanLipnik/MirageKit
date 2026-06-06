@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 @MainActor
 public extension MirageHostService {
@@ -54,7 +62,7 @@ public extension MirageHostService {
             _ = await disableDisplayMirroring(displayID: mirroredDisplayID)
         }
         await context?.stop()
-        await WindowSpaceManager.shared.restoreAllWindowsOwned(by: session.id)
+        await platformVirtualDisplayBackend.restoreAllWindowsOwned(by: session.id)
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)
         removeActiveStreamSession(streamID: session.id)
@@ -63,7 +71,7 @@ public extension MirageHostService {
 
         inputStreamCache.remove(session.id)
 
-        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: session.id) {
+        if let videoStream = videoMediaStreamsByStreamID.removeValue(forKey: session.id) {
             closeRemovedMediaStream(videoStream, streamID: session.id, kind: "video")
         }
         transportRegistry.unregisterVideoStream(streamID: session.id)

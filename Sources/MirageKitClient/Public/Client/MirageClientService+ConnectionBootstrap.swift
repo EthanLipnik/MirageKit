@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 @MainActor
 extension MirageClientService {
@@ -30,9 +38,13 @@ extension MirageClientService {
 
         let plannedHost = try await refreshedHostForPendingAwdlScopedAddressIfNeeded(host)
         let attempts = controlSessionAttempts(for: plannedHost)
-        recordControlSessionAttemptPlan(attempts, host: plannedHost)
+        recordControlSessionAttemptPlan(
+            attempts,
+            resolvedAddressCount: plannedHost.resolvedAddresses.count,
+            discoveredInterfaceNames: plannedHost.discoveredInterfaces.map(\.name)
+        )
         if attempts.isEmpty, let debugRouteOverride {
-            throw MirageError.protocolError(
+            throw MirageCore.MirageError.protocolError(
                 "Debug route override \(debugRouteOverride.displayName) matched no available connection route for \(plannedHost.name); forced routes do not fall back automatically."
             )
         }
@@ -98,7 +110,7 @@ extension MirageClientService {
                     await openedSession.cancel()
                 }
 
-                if let rejectionError = error as? MirageError,
+                if let rejectionError = error as? MirageCore.MirageError,
                    case let .connectionRejected(rejection) = rejectionError,
                    rejection.isTerminal {
                     throw rejectionError
@@ -153,8 +165,8 @@ extension MirageClientService {
                     MirageLogger.client(
                         "Bootstrap failure diagnosed as local-network mismatch: \(failureReason)"
                     )
-                    throw MirageError.connectionRejected(
-                        MirageConnectionRejection(
+                    throw MirageCore.MirageError.connectionRejected(
+                        MirageCore.MirageConnectionRejection(
                             reason: .localNetworkBlocked,
                             hostName: plannedHost.name,
                             recoveryHint: networkMismatchReason
@@ -162,11 +174,11 @@ extension MirageClientService {
                     )
                 }
 
-                throw MirageError.protocolError(failureReason)
+                throw MirageCore.MirageError.protocolError(failureReason)
             }
         }
 
-        throw MirageError.protocolError(
+        throw MirageCore.MirageError.protocolError(
             lastFailureReason ?? "Failed to bootstrap control session to \(plannedHost.name)"
         )
     }
@@ -234,12 +246,15 @@ extension MirageClientService {
         ) { group in
             for (index, attempt) in attempts.enumerated() {
                 group.addTask { [weak self] in
-                    let delay = OverlayControlSessionRacePolicy.launchDelay(for: attempt.transportKind)
+                    let raceTransportKind = MirageConnectivityLoomAdapter.transportKind(
+                        from: attempt.transportKind
+                    )
+                    let delay = OverlayControlSessionRacePolicy.launchDelay(for: raceTransportKind)
                     do {
                         let earliestLaunch = ContinuousClock.now.advanced(by: delay)
                         launchWaitLoop: while true {
                             let decision = await raceState.launchDecision(
-                                for: attempt.transportKind,
+                                for: raceTransportKind,
                                 now: ContinuousClock.now,
                                 earliestLaunch: earliestLaunch
                             )
@@ -252,7 +267,7 @@ extension MirageClientService {
                                 return .suppressed(index: index, attempt: attempt, reason: reason)
                             }
                         }
-                        await raceState.recordLaunched(attempt.transportKind)
+                        await raceState.recordLaunched(raceTransportKind)
                         await MainActor.run {
                             self?.recordControlSessionAttemptHedgeLaunched(
                                 attempt,
@@ -268,8 +283,8 @@ extension MirageClientService {
                             attemptID: attemptID,
                             progressObserver: { progress in
                                 await raceState.recordProgress(
-                                    progress,
-                                    transportKind: attempt.transportKind
+                                    progress.phase,
+                                    transportKind: raceTransportKind
                                 )
                             }
                         )
@@ -277,7 +292,7 @@ extension MirageClientService {
                     } catch is CancellationError {
                         return .cancelled(index: index, attempt: attempt)
                     } catch {
-                        await raceState.recordFailed(attempt.transportKind)
+                        await raceState.recordFailed(raceTransportKind)
                         let classification = Self.classifyControlSessionFailure(error)
                         return .failed(
                             index: index,
@@ -296,7 +311,9 @@ extension MirageClientService {
             while let outcome = try await group.next() {
                 switch outcome {
                 case let .connected(_, attempt, session):
-                    if await raceState.markWinner(attempt.transportKind) {
+                    if await raceState.markWinner(
+                        MirageConnectivityLoomAdapter.transportKind(from: attempt.transportKind)
+                    ) {
                         recordControlSessionAttemptWinner(
                             attempt,
                             reason: "overlay race winner"
@@ -329,12 +346,12 @@ extension MirageClientService {
             if let lastFailure {
                 switch lastFailure.classification {
                 case .timeout:
-                    throw MirageError.timeout
+                    throw MirageCore.MirageError.timeout
                 default:
-                    throw MirageError.protocolError(lastFailure.reason)
+                    throw MirageCore.MirageError.protocolError(lastFailure.reason)
                 }
             }
-            throw MirageError.timeout
+            throw MirageCore.MirageError.timeout
         }
     }
 
@@ -342,7 +359,7 @@ extension MirageClientService {
         attempt: ControlSessionAttempt,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
-        progressObserver: (@Sendable (LoomAuthenticatedSessionBootstrapProgress) async -> Void)? = nil
+        progressObserver: (@Sendable (MirageSessionBootstrapProgress) async -> Void)? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
@@ -364,12 +381,13 @@ extension MirageClientService {
                     self?.authorizationState = .verifyingTrust
                 },
                 onBootstrapProgress: { [weak self] progress in
+                    let mirageProgress = MirageConnectivityLoomAdapter.sessionBootstrapProgress(from: progress)
                     Task {
-                        await bootstrapProgressTracker.record(progress)
-                        await progressObserver?(progress)
+                        await bootstrapProgressTracker.record(mirageProgress)
+                        await progressObserver?(mirageProgress)
                         await MainActor.run {
                             self?.handleConnectBootstrapProgress(
-                                progress,
+                                mirageProgress,
                                 attempt: attempt,
                                 attemptID: attemptID
                             )
@@ -420,10 +438,10 @@ extension MirageClientService {
                 "expected=\(attempt.proximityDescription) actual=missing-path-snapshot"
             MirageLogger.client(reason)
             recordControlSessionProximityValidation(attempt, outcome: "missingPathSnapshot")
-            throw MirageError.protocolError(reason)
+            throw MirageCore.MirageError.protocolError(reason)
         }
 
-        let classifiedSnapshot = MirageNetworkPathClassifier.classify(pathSnapshot)
+        let classifiedSnapshot = MirageConnectivity.MirageNetworkPathClassifier.classify(pathSnapshot)
         guard attempt.acceptsProximityPath(classifiedSnapshot) else {
             let reason = "Proximity path validation failed for \(attempt.hostName) " +
                 "expected=\(attempt.proximityDescription) actual=\(classifiedSnapshot.signature)"
@@ -432,7 +450,7 @@ extension MirageClientService {
                 attempt,
                 outcome: "rejected actual=\(classifiedSnapshot.signature)"
             )
-            throw MirageError.protocolError(reason)
+            throw MirageCore.MirageError.protocolError(reason)
         }
 
         MirageLogger.client(
@@ -457,7 +475,7 @@ extension MirageClientService {
         preRemoteHelloActivePhaseIdleTimeout: Duration?,
         bootstrapProgressTracker: ConnectSessionBootstrapProgressTracker
     ) async throws -> LoomAuthenticatedSession {
-        let timeoutError = MirageError.timeout
+        let timeoutError = MirageCore.MirageError.timeout
         var connectResultTask: Task<Void, Never>?
         var timeoutMonitorTask: Task<Void, Never>?
 
@@ -565,7 +583,7 @@ extension MirageClientService {
     }
 
     func handleConnectBootstrapProgress(
-        _ progress: LoomAuthenticatedSessionBootstrapProgress,
+        _ progress: MirageSessionBootstrapProgress,
         attempt: ControlSessionAttempt,
         attemptID: UUID
     ) {

@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -27,13 +35,14 @@ extension MirageHostService {
 
         while true {
             let onlineDisplayIDs = currentOnlineDisplayIDsForMirroringStability()
-            let observedResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(targetDisplayID)?.pixel
+            let observedResolution = platformVirtualDisplayBackend.currentDisplayModeSizes(targetDisplayID)?.pixel
             let decision = displayMirroringTargetStabilityDecision(
                 targetDisplayID: targetDisplayID,
                 onlineDisplayIDs: onlineDisplayIDs,
                 observedTargetPixelResolution: observedResolution,
                 expectedTargetPixelResolution: expectedPixelResolution,
-                requiresResidualMirageDisplaysClear: requiresResidualMirageDisplaysClear
+                requiresResidualMirageDisplaysClear: requiresResidualMirageDisplaysClear,
+                isMirageDisplay: { platformVirtualDisplayBackend.isMirageDisplay($0) }
             )
             lastDecision = decision
 
@@ -61,13 +70,7 @@ extension MirageHostService {
     }
 
     func currentOnlineDisplayIDsForMirroringStability() -> [CGDirectDisplayID] {
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return [] }
-
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
-        return Array(displays.prefix(Int(displayCount)))
+        platformVirtualDisplayBackend.onlineDisplayIDs()
     }
 
     func displayMirroringTargetStabilityDescription(

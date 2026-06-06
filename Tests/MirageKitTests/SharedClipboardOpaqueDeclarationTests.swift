@@ -8,6 +8,7 @@
 @testable import MirageKit
 import Foundation
 import Testing
+import MirageWire
 
 extension SharedClipboardTests {
     @Test("Automatic shared clipboard declares each opaque pasteboard change")
@@ -33,7 +34,7 @@ extension SharedClipboardTests {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 100_000
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 8,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000020")!
         )
@@ -56,7 +57,7 @@ extension SharedClipboardTests {
 
 private func opaqueFileItem() -> MirageSharedClipboardItem {
     MirageSharedClipboardItem(
-        representation: SharedClipboardRepresentation(
+        representation: MirageWire.SharedClipboardRepresentation(
             kind: .file,
             contentType: "public.data",
             filename: "Large.mov",

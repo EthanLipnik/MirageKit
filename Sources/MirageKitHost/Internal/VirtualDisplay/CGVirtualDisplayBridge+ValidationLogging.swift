@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -45,7 +53,7 @@ extension CGVirtualDisplayBridge {
 
     static func validatedDisplayColorSpace(
         displayID: CGDirectDisplayID,
-        expectedColorSpace: MirageColorSpace
+        expectedColorSpace: MirageMedia.MirageColorSpace
     ) -> DisplayColorSpaceValidationResult {
         var latest = DisplayColorSpaceValidationResult(
             coverageStatus: .unresolved,
@@ -71,7 +79,7 @@ extension CGVirtualDisplayBridge {
 
     static func acceptValidatedVirtualDisplayColor(
         _ colorValidation: DisplayColorSpaceValidationResult,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,

@@ -7,9 +7,17 @@
 //  HEVC decoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 extension FrameReassembler {
     func setFrameHandler(_ handler: @escaping @Sendable (
@@ -74,9 +82,9 @@ extension FrameReassembler {
         MirageLogger.log(.frameAssembly, "Reassembler target frame rate updated to \(sanitizedFrameRate)fps for stream \(streamID)")
     }
 
-    func setLatencyMode(_ latencyMode: MirageStreamLatencyMode) {
+    func setLatencyMode(_ latencyMode: MirageMedia.MirageStreamLatencyMode) {
         lock.lock()
-        let previousLatencyMode: MirageStreamLatencyMode
+        let previousLatencyMode: MirageMedia.MirageStreamLatencyMode
         do {
             defer { lock.unlock() }
             previousLatencyMode = self.latencyMode
@@ -90,9 +98,9 @@ extension FrameReassembler {
         )
     }
 
-    func setTransportPathKind(_ pathKind: MirageNetworkPathKind) {
+    func setTransportPathKind(_ pathKind: MirageCore.MirageNetworkPathKind) {
         lock.lock()
-        let previousPathKind: MirageNetworkPathKind
+        let previousPathKind: MirageCore.MirageNetworkPathKind
         do {
             defer { lock.unlock() }
             previousPathKind = transportPathKind
@@ -106,9 +114,9 @@ extension FrameReassembler {
         )
     }
 
-    func setMediaPathProfile(_ profile: MirageMediaPathProfile) {
+    func setMediaPathProfile(_ profile: MirageMedia.MirageMediaPathProfile) {
         lock.lock()
-        let previousProfile: MirageMediaPathProfile
+        let previousProfile: MirageMedia.MirageMediaPathProfile
         do {
             defer { lock.unlock() }
             previousProfile = mediaPathProfile
@@ -127,7 +135,7 @@ extension FrameReassembler {
         return delta > 0 && delta < 32_768
     }
 
-    func processPacket(_ data: Data, header: FrameHeader) {
+    func processPacket(_ data: Data, header: MirageWire.FrameHeader) {
         var completedFrames: [CompletedFrame] = []
         var completionHandler: (@Sendable (
             StreamID,
@@ -233,7 +241,7 @@ extension FrameReassembler {
 
         // Encrypted packets use AEAD integrity; unencrypted packets keep mandatory CRC validation.
         if !header.flags.contains(.encryptedPayload) {
-            let calculatedCRC = CRC32.calculate(data)
+            let calculatedCRC = MirageWire.CRC32.calculate(data)
             if calculatedCRC != header.checksum {
                 packetsDiscardedCRC += 1
                 MirageLogger.log(

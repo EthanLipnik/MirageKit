@@ -5,31 +5,17 @@
 //  Created by Ethan Lipnik on 5/20/26.
 //
 
-import Foundation
-import Loom
-import Network
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
-
-public struct MirageClientControlSessionAttemptSummary: Sendable, Equatable {
-    public let observedAt: Date
-    public let phase: String
-    public let hostName: String
-    public let transport: String
-    public let endpoint: String
-    public let candidateKind: String
-    public let routeTier: String
-    public let endpointSource: String
-    public let requiredInterface: String
-    public let proximity: String
-    public let outcome: String
-
-    public var supportSummaryLine: String {
-        "\(observedAt.ISO8601Format()) phase=\(phase) host=\(hostName) " +
-            "transport=\(transport) candidate=\(candidateKind) endpoint=\(endpoint) " +
-            "route=\(routeTier) source=\(endpointSource) interface=\(requiredInterface) " +
-            "proximity=\(proximity) outcome=\(outcome)"
-    }
-}
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Network
 
 @MainActor
 extension MirageClientService {
@@ -37,14 +23,15 @@ extension MirageClientService {
 
     func recordControlSessionAttemptPlan(
         _ attempts: [ControlSessionAttempt],
-        host: LoomPeer
+        resolvedAddressCount: Int,
+        discoveredInterfaceNames: [String]
     ) {
         guard !attempts.isEmpty else { return }
         for (index, attempt) in attempts.enumerated() {
             recordControlSessionAttempt(
                 attempt,
                 phase: "planned",
-                outcome: "order=\(index + 1)/\(attempts.count) resolved=\(host.resolvedAddresses.count) interfaces=\(host.discoveredInterfaces.map(\.name).joined(separator: ","))"
+                outcome: "order=\(index + 1)/\(attempts.count) resolved=\(resolvedAddressCount) interfaces=\(discoveredInterfaceNames.joined(separator: ","))"
             )
         }
     }
@@ -109,7 +96,7 @@ extension MirageClientService {
         outcome: String
     ) {
         recentControlSessionAttemptSummaries.append(
-            MirageClientControlSessionAttemptSummary(
+            MirageDiagnostics.MirageClientControlSessionAttemptSummary(
                 observedAt: Date(),
                 phase: phase,
                 hostName: attempt.hostName,

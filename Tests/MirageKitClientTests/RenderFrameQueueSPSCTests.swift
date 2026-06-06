@@ -13,6 +13,8 @@ import CoreVideo
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
 #if os(macOS)
 @Suite("Render Stream Store")
@@ -222,7 +224,7 @@ struct RenderFrameQueueSPSCTests {
 
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(sourceFPS: 60)
+            target: MirageMedia.MirageStreamCadenceTarget(sourceFPS: 60)
         )
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
         for index in 0 ..< 3 {
@@ -272,7 +274,7 @@ struct RenderFrameQueueSPSCTests {
 
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 30,
                 displayFPS: 120,
                 latencyMode: .lowestLatency

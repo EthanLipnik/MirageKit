@@ -7,8 +7,16 @@
 //  Client-side quality test support.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import Network
 
 /// Strategy used when building a client-to-host network quality test.
@@ -28,11 +36,11 @@ public struct MirageQualityTestProgressUpdate: Sendable {
     /// Number of stages completed before this update.
     public let completedStages: Int
     /// Probe path used by the current stage.
-    public let probeKind: MirageQualityTestPlan.ProbeKind
+    public let probeKind: MirageDiagnostics.MirageQualityTestPlan.ProbeKind
     /// Target bitrate for the current stage, in bits per second.
     public let targetBitrateBps: Int
     /// Most recent completed stage result, when available.
-    public let latestCompletedStageResult: MirageQualityTestSummary.StageResult?
+    public let latestCompletedStageResult: MirageDiagnostics.MirageQualityTestSummary.StageResult?
     /// Bytes transferred so far for object-transfer based tests.
     public let transferredBytes: UInt64?
     /// Total bytes expected for object-transfer based tests.
@@ -43,9 +51,9 @@ public struct MirageQualityTestProgressUpdate: Sendable {
         currentStage: Int,
         totalStages: Int,
         completedStages: Int,
-        probeKind: MirageQualityTestPlan.ProbeKind,
+        probeKind: MirageDiagnostics.MirageQualityTestPlan.ProbeKind,
         targetBitrateBps: Int,
-        latestCompletedStageResult: MirageQualityTestSummary.StageResult?,
+        latestCompletedStageResult: MirageDiagnostics.MirageQualityTestSummary.StageResult?,
         transferredBytes: UInt64? = nil,
         totalBytes: UInt64? = nil
     ) {
@@ -66,7 +74,7 @@ extension MirageClientService {
     nonisolated static let connectionLimitLossThresholdPercent = 1.0
 
     nonisolated static func qualityTestShouldStopConnectionLimitSweep(
-        _ stage: MirageQualityTestSummary.StageResult
+        _ stage: MirageDiagnostics.MirageQualityTestSummary.StageResult
     ) -> Bool {
         stage.lossPercent >= connectionLimitLossThresholdPercent
     }
@@ -76,23 +84,23 @@ extension MirageClientService {
         includeThroughput: Bool = true,
         mode: MirageQualityTestMode = .automaticSelection,
         onStageUpdate: (@MainActor (MirageQualityTestProgressUpdate) -> Void)? = nil
-    ) async throws -> MirageQualityTestSummary {
+    ) async throws -> MirageDiagnostics.MirageQualityTestSummary {
         let testID = UUID()
         return try await withTaskCancellationHandler {
             guard case .connected = connectionState else {
-                throw MirageError.protocolError("Not connected")
+                throw MirageCore.MirageError.protocolError("Not connected")
             }
 
             qualityTestPendingTestID = testID
 
             let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
-            let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
+            let payloadBytes = MirageWire.miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
             let usesObjectTransfer = includeThroughput
             let executionPlan =
                 includeThroughput && !usesObjectTransfer
                     ? Self.qualityTestExecutionPlan(for: mode)
                     : QualityTestExecutionPlan(
-                        plan: MirageQualityTestPlan(stages: []),
+                        plan: MirageDiagnostics.MirageQualityTestPlan(stages: []),
                         transportMeasurementStageIDs: [],
                         streamingReplayMeasurementStageIDs: [],
                         stopAfterFirstBreach: false
@@ -138,7 +146,7 @@ extension MirageClientService {
             }
             try Task.checkCancellation()
 
-            let stageResults: [MirageQualityTestSummary.StageResult]
+            let stageResults: [MirageDiagnostics.MirageQualityTestSummary.StageResult]
             if usesObjectTransfer {
                 stageResults = try await runQualityTestObjectTransferSession(
                     testID: testID,
@@ -201,12 +209,12 @@ extension MirageClientService {
 
             if resolvedBitrates.transportHeadroomBps <= 0
                 && resolvedBitrates.streamingSafeBitrateBps <= 0 {
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Connection test failed: no usable throughput measurement was recorded."
                 )
             }
 
-            return MirageQualityTestSummary(
+            return MirageDiagnostics.MirageQualityTestSummary(
                 testID: testID,
                 rttMs: rttMs,
                 lossPercent: lossPercent,
@@ -235,14 +243,14 @@ extension MirageClientService {
     public func runInStreamProbe(
         targetBitrateBps: Int,
         durationMs: Int = 600
-    ) async throws -> MirageQualityTestSummary.StageResult {
+    ) async throws -> MirageDiagnostics.MirageQualityTestSummary.StageResult {
         guard case .connected = connectionState else {
-            throw MirageError.protocolError("Not connected")
+            throw MirageCore.MirageError.protocolError("Not connected")
         }
 
         let testID = UUID()
         let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
-        let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
+        let payloadBytes = MirageWire.miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
 
         MirageLogger.client(
             "In-stream probe starting: target \(mirageFormattedMegabitRate(targetBitrateBps)), duration \(durationMs)ms"
@@ -270,10 +278,10 @@ extension MirageClientService {
     }
 
     /// Handles the host-side encode benchmark result for the active quality test.
-    func handleQualityTestBenchmark(_ message: ControlMessage) {
-        let result: QualityTestBenchmarkMessage
+    func handleQualityTestBenchmark(_ message: MirageWire.ControlMessage) {
+        let result: MirageWire.QualityTestBenchmarkMessage
         do {
-            result = try message.decode(QualityTestBenchmarkMessage.self)
+            result = try message.decode(MirageWire.QualityTestBenchmarkMessage.self)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode quality test benchmark: "
@@ -288,10 +296,10 @@ extension MirageClientService {
     }
 
     /// Handles a host-reported quality-test stage completion or buffers it until the stage waiter is armed.
-    func handleQualityTestStageCompletion(_ message: ControlMessage) {
-        let result: QualityTestStageCompleteMessage
+    func handleQualityTestStageCompletion(_ message: MirageWire.ControlMessage) {
+        let result: MirageWire.QualityTestStageCompleteMessage
         do {
-            result = try message.decode(QualityTestStageCompleteMessage.self)
+            result = try message.decode(MirageWire.QualityTestStageCompleteMessage.self)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode quality test stage completion: "

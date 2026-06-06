@@ -5,31 +5,25 @@
 //  Created by Ethan Lipnik on 4/1/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CryptoKit
 import Darwin
 import Foundation
 import Network
 
-package struct MirageLocalNetworkSnapshot: Sendable, Equatable {
-    package let currentPathKind: MirageNetworkPathKind
-    package let wifiSubnetSignatures: [String]
-    package let wiredSubnetSignatures: [String]
-
-    /// Combines Wi-Fi and wired subnet fingerprints into the set used for local-network overlap checks.
-    package static func subnetSignatureSet(
-        wifiSubnetSignatures: [String],
-        wiredSubnetSignatures: [String]
-    ) -> Set<String> {
-        Set(wifiSubnetSignatures).union(wiredSubnetSignatures)
-    }
-}
 
 package final class MirageLocalNetworkMonitor: @unchecked Sendable {
     private let pathMonitor: NWPathMonitor
     private let pathMonitorQueue: DispatchQueue
     private let stateQueue: DispatchQueue
 
-    private var currentPathKind: MirageNetworkPathKind = .unknown
+    private var currentPathKind: MirageCore.MirageNetworkPathKind = .unknown
     private var interfaceTypesByName: [String: NWInterface.InterfaceType] = [:]
 
     package init(label: String) {
@@ -52,7 +46,7 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
     /// The path kind and interface map are read from the monitor queue before subnet signatures are
     /// derived from the system interface table, so callers receive a consistent point-in-time view
     /// of the last `NWPath` update.
-    package var snapshot: MirageLocalNetworkSnapshot {
+    package var snapshot: MirageConnectivity.MirageLocalNetworkSnapshot {
         let (pathKind, interfaceTypesByName) = stateQueue.sync {
             (currentPathKind, self.interfaceTypesByName)
         }
@@ -71,10 +65,10 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
     }
 
     package static func makeSnapshot(
-        currentPathKind: MirageNetworkPathKind,
+        currentPathKind: MirageCore.MirageNetworkPathKind,
         interfaceTypesByName: [String: NWInterface.InterfaceType]
-    ) -> MirageLocalNetworkSnapshot {
-        MirageLocalNetworkSnapshot(
+    ) -> MirageConnectivity.MirageLocalNetworkSnapshot {
+        MirageConnectivity.MirageLocalNetworkSnapshot(
             currentPathKind: currentPathKind,
             wifiSubnetSignatures: subnetSignatures(
                 for: .wifi,
@@ -143,7 +137,7 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
             interface in
             partialResult[interface.name.lowercased()] = interface.type
         }
-        let localDefaultRouteKind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+        let localDefaultRouteKind = MirageConnectivity.MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
             interfaceNames: path.availableInterfaces.map(\.name),
             usesWiFi: path.usesInterfaceType(.wifi),
             usesWired: path.usesInterfaceType(.wiredEthernet),

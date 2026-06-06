@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
 
@@ -16,9 +25,9 @@ import AppKit
 @MainActor
 public final class MirageHostCaptureBenchmarkWindowConfiguration {
     /// Benchmark stage being prepared.
-    public let stage: MirageHostCaptureBenchmarkStage
+    public let stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage
     /// Capture mode selection being measured.
-    public let modeSelection: MirageHostCaptureBenchmarkModeSelection
+    public let modeSelection: MirageDiagnostics.MirageHostCaptureBenchmarkModeSelection
     /// Display that should contain the prepared source window.
     public let displayID: CGDirectDisplayID
     /// Bounds of the target display in global display coordinates.
@@ -29,8 +38,8 @@ public final class MirageHostCaptureBenchmarkWindowConfiguration {
     private let spaceID: CGSSpaceID
 
     init(
-        stage: MirageHostCaptureBenchmarkStage,
-        modeSelection: MirageHostCaptureBenchmarkModeSelection,
+        stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
+        modeSelection: MirageDiagnostics.MirageHostCaptureBenchmarkModeSelection,
         displayID: CGDirectDisplayID,
         displayBounds: CGRect,
         pixelSize: CGSize,

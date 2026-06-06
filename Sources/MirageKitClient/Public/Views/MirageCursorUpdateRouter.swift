@@ -7,7 +7,15 @@
 //  Cursor update routing for input capture views.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS) || os(macOS)
 import Foundation
 
@@ -36,7 +44,7 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
     private var flushTask: Task<Void, Never>?
     private let flushInterval: Duration
 
-    init(flushInterval: Duration = MirageInteractionCadence.frameInterval120Duration) {
+    init(flushInterval: Duration = MirageMedia.MirageInteractionCadence.frameInterval120Duration) {
         self.flushInterval = flushInterval
     }
 

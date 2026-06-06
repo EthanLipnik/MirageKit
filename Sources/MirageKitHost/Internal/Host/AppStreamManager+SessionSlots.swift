@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension AppStreamManager {
@@ -57,8 +65,8 @@ extension AppStreamManager {
 
     /// Sorts hidden windows by display title, then window ID for deterministic inventory updates.
     func hiddenInventoryWindowPrecedes(
-        _ lhs: AppWindowInventoryMessage.WindowMetadata,
-        _ rhs: AppWindowInventoryMessage.WindowMetadata
+        _ lhs: MirageWire.AppWindowInventoryMessage.WindowMetadata,
+        _ rhs: MirageWire.AppWindowInventoryMessage.WindowMetadata
     ) -> Bool {
         let lhsTitle = lhs.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let rhsTitle = rhs.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

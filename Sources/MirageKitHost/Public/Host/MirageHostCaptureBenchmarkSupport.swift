@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -75,17 +83,17 @@ struct MirageHostCaptureBenchmarkResolvedSource {
 
 /// Measurements produced by the source-window benchmark phase.
 struct MirageHostCaptureBenchmarkPhaseMeasurement {
-    let phase: MirageHostCaptureBenchmarkPhaseResult
+    let phase: MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult
     let observedDisplayCadenceFPS: Double?
     let sourceGenerationFPS: Double?
-    let capturePolicy: MirageHostCaptureBenchmarkCapturePolicy?
+    let capturePolicy: MirageDiagnostics.MirageHostCaptureBenchmarkCapturePolicy?
 }
 
 /// Measurements produced by the display-capture and encode benchmark phase.
 struct MirageHostCaptureBenchmarkDisplayMeasurement {
-    let phase: MirageHostCaptureBenchmarkPhaseResult
+    let phase: MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult
     let encodeFPS: Double?
     let averageEncodeTimeMs: Double?
-    let capturePolicy: MirageHostCaptureBenchmarkCapturePolicy?
+    let capturePolicy: MirageDiagnostics.MirageHostCaptureBenchmarkCapturePolicy?
 }
 #endif

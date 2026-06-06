@@ -7,9 +7,18 @@
 //  Session state updates and window list delivery.
 //
 
-import Foundation
-import MirageBootstrapShared
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Loom
+import MirageBootstrapShared
 
 #if os(macOS)
 @MainActor
@@ -41,16 +50,18 @@ extension MirageHostService {
 
     /// Applies a session availability change and broadcasts dependent host state.
     func handleSessionStateChange(_ newState: LoomSessionAvailability) async {
-        sessionState = newState
+        let availability = MirageWire.MirageHostSessionAvailability(loomAvailability: newState)
+        mirageSessionAvailability = availability
         currentSessionToken = UUID().uuidString
 
+        delegate?.sessionAvailabilityDidChange(availability)
         delegate?.sessionStateDidChange(newState)
 
         for clientContext in clientsBySessionID.values {
             await sendSessionState(to: clientContext)
         }
 
-        if newState == .ready {
+        if mirageSessionAvailability == .ready {
             for clientContext in clientsBySessionID.values {
                 await sendWindowList(to: clientContext)
             }
@@ -64,10 +75,11 @@ extension MirageHostService {
 
     /// Sends the current host session availability to a client.
     func sendSessionState(to clientContext: ClientContext) async {
-        let message = SessionStateUpdateMessage(
-            state: sessionState,
+        let availability = mirageSessionAvailability
+        let message = MirageWire.SessionStateUpdateMessage(
+            state: availability,
             sessionToken: currentSessionToken,
-            requiresUserIdentifier: sessionState.requiresUserIdentifier
+            requiresUserIdentifier: availability.requiresUserIdentifier
         )
 
         do {
@@ -85,7 +97,7 @@ extension MirageHostService {
     /// Sends the current window catalog to a client.
     func sendWindowList(to clientContext: ClientContext) async {
         do {
-            let windowList = WindowListMessage(windows: availableWindows)
+            let windowList = MirageWire.WindowListMessage(windows: availableWindows)
             try await clientContext.send(.windowList, content: windowList)
             MirageLogger.host("Sent window list with \(availableWindows.count) windows")
         } catch {

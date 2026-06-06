@@ -7,176 +7,17 @@
 //  Latest-frame render store state and telemetry carriers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
-import MirageKit
-
-struct SubmissionSnapshot {
-    /// Generation-aware cursor for presentation progress.
-    ///
-    /// A zero sequence records the current render generation before its first submission.
-    let cursor: MirageRenderCursor
-
-    /// Last frame sequence accepted by the presentation layer.
-    let sequence: UInt64
-
-    /// Wall-clock time when the frame was submitted.
-    let submittedTime: CFAbsoluteTime
-
-    /// Host-provided presentation timestamp for the submitted frame, when available.
-    let remotePresentationTime: CMTime
-
-    func hasSubmittedFrame(after baseline: SubmissionSnapshot) -> Bool {
-        cursor.hasSubmittedFrame && cursor.isAfter(baseline.cursor)
-    }
-}
-
-struct MirageRenderEnqueueResult {
-    let cursor: MirageRenderCursor
-    let didEnqueue: Bool
-    let pendingFrameCount: Int
-    let pendingFrameAgeMs: Double
-    let overwrittenPendingFrames: Int
-}
-
-/// Rolling render telemetry sampled by stream UI and diagnostics.
-struct RenderTelemetrySnapshot {
-    /// Display clock ticks observed during the one-second telemetry window.
-    let displayTickFPS: Double
-
-    /// Presentation attempts made during the one-second telemetry window.
-    let submitAttemptFPS: Double
-
-    /// Frames accepted by the display layer during the one-second telemetry window.
-    let layerAcceptedFPS: Double
-
-    /// Unique frame submissions accepted by the display layer during the one-second telemetry window.
-    let visibleFrameFPS: Double
-
-    /// Total display-layer submissions during the one-second telemetry window.
-    let submittedFPS: Double
-
-    /// Unique frame submissions, excluding repeated ticks that reused the last frame.
-    let uniqueSubmittedFPS: Double
-
-    /// Frames currently queued for presentation.
-    let pendingFrameCount: Int
-
-    /// Age of the oldest pending frame in milliseconds.
-    let pendingFrameAgeMs: Double
-
-    /// 95th percentile age of the oldest pending frame in the telemetry window.
-    let pendingFrameAgeP95Ms: Double
-
-    /// Maximum age of the oldest pending frame in the telemetry window.
-    let pendingFrameAgeMaxMs: Double
-
-    /// Maximum queued frame depth sampled in the telemetry window.
-    let pendingFrameDepthMax: Int
-
-    /// Current Smoothest-mode display debt, in milliseconds.
-    let smoothestDisplayDebtMs: Double
-
-    /// Active Smoothest-mode display debt cap, in milliseconds.
-    let smoothestDisplayDebtCapMs: Double
-
-    /// Current Smoothest-mode target playout delay, in milliseconds.
-    let smoothestTargetDelayMs: Double
-
-    /// Pending frames overwritten because the local playout queue was full.
-    let overwrittenPendingFrames: UInt64
-
-    /// Smoothest-mode frames dropped by local playout queue bounds.
-    let smoothestQueueDrops: UInt64
-
-    /// Smoothest-mode frames dropped because the queue exceeded its depth bound.
-    let smoothestDepthDrops: UInt64
-
-    /// Smoothest-mode frames dropped because queued frames exceeded the stale-age bound.
-    let smoothestAgeDrops: UInt64
-
-    /// Smoothest-mode frames dropped while younger than 100 ms.
-    let smoothestDropsUnder100ms: UInt64
-
-    /// Maximum local age for a Smoothest-mode dropped frame.
-    let smoothestDroppedFrameAgeMaxMs: Double
-
-    /// Smoothest-mode frames dropped because queued display debt exceeded the live threshold.
-    let smoothestDisplayDebtDrops: UInt64
-
-    /// Number of Smoothest-mode FIFO resets caused by stale or excessive display debt.
-    let smoothestFifoResetCount: UInt64
-
-    /// Queued frames dropped because newer frames had already superseded them.
-    let lateFrameDrops: UInt64
-
-    /// Frames coalesced before presentation.
-    let coalescedBeforeSubmitCount: UInt64
-
-    /// Frames received with a duplicate host presentation timestamp.
-    let duplicateRemoteTimestampCount: UInt64
-
-    /// Frames whose host timestamp required local monotonic correction.
-    let correctedStreamTimestampCount: UInt64
-
-    /// Times presentation was attempted while the display layer was not ready.
-    let displayLayerNotReadyCount: UInt64
-
-    /// Display ticks that repeated the previous submitted frame.
-    let repeatedFrameCount: UInt64
-
-    let displayTickNoFrameCount: UInt64
-    let pendingFrameNotReadyDisplayTickCount: UInt64
-    let frameArrivedAfterNoFrameTickCount: UInt64
-    let frameArrivalFallbackCount: UInt64
-    let frameArrivalFallbackScheduledCount: UInt64
-    let frameArrivalFallbackSubmittedCount: UInt64
-    let noFrameTickToFrameArrivalMaxMs: Double
-
-    /// Display intervals that exceeded the target frame duration threshold.
-    let missedVSyncCount: UInt64
-
-    /// 95th percentile display-clock interval in milliseconds.
-    let displayTickIntervalP95Ms: Double
-
-    /// 99th percentile display-clock interval in milliseconds.
-    let displayTickIntervalP99Ms: Double
-
-    /// Current playout delay target in frames.
-    let playoutDelayFrames: Int
-
-    /// Presentation gaps counted as stalls since the previous snapshot.
-    let presentationStallCount: UInt64
-
-    /// Longest presentation gap in milliseconds since the previous snapshot.
-    let worstPresentationGapMs: Double
-
-    /// 95th percentile unique-frame submission interval in milliseconds.
-    let frameIntervalP95Ms: Double
-
-    /// 99th percentile unique-frame submission interval in milliseconds.
-    let frameIntervalP99Ms: Double
-
-    /// Whether decode throughput is high enough for the current source frame rate.
-    let decodeHealthy: Bool
-}
-
-/// Weak owner token used to drop render-frame listeners after their owner deallocates.
-final class MirageRenderStreamWeakOwner {
-    weak var value: AnyObject?
-
-    init(_ value: AnyObject) {
-        self.value = value
-    }
-}
-
-struct MirageRenderStreamFrameListener {
-    /// Weak owner that controls listener lifetime.
-    let owner: MirageRenderStreamWeakOwner
-
-    /// Callback invoked when the store has work for the listener.
-    let callback: @Sendable () -> Void
-}
 
 /// Locked mutable render state for one media stream.
 final class MirageRenderStreamState {
@@ -195,14 +36,14 @@ final class MirageRenderStreamState {
     var lastEnqueuedDimensionToken: UInt16?
     var lastSubmittedRemotePresentationTime: CMTime = .invalid
     var lastSubmittedMappedPresentationTime: CMTime = .invalid
-    var lastAcceptedFrameTimeline: FrameTimeline?
+    var lastAcceptedFrameTimeline: MirageDiagnostics.FrameTimeline?
     var lastDisplayTickTime: CFAbsoluteTime = 0
     var sourceTargetFPS: Int = 60
     var displayTargetFPS: Int = 60
-    var latencyMode: MirageStreamLatencyMode = .lowestLatency
-    var playoutDelayFrames: Int = MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .lowestLatency)
-    var transportPathKind: MirageNetworkPathKind = .unknown
-    var mediaPathProfile: MirageMediaPathProfile = .unknown
+    var latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency
+    var playoutDelayFrames: Int = MirageMedia.MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .lowestLatency)
+    var transportPathKind: MirageCore.MirageNetworkPathKind = .unknown
+    var mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     var awdlReceiverPlayoutDelayTargetMs: Double?
     var lastInteractionTime: CFAbsoluteTime = 0
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]

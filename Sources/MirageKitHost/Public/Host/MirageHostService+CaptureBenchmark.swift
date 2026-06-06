@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 4/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -16,10 +24,10 @@ extension MirageHostService {
     /// Runs the host capture benchmark for the requested stages and mode selections.
     @_spi(HostApp)
     public func runCaptureBenchmark(
-        configuration: MirageHostCaptureBenchmarkConfiguration,
+        configuration: MirageDiagnostics.MirageHostCaptureBenchmarkConfiguration,
         prepareSourceWindow: @escaping @MainActor @Sendable (MirageHostCaptureBenchmarkWindowConfiguration) async throws -> MirageHostCaptureBenchmarkPreparedSource,
-        progressHandler: (@MainActor @Sendable (MirageHostCaptureBenchmarkProgress?) -> Void)? = nil
-    ) async throws -> MirageHostCaptureBenchmarkReport {
+        progressHandler: (@MainActor @Sendable (MirageDiagnostics.MirageHostCaptureBenchmarkProgress?) -> Void)? = nil
+    ) async throws -> MirageDiagnostics.MirageHostCaptureBenchmarkReport {
         guard !configuration.modeSelections.isEmpty else {
             throw MirageHostCaptureBenchmarkError.noModesSelected
         }
@@ -32,7 +40,7 @@ extension MirageHostService {
 
         let totalStageCount = configuration.modeSelections.count * configuration.stages.count
         var completedStageCount = 0
-        var modeResults: [MirageHostCaptureBenchmarkModeResult] = []
+        var modeResults: [MirageDiagnostics.MirageHostCaptureBenchmarkModeResult] = []
         var didCancel = false
 
         for modeSelection in configuration.modeSelections {
@@ -42,20 +50,20 @@ extension MirageHostService {
             }
 
             let lowPowerEnabled = modeSelection.lowPowerEnabled
-            var stageResults: [MirageHostCaptureBenchmarkStageResult] = []
+            var stageResults: [MirageDiagnostics.MirageHostCaptureBenchmarkStageResult] = []
 
             for stage in configuration.stages {
                 if Task.isCancelled {
                     didCancel = true
                     stageResults.append(
-                        MirageHostCaptureBenchmarkStageResult(
+                        MirageDiagnostics.MirageHostCaptureBenchmarkStageResult(
                             stage: stage,
                             status: .cancelled,
                             failureDescription: "Benchmark cancelled before stage start."
                         )
                     )
                     progressHandler?(
-                        MirageHostCaptureBenchmarkProgress(
+                        MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                             phase: .cancelled,
                             modeSelection: modeSelection,
                             stage: stage,
@@ -68,7 +76,7 @@ extension MirageHostService {
                 }
 
                 progressHandler?(
-                    MirageHostCaptureBenchmarkProgress(
+                    MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                         phase: .preparing,
                         modeSelection: modeSelection,
                         stage: stage,
@@ -99,7 +107,7 @@ extension MirageHostService {
             }
 
             modeResults.append(
-                MirageHostCaptureBenchmarkModeResult(
+                MirageDiagnostics.MirageHostCaptureBenchmarkModeResult(
                     modeSelection: modeSelection,
                     lowPowerModeEnabled: lowPowerEnabled,
                     stageResults: stageResults
@@ -111,7 +119,7 @@ extension MirageHostService {
             }
         }
 
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.benchmark)
+        await platformVirtualDisplayBackend.releaseDisplayForConsumer(.benchmark)
         progressHandler?(nil)
 
         let advertisement = currentPeerAdvertisement
@@ -122,7 +130,7 @@ extension MirageHostService {
             forInfoDictionaryKey: kCFBundleVersionKey as String
         ) as? String ?? "0"
 
-        return MirageHostCaptureBenchmarkReport(
+        return MirageDiagnostics.MirageHostCaptureBenchmarkReport(
             machineID: advertisement.deviceID ?? hostID,
             hostName: serviceName,
             hardwareModelIdentifier: advertisement.modelIdentifier,
@@ -139,27 +147,31 @@ extension MirageHostService {
 
     /// Runs one configured benchmark stage and returns its measured result.
     private func runCaptureBenchmarkStage(
-        stage: MirageHostCaptureBenchmarkStage,
-        modeSelection: MirageHostCaptureBenchmarkModeSelection,
+        stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
+        modeSelection: MirageDiagnostics.MirageHostCaptureBenchmarkModeSelection,
         lowPowerEnabled: Bool,
         warmupDurationSeconds: Double,
         measurementDurationSeconds: Double,
         completedStageCount: Int,
         totalStageCount: Int,
         prepareSourceWindow: @escaping @MainActor @Sendable (MirageHostCaptureBenchmarkWindowConfiguration) async throws -> MirageHostCaptureBenchmarkPreparedSource,
-        progressHandler: (@MainActor @Sendable (MirageHostCaptureBenchmarkProgress?) -> Void)?
-    ) async -> MirageHostCaptureBenchmarkStageResult {
+        progressHandler: (@MainActor @Sendable (MirageDiagnostics.MirageHostCaptureBenchmarkProgress?) -> Void)?
+    ) async -> MirageDiagnostics.MirageHostCaptureBenchmarkStageResult {
         var actualPixelWidth: Int?
         var actualPixelHeight: Int?
         var reportedDisplayRefreshRate: Double?
-        var stageWarnings: [MirageHostCaptureBenchmarkWarning] = []
+        var stageWarnings: [MirageDiagnostics.MirageHostCaptureBenchmarkWarning] = []
 
         do {
-            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.benchmark)
-            let displaySnapshot = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+            await platformVirtualDisplayBackend.releaseDisplayForConsumer(.benchmark)
+            let displaySnapshot = try await platformVirtualDisplayBackend.acquireDisplayForConsumer(
                 .benchmark,
                 resolution: stage.pixelSize,
-                refreshRate: stage.refreshRate
+                refreshRate: stage.refreshRate,
+                colorSpace: .displayP3,
+                allowActiveUpdate: false,
+                creationPolicy: .adaptiveRetinaThenFallback1xAndColor,
+                startupBudget: nil
             )
 
             reportedDisplayRefreshRate = displaySnapshot.refreshRate
@@ -178,7 +190,7 @@ extension MirageHostService {
                 actualPixelHeight = actualHeight
                 stageWarnings.append(.quantizedResolution)
             case let .invalid(reason):
-                return MirageHostCaptureBenchmarkStageResult(
+                return MirageDiagnostics.MirageHostCaptureBenchmarkStageResult(
                     stage: stage,
                     status: .invalid,
                     actualPixelWidth: Int(displaySnapshot.resolution.width.rounded()),
@@ -188,7 +200,7 @@ extension MirageHostService {
                 )
             }
 
-            guard let displayBounds = await SharedVirtualDisplayManager.shared.displayBounds else {
+            guard let displayBounds = await platformVirtualDisplayBackend.displayBounds else {
                 throw MirageHostCaptureBenchmarkError.displayBoundsUnavailable(displaySnapshot.displayID)
             }
 
@@ -226,7 +238,7 @@ extension MirageHostService {
             )
 
             progressHandler?(
-                MirageHostCaptureBenchmarkProgress(
+                MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                     phase: .warmingUp,
                     modeSelection: modeSelection,
                     stage: stage,
@@ -248,7 +260,7 @@ extension MirageHostService {
             )
 
             progressHandler?(
-                MirageHostCaptureBenchmarkProgress(
+                MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                     phase: .warmingUp,
                     modeSelection: modeSelection,
                     stage: stage,
@@ -258,13 +270,18 @@ extension MirageHostService {
                 )
             )
 
-            let scDisplayWrapper = try await SharedVirtualDisplayManager.shared.findSCDisplay(
+            let captureDisplay = try await platformVirtualDisplayBackend.findCaptureDisplay(
                 displayID: displaySnapshot.displayID,
-                maxAttempts: 12
+                maxAttempts: 12,
+                startupBudget: nil
+            )
+            let displayWrapper = try await resolveSCDisplayWrapper(
+                for: captureDisplay,
+                label: "capture benchmark display phase"
             )
             let displayMeasurement = try await measureDisplayAndEncodePhase(
                 stage: stage,
-                displayWrapper: scDisplayWrapper,
+                displayWrapper: displayWrapper,
                 resolution: displaySnapshot.resolution,
                 lowPowerEnabled: lowPowerEnabled,
                 warmupDurationSeconds: warmupDurationSeconds,
@@ -307,7 +324,7 @@ extension MirageHostService {
             )
 
             progressHandler?(
-                MirageHostCaptureBenchmarkProgress(
+                MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                     phase: .completed,
                     modeSelection: modeSelection,
                     stage: stage,
@@ -317,7 +334,7 @@ extension MirageHostService {
                 )
             )
 
-            return MirageHostCaptureBenchmarkStageResult(
+            return MirageDiagnostics.MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
                 status: .completed,
                 actualPixelWidth: actualPixelWidth,
@@ -337,7 +354,7 @@ extension MirageHostService {
                 warnings: stageWarnings
             )
         } catch is CancellationError {
-            return MirageHostCaptureBenchmarkStageResult(
+            return MirageDiagnostics.MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
                 status: .cancelled,
                 actualPixelWidth: actualPixelWidth,
@@ -347,7 +364,7 @@ extension MirageHostService {
                 failureDescription: "Benchmark cancelled."
             )
         } catch let error as MirageHostCaptureBenchmarkError {
-            return MirageHostCaptureBenchmarkStageResult(
+            return MirageDiagnostics.MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
                 status: .invalid,
                 actualPixelWidth: actualPixelWidth,
@@ -357,7 +374,7 @@ extension MirageHostService {
                 invalidMeasurementReason: error.localizedDescription
             )
         } catch {
-            return MirageHostCaptureBenchmarkStageResult(
+            return MirageDiagnostics.MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
                 status: .failed,
                 actualPixelWidth: actualPixelWidth,

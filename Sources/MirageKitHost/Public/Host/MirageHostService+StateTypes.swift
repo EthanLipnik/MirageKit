@@ -5,26 +5,34 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
 /// Client-side route evidence captured when a stream is accepted.
 struct HostStreamMediaPathClientEvidence: Sendable, Equatable {
-    let pathKind: MirageNetworkPathKind
-    let mediaPathProfile: MirageMediaPathProfile
+    let pathKind: MirageCore.MirageNetworkPathKind
+    let mediaPathProfile: MirageMedia.MirageMediaPathProfile
     let pathSignature: String?
-    let policyPathKind: MirageNetworkPathKind
-    let policyMediaPathProfile: MirageMediaPathProfile
+    let policyPathKind: MirageCore.MirageNetworkPathKind
+    let policyMediaPathProfile: MirageMedia.MirageMediaPathProfile
 
     init(
-        pathKind: MirageNetworkPathKind?,
-        mediaPathProfile: MirageMediaPathProfile?,
+        pathKind: MirageCore.MirageNetworkPathKind?,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile?,
         pathSignature: String?,
-        policyPathKind: MirageNetworkPathKind? = nil,
-        policyMediaPathProfile: MirageMediaPathProfile? = nil
+        policyPathKind: MirageCore.MirageNetworkPathKind? = nil,
+        policyMediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) {
         self.pathKind = pathKind ?? .unknown
         self.mediaPathProfile = mediaPathProfile ?? .unknown
@@ -106,7 +114,7 @@ extension MirageHostService {
 
     /// App stream request accepted while the host is locked and waiting for the interactive session.
     struct PendingLockedAppStreamIntent {
-        let request: SelectAppMessage
+        let request: MirageWire.SelectAppMessage
         let clientSessionID: UUID
         let clientID: UUID
         let createdAt: Date
@@ -136,7 +144,7 @@ extension MirageHostService {
     struct PendingAppWindowCloseAlertToken {
         let clientID: UUID
         let sourceWindowID: WindowID
-        let sourceApp: MirageApplication?
+        let sourceApp: MirageMedia.MirageApplication?
         let presentingStreamID: StreamID
         let actions: [PendingAppWindowCloseAlertAction]
     }

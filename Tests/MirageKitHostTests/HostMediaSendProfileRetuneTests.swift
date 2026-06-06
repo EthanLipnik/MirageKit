@@ -9,6 +9,10 @@
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 @Suite("Host Media Send Profile Retune")
@@ -120,11 +124,11 @@ struct HostMediaSendProfileRetuneTests {
 
     private func makeContext(
         targetFrameRate: Int = 60,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
-        maxPacketSize: Int = mirageDefaultMaxPacketSize
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame,
+        maxPacketSize: Int = MirageWire.mirageDefaultMaxPacketSize
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: targetFrameRate,
@@ -147,10 +151,10 @@ struct HostMediaSendProfileRetuneTests {
         )
     }
 
-    private static func snapshot(kind: MirageNetworkPathKind) -> MirageNetworkPathSnapshot {
+    private static func snapshot(kind: MirageCore.MirageNetworkPathKind) -> MirageConnectivity.MirageNetworkPathSnapshot {
         switch kind {
         case .awdl:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: ["llw0"],
                 usesWiFi: true,
                 usesWired: false,
@@ -164,7 +168,7 @@ struct HostMediaSendProfileRetuneTests {
                 supportsIPv6: true
             )
         case .wifi:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: ["en0"],
                 usesWiFi: true,
                 usesWired: false,
@@ -178,7 +182,7 @@ struct HostMediaSendProfileRetuneTests {
                 supportsIPv6: true
             )
         case .wired:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: ["en7"],
                 usesWiFi: false,
                 usesWired: true,
@@ -192,7 +196,7 @@ struct HostMediaSendProfileRetuneTests {
                 supportsIPv6: true
             )
         case .cellular, .vpn, .loopback, .other, .unknown:
-            MirageNetworkPathClassifier.classify(
+            MirageConnectivity.MirageNetworkPathClassifier.classify(
                 interfaceNames: [],
                 usesWiFi: false,
                 usesWired: false,

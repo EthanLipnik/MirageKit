@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ApplicationServices
 
-struct WindowAccessibilityResizeResult {
-    let outcome: MirageAppWindowResizeResultOutcome
+struct WindowAccessibilityResizeResult: Sendable {
+    let outcome: MirageWire.MirageAppWindowResizeResultOutcome
     let observedFrame: CGRect?
     let reason: String
 }

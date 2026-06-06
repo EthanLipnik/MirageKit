@@ -8,18 +8,19 @@
 import Foundation
 @testable import MirageKit
 import Testing
+import MirageWire
 
 @Suite("MirageKit Software Update Serialization")
 struct MirageKitSoftwareUpdateSerializationTests {
     @Test("Host software update control message serialization")
     func hostSoftwareUpdateControlMessageSerialization() throws {
-        let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
-        let requestEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatusRequest, content: statusRequest)
+        let statusRequest = MirageWire.HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
+        let requestEnvelope = try MirageWire.ControlMessage(type: .hostSoftwareUpdateStatusRequest, content: statusRequest)
         let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
-        let decodedStatusRequest = try decodedRequestEnvelope.decode(HostSoftwareUpdateStatusRequestMessage.self)
+        let decodedStatusRequest = try decodedRequestEnvelope.decode(MirageWire.HostSoftwareUpdateStatusRequestMessage.self)
         #expect(decodedStatusRequest.forceRefresh == true)
 
-        let status = HostSoftwareUpdateStatusMessage(
+        let status = MirageWire.HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: true,
             isCheckingForUpdates: false,
             isInstallInProgress: true,
@@ -42,9 +43,9 @@ struct MirageKitSoftwareUpdateSerializationTests {
             releaseNotesFormat: .html,
             lastCheckedAtMs: 1_700_000_000_000
         )
-        let statusEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: status)
+        let statusEnvelope = try MirageWire.ControlMessage(type: .hostSoftwareUpdateStatus, content: status)
         let (decodedStatusEnvelope, _) = try requireParsedControlMessage(from: statusEnvelope.serialize())
-        let decodedStatus = try decodedStatusEnvelope.decode(HostSoftwareUpdateStatusMessage.self)
+        let decodedStatus = try decodedStatusEnvelope.decode(MirageWire.HostSoftwareUpdateStatusMessage.self)
         #expect(decodedStatus.channel == .nightly)
         #expect(decodedStatus.availableVersion == "1.3.0")
         #expect(decodedStatus.isInstallInProgress == true)
@@ -56,36 +57,36 @@ struct MirageKitSoftwareUpdateSerializationTests {
         #expect(decodedStatus.extractionProgress == 0.25)
         #expect(decodedStatus.releaseNotesFormat == .html)
 
-        let installRequestEnvelope = ControlMessage(type: .hostSoftwareUpdateInstallRequest)
+        let installRequestEnvelope = MirageWire.ControlMessage(type: .hostSoftwareUpdateInstallRequest)
         let (decodedInstallRequestEnvelope, _) = try requireParsedControlMessage(from: installRequestEnvelope.serialize())
         #expect(decodedInstallRequestEnvelope.payload.isEmpty)
 
-        let installResult = HostSoftwareUpdateInstallResultMessage(
+        let installResult = MirageWire.HostSoftwareUpdateInstallResultMessage(
             message: "Denied",
             resultCode: .denied,
             blockReason: .policyDenied,
             remediationHint: nil,
             status: status
         )
-        let installResultEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: installResult)
+        let installResultEnvelope = try MirageWire.ControlMessage(type: .hostSoftwareUpdateInstallResult, content: installResult)
         let (decodedInstallResultEnvelope, _) = try requireParsedControlMessage(from: installResultEnvelope.serialize())
-        let decodedInstallResult = try decodedInstallResultEnvelope.decode(HostSoftwareUpdateInstallResultMessage.self)
+        let decodedInstallResult = try decodedInstallResultEnvelope.decode(MirageWire.HostSoftwareUpdateInstallResultMessage.self)
         #expect(decodedInstallResult.status.currentVersion == "1.2.0")
         #expect(decodedInstallResult.message == "Denied")
         #expect(decodedInstallResult.resultCode == .denied)
         #expect(decodedInstallResult.blockReason == .policyDenied)
 
-        let restartRequestEnvelope = ControlMessage(type: .hostApplicationRestartRequest)
+        let restartRequestEnvelope = MirageWire.ControlMessage(type: .hostApplicationRestartRequest)
         let (decodedRestartRequestEnvelope, _) = try requireParsedControlMessage(from: restartRequestEnvelope.serialize())
         #expect(decodedRestartRequestEnvelope.payload.isEmpty)
 
-        let restartResult = HostApplicationRestartResultMessage(
+        let restartResult = MirageWire.HostApplicationRestartResultMessage(
             accepted: true,
             message: "Restarting Mirage Host."
         )
-        let restartResultEnvelope = try ControlMessage(type: .hostApplicationRestartResult, content: restartResult)
+        let restartResultEnvelope = try MirageWire.ControlMessage(type: .hostApplicationRestartResult, content: restartResult)
         let (decodedRestartResultEnvelope, _) = try requireParsedControlMessage(from: restartResultEnvelope.serialize())
-        let decodedRestartResult = try decodedRestartResultEnvelope.decode(HostApplicationRestartResultMessage.self)
+        let decodedRestartResult = try decodedRestartResultEnvelope.decode(MirageWire.HostApplicationRestartResultMessage.self)
         #expect(decodedRestartResult.accepted == true)
         #expect(decodedRestartResult.message == "Restarting Mirage Host.")
     }

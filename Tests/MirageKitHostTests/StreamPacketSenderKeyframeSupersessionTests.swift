@@ -12,6 +12,7 @@ import CoreMedia
 import Foundation
 import MirageKit
 import Testing
+import MirageWire
 
 @Suite("Stream Packet Sender Keyframe Supersession")
 struct StreamPacketSenderKeyframeSupersessionTests {
@@ -21,7 +22,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -63,7 +64,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -133,7 +134,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return

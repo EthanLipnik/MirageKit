@@ -13,6 +13,8 @@ import CoreMedia
 import CoreVideo
 import MirageKit
 import Testing
+import MirageCore
+import MirageDiagnostics
 
 @Suite("Frame Timeline")
 struct FrameTimelineTests {
@@ -22,10 +24,10 @@ struct FrameTimelineTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         let now = CFAbsoluteTimeGetCurrent()
 
-        let timeline = FrameTimeline(
+        let timeline = MirageDiagnostics.FrameTimeline(
             streamID: streamID,
             frameNumber: 42,
-            dependencyEpoch: DependencyEpoch(3),
+            dependencyEpoch: MirageDiagnostics.DependencyEpoch(3),
             isKeyframe: true,
             encodedByteCount: 4096,
             fragmentCount: 4,
@@ -65,7 +67,7 @@ struct FrameTimelineTests {
         let rendered = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
         #expect(accepted?.streamID == streamID)
         #expect(accepted?.frameNumber == 42)
-        #expect(accepted?.dependencyEpoch == DependencyEpoch(3))
+        #expect(accepted?.dependencyEpoch == MirageDiagnostics.DependencyEpoch(3))
         #expect(accepted?.renderEnqueueTime != nil)
         #expect(accepted?.displayPresentationAcceptedTime != nil)
         #expect(rendered.renderedFrameNumber == 42)

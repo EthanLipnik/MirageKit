@@ -11,6 +11,7 @@ import Foundation
 import Loom
 import Network
 import Testing
+import MirageKit
 
 @Suite("Client Connection Endpoint Planning")
 struct ClientConnectionEndpointPlanningTests {
@@ -25,7 +26,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: UUID(),
                 hostName: "altair.local",
                 directTransports: [
@@ -65,7 +66,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("altair.tail0000.ts.net"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: UUID(),
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
@@ -98,7 +99,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: UUID(),
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
@@ -131,7 +132,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "Altair.local",
                 directTransports: [
@@ -171,7 +172,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("100.65.199.51"), port: udpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: UUID(),
                 hostName: "Vega",
                 directTransports: [
@@ -214,7 +215,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -254,7 +255,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: .ipv6(linkLocalAddress), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -295,7 +296,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
@@ -334,7 +335,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -378,7 +379,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: .ipv4(overlayAddress), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -424,7 +425,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageKit.controlProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [

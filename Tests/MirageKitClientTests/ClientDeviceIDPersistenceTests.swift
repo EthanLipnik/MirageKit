@@ -8,7 +8,9 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import Foundation
+import Loom
 import Testing
+import MirageKit
 
 @Suite("Client Device ID Persistence", .serialized)
 struct ClientDeviceIDPersistenceTests {

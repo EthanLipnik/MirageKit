@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+MessageHandling+MenuBar.swift
 //  MirageKit
@@ -7,14 +16,13 @@
 //  Menu bar passthrough message handling.
 //
 
-import MirageKit
 
 @MainActor
 extension MirageClientService {
     /// Decodes a host menu-bar snapshot and publishes it to UI observers.
-    func handleMenuBarUpdate(_ message: ControlMessage) {
+    func handleMenuBarUpdate(_ message: MirageWire.ControlMessage) {
         do {
-            let update = try message.decode(MenuBarUpdateMessage.self)
+            let update = try message.decode(MirageWire.MenuBarUpdateMessage.self)
             if let menuBar = update.menuBar {
                 MirageLogger.log(
                     .menuBar,

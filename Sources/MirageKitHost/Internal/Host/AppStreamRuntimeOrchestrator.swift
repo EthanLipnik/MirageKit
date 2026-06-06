@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 2/28/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Tracks active ownership and runtime encoder policies for multi-window app streams.
@@ -22,7 +30,7 @@ actor AppStreamRuntimeOrchestrator {
         /// Time at which an inactive stream's demotion grace expires, if any.
         let nextPolicyTransitionAt: CFAbsoluteTime?
         /// Per-stream policies to apply to the encoder and inventory.
-        let policies: [MirageStreamPolicy]
+        let policies: [MirageWire.MirageStreamPolicy]
     }
 
     /// Mutable runtime state for one app bundle.
@@ -48,7 +56,7 @@ actor AppStreamRuntimeOrchestrator {
     private var bundleStatesByIdentifier: [String: BundleState] = [:]
 
     /// Returns whether an input event should claim active ownership for its stream.
-    nonisolated static func isOwnershipSwitchSignal(_ event: MirageInputEvent) -> Bool {
+    nonisolated static func isOwnershipSwitchSignal(_ event: MirageInput.MirageInputEvent) -> Bool {
         switch event {
         case .windowFocus,
              .mouseDown,
@@ -81,7 +89,7 @@ actor AppStreamRuntimeOrchestrator {
     }
 
     /// Returns whether a scroll event begins or resumes active stream ownership.
-    nonisolated static func isScrollOwnershipSwitchSignal(_ event: MirageScrollEvent) -> Bool {
+    nonisolated static func isScrollOwnershipSwitchSignal(_ event: MirageInput.MirageScrollEvent) -> Bool {
         if event.phase == .began { return true }
         return event.phase == .none && event.momentumPhase == .none
     }
@@ -221,7 +229,7 @@ actor AppStreamRuntimeOrchestrator {
             let isPrimaryActive = streamID == state.activeStreamID
             let isGraceActive = allowsPassiveSnapshots && graceLiveStreamIDs.contains(streamID)
             let isLive = isPrimaryActive || isGraceActive
-            return MirageStreamPolicy(
+            return MirageWire.MirageStreamPolicy(
                 streamID: streamID,
                 tier: isLive ? .activeLive : .passiveSnapshot,
                 targetFPS: isLive ? resolvedActiveFPS : Self.passiveTargetFPS,
@@ -250,7 +258,7 @@ actor AppStreamRuntimeOrchestrator {
     /// Builds a compact identity for policy changes that should bump the epoch.
     private nonisolated static func policyFingerprint(
         activeStreamID: StreamID?,
-        policies: [MirageStreamPolicy]
+        policies: [MirageWire.MirageStreamPolicy]
     ) -> String {
         let activeText = activeStreamID.map(String.init) ?? "-"
         let streamText = policies.map { policy in

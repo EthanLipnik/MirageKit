@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Frame Reassembler Keyframe Recovery")
@@ -297,7 +298,7 @@ struct FrameReassemblerKeyframeRecoveryTests {
         let fragment5 = Data([0x26, 0xAA, 0xBB, 0xCC])
         let parity0 = xorFragments([fragment0, fragment1, fragment2, fragment3])
 
-        let payloadsByFragment: [(UInt16, FrameFlags, Data)] = [
+        let payloadsByFragment: [(UInt16, MirageWire.FrameFlags, Data)] = [
             (1, [.keyframe], fragment1),
             (2, [.keyframe], fragment2),
             (3, [.keyframe], fragment3),
@@ -339,7 +340,7 @@ struct FrameReassemblerKeyframeRecoveryTests {
         let fragment1 = Data([0x26, 0xAA, 0xBB, 0xCC])
         let fragment2 = Data([0x11, 0x22, 0x33, 0x44])
 
-        let payloadsByFragment: [(UInt16, FrameFlags, Data)] = [
+        let payloadsByFragment: [(UInt16, MirageWire.FrameFlags, Data)] = [
             (0, [.keyframe], fragment0),
             (2, [.keyframe], fragment2),
             (4, [.keyframe, .fecParity], fragment1),

@@ -7,9 +7,16 @@
 //  TCP control message receiving and buffering.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import Network
 
 private final class ClientControlPingFastPath: @unchecked Sendable {
@@ -20,7 +27,7 @@ private final class ClientControlPingFastPath: @unchecked Sendable {
 
         var parseOffset = 0
         while true {
-            switch ControlMessage.deserialize(from: receiveBuffer, offset: parseOffset) {
+            switch MirageWire.ControlMessage.deserialize(from: receiveBuffer, offset: parseOffset) {
             case let .success(message, bytesConsumed):
                 parseOffset += bytesConsumed
                 if message.type == .ping {
@@ -29,7 +36,7 @@ private final class ClientControlPingFastPath: @unchecked Sendable {
             case .needMoreData:
                 if parseOffset > 0 {
                     receiveBuffer.removeSubrange(0 ..< parseOffset)
-                } else if receiveBuffer.count > LoomMessageLimits.maxReceiveBufferBytes {
+                } else if receiveBuffer.count > MirageControlMessageLimits.maxReceiveBufferBytes {
                     receiveBuffer.removeAll(keepingCapacity: false)
                 }
                 return
@@ -94,7 +101,7 @@ extension MirageClientService {
                 return
             }
 
-            switch ControlMessage.deserialize(from: receiveBuffer, offset: 0) {
+            switch MirageWire.ControlMessage.deserialize(from: receiveBuffer, offset: 0) {
             case let .success(message, bytesConsumed):
                 receiveBuffer.removeSubrange(0 ..< bytesConsumed)
                 if controlUpdatePolicy == .interactiveStreaming,
@@ -108,7 +115,7 @@ extension MirageClientService {
                 }
                 await routeControlMessage(message)
             case .needMoreData:
-                if receiveBuffer.count > LoomMessageLimits.maxReceiveBufferBytes {
+                if receiveBuffer.count > MirageControlMessageLimits.maxReceiveBufferBytes {
                     MirageLogger.client("Control receive buffer overflow (\(receiveBuffer.count) bytes)")
                     receiveBuffer.removeAll(keepingCapacity: false)
                     await handleDisconnect(
@@ -154,7 +161,7 @@ extension MirageClientService {
         receiveBuffer.removeAll(keepingCapacity: false)
     }
 
-    nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
+    nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: MirageWire.ControlMessageType) -> Bool {
         switch type {
         case .appListProgress,
              .appListComplete,
@@ -168,7 +175,7 @@ extension MirageClientService {
         }
     }
 
-    private func recordSuppressedControlMessage(_ type: ControlMessageType) {
+    private func recordSuppressedControlMessage(_ type: MirageWire.ControlMessageType) {
         switch type {
         case .appListProgress, .appListComplete:
             deferredControlRefreshRequirements.needsAppListRefresh = true
@@ -181,7 +188,7 @@ extension MirageClientService {
         }
     }
 
-    private func recordHighFrequencyControlMessageSampleIfNeeded(_ type: ControlMessageType) {
+    private func recordHighFrequencyControlMessageSampleIfNeeded(_ type: MirageWire.ControlMessageType) {
         guard MirageSteadyStateDiagnostics.isEnabled else { return }
         guard type == .streamMetricsUpdate else { return }
         streamMetricsMessagesSinceLastSample &+= 1
@@ -200,7 +207,7 @@ extension MirageClientService {
         MirageLogger.network("Control sample (1s): streamMetricsUpdates=\(metricsCount)")
     }
 
-    nonisolated static func shouldLogControlMessage(_ type: ControlMessageType) -> Bool {
+    nonisolated static func shouldLogControlMessage(_ type: MirageWire.ControlMessageType) -> Bool {
         switch type {
         case .appListProgress,
              .cursorUpdate,

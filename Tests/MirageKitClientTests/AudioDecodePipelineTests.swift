@@ -11,6 +11,7 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageWire
 
 @Suite("Client Audio Decode Pipeline")
 struct AudioDecodePipelineTests {
@@ -115,8 +116,8 @@ struct AudioDecodePipelineTests {
         fragmentCount: UInt16 = 1,
         payloadSize: Int,
         frameByteCount: Int? = nil
-    ) -> AudioPacketHeader {
-        AudioPacketHeader(
+    ) -> MirageWire.AudioPacketHeader {
+        MirageWire.AudioPacketHeader(
             codec: .pcm16LE,
             streamID: 7,
             sequenceNumber: frameNumber,

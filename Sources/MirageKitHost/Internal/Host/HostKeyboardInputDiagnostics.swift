@@ -7,8 +7,16 @@
 //  Rate-limited desktop keyboard input diagnostics.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ApplicationServices
@@ -19,7 +27,7 @@ enum HostKeyboardInputDiagnostics {
 
     /// Logs that the host received a keyboard input event from the control path.
     static func logReceive(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         sessionActive: Bool,
         path: String
@@ -36,7 +44,7 @@ enum HostKeyboardInputDiagnostics {
 
     /// Logs the stream/window target selected for a keyboard input event.
     static func logTargetResolution(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         targetState: String,
         path: String
@@ -53,7 +61,7 @@ enum HostKeyboardInputDiagnostics {
 
     /// Logs a posted key event after host injection chooses an input domain.
     static func logPost(
-        keyEvent: MirageKeyEvent,
+        keyEvent: MirageInput.MirageKeyEvent,
         isKeyDown: Bool,
         domain: HostKeyboardInjectionDomain
     ) {
@@ -66,7 +74,7 @@ enum HostKeyboardInputDiagnostics {
 
     /// Logs a posted modifier-state event after host injection chooses an input domain.
     static func logPost(
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
     ) {
         let diagnostic = MirageKeyboardInputDiagnosticEvent(

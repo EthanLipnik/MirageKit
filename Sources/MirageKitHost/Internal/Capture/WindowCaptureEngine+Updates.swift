@@ -7,11 +7,19 @@
 //  Capture engine extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import os
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -25,8 +33,8 @@ extension WindowCaptureEngine {
         let scale = max(0.1, min(1.0, outputScale ?? self.outputScale))
         self.outputScale = scale
         currentScaleFactor = target.hostScaleFactor * scale
-        let newWidth = MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.width) * scale)
-        let newHeight = MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.height) * scale)
+        let newWidth = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.width) * scale)
+        let newHeight = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.height) * scale)
         if let config = captureSessionConfig {
             captureSessionConfig = CaptureSessionConfiguration(
                 windowID: config.windowID,

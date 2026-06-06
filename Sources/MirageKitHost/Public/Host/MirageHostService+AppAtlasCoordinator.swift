@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -54,7 +61,7 @@ extension MirageHostService {
         streamsByID.removeValue(forKey: mediaStreamID)
         mediaPathClientEvidenceByStreamID.removeValue(forKey: mediaStreamID)
         await deactivateAudioSourceIfNeeded(streamID: mediaStreamID)
-        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: mediaStreamID) {
+        if let videoStream = videoMediaStreamsByStreamID.removeValue(forKey: mediaStreamID) {
             closeRemovedMediaStream(videoStream, streamID: mediaStreamID, kind: "video")
         }
         transportRegistry.unregisterVideoStream(streamID: mediaStreamID)
@@ -65,14 +72,14 @@ extension MirageHostService {
     /// Returns an existing app-atlas coordinator or creates the shared media stream that backs one.
     func ensureAppAtlasCoordinator(
         clientContext: ClientContext,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         requestedBitrate: Int?,
         mediaMaxPacketSize: Int
     ) async throws -> AppAtlasMediaCoordinator {
         let clientID = clientContext.client.id
         guard !disconnectingClientIDs.contains(clientID) else {
-            throw MirageError.protocolError("Client is disconnecting")
+            throw MirageCore.MirageError.protocolError("Client is disconnecting")
         }
         if let existing = appAtlasCoordinatorsByClientID[clientID] {
             try await retuneAppAtlasCoordinator(
@@ -111,7 +118,7 @@ extension MirageHostService {
                 return existing
             }
             guard !disconnectingClientIDs.contains(clientID) else {
-                throw MirageError.protocolError("Client is disconnecting")
+                throw MirageCore.MirageError.protocolError("Client is disconnecting")
             }
         }
 
@@ -129,11 +136,11 @@ extension MirageHostService {
             return existing
         }
         guard !disconnectingClientIDs.contains(clientID) else {
-            throw MirageError.protocolError("Client is disconnecting")
+            throw MirageCore.MirageError.protocolError("Client is disconnecting")
         }
 
         guard mediaSecurityByClientID[clientID] != nil else {
-            throw MirageError.protocolError("Missing media security context for client")
+            throw MirageCore.MirageError.protocolError("Missing media security context for client")
         }
 
         do {
@@ -197,7 +204,11 @@ extension MirageHostService {
             enteredBitrate: selectRequest.enteredBitrate,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
-            encoderMaxHeight: selectRequest.encoderMaxHeight
+            encoderMaxHeight: selectRequest.encoderMaxHeight,
+            videoEncoderFactoryBackend: platformVideoEncoderFactoryBackend,
+            captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+            captureContentProviderBackend: platformCaptureContentProviderBackend,
+            virtualDisplayBackend: platformVirtualDisplayBackend
         )
         MirageLogger.host(
             "event=media_path_policy phase=app_atlas_start stream=\(mediaStreamID) " +
@@ -237,13 +248,13 @@ extension MirageHostService {
             throw error
         }
 
-        let videoStream: LoomMultiplexedStream
+        let videoStream: any MirageQueuedUnreliableMediaStream
         do {
             let openedVideoStream = try await clientContext.controlChannel.session.openStream(
                 label: "video/\(mediaStreamID)"
             )
             videoStream = openedVideoStream
-            loomVideoStreamsByStreamID[mediaStreamID] = openedVideoStream
+            videoMediaStreamsByStreamID[mediaStreamID] = openedVideoStream
             transportRegistry.registerVideoStream(openedVideoStream, streamID: mediaStreamID)
             MirageLogger.host("Opened Loom app-atlas video stream \(mediaStreamID)")
         } catch {
@@ -255,12 +266,13 @@ extension MirageHostService {
         let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile(
             resolvedMediaPathProfile: mediaPathPolicy.mediaPathProfile,
             streamID: mediaStreamID,
-            phase: "app_atlas_transport"
+            phase: "app_atlas_transport",
+            logHostEvent: { message in MirageLogger.host(message) }
         )
         let mediaSendProfileReference = await context.setMediaSendProfile(
             mediaSendProfile,
             diagnosticsProvider: { profile in
-                await videoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+                await videoStream.mirageQueuedUnreliableSendDiagnostics(profile: profile)
             }
         )
         MirageLogger.host(
@@ -275,13 +287,15 @@ extension MirageHostService {
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             capturePressureProfile: capturePressureProfile,
+            captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+            captureContentProviderBackend: platformCaptureContentProviderBackend,
             targetFrameRate: targetFrameRate,
             sendPacketWithMetadata: { packetData, metadata, onComplete in
                 let activeMediaSendProfile = mediaSendProfileReference.read { $0 }
                 videoStream.sendUnreliableQueued(
                     packetData,
                     profile: activeMediaSendProfile,
-                    options: metadata.loomQueuedUnreliableSendOptions,
+                    options: metadata.mirageQueuedUnreliableSendOptions,
                     onComplete: onComplete
                 )
             },
@@ -316,7 +330,7 @@ extension MirageHostService {
 
     private func retuneAppAtlasCoordinator(
         _ coordinator: AppAtlasMediaCoordinator,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         requestedBitrate: Int?
     ) async throws {
         try await coordinator.updateQualityContract(

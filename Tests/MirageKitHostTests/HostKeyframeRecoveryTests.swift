@@ -14,6 +14,9 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 @Suite("Host Keyframe Recovery")
@@ -434,7 +437,7 @@ struct HostKeyframeRecoveryTests {
                 sequence: 2,
                 recoveryState: .idle,
                 recoveryCause: .none,
-                ackRanges: [MediaFeedbackFrameRange(startFrame: 44, endFrame: 44)]
+                ackRanges: [MirageWire.MediaFeedbackFrameRange(startFrame: 44, endFrame: 44)]
             )
         )
 
@@ -1097,10 +1100,10 @@ struct HostKeyframeRecoveryTests {
         frameRate: Int = 60,
         bitrate: Int = 600_000_000,
         runtimeQualityAdjustmentEnabled: Bool = true,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil,
         bitrateAdaptationCeiling: Int? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
@@ -1172,15 +1175,15 @@ struct HostKeyframeRecoveryTests {
 
     private func receiverRecoveryFeedback(
         sequence: UInt64 = 1,
-        recoveryState: MirageMediaFeedbackRecoveryState,
-        recoveryCause: MirageMediaFeedbackRecoveryCause,
-        ackRanges: [MediaFeedbackFrameRange] = [],
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState,
+        recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause,
+        ackRanges: [MirageWire.MediaFeedbackFrameRange] = [],
         reassemblerIncompleteFrameTimeouts: UInt64? = nil,
-        reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = [],
+        reliabilityCauses: [MirageWire.ReceiverMediaFeedbackReliabilityCause] = [],
         latestAcceptedFrameNumber: UInt32? = nil,
         latestPresentedFrameNumber: UInt32? = nil
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 1,
             sequence: sequence,
             sentAtUptime: CFAbsoluteTimeGetCurrent(),

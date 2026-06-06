@@ -7,8 +7,16 @@
 //  Host input controller extensions.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 import AppKit
@@ -24,7 +32,7 @@ extension MirageHostInputController {
     }
 
     /// Resolves the virtual key or Unicode fallback needed for a key event.
-    static func keyboardInjectionPlan(for event: MirageKeyEvent) -> KeyboardInjectionPlan {
+    static func keyboardInjectionPlan(for event: MirageInput.MirageKeyEvent) -> KeyboardInjectionPlan {
         guard event.usesUnicodeScalarFallback else {
             return KeyboardInjectionPlan(
                 virtualKey: CGKeyCode(event.keyCode),
@@ -47,7 +55,7 @@ extension MirageHostInputController {
     /// Builds a CoreGraphics keyboard event with Mirage modifiers and repeat state applied.
     func makeInjectedKeyboardEvent(
         isKeyDown: Bool,
-        _ event: MirageKeyEvent
+        _ event: MirageInput.MirageKeyEvent
     ) -> CGEvent? {
         let injectionPlan = Self.keyboardInjectionPlan(for: event)
         guard let cgEvent = CGEvent(
@@ -77,7 +85,7 @@ extension MirageHostInputController {
     /// Injects a key-down or key-up event into the requested host event domain.
     func injectKeyEvent(
         isKeyDown: Bool,
-        _ event: MirageKeyEvent,
+        _ event: MirageInput.MirageKeyEvent,
         domain: HostKeyboardInjectionDomain
     ) {
         guard let cgEvent = makeInjectedKeyboardEvent(isKeyDown: isKeyDown, event) else { return }
@@ -104,7 +112,7 @@ extension MirageHostInputController {
 
     /// Injects modifier key transitions needed to reach the requested modifier state.
     func injectFlagsChanged(
-        _ modifiers: MirageModifierFlags,
+        _ modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
     ) {
         let transitionPlan = Self.modifierTransitionPlan(from: lastSentModifiers, to: modifiers)

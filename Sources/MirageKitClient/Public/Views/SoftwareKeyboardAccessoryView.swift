@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -23,7 +31,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
         SoftwareModifierKey(title: "Option", modifier: .option),
         SoftwareModifierKey(title: "Control", modifier: .control),
     ]
-    private var buttons: [MirageModifierFlags: UIButton] = [:]
+    private var buttons: [MirageInput.MirageModifierFlags: UIButton] = [:]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -42,7 +50,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
     }
 
     /// Applies the current held-modifier state and returns the number of buttons that changed.
-    func setSelectedModifiers(_ modifiers: MirageModifierFlags) -> Int {
+    func setSelectedModifiers(_ modifiers: MirageInput.MirageModifierFlags) -> Int {
         var updatedButtonCount = 0
         for (flag, button) in buttons {
             let isSelected = modifiers.contains(flag)

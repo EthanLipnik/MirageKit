@@ -7,6 +7,7 @@
 
 #if os(macOS)
 @testable import MirageKitClient
+import MirageKitClientPresentation
 import CoreGraphics
 import Testing
 

@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -248,7 +256,7 @@ extension ScrollPhysicsCapturingNSView {
 
     func requestCursorLockEscapeIfNeeded(for event: NSEvent) -> Bool {
         guard cursorLockEnabled else { return false }
-        let modifiers = MirageModifierFlags(nsEventFlags: event.modifierFlags)
+        let modifiers = MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         guard modifiers.isEmpty else { return false }
         onCursorLockEscapeRequested?()
         return true
@@ -366,7 +374,7 @@ extension ScrollPhysicsCapturingNSView {
     func startLockedCursorSmoothingIfNeeded() {
         guard lockedCursorSmoothingTimer == nil else { return }
         lockedCursorSmoothingTimer = Timer.scheduledTimer(
-            withTimeInterval: MirageInteractionCadence.frameInterval120Seconds,
+            withTimeInterval: MirageMedia.MirageInteractionCadence.frameInterval120Seconds,
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor [weak self] in

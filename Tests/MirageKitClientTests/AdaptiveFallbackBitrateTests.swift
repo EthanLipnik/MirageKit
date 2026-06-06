@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageCore
 
 @Suite("Adaptive Recovery Mode")
 struct AdaptiveFallbackBitrateTests {

@@ -5,8 +5,18 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
+@_spi(HostApp) import MirageDiagnostics
 
 #if os(macOS)
 /// Validation status for the virtual display acquired for a benchmark stage.
@@ -18,7 +28,7 @@ enum MirageHostCaptureBenchmarkDisplayValidationResult: Equatable {
 
 /// Validates whether the acquired display mode can be used for a requested benchmark stage.
 func captureBenchmarkDisplayValidationResult(
-    requestedStage: MirageHostCaptureBenchmarkStage,
+    requestedStage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
     actualResolution: CGSize,
     actualRefreshRate: Double
 ) -> MirageHostCaptureBenchmarkDisplayValidationResult {
@@ -37,13 +47,6 @@ func captureBenchmarkDisplayValidationResult(
     }
 
     return .accepted(actualWidth: actualWidth, actualHeight: actualHeight)
-}
-
-let captureBenchmarkValidThresholdFPS: Double = 60
-
-/// Returns the frame-rate threshold treated as sustained target performance.
-func captureBenchmarkSustainThreshold(targetFrameRate: Int) -> Double {
-    Double(targetFrameRate) * 0.95
 }
 
 /// Returns whether the observed source-window frame matches the prepared benchmark frame.
@@ -91,7 +94,7 @@ func captureBenchmarkInvalidMeasurementReason(
 
 /// Caps measured display-capture capability to the stage target frame rate.
 func captureBenchmarkDisplayCapabilityFPS(
-    displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
+    displayPhase: MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult?,
     targetFrameRate: Int
 ) -> Double? {
     guard let measuredFloor = displayPhase?.deliveryCapabilityFPS else { return nil }
@@ -100,7 +103,7 @@ func captureBenchmarkDisplayCapabilityFPS(
 
 /// Returns the lowest measured throughput across display capture, delivery, and encode phases.
 func captureBenchmarkValidatedCapabilityFPS(
-    displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
+    displayPhase: MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult?,
     encodeFPS: Double?,
     targetFrameRate: Int
 ) -> Double? {
@@ -115,10 +118,10 @@ func captureBenchmarkValidatedCapabilityFPS(
 
 /// Classifies the first benchmark phase below the sustained target threshold.
 func captureBenchmarkBottleneck(
-    stage: MirageHostCaptureBenchmarkStage,
-    displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
+    stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
+    displayPhase: MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult?,
     encodeFPS: Double?
-) -> MirageHostCaptureBenchmarkBottleneck? {
+) -> MirageDiagnostics.MirageHostCaptureBenchmarkBottleneck? {
     let targetThreshold = captureBenchmarkSustainThreshold(targetFrameRate: stage.targetFrameRate)
 
     if let displayIngressFPS = displayPhase?.ingressCapabilityFPS, displayIngressFPS < targetThreshold {
@@ -136,33 +139,4 @@ func captureBenchmarkBottleneck(
     return hasMeasurement ? .balanced : nil
 }
 
-/// Summarizes the highest completed benchmark stages that meet validity and sustain thresholds.
-func captureBenchmarkSummary(
-    stageResults: [MirageHostCaptureBenchmarkStageResult]
-) -> MirageHostCaptureBenchmarkSummary {
-    let targetFrameRate = stageResults.last?.stage.targetFrameRate ??
-        MirageHostCaptureBenchmarkStage.allStages.last?.targetFrameRate ?? 120
-    let validThreshold = captureBenchmarkValidThresholdFPS
-    let threshold = captureBenchmarkSustainThreshold(targetFrameRate: targetFrameRate)
-    let highestValidStage = stageResults.last(where: { result in
-        result.status == .completed &&
-            (result.validatedCapabilityFPS ?? 0) >= validThreshold
-    })
-    let highest120Stage = stageResults.last(where: { result in
-        result.status == .completed &&
-            (result.validatedCapabilityFPS ?? 0) >= threshold
-    })
-
-    return MirageHostCaptureBenchmarkSummary(
-        targetFrameRate: targetFrameRate,
-        validThresholdFPS: validThreshold,
-        sustainThresholdFPS: threshold,
-        highestValidStageID: highestValidStage?.stage.id,
-        highestValidStageTitle: highestValidStage?.stage.title,
-        highestValidResolution: highestValidStage?.stage.pixelDescription,
-        highest120FPSStageID: highest120Stage?.stage.id,
-        highest120FPSStageTitle: highest120Stage?.stage.title,
-        highest120FPSResolution: highest120Stage?.stage.pixelDescription
-    )
-}
 #endif

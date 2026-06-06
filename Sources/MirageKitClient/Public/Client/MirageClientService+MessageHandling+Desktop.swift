@@ -7,14 +7,22 @@
 //  Desktop stream control message handling.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
-    func handleDesktopStreamStarted(_ message: ControlMessage) async {
+    func handleDesktopStreamStarted(_ message: MirageWire.ControlMessage) async {
         do {
-            let started = try message.decode(DesktopStreamStartedMessage.self)
+            let started = try message.decode(MirageWire.DesktopStreamStartedMessage.self)
             let streamID = started.streamID
             let receivedDesktopSessionID = started.desktopSessionID
             let requestStartPending = desktopStreamRequestStartTime > 0
@@ -293,15 +301,15 @@ extension MirageClientService {
                 cancelStreamSetup()
                 clearPendingDesktopStreamStartState()
                 delegate?.didEncounterError(
-                    MirageError.protocolError("Desktop stream failed: invalid start response from host.")
+                    MirageCore.MirageError.protocolError("Desktop stream failed: invalid start response from host.")
                 )
             }
         }
     }
 
-    func handleDesktopStreamFailed(_ message: ControlMessage) {
+    func handleDesktopStreamFailed(_ message: MirageWire.ControlMessage) {
         do {
-            let failed = try message.decode(DesktopStreamFailedMessage.self)
+            let failed = try message.decode(MirageWire.DesktopStreamFailedMessage.self)
             MirageLogger.error(.client, "Desktop stream start failed: \(failed.reason)")
             if let streamID = desktopStreamID {
                 clearStartupAttempt(for: streamID)
@@ -309,20 +317,20 @@ extension MirageClientService {
             }
             clearPendingDesktopStreamStartState()
             delegate?.didEncounterError(
-                MirageError.protocolError("Desktop stream failed: \(failed.reason)")
+                MirageCore.MirageError.protocolError("Desktop stream failed: \(failed.reason)")
             )
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream failed: ")
             clearPendingDesktopStreamStartState()
             delegate?.didEncounterError(
-                MirageError.protocolError("Desktop stream start failed (unknown reason)")
+                MirageCore.MirageError.protocolError("Desktop stream start failed (unknown reason)")
             )
         }
     }
 
-    func handleDesktopStreamStopped(_ message: ControlMessage) {
+    func handleDesktopStreamStopped(_ message: MirageWire.ControlMessage) {
         do {
-            let stopped = try message.decode(DesktopStreamStoppedMessage.self)
+            let stopped = try message.decode(MirageWire.DesktopStreamStoppedMessage.self)
             let streamID = stopped.streamID
             guard desktopSessionID == stopped.desktopSessionID else {
                 MirageLogger.client(

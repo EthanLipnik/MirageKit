@@ -7,10 +7,18 @@
 //  HEVC encoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit

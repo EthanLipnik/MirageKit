@@ -9,17 +9,18 @@ import CoreGraphics
 import Foundation
 @_spi(HostApp) @testable import MirageKitHost
 import Testing
+import MirageDiagnostics
 
 #if os(macOS)
 @Suite("Capture Benchmark")
 struct CaptureBenchmarkTests {
     @Test("Report reuse requires matching machine, software environment, configuration, and a completed run")
     func reportReuseRequiresMatchingEnvironment() {
-        #expect(MirageHostCaptureBenchmarkReport.currentVersion == 3)
+        #expect(MirageDiagnostics.MirageHostCaptureBenchmarkReport.currentVersion == 3)
 
-        let configuration = MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
+        let configuration = MirageDiagnostics.MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
         let machineID = UUID()
-        let report = MirageHostCaptureBenchmarkReport(
+        let report = MirageDiagnostics.MirageHostCaptureBenchmarkReport(
             machineID: machineID,
             hostName: "Bench Mac",
             hardwareModelIdentifier: "Mac16,7",
@@ -32,7 +33,7 @@ struct CaptureBenchmarkTests {
             modeResults: [],
             didCancel: false
         )
-        let cancelledReport = MirageHostCaptureBenchmarkReport(
+        let cancelledReport = MirageDiagnostics.MirageHostCaptureBenchmarkReport(
             machineID: machineID,
             hostName: "Bench Mac",
             hardwareModelIdentifier: "Mac16,7",
@@ -45,7 +46,7 @@ struct CaptureBenchmarkTests {
             modeResults: [],
             didCancel: true
         )
-        let staleReport = MirageHostCaptureBenchmarkReport(
+        let staleReport = MirageDiagnostics.MirageHostCaptureBenchmarkReport(
             version: 0,
             machineID: machineID,
             hostName: "Bench Mac",
@@ -105,7 +106,7 @@ struct CaptureBenchmarkTests {
                 machineID: machineID,
                 appVersion: "2.4",
                 operatingSystemVersion: "macOS 15.4 (24E214)",
-                configuration: MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOn])
+                configuration: MirageDiagnostics.MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOn])
             )
         )
         #expect(

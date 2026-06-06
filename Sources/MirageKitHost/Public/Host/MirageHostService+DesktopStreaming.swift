@@ -5,10 +5,17 @@
 //  Created by Ethan Lipnik on 1/11/26.
 //
 
-import Foundation
-import Loom
-import Network
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Network
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -18,7 +25,7 @@ extension MirageHostService {
     /// honored literally as the client ceiling; HEVC streams may start below it
     /// and climb as the host proves encoder and transport headroom.
     nonisolated static func resolvedDesktopEncoderBitrate(requestedBitrate: Int?) -> Int? {
-        MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: requestedBitrate)
+        MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: requestedBitrate)
     }
 
 /// Start streaming the desktop (unified or secondary display mode)
@@ -27,35 +34,35 @@ func startDesktopStream(
     to clientContext: ClientContext,
     displayResolution: CGSize,
     clientScaleFactor: CGFloat? = nil,
-    mode: MirageDesktopStreamMode,
-    cursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
+    mode: MirageMedia.MirageDesktopStreamMode,
+    cursorPresentation: MirageWire.MirageDesktopCursorPresentation = .simulatedCursor,
     usesHostResolution: Bool,
     keyFrameInterval: Int?,
-    colorDepth: MirageStreamColorDepth?,
+    colorDepth: MirageMedia.MirageStreamColorDepth?,
     captureQueueDepth: Int?,
     enteredBitrate: Int?,
     bitrate: Int?,
-    latencyMode: MirageStreamLatencyMode = .lowestLatency,
-    hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+    latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+    hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame,
     allowRuntimeQualityAdjustment: Bool?,
     allowEncoderCatchUpQualityAdjustment: Bool?,
     lowLatencyHighResolutionCompressionBoost: Bool,
     disableResolutionCap: Bool,
     streamScale: CGFloat?,
-    audioConfiguration: MirageAudioConfiguration,
+    audioConfiguration: MirageMedia.MirageAudioConfiguration,
     targetFrameRate: Int? = nil,
     bitrateAdaptationCeiling: Int? = nil,
     encoderMaxWidth: Int? = nil,
     encoderMaxHeight: Int? = nil,
-    mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
+    mediaMaxPacketSize: Int = MirageWire.mirageDefaultMaxPacketSize,
     mediaPathPolicy: MirageEffectiveMediaPathPolicy,
-    upscalingMode: MirageUpscalingMode? = nil,
-    codec: MirageVideoCodec? = nil,
+    upscalingMode: MirageMedia.MirageUpscalingMode? = nil,
+    codec: MirageMedia.MirageVideoCodec? = nil,
     startupRequestID: UUID,
     desktopGeometryContractID: UUID? = nil,
     desktopGeometrySceneIdentity: String? = nil,
     desktopGeometryRefreshTargetHz: Int? = nil,
-    presentationRole: MirageDesktopPresentationRole? = nil,
+    presentationRole: MirageWire.MirageDesktopPresentationRole? = nil,
     associatedAppSessionID: UUID? = nil,
     associatedAppStartupRequestID: UUID? = nil,
     associatedBundleIdentifier: String? = nil
@@ -232,7 +239,7 @@ async throws {
         )
     }
 
-    let computedStreamScale = MirageStreamGeometry.resolveEncodedPlan(
+    let computedStreamScale = MirageMedia.MirageStreamGeometry.resolveEncodedPlan(
         basePixelSize: captureResolution,
         requestedStreamScale: streamScale ?? 1.0,
         encoderMaxWidth: encoderMaxWidth,
@@ -306,7 +313,7 @@ async throws {
     )
     logDesktopStartStep("display capture started")
 
-    let startupAudioConfiguration: MirageAudioConfiguration
+    let startupAudioConfiguration: MirageMedia.MirageAudioConfiguration
     do {
         startupAudioConfiguration = try await waitForDesktopCaptureStartupReadiness(
             streamContext: streamContext,

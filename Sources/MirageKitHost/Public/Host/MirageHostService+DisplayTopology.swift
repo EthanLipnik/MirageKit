@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 4/1/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -119,7 +127,7 @@ extension MirageHostService {
 
         let entries = displayIDs
             .prefix(Int(displayCount))
-            .filter { !CGVirtualDisplayBridge.isMirageDisplay($0) }
+            .filter { !platformVirtualDisplayBackend.isMirageDisplay($0) }
             .sorted()
             .map { displayID in
                 let bounds = CGDisplayBounds(displayID)
@@ -170,9 +178,9 @@ extension MirageHostService {
     /// Resolves the current desktop virtual-display pixel resolution from live and cached state.
     func currentDesktopVirtualDisplayPixelResolution(fallback: CGSize? = nil) async -> CGSize? {
         let liveResolution = desktopVirtualDisplayID.flatMap {
-            CGVirtualDisplayBridge.currentDisplayModeSizes($0)?.pixel
+            platformVirtualDisplayBackend.currentDisplayModeSizes($0)?.pixel
         }
-        let sharedSnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot
+        let sharedSnapshot = await platformVirtualDisplayBackend.displaySnapshot
         let sharedResolution: CGSize? = if desktopUsesHostResolution {
             nil
         } else if let desktopVirtualDisplayID, sharedSnapshot?.displayID == desktopVirtualDisplayID {

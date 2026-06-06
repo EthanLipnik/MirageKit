@@ -11,6 +11,8 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
 #if os(macOS)
 @Suite("Freshness Burst")
@@ -139,8 +141,8 @@ struct FreshnessBurstTests {
     private func makeContext(
         bitrate: Int,
         captureQueueDepth: Int,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        transportPathKind: MirageNetworkPathKind = .unknown
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
             targetFrameRate: 60,

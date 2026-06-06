@@ -8,7 +8,8 @@
 //
 
 @testable import MirageKitHost
-import Loom
+import MirageConnectivity
+import MirageMedia
 import Testing
 
 #if os(macOS)
@@ -17,7 +18,7 @@ struct QualityTestQueueBudgetTests {
     @Test("Quality test queue no longer stops at the interactive-media packet window")
     func queueWindowExceedsInteractiveMediaPacketCap() {
         let packetBytes = 1_338
-        let interactiveLimits = LoomQueuedUnreliableSendProfile.interactiveMedia.recommendedLimits
+        let interactiveLimits = MirageMedia.MirageMediaSendProfile.interactiveMedia.queuedUnreliableRecommendedLimits
 
         #expect(
             MirageHostService.qualityTestCanEnqueuePacket(
@@ -31,7 +32,7 @@ struct QualityTestQueueBudgetTests {
     @Test("Quality test queue still enforces the packet cap")
     func queueWindowRespectsPacketCap() {
         let packetBytes = 1_338
-        let limits = LoomQueuedUnreliableSendProfile.throughputProbe.recommendedLimits
+        let limits = MirageMedia.MirageMediaSendProfile.throughputProbe.queuedUnreliableRecommendedLimits
 
         #expect(
             !MirageHostService.qualityTestCanEnqueuePacket(
@@ -45,7 +46,7 @@ struct QualityTestQueueBudgetTests {
     @Test("Streaming replay queue respects the interactive packet cap")
     func streamingReplayQueueRespectsInteractivePacketCap() {
         let packetBytes = 1_338
-        let limits = LoomQueuedUnreliableSendProfile.interactiveMedia.recommendedLimits
+        let limits = MirageMedia.MirageMediaSendProfile.interactiveMedia.queuedUnreliableRecommendedLimits
 
         #expect(
             !MirageHostService.qualityTestCanEnqueuePacket(
@@ -59,7 +60,7 @@ struct QualityTestQueueBudgetTests {
 
     @Test("Quality test queue enforces the byte cap once packets are in flight")
     func queueWindowRespectsByteCap() {
-        let limits = LoomQueuedUnreliableSendProfile.throughputProbe.recommendedLimits
+        let limits = MirageMedia.MirageMediaSendProfile.throughputProbe.queuedUnreliableRecommendedLimits
         #expect(
             !MirageHostService.qualityTestCanEnqueuePacket(
                 outstandingPackets: 1,

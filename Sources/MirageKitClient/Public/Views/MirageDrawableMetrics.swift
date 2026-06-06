@@ -7,8 +7,16 @@
 //  Drawable metrics used for resize handling without screen polling.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 /// Current drawable, view, and screen metrics used to drive stream resize decisions.
 public struct MirageDrawableMetrics: Sendable, Equatable {

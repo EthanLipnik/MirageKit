@@ -11,6 +11,8 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageCore
+import MirageInput
 
 @Suite("Continuous Input Batcher")
 struct MirageContinuousInputBatcherTests {
@@ -19,7 +21,7 @@ struct MirageContinuousInputBatcherTests {
         let batcher = MirageContinuousInputBatcher()
         let streamID: StreamID = 51
         let samples = (0 ..< 80).map { index in
-            MiragePointerSample(
+            MirageInput.MiragePointerSample(
                 location: CGPoint(x: CGFloat(index), y: 0.5),
                 pressure: 0.5,
                 stylus: makeStylus(),
@@ -27,13 +29,13 @@ struct MirageContinuousInputBatcherTests {
             )
         }
 
-        let accepted = batcher.enqueue(.pointerSampleBatch(MiragePointerSampleBatch(
+        let accepted = batcher.enqueue(.pointerSampleBatch(MirageInput.MiragePointerSampleBatch(
             phase: .moved,
             isButtonPressed: true,
             samples: samples
         )), streamID: streamID)
 
-        let flushedSamples = batcher.flush().flatMap { $0.inputEvents() }.flatMap { event -> [MiragePointerSample] in
+        let flushedSamples = batcher.flush().flatMap { $0.inputEvents() }.flatMap { event -> [MirageInput.MiragePointerSample] in
             guard case let .pointerSampleBatch(batch) = event else { return [] }
             return batch.samples
         }
@@ -48,7 +50,7 @@ struct MirageContinuousInputBatcherTests {
         let streamID: StreamID = 52
 
         for index in 0 ..< 80 {
-            _ = batcher.enqueue(.mouseMoved(MirageMouseEvent(
+            _ = batcher.enqueue(.mouseMoved(MirageInput.MirageMouseEvent(
                 location: CGPoint(x: CGFloat(index), y: 0.5),
                 timestamp: TimeInterval(index)
             )), streamID: streamID)
@@ -66,8 +68,8 @@ struct MirageContinuousInputBatcherTests {
     func fullPacketsRequestImmediateFlush() {
         let batcher = MirageContinuousInputBatcher()
 
-        for index in 0 ..< MirageContinuousInputBatch.maximumSamplesPerPacket {
-            _ = batcher.enqueue(.mouseMoved(MirageMouseEvent(
+        for index in 0 ..< MirageInput.MirageContinuousInputBatch.maximumSamplesPerPacket {
+            _ = batcher.enqueue(.mouseMoved(MirageInput.MirageMouseEvent(
                 location: CGPoint(x: CGFloat(index), y: 0.5),
                 timestamp: TimeInterval(index)
             )), streamID: 53)
@@ -79,11 +81,11 @@ struct MirageContinuousInputBatcherTests {
     @Test("Discrete pointer boundary is not accepted by continuous batcher")
     func discretePointerBoundaryIsNotAcceptedByContinuousBatcher() {
         let batcher = MirageContinuousInputBatcher()
-        let event = MirageInputEvent.pointerSampleBatch(MiragePointerSampleBatch(
+        let event = MirageInput.MirageInputEvent.pointerSampleBatch(MirageInput.MiragePointerSampleBatch(
             phase: .began,
             isButtonPressed: true,
             samples: [
-                MiragePointerSample(
+                MirageInput.MiragePointerSample(
                     location: CGPoint(x: 0.5, y: 0.5),
                     pressure: 0.5,
                     stylus: makeStylus()
@@ -96,8 +98,8 @@ struct MirageContinuousInputBatcherTests {
     }
 }
 
-private func makeStylus() -> MirageStylusEvent {
-    MirageStylusEvent(
+private func makeStylus() -> MirageInput.MirageStylusEvent {
+    MirageInput.MirageStylusEvent(
         altitudeAngle: 0.7,
         azimuthAngle: 0.2,
         tiltX: 0.1,

@@ -5,17 +5,24 @@
 //  Created by Ethan Lipnik on 5/25/26.
 //
 
-import Loom
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 extension StreamContext {
     func setMediaSendProfile(
-        _ profile: LoomQueuedUnreliableSendProfile,
+        _ profile: MirageMedia.MirageMediaSendProfile,
         diagnosticsProvider:
-        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)? = nil
-    ) -> Locked<LoomQueuedUnreliableSendProfile> {
-        let reference: Locked<LoomQueuedUnreliableSendProfile>
+        (@Sendable (MirageMedia.MirageMediaSendProfile) async -> MirageQueuedUnreliableSendDiagnostics?)? = nil
+    ) -> Locked<MirageMedia.MirageMediaSendProfile> {
+        let reference: Locked<MirageMedia.MirageMediaSendProfile>
         if let mediaSendProfileReference {
             reference = mediaSendProfileReference
             reference.withLock { $0 = profile }
@@ -23,7 +30,7 @@ extension StreamContext {
             reference = Locked(profile)
             mediaSendProfileReference = reference
         }
-        let limits = profile.recommendedLimits
+        let limits = profile.queuedUnreliableRecommendedLimits
         mediaSendProfile = profile
         mediaSendProfileRawValue = profile.rawValue
         mediaSendProfileMaxOutstandingPackets = limits.maxOutstandingPackets
@@ -33,7 +40,7 @@ extension StreamContext {
         return reference
     }
 
-    func activeMediaSendProfile() -> LoomQueuedUnreliableSendProfile {
+    func activeMediaSendProfile() -> MirageMedia.MirageMediaSendProfile {
         if let mediaSendProfileReference {
             return mediaSendProfileReference.read { $0 }
         }

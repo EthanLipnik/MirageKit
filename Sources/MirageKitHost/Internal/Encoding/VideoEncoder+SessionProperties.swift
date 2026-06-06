@@ -7,10 +7,18 @@
 //  VideoToolbox session creation and property helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 extension VideoEncoder {
@@ -74,7 +82,7 @@ extension VideoEncoder {
         /// Do not apply a low-latency bitrate override.
         case none
 
-        var publicStrategy: MirageEncoderRateControlStrategy {
+        var publicStrategy: MirageMedia.MirageEncoderRateControlStrategy {
             switch self {
             case .averageBitRateOnly:
                 .none
@@ -96,8 +104,8 @@ extension VideoEncoder {
     }
 
     nonisolated static func frameDelayCount(
-        for mode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        for mode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> Int {
         if mediaPathProfile.usesAwdlRadioPolicy {
             return 1
@@ -111,7 +119,7 @@ extension VideoEncoder {
     }
 
     nonisolated static func prioritizeEncodingSpeedOverQuality(
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> Bool {
         !mediaPathProfile.usesAwdlRadioPolicy
     }
@@ -172,7 +180,7 @@ extension VideoEncoder {
         )
 
         while status != noErr {
-            let fallbackPixelFormat: MiragePixelFormat? = switch activePixelFormat {
+            let fallbackPixelFormat: MirageMedia.MiragePixelFormat? = switch activePixelFormat {
             case .xf44, .ayuv16:
                 .p010
             case .p010,
@@ -214,7 +222,7 @@ extension VideoEncoder {
             }
         }
 
-        guard status == noErr, let session else { throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
+        guard status == noErr, let session else { throw MirageCore.MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
 
         hardwareStatusRefreshAttempts = 0
         loadSupportedProperties(session)
@@ -278,7 +286,7 @@ extension VideoEncoder {
             if try await preheat() { return true }
 
             while true {
-                let fallbackFormat: MiragePixelFormat? = switch activePixelFormat {
+                let fallbackFormat: MirageMedia.MiragePixelFormat? = switch activePixelFormat {
                 case .xf44, .ayuv16: .p010
                 case .p010, .bgr10a2: .nv12
                 case .bgra8, .nv12: nil

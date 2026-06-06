@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import SwiftUI
 
@@ -50,7 +58,7 @@ public final class MirageStreamViewController: UIViewController {
     }
 
     func configureCallbacks(
-        onInputEvent: ((MirageInputEvent) -> Void)?,
+        onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
         onContainerSizeChanged: ((CGSize) -> Void)?,
         onRefreshRateOverrideChange: ((Int) -> Void)?,
@@ -59,7 +67,7 @@ public final class MirageStreamViewController: UIViewController {
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
         onClientShortcut: ((MirageClientShortcut) -> Void)?,
-        onActionTriggered: ((MirageAction) -> Void)?,
+        onActionTriggered: ((MirageInput.MirageAction) -> Void)?,
         onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?,
         onDictationStateChanged: ((Bool) -> Void)?,
         onDictationError: ((String) -> Void)?,

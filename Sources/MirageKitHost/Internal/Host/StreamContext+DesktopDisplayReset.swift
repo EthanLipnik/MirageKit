@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension StreamContext {
@@ -46,22 +54,27 @@ extension StreamContext {
         captureMode = .display
         updateQueueLimits()
 
-        await captureEngine?.stopCapture()
+        if let captureSourceBackend {
+            await captureSourceBackend.stopCapture()
+            self.captureSourceBackend = nil
+        } else {
+            await captureEngine?.stopCapture()
+        }
 
-        guard let encoder else { throw MirageError.protocolError("Desktop resize reset missing encoder") }
+        guard let encoder else { throw MirageCore.MirageError.protocolError("Desktop resize reset missing encoder") }
         try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
         try await encoder.reset()
         let resolvedPixelFormat = await encoder.activePixelFormat
         activePixelFormat = resolvedPixelFormat
 
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
-        let restartCaptureEngine = WindowCaptureEngine(
+        let restartCaptureEngine = captureEngineFactoryBackend.makeCaptureEngine(
             configuration: captureConfig,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             captureFrameRate: captureFrameRate,
-            usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(displayWrapper.display.displayID)
+            usesDisplayRefreshCadence: virtualDisplayBackend.isMirageDisplay(displayWrapper.display.displayID)
         )
         captureEngine = restartCaptureEngine
         if let captureStallStageHandler {
@@ -88,15 +101,26 @@ extension StreamContext {
             return true
         }
 
-        try await restartCaptureEngine.startDisplayCapture(
-            display: displayWrapper.display,
-            resolution: outputSize,
-            showsCursor: captureShowsCursor,
+        let captureSourceBackend = makeCaptureSourceBackend()
+        try await captureSourceBackend.startCapture(
+            MirageHostCaptureRequest(
+                source: .display(MirageHostDisplayID(displayWrapper.display.displayID)),
+                configuration: MirageHostCaptureConfiguration(
+                    logicalSize: outputSize,
+                    captureResolution: outputSize,
+                    showsCursor: captureShowsCursor,
+                    targetFrameRate: currentFrameRate,
+                    queueDepth: encoderConfig.captureQueueDepth ?? 1,
+                    capturesAudio: onCapturedAudioBuffer != nil,
+                    audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: onCapturedAudioBuffer != nil),
+                    audioChannelCount: requestedAudioChannelCount
+                )
+            ),
+            using: restartCaptureEngine,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },
             onAudio: onCapturedAudioBuffer,
-            audioChannelCount: requestedAudioChannelCount
         )
         await refreshCaptureCadence()
         await applyDerivedQuality(for: outputSize, logLabel: "Desktop resize reset")

@@ -7,8 +7,16 @@
 //  Stream update and shutdown helpers.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -35,7 +43,7 @@ extension StreamContext {
         reason: String
     ) async {
         guard isRunning else { return }
-        guard let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        guard let normalizedBitrate = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: bitrate
         ) else { return }
         let ceiling = ceilingBitrateBps ?? bitrateAdaptationCeiling ?? requestedTargetBitrate ?? normalizedBitrate
@@ -45,14 +53,14 @@ extension StreamContext {
             max(minimumBitrateFloor, ceiling)
         )
         guard targetBitrate > 0 else { return }
-        let normalizedEncoderRateHint = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        let normalizedEncoderRateHint = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: encoderRateHintBps ?? targetBitrate
         ) ?? targetBitrate
         let encoderRateHint = min(
             max(minimumBitrateFloor, normalizedEncoderRateHint),
             max(minimumBitrateFloor, ceiling)
         )
-        let normalizedSenderPacingBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        let normalizedSenderPacingBitrate = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: senderPacingBitrateBps ?? targetBitrate
         ) ?? targetBitrate
         let senderPacingMinimumFloor = mediaPathProfile.usesAwdlRadioPolicy ? 1 : minimumBitrateFloor
@@ -108,7 +116,7 @@ extension StreamContext {
     }
 
     func updateEncoderSettings(
-        colorDepth: MirageStreamColorDepth?,
+        colorDepth: MirageMedia.MirageStreamColorDepth?,
         bitrate: Int?,
         bitrateAdaptationCeiling: Int? = nil,
         updateRequestedTargetBitrate: Bool = false
@@ -125,7 +133,7 @@ extension StreamContext {
             colorDepth: colorDepth,
             bitrate: bitrate
         )
-        if let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        if let normalizedBitrate = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: updatedConfig.bitrate
         ) {
             updatedConfig.bitrate = normalizedBitrate
@@ -270,7 +278,7 @@ extension StreamContext {
     func updateCaptureShowsCursor(_ showsCursor: Bool) async throws {
         guard captureShowsCursor != showsCursor else { return }
         captureShowsCursor = showsCursor
-        try await captureEngine?.updateShowsCursor(showsCursor)
+        try await updateActiveCaptureShowsCursor(showsCursor)
         MirageLogger.stream("Stream \(streamID) capture cursor visibility updated: showsCursor=\(showsCursor)")
     }
 
@@ -308,9 +316,7 @@ extension StreamContext {
                 "Updating stream to scaled resolution: \(width)x\(height) (capture \(captureTarget.width)x\(captureTarget.height), scale: \(captureTarget.hostScaleFactor), from \(windowFrame.width)x\(windowFrame.height) pts) (frames paused)"
             )
         do {
-            if let captureEngine {
-                try await captureEngine.updateDimensions(windowFrame: windowFrame, outputScale: streamScale)
-            }
+            try await updateActiveWindowCaptureDimensions(windowFrame: windowFrame, outputScale: streamScale)
 
             if let encoder {
                 try await encoder.updateDimensions(width: width, height: height)
@@ -342,8 +348,8 @@ extension StreamContext {
             requestedScale: requestedStreamScale,
             logLabel: nil
         )
-        let candidateScaledWidth = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.width * candidateScale)
-        let candidateScaledHeight = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.height * candidateScale)
+        let candidateScaledWidth = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.width * candidateScale)
+        let candidateScaledHeight = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.height * candidateScale)
         let candidateOutputSize = CGSize(width: CGFloat(candidateScaledWidth), height: CGFloat(candidateScaledHeight))
 
         if requestedBaseSize == baseCaptureSize,
@@ -368,8 +374,8 @@ extension StreamContext {
             requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
-        let scaledWidth = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.width * resolvedScaleForUpdate)
-        let scaledHeight = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.height * resolvedScaleForUpdate)
+        let scaledWidth = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.width * resolvedScaleForUpdate)
+        let scaledHeight = MirageMedia.MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.height * resolvedScaleForUpdate)
         let outputSize = CGSize(width: CGFloat(scaledWidth), height: CGFloat(scaledHeight))
 
         baseCaptureSize = requestedBaseSize
@@ -381,9 +387,7 @@ extension StreamContext {
                 "Updating to client-requested resolution: \(width)x\(height) (scaled \(scaledWidth)x\(scaledHeight)) (frames paused)"
             )
         do {
-            if let captureEngine {
-                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
-            }
+            try await updateActiveCaptureResolution(width: scaledWidth, height: scaledHeight)
 
             currentCaptureSize = outputSize
             currentEncodedSize = outputSize
@@ -480,14 +484,12 @@ extension StreamContext {
                     " encoded \(scaledWidth)x\(scaledHeight)"
             )
         do {
-            if let captureEngine {
-                switch captureMode {
-                case .display:
-                    try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
-                case .window:
-                    if !lastWindowFrame.isEmpty {
-                        try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
-                    }
+            switch captureMode {
+            case .display:
+                try await updateActiveCaptureResolution(width: scaledWidth, height: scaledHeight)
+            case .window:
+                if !lastWindowFrame.isEmpty {
+                    try await updateActiveWindowCaptureDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
                 }
             }
 
@@ -573,14 +575,12 @@ extension StreamContext {
         )
 
         do {
-            if let captureEngine {
-                switch captureMode {
-                case .display:
-                    try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
-                case .window:
-                    if !lastWindowFrame.isEmpty {
-                        try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
-                    }
+            switch captureMode {
+            case .display:
+                try await updateActiveCaptureResolution(width: scaledWidth, height: scaledHeight)
+            case .window:
+                if !lastWindowFrame.isEmpty {
+                    try await updateActiveWindowCaptureDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
                 }
             }
 

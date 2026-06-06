@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -20,7 +28,7 @@ extension CGVirtualDisplayBridge {
         width: Int,
         height: Int,
         ppi: Double,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         profile: DescriptorAttempt
     ) {
         descriptor.setValue(name, forKey: "name")

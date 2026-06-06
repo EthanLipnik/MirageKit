@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Loom
 
 /// Initialization helpers for client transport, audio, and session-store wiring.
 @MainActor
@@ -15,12 +23,7 @@ extension MirageClientService {
     static func resolvedNetworkConfiguration(
         from loomConfiguration: LoomNetworkConfiguration
     ) -> LoomNetworkConfiguration {
-        var resolvedConfiguration = loomConfiguration
-        if resolvedConfiguration.serviceType == Loom.serviceType {
-            resolvedConfiguration.serviceType = MirageKit.serviceType
-        }
-        resolvedConfiguration.quicALPN = ["mirage-v2"]
-        return resolvedConfiguration
+        MirageConnectivityLoomAdapter.resolvedClientNetworkConfiguration(from: loomConfiguration)
     }
 
     /// Connects decoded-audio delivery from the ingress queue back into the client service.

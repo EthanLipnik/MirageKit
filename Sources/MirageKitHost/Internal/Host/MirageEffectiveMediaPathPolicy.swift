@@ -5,31 +5,38 @@
 //  Created by Ethan Lipnik on 5/27/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
 struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
-    let hostPathKind: MirageNetworkPathKind
-    let hostMediaPathProfile: MirageMediaPathProfile
+    let hostPathKind: MirageCore.MirageNetworkPathKind
+    let hostMediaPathProfile: MirageMedia.MirageMediaPathProfile
     let hostPathSignature: String?
-    let clientPathKind: MirageNetworkPathKind
-    let clientMediaPathProfile: MirageMediaPathProfile
+    let clientPathKind: MirageCore.MirageNetworkPathKind
+    let clientMediaPathProfile: MirageMedia.MirageMediaPathProfile
     let clientPathSignature: String?
-    let clientPolicyPathKind: MirageNetworkPathKind
-    let clientPolicyMediaPathProfile: MirageMediaPathProfile
-    let transportPathKind: MirageNetworkPathKind
-    let mediaPathProfile: MirageMediaPathProfile
+    let clientPolicyPathKind: MirageCore.MirageNetworkPathKind
+    let clientPolicyMediaPathProfile: MirageMedia.MirageMediaPathProfile
+    let transportPathKind: MirageCore.MirageNetworkPathKind
+    let mediaPathProfile: MirageMedia.MirageMediaPathProfile
 
     static func resolve(
-        hostSnapshot: MirageNetworkPathSnapshot?,
-        clientPathKind: MirageNetworkPathKind?,
-        clientMediaPathProfile: MirageMediaPathProfile?,
+        hostSnapshot: MirageConnectivity.MirageNetworkPathSnapshot?,
+        clientPathKind: MirageCore.MirageNetworkPathKind?,
+        clientMediaPathProfile: MirageMedia.MirageMediaPathProfile?,
         clientPathSignature: String?,
-        clientPolicyPathKind: MirageNetworkPathKind? = nil,
-        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil
+        clientPolicyPathKind: MirageCore.MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> MirageEffectiveMediaPathPolicy {
         let hostKind = hostSnapshot?.kind ?? .unknown
         let hostProfile = hostSnapshot?.mediaProfile ?? .unknown
@@ -69,15 +76,15 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     }
 
     private static func resolvedMediaPathProfile(
-        hostKind: MirageNetworkPathKind,
+        hostKind: MirageCore.MirageNetworkPathKind,
         hostSignature: String?,
-        host: MirageMediaPathProfile,
-        clientKind: MirageNetworkPathKind,
+        host: MirageMedia.MirageMediaPathProfile,
+        clientKind: MirageCore.MirageNetworkPathKind,
         clientSignature: String?,
-        client: MirageMediaPathProfile,
-        clientPolicyKind: MirageNetworkPathKind,
-        clientPolicy: MirageMediaPathProfile
-    ) -> MirageMediaPathProfile {
+        client: MirageMedia.MirageMediaPathProfile,
+        clientPolicyKind: MirageCore.MirageNetworkPathKind,
+        clientPolicy: MirageMedia.MirageMediaPathProfile
+    ) -> MirageMedia.MirageMediaPathProfile {
         let hostResolved = resolvedAwdlSideProfile(
             kind: hostKind,
             profile: host,
@@ -113,10 +120,10 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     }
 
     private static func resolvedAwdlSideProfile(
-        kind: MirageNetworkPathKind,
-        profile: MirageMediaPathProfile,
+        kind: MirageCore.MirageNetworkPathKind,
+        profile: MirageMedia.MirageMediaPathProfile,
         signature: String?
-    ) -> MirageMediaPathProfile? {
+    ) -> MirageMedia.MirageMediaPathProfile? {
         guard kind == .awdl else { return nil }
         if profile.usesAwdlRadioPolicy {
             return .awdlRadio
@@ -162,11 +169,11 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     }
 
     private static func resolvedTransportPathKind(
-        resolvedProfile: MirageMediaPathProfile,
-        hostKind: MirageNetworkPathKind,
-        clientKind: MirageNetworkPathKind,
-        clientPolicyKind: MirageNetworkPathKind
-    ) -> MirageNetworkPathKind {
+        resolvedProfile: MirageMedia.MirageMediaPathProfile,
+        hostKind: MirageCore.MirageNetworkPathKind,
+        clientKind: MirageCore.MirageNetworkPathKind,
+        clientPolicyKind: MirageCore.MirageNetworkPathKind
+    ) -> MirageCore.MirageNetworkPathKind {
         if resolvedProfile == .vpnOrOverlay {
             return .vpn
         }
@@ -190,21 +197,14 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
     }
 }
 
-func currentHostMediaPathSnapshot(
-    liveSnapshot: LoomSessionNetworkPathSnapshot?,
-    bootstrapSnapshot: LoomSessionNetworkPathSnapshot?
-) -> MirageNetworkPathSnapshot? {
-    (liveSnapshot ?? bootstrapSnapshot).map { MirageNetworkPathClassifier.classify($0) }
-}
-
 extension MirageHostService {
     func effectiveMediaPathPolicy(
         clientContext: ClientContext,
-        clientPathKind: MirageNetworkPathKind?,
-        clientMediaPathProfile: MirageMediaPathProfile?,
+        clientPathKind: MirageCore.MirageNetworkPathKind?,
+        clientMediaPathProfile: MirageMedia.MirageMediaPathProfile?,
         clientPathSignature: String?,
-        clientPolicyPathKind: MirageNetworkPathKind? = nil,
-        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil
+        clientPolicyPathKind: MirageCore.MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> MirageEffectiveMediaPathPolicy {
         let hostSnapshot = currentHostMediaPathSnapshot(
             liveSnapshot: nil,
@@ -222,11 +222,11 @@ extension MirageHostService {
 
     func effectiveMediaPathPolicyUsingLiveSession(
         clientContext: ClientContext,
-        clientPathKind: MirageNetworkPathKind?,
-        clientMediaPathProfile: MirageMediaPathProfile?,
+        clientPathKind: MirageCore.MirageNetworkPathKind?,
+        clientMediaPathProfile: MirageMedia.MirageMediaPathProfile?,
         clientPathSignature: String?,
-        clientPolicyPathKind: MirageNetworkPathKind? = nil,
-        clientPolicyMediaPathProfile: MirageMediaPathProfile? = nil
+        clientPolicyPathKind: MirageCore.MirageNetworkPathKind? = nil,
+        clientPolicyMediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) async -> MirageEffectiveMediaPathPolicy {
         let hostSnapshot = currentHostMediaPathSnapshot(
             liveSnapshot: await clientContext.controlChannel.session.pathSnapshot,
@@ -243,7 +243,7 @@ extension MirageHostService {
     }
 
     func effectiveMediaPathPolicy(
-        for request: StartDesktopStreamMessage,
+        for request: MirageWire.StartDesktopStreamMessage,
         clientContext: ClientContext
     ) -> MirageEffectiveMediaPathPolicy {
         effectiveMediaPathPolicy(
@@ -257,7 +257,7 @@ extension MirageHostService {
     }
 
     func effectiveMediaPathPolicyUsingLiveSession(
-        for request: StartDesktopStreamMessage,
+        for request: MirageWire.StartDesktopStreamMessage,
         clientContext: ClientContext
     ) async -> MirageEffectiveMediaPathPolicy {
         await effectiveMediaPathPolicyUsingLiveSession(
@@ -271,7 +271,7 @@ extension MirageHostService {
     }
 
     func effectiveMediaPathPolicy(
-        for request: StartStreamMessage,
+        for request: MirageWire.StartStreamMessage,
         clientContext: ClientContext
     ) -> MirageEffectiveMediaPathPolicy {
         effectiveMediaPathPolicy(
@@ -285,7 +285,7 @@ extension MirageHostService {
     }
 
     func effectiveMediaPathPolicy(
-        for request: SelectAppMessage,
+        for request: MirageWire.SelectAppMessage,
         clientContext: ClientContext
     ) -> MirageEffectiveMediaPathPolicy {
         effectiveMediaPathPolicy(
@@ -299,7 +299,7 @@ extension MirageHostService {
     }
 
     func effectiveMediaPathPolicy(
-        for request: StartCustomStreamMessage,
+        for request: MirageWire.StartCustomStreamMessage,
         clientContext: ClientContext
     ) -> MirageEffectiveMediaPathPolicy {
         effectiveMediaPathPolicy(

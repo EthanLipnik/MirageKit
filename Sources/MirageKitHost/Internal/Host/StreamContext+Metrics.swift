@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -48,8 +56,8 @@ extension StreamContext {
             }
             let captureValidation = captureValidationSnapshot()
             let encoderValidation = await encoder?.runtimeValidationSnapshot
-            let captureTelemetry = await captureEngine?.consumeCaptureTelemetrySnapshot()
-            let capturePolicy = await captureEngine?.capturePolicySnapshot
+            let captureTelemetry = await consumeActiveCaptureTelemetrySnapshot()
+            let capturePolicy = await activeCapturePolicySnapshot()
             let packetTelemetry = await packetSender?.consumeTelemetrySnapshot(
                 queuedUnreliableProfile: mediaSendProfile
             )
@@ -68,7 +76,7 @@ extension StreamContext {
                 policy: capturePolicy
             )
             let awdlPolicy = transportController.latestAwdlMediaDecision
-            let message = StreamMetricsMessage(
+            let message = MirageWire.StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
                 idleEncodedFPS: idleEncodedFPS,
@@ -269,7 +277,7 @@ extension StreamContext {
         }
     }
     static func measuredTenBitDisplayP3Validation(
-        coverageStatus: MirageDisplayP3CoverageStatus?,
+        coverageStatus: MirageMedia.MirageDisplayP3CoverageStatus?,
         captureIsTenBitP010: Bool?,
         captureIsDisplayP3: Bool?,
         encoderTenBitDisplayP3Validated: Bool?
@@ -286,7 +294,7 @@ extension StreamContext {
     private func resolvedDisplayP3CoverageStatus(
         capture: CaptureValidationSnapshot?,
         encoder: VideoEncoder.RuntimeValidationSnapshot?
-    ) -> MirageDisplayP3CoverageStatus? {
+    ) -> MirageMedia.MirageDisplayP3CoverageStatus? {
         if let override = displayP3CoverageStatusOverride {
             return override
         }

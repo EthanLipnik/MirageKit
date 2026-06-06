@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
     /// Tunable parameters for one quality-test probe family.
     struct QualityTestProbeProfile {
         /// Transport path measured by this profile.
-        let probeKind: MirageQualityTestPlan.ProbeKind
+        let probeKind: MirageDiagnostics.MirageQualityTestPlan.ProbeKind
 
         /// Lowest bitrate sampled by the sweep.
         let minTargetBitrate: Int
@@ -55,7 +63,7 @@ extension MirageClientService {
     /// Fully expanded quality-test plan plus stage ownership metadata.
     struct QualityTestExecutionPlan {
         /// Ordered stages sent to the host.
-        let plan: MirageQualityTestPlan
+        let plan: MirageDiagnostics.MirageQualityTestPlan
 
         /// Stage IDs contributing to the transport summary.
         let transportMeasurementStageIDs: Set<Int>
@@ -78,7 +86,7 @@ extension MirageClientService {
 
     /// Selects the stable bitrate and loss value for one quality-test phase.
     nonisolated static func summarizeQualityTestPhase(
-        stageResults: [MirageQualityTestSummary.StageResult],
+        stageResults: [MirageDiagnostics.MirageQualityTestSummary.StageResult],
         measurementStageIDs: Set<Int>,
         throughputFloor: Double?,
         lossCeiling: Double,
@@ -160,7 +168,7 @@ extension MirageClientService {
 
     /// Returns whether one measured stage satisfies the loss and throughput constraints for its phase.
     nonisolated static func qualityTestStageIsStable(
-        _ stage: MirageQualityTestSummary.StageResult,
+        _ stage: MirageDiagnostics.MirageQualityTestSummary.StageResult,
         targetBitrate: Int,
         payloadBytes: Int,
         throughputFloor: Double?,
@@ -174,7 +182,7 @@ extension MirageClientService {
         }
         guard !stage.deliveryWindowMissed else { return false }
         guard let throughputFloor else { return true }
-        let packetBytes = payloadBytes + mirageQualityTestHeaderSize
+        let packetBytes = payloadBytes + MirageWire.mirageQualityTestHeaderSize
         let payloadRatio =
             packetBytes > 0
                 ? Double(payloadBytes) / Double(packetBytes)
@@ -250,7 +258,7 @@ extension MirageClientService {
         for mode: MirageQualityTestMode
     ) -> QualityTestExecutionPlan {
         let modeProfile = Self.qualityTestProfile(for: mode)
-        var stages: [MirageQualityTestPlan.Stage] = []
+        var stages: [MirageDiagnostics.MirageQualityTestPlan.Stage] = []
         var nextStageID = 0
 
         func appendStages(
@@ -260,7 +268,7 @@ extension MirageClientService {
             let measurementTargets = Self.qualityTestMeasurementTargets(profile: profile)
 
             stages.append(
-                MirageQualityTestPlan.Stage(
+                MirageDiagnostics.MirageQualityTestPlan.Stage(
                     id: nextStageID,
                     probeKind: profile.probeKind,
                     targetBitrateBps: profile.minTargetBitrate,
@@ -272,7 +280,7 @@ extension MirageClientService {
             for target in measurementTargets {
                 let stageID = nextStageID
                 stages.append(
-                    MirageQualityTestPlan.Stage(
+                    MirageDiagnostics.MirageQualityTestPlan.Stage(
                         id: stageID,
                         probeKind: profile.probeKind,
                         targetBitrateBps: target,
@@ -296,7 +304,7 @@ extension MirageClientService {
             streamingReplayMeasurementStageIDs = appendStages(for: modeProfile.streamingReplay)
         }
         return QualityTestExecutionPlan(
-            plan: MirageQualityTestPlan(stages: stages),
+            plan: MirageDiagnostics.MirageQualityTestPlan(stages: stages),
             transportMeasurementStageIDs: transportMeasurementStageIDs,
             streamingReplayMeasurementStageIDs: streamingReplayMeasurementStageIDs,
             stopAfterFirstBreach: false
@@ -306,7 +314,7 @@ extension MirageClientService {
     /// Returns the throughput and loss constraints for one mode/probe-kind pair.
     nonisolated static func qualityTestStabilityConstraints(
         for mode: MirageQualityTestMode,
-        probeKind: MirageQualityTestPlan.ProbeKind
+        probeKind: MirageDiagnostics.MirageQualityTestPlan.ProbeKind
     ) -> (throughputFloor: Double?, lossCeiling: Double) {
         let modeProfile = qualityTestProfile(for: mode)
         switch probeKind {

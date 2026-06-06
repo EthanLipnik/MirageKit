@@ -5,13 +5,27 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
 
 extension StreamContext {
+    /// Refreshes capture content through the platform backend.
+    func currentCaptureShareableContent() async throws -> SCShareableContent {
+        let contentWrapper = try await captureContentProviderBackend.shareableContent()
+        return contentWrapper.content
+    }
+
     /// Iteratively resizes a host window until its accepted frame approximates the requested aspect ratio.
     func iterativelyResizeWindow(
         windowID: WindowID,
@@ -34,18 +48,14 @@ extension StreamContext {
                 height: max(200, candidateH.rounded(.down))
             )
             if let placementBounds, placementBounds.width > 0, placementBounds.height > 0 {
-                let targetOrigin = CGPoint(
-                    x: placementBounds.minX + floor((placementBounds.width - candidate.width) * 0.5),
-                    y: placementBounds.minY + floor((placementBounds.height - candidate.height) * 0.5)
-                )
-                await WindowSpaceManager.shared.positionWindow(windowID, at: targetOrigin)
+                await virtualDisplayBackend.centerWindow(windowID, on: placementBounds)
                 do {
                     try await Task.sleep(for: .milliseconds(8))
                 } catch {
                     return lastResolvedFrame
                 }
             }
-            _ = await WindowSpaceManager.shared.resizeWindow(windowID, to: candidate)
+            _ = await virtualDisplayBackend.resizeWindow(windowID, to: candidate)
 
             do {
                 try await Task.sleep(for: .milliseconds(24))
@@ -137,7 +147,7 @@ extension StreamContext {
         var delayMs = max(40, initialDelayMs)
 
         for attempt in 1 ... attempts {
-            let content = try await SCShareableContent.mirageHostContent()
+            let content = try await currentCaptureShareableContent()
             if let window = content.windows.first(where: { $0.windowID == CGWindowID(windowID) }) {
                 if attempt > 1 {
                     MirageLogger.stream("Resolved SCWindow \(windowID) on attempt \(attempt) (\(label))")
@@ -157,7 +167,7 @@ extension StreamContext {
                 )
             }
         }
-        throw MirageError.protocolError("Unable to resolve SCWindow \(windowID) for stream \(streamID) (\(label))")
+        throw MirageCore.MirageError.protocolError("Unable to resolve SCWindow \(windowID) for stream \(streamID) (\(label))")
     }
 
     /// Resolves a ScreenCaptureKit display wrapper, retrying while SCK refreshes its shareable-content list.
@@ -172,7 +182,7 @@ extension StreamContext {
         var delayMs = max(40, initialDelayMs)
 
         for attempt in 1 ... attempts {
-            let content = try await SCShareableContent.mirageHostContent()
+            let content = try await currentCaptureShareableContent()
             if let display = content.displays.first(where: { $0.displayID == displayID }) {
                 if attempt > 1 {
                     MirageLogger.stream("Resolved SCDisplay \(displayID) on attempt \(attempt) (\(label))")
@@ -191,7 +201,7 @@ extension StreamContext {
                 )
             }
         }
-        throw MirageError.protocolError("Unable to resolve SCDisplay \(displayID) for stream \(streamID) (\(label))")
+        throw MirageCore.MirageError.protocolError("Unable to resolve SCDisplay \(displayID) for stream \(streamID) (\(label))")
     }
 }
 

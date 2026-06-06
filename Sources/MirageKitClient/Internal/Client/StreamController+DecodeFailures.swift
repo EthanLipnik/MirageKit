@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension StreamController {
     /// Records a foreground decode failure and escalates logging once recovery is actionable.
@@ -24,7 +32,7 @@ extension StreamController {
             return
         }
 
-        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let metadata = MirageDiagnostics.MirageDiagnosticsErrorMetadata(error: error)
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime
         consecutiveDecodeErrors += 1
@@ -78,7 +86,7 @@ extension StreamController {
     }
 
     private func recordBackgroundDecodeFailureIfNeeded(_ error: Error) {
-        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let metadata = MirageDiagnostics.MirageDiagnosticsErrorMetadata(error: error)
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime
         let shouldLog = signature != lastBackgroundDecodeErrorSignature ||
@@ -116,13 +124,13 @@ extension StreamController {
         label: String,
         into components: inout [String]
     ) {
-        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let metadata = MirageDiagnostics.MirageDiagnosticsErrorMetadata(error: error)
         let localizedDescription = sanitizedDiagnosticDescription(error.localizedDescription)
         components.append(
             "\(label){type=\(metadata.typeName),domain=\(metadata.domain),code=\(metadata.code),description=\(localizedDescription)}"
         )
 
-        if let mirageError = error as? MirageError {
+        if let mirageError = error as? MirageCore.MirageError {
             switch mirageError {
             case let .connectionFailed(underlyingError),
                  let .encodingError(underlyingError),
@@ -155,7 +163,7 @@ extension StreamController {
         parentLabel: String,
         into components: inout [String]
     ) {
-        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let metadata = MirageDiagnostics.MirageDiagnosticsErrorMetadata(error: error)
         let localizedDescription = sanitizedDiagnosticDescription(error.localizedDescription)
         components.append(
             "\(parentLabel).underlying{type=\(metadata.typeName),domain=\(metadata.domain),code=\(metadata.code),description=\(localizedDescription)}"

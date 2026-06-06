@@ -7,6 +7,13 @@
 //  Shared codec benchmark infrastructure used by both host and client.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -40,7 +47,7 @@ package enum MirageCodecBenchmarkRunner {
         let encoded = try await encoder.encodeFrames(frameCount: frameCount)
         guard let firstSample = encoded.samples.first,
               let formatDescription = CMSampleBufferGetFormatDescription(firstSample) else {
-            throw MirageError.protocolError("Failed to create sample buffers for decode benchmark")
+            throw MirageCore.MirageError.protocolError("Failed to create sample buffers for decode benchmark")
         }
 
         let decodeTimes = try await BenchmarkDecoder.decodeSamples(
@@ -112,7 +119,7 @@ package final class BenchmarkEncoder {
         )
 
         guard status == noErr, let session else {
-            throw MirageError.protocolError("Failed to create compression session")
+            throw MirageCore.MirageError.protocolError("Failed to create compression session")
         }
 
         defer {
@@ -188,11 +195,11 @@ package final class BenchmarkEncoder {
 
         let waitResult = await MirageCodecBenchmarkRunner.waitForGroup(group, timeout: .seconds(10))
         if waitResult == .timedOut {
-            throw MirageError.protocolError("Encode benchmark timed out")
+            throw MirageCore.MirageError.protocolError("Encode benchmark timed out")
         }
 
         if let encodeError {
-            throw MirageError.protocolError("Encode benchmark failed: \(encodeError)")
+            throw MirageCore.MirageError.protocolError("Encode benchmark failed: \(encodeError)")
         }
 
         return Result(samples: state.samples)
@@ -281,7 +288,7 @@ package enum BenchmarkDecoder {
         )
 
         guard status == noErr, let session else {
-            throw MirageError.protocolError("Failed to create decompression session")
+            throw MirageCore.MirageError.protocolError("Failed to create decompression session")
         }
 
         defer {
@@ -317,11 +324,11 @@ package enum BenchmarkDecoder {
 
         let waitResult = await MirageCodecBenchmarkRunner.waitForGroup(group, timeout: .seconds(10))
         if waitResult == .timedOut {
-            throw MirageError.protocolError("Decode benchmark timed out")
+            throw MirageCore.MirageError.protocolError("Decode benchmark timed out")
         }
 
         if let decodeError {
-            throw MirageError.protocolError("Decode benchmark failed: \(decodeError)")
+            throw MirageCore.MirageError.protocolError("Decode benchmark failed: \(decodeError)")
         }
 
         return state.decodeTimes

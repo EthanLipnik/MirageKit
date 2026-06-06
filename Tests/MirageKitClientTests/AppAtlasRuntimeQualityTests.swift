@@ -10,6 +10,10 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 @Suite("App Atlas Runtime Quality")
@@ -103,7 +107,7 @@ struct AppAtlasRuntimeQualityTests {
 
             let requestEnvelope = try await serverReceiver.next()
             #expect(requestEnvelope.type == .streamEncoderSettingsChange)
-            let request = try requestEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+            let request = try requestEnvelope.decode(MirageWire.StreamEncoderSettingsChangeMessage.self)
             #expect(request.streamID == mediaStreamID)
             #expect(request.targetFrameRate == 30)
         } catch {
@@ -169,7 +173,7 @@ struct AppAtlasRuntimeQualityTests {
             let requestEnvelope = try await serverReceiver.next()
             #expect(downshiftedCount == 1)
             #expect(requestEnvelope.type == .streamEncoderSettingsChange)
-            let request = try requestEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+            let request = try requestEnvelope.decode(MirageWire.StreamEncoderSettingsChangeMessage.self)
             #expect(request.streamID == dedicatedStreamID)
             #expect(request.streamScale == 0.75)
             #expect(request.targetFrameRate == 30)
@@ -185,11 +189,11 @@ struct AppAtlasRuntimeQualityTests {
         await pair.stop()
     }
 
-    private static func window(id: WindowID, title: String) -> MirageWindow {
-        MirageWindow(
+    private static func window(id: WindowID, title: String) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: title,
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 1,
                 bundleIdentifier: "com.example.Editor",
                 name: "Editor"

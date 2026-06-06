@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 5/15/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 struct HostPriorityInputMetricsSnapshot: Equatable, Sendable {
@@ -39,7 +46,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     }
 
     private struct State {
-        var endpoint: LoomPriorityInputEndpoint?
+        var endpoint: MiragePriorityInputEndpointProtocol?
         var receiveTask: Task<Void, Never>?
         var seenProtectedEventIDs: Set<UInt64> = []
         var protectedEventIDOrder: [UInt64] = []
@@ -139,13 +146,13 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         receiveTask?.cancel()
     }
 
-    func handleControlInputMessage(_ message: ControlMessage) {
+    func handleControlInputMessage(_ message: MirageWire.ControlMessage) {
         switch message.type {
         case .inputEvent:
             inputScheduler.enqueue(message)
         case .priorityInputEvent:
             do {
-                let envelope = try MiragePriorityInputEnvelope.deserialize(message.payload)
+                let envelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(message.payload)
                 recordFallback()
                 handle(envelope: envelope)
             } catch {
@@ -171,12 +178,12 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         }
     }
 
-    private func install(endpoint: LoomPriorityInputEndpoint) {
+    private func install(endpoint: MiragePriorityInputEndpointProtocol) {
         let stream = endpoint.makeIncomingPayloadStream()
         let receiveTask = Task.detached(priority: .high) { [weak self] in
             for await payload in stream {
                 do {
-                    let envelope = try MiragePriorityInputEnvelope.deserialize(payload)
+                    let envelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(payload)
                     self?.handle(envelope: envelope)
                 } catch {
                     self?.recordMalformedEnvelope()
@@ -198,7 +205,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         previousTask?.cancel()
     }
 
-    private func handle(envelope: MiragePriorityInputEnvelope) {
+    private func handle(envelope: MirageWire.MiragePriorityInputEnvelope) {
         switch envelope.kind {
         case .input:
             handleInputEnvelope(envelope)
@@ -209,7 +216,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         }
     }
 
-    private func handleInputEnvelope(_ envelope: MiragePriorityInputEnvelope) {
+    private func handleInputEnvelope(_ envelope: MirageWire.MiragePriorityInputEnvelope) {
         recordPriorityReceive()
         let accepted = shouldAccept(envelope)
         switch envelope.deliveryClass {
@@ -229,7 +236,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         }
     }
 
-    private func handleContinuousInputEnvelope(_ envelope: MiragePriorityInputEnvelope) {
+    private func handleContinuousInputEnvelope(_ envelope: MirageWire.MiragePriorityInputEnvelope) {
         recordPriorityReceive()
         recordContinuousReceive()
         let accepted = shouldAccept(envelope)
@@ -239,7 +246,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         guard accepted else { return }
 
         do {
-            let batch = try MirageContinuousInputBatch.deserialize(envelope.inputPayload)
+            let batch = try MirageInput.MirageContinuousInputBatch.deserialize(envelope.inputPayload)
             MirageInputLatencyTelemetry.shared.recordHostContinuousBatchReceive(batch)
             inputScheduler.enqueueContinuousBatch(batch)
         } catch {
@@ -248,7 +255,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         }
     }
 
-    private func sendRealtimeAcknowledgementIfNeeded(for envelope: MiragePriorityInputEnvelope) {
+    private func sendRealtimeAcknowledgementIfNeeded(for envelope: MirageWire.MiragePriorityInputEnvelope) {
         let now = ProcessInfo.processInfo.systemUptime
         let shouldAck = withState { state in
             guard state.lastRealtimeAckAt == 0 ||
@@ -262,7 +269,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         sendAcknowledgement(for: envelope, kind: .ack)
     }
 
-    private func shouldAccept(_ envelope: MiragePriorityInputEnvelope) -> Bool {
+    private func shouldAccept(_ envelope: MirageWire.MiragePriorityInputEnvelope) -> Bool {
         switch envelope.deliveryClass {
         case .realtime:
             return shouldAcceptRealtime(envelope)
@@ -271,7 +278,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         }
     }
 
-    private func shouldAcceptProtected(_ envelope: MiragePriorityInputEnvelope) -> Bool {
+    private func shouldAcceptProtected(_ envelope: MirageWire.MiragePriorityInputEnvelope) -> Bool {
         return withState { state in
             if state.seenProtectedEventIDs.contains(envelope.eventID) {
                 state.dedupeCount &+= 1
@@ -287,7 +294,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         }
     }
 
-    private func shouldAcceptRealtime(_ envelope: MiragePriorityInputEnvelope) -> Bool {
+    private func shouldAcceptRealtime(_ envelope: MirageWire.MiragePriorityInputEnvelope) -> Bool {
         let timestampIdentity = Self.realtimeTimestampIdentity(for: envelope)
         return withState { state in
             if state.seenRealtimeEventIDs.contains(envelope.eventID) {
@@ -313,10 +320,10 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     }
 
     private static func realtimeTimestampIdentity(
-        for envelope: MiragePriorityInputEnvelope
+        for envelope: MirageWire.MiragePriorityInputEnvelope
     ) -> (key: RealtimeInputKey, timestamp: TimeInterval)? {
         guard envelope.kind == .input,
-              let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload),
+              let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(envelope.inputPayload),
               let kind = realtimeInputKind(for: inputMessage.event) else {
             return nil
         }
@@ -326,7 +333,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         )
     }
 
-    private static func realtimeInputKind(for event: MirageInputEvent) -> RealtimeInputKind? {
+    private static func realtimeInputKind(for event: MirageInput.MirageInputEvent) -> RealtimeInputKind? {
         switch event {
         case .mouseMoved:
             .mouseMoved
@@ -346,12 +353,12 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     }
 
     private func sendAcknowledgement(
-        for envelope: MiragePriorityInputEnvelope,
-        kind: MiragePriorityInputEnvelopeKind
+        for envelope: MirageWire.MiragePriorityInputEnvelope,
+        kind: MirageWire.MiragePriorityInputEnvelopeKind
     ) {
         let endpoint = withState { state in state.endpoint }
         guard let endpoint else { return }
-        let acknowledgement = MiragePriorityInputEnvelope(
+        let acknowledgement = MirageWire.MiragePriorityInputEnvelope(
             kind: kind,
             eventID: envelope.eventID,
             streamID: envelope.streamID,

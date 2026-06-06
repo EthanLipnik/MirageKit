@@ -7,9 +7,17 @@
 //  Host input controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -34,7 +42,7 @@ extension MirageHostInputController {
     }
 
     /// Posts a synthetic flags-changed event for the requested modifier state.
-    func postFlagsChangedEvent(_ modifiers: MirageModifierFlags, domain: HostKeyboardInjectionDomain) {
+    func postFlagsChangedEvent(_ modifiers: MirageInput.MirageModifierFlags, domain: HostKeyboardInjectionDomain) {
         guard let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) else {
             return
         }
