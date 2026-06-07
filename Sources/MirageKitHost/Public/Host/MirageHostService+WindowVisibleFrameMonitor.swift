@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -39,14 +47,14 @@ extension MirageHostService {
                     continue
                 }
 
-                let displayBounds = CGVirtualDisplayBridge.displayBounds(
+                let displayBounds = platformVirtualDisplayBackend.displayBounds(
                     state.displayID,
                     knownResolution: SharedVirtualDisplayManager.logicalResolution(
                         for: state.pixelResolution,
                         scaleFactor: max(1.0, state.scaleFactor)
                     )
                 )
-                var visibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+                var visibleBounds = platformVirtualDisplayBackend.displayVisibleBounds(
                     state.displayID,
                     knownBounds: displayBounds
                 )

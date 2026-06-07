@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -26,11 +34,11 @@ extension MirageHostService {
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw MirageError.protocolError("Timed out waiting for \(phase) from \(peerName)")
+                throw MirageCore.MirageError.protocolError("Timed out waiting for \(phase) from \(peerName)")
             }
 
             let result = try await group.next() ?? {
-                throw MirageError.protocolError("Bootstrap step ended unexpectedly")
+                throw MirageCore.MirageError.protocolError("Bootstrap step ended unexpectedly")
             }()
             group.cancelAll()
             return result
@@ -40,25 +48,25 @@ extension MirageHostService {
     /// Receives the first Mirage bootstrap request frame from a newly accepted control channel.
     func receiveBootstrapRequest(
         from controlChannel: MirageControlChannel
-    ) async throws -> MirageSessionBootstrapRequest {
+    ) async throws -> MirageWire.MirageSessionBootstrapRequest {
         var buffer = Data()
 
         for await chunk in controlChannel.incomingBytes {
             guard !chunk.isEmpty else { continue }
             buffer.append(chunk)
 
-            switch ControlMessage.deserialize(from: buffer) {
+            switch MirageWire.ControlMessage.deserialize(from: buffer) {
             case let .success(message, _):
                 guard message.type == .sessionBootstrapRequest else {
-                    throw MirageError.protocolError("Expected Mirage session bootstrap request")
+                    throw MirageCore.MirageError.protocolError("Expected Mirage session bootstrap request")
                 }
-                return try message.decode(MirageSessionBootstrapRequest.self)
+                return try message.decode(MirageWire.MirageSessionBootstrapRequest.self)
             case .needMoreData:
                 continue
             case let .invalidFrame(reason):
                 MirageLogger.host("Rejected incompatible Mirage bootstrap frame: \(reason)")
-                throw MirageError.connectionRejected(
-                    MirageConnectionRejection(
+                throw MirageCore.MirageError.connectionRejected(
+                    MirageCore.MirageConnectionRejection(
                         reason: .malformedBootstrap,
                         recoveryHint: "Invalid Mirage bootstrap frame: \(reason)"
                     )
@@ -66,29 +74,49 @@ extension MirageHostService {
             }
         }
 
-        throw MirageError.protocolError("Control stream closed before session bootstrap request")
+        throw MirageCore.MirageError.protocolError("Control stream closed before session bootstrap request")
     }
 
     /// Builds the accepted or rejected Mirage bootstrap response for a client request.
     func makeBootstrapResponse(
-        for request: MirageSessionBootstrapRequest,
+        for request: MirageWire.MirageSessionBootstrapRequest,
         peerIdentity: LoomPeerIdentity,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?,
         autoTrustGranted: Bool
-    ) async throws -> (response: MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
+    ) async throws -> (response: MirageWire.MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
         let hostName = serviceName
+        let hostCapabilities = MirageRuntimeCapabilities.currentFullFrameBaseline
 
-        guard request.protocolVersion == Int(MirageKit.protocolVersion) else {
+        guard request.protocolVersion == Int(MirageKit.controlProtocolVersion) else {
             return (
-                MirageSessionBootstrapResponse(
+                MirageWire.MirageSessionBootstrapResponse(
                     accepted: false,
                     hostID: hostID,
                     hostName: hostName,
                     mediaEncryptionEnabled: false,
                     datagramRegistrationToken: Data(),
                     rejectionReason: .protocolVersionMismatch,
-                    protocolMismatchHostVersion: Int(MirageKit.protocolVersion),
+                    protocolMismatchHostVersion: Int(MirageKit.controlProtocolVersion),
+                    protocolMismatchClientVersion: request.protocolVersion
+                ),
+                nil
+            )
+        }
+
+        guard hostCapabilities.selectedMediaPacketFamilyForSend(
+            matching: request.clientCapabilities
+        ) != nil else {
+            return (
+                MirageWire.MirageSessionBootstrapResponse(
+                    accepted: false,
+                    hostID: hostID,
+                    hostName: hostName,
+                    mediaEncryptionEnabled: false,
+                    datagramRegistrationToken: Data(),
+                    hostCapabilities: hostCapabilities,
+                    rejectionReason: .protocolVersionMismatch,
+                    protocolMismatchHostVersion: Int(MirageKit.controlProtocolVersion),
                     protocolMismatchClientVersion: request.protocolVersion
                 ),
                 nil
@@ -96,14 +124,14 @@ extension MirageHostService {
         }
 
         guard let identityManager else {
-            throw MirageError.protocolError("Cannot bootstrap session without identity manager")
+            throw MirageCore.MirageError.protocolError("Cannot bootstrap session without identity manager")
         }
         guard let clientPublicKey = peerIdentity.identityPublicKey,
               let clientKeyID = peerIdentity.identityKeyID else {
-            throw MirageError.protocolError("Authenticated Loom session is missing client identity metadata")
+            throw MirageCore.MirageError.protocolError("Authenticated Loom session is missing client identity metadata")
         }
 
-        let hostIdentity = try identityManager.currentIdentity()
+        let hostIdentity = try MirageKit.currentIdentitySnapshot(using: identityManager)
         let mediaEncryptionEnabled = mediaEncryptionEnabledForAcceptedSession(
             isPeerToPeer: ClientContext.isPeerToPeerConnection(
                 remoteEndpoint: remoteEndpoint,
@@ -122,14 +150,15 @@ extension MirageHostService {
             datagramRegistrationToken: datagramRegistrationToken
         )
 
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: true,
             hostID: hostID,
             hostName: hostName,
             mediaEncryptionEnabled: mediaEncryptionEnabled,
             datagramRegistrationToken: datagramRegistrationToken,
             autoTrustGranted: autoTrustGranted,
-            remoteAccessAllowed: MiragePeerAdvertisementMetadata.vpnAccessEnabled(in: advertisedPeerAdvertisement)
+            remoteAccessAllowed: MirageConnectivity.MiragePeerAdvertisementMetadata.vpnAccessEnabled(in: advertisedPeerAdvertisement),
+            hostCapabilities: hostCapabilities
         )
         return (response, mediaSecurity)
     }
@@ -156,11 +185,11 @@ extension MirageHostService {
     /// Rejects an authenticated session before it becomes a connected Mirage client.
     func rejectIncomingSession(
         _ session: LoomAuthenticatedSession,
-        reason: MirageSessionBootstrapRejectionReason
+        reason: MirageWire.MirageSessionBootstrapRejectionReason
     ) async {
         do {
             let controlChannel = try await MirageControlChannel.accept(from: session)
-            let response = MirageSessionBootstrapResponse(
+            let response = MirageWire.MirageSessionBootstrapResponse(
                 accepted: false,
                 hostID: hostID,
                 hostName: serviceName,
@@ -182,10 +211,10 @@ extension MirageHostService {
 
     /// Creates a rejected bootstrap response for an already accepted control channel.
     func makeRejectedBootstrapResponse(
-        reason: MirageSessionBootstrapRejectionReason,
-        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil
-    ) -> MirageSessionBootstrapResponse {
-        MirageSessionBootstrapResponse(
+        reason: MirageWire.MirageSessionBootstrapRejectionReason,
+        authorizationFailureReason: MirageWire.MirageSessionBootstrapAuthorizationFailureReason? = nil
+    ) -> MirageWire.MirageSessionBootstrapResponse {
+        MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: hostID,
             hostName: serviceName,

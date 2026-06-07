@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension MirageHostService {
@@ -82,7 +90,7 @@ extension MirageHostService {
         geometry: DesktopResizeResolvedGeometry,
         resizeRequest: DesktopVirtualDisplayResizeRequest,
         mirroringPlan: DesktopResizeMirroringPlan,
-        preResizeSnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        preResizeSnapshot: MirageHostVirtualDisplaySnapshot?,
         setupGuardToken: inout UUID?,
         shouldRestoreMirroring: inout Bool,
         suspendedMirroringDisplayID: inout CGDirectDisplayID?,
@@ -98,11 +106,11 @@ extension MirageHostService {
             shouldRestoreMirroring = true
         }
 
-        var updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+        var updateResult = try await platformVirtualDisplayBackend.updateDisplayResolution(
             for: .desktopStream,
             newResolution: geometry.pixelResolution,
             refreshRate: geometry.refreshRate,
-            resizeRequest: resizeRequest,
+            resizeRequest: MirageHostVirtualDisplayResizeRequest(resizeRequest: resizeRequest),
             allowRecreation: false
         )
 
@@ -116,18 +124,18 @@ extension MirageHostService {
                 shouldRestoreMirroring = true
             }
             try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
-            updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+            updateResult = try await platformVirtualDisplayBackend.updateDisplayResolution(
                 for: .desktopStream,
                 newResolution: geometry.pixelResolution,
                 refreshRate: geometry.refreshRate,
-                resizeRequest: resizeRequest,
+                resizeRequest: MirageHostVirtualDisplayResizeRequest(resizeRequest: resizeRequest),
                 allowRecreation: true
             )
         }
 
         try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
-        guard let postResizeSnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot else {
-            throw MirageError.protocolError("Missing shared display snapshot after desktop resize")
+        guard let postResizeSnapshot = await platformVirtualDisplayBackend.displaySnapshot else {
+            throw MirageCore.MirageError.protocolError("Missing shared display snapshot after desktop resize")
         }
 
         sharedVirtualDisplayScaleFactor = max(1.0, postResizeSnapshot.scaleFactor)
@@ -145,7 +153,7 @@ extension MirageHostService {
                 expectedPixelResolution: effectivePixelResolution
             )
             if !mirroringRestored {
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Unified desktop resize could not restore display mirroring"
                 )
             }
@@ -187,7 +195,7 @@ extension MirageHostService {
     func resetDesktopCaptureAfterDisplayResize(
         streamID: StreamID,
         request: DesktopResizeRequestState,
-        displaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot
+        displaySnapshot: MirageHostVirtualDisplaySnapshot
     ) async throws -> StreamContext {
         let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6)
         try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)

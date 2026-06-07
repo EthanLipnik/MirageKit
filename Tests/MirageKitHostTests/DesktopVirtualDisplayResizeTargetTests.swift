@@ -7,7 +7,9 @@
 
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import Testing
+import MirageMedia
 
 #if os(macOS)
 @Suite("Desktop Virtual Display Resize Targets", .serialized)
@@ -94,9 +96,9 @@ struct DesktopVirtualDisplayResizeTargetTests {
         resolution: CGSize,
         scaleFactor: CGFloat,
         refreshRate: Double,
-        colorSpace: MirageColorSpace
-    ) -> SharedVirtualDisplayManager.DisplaySnapshot {
-        SharedVirtualDisplayManager.DisplaySnapshot(
+        colorSpace: MirageMedia.MirageColorSpace
+    ) -> MirageHostVirtualDisplaySnapshot {
+        MirageHostVirtualDisplaySnapshot(
             displayID: 1,
             spaceID: 1,
             resolution: resolution,

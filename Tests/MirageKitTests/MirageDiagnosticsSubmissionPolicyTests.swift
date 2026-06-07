@@ -9,12 +9,16 @@
 import Foundation
 import Loom
 import Testing
+import MirageCore
+import MirageDiagnostics
+import MirageKit
+import MirageKitHost
 
 @Suite("Mirage Diagnostics Submission Policy")
 struct MirageDiagnosticsSubmissionPolicyTests {
     @Test("Expected desktop startup disconnects stay breadcrumb-only")
     func expectedDesktopStartupDisconnectsStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "client",
                 message: "Desktop stream start failed: Failed to start desktop stream: Protocol error: Desktop stream client disconnected during startup"
@@ -27,7 +31,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Local startup stops stay breadcrumb-only")
     func localStartupStopsStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "host",
                 message: "Desktop stream failed: local stop during startup"
@@ -40,7 +44,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("AppState duplicate startup errors stay breadcrumb-only")
     func appStateDuplicateStartupErrorsStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "appState",
                 message: "Client error: protocolError(\"Desktop stream failed: failed waiting for first display sample\")"
@@ -53,7 +57,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("AppState startup timeout duplicates stay breadcrumb-only")
     func appStateStartupTimeoutDuplicatesStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "appState",
                 message: "Client error: protocolError(\"Desktop stream start timed out. The host may be busy or unreachable.\")"
@@ -66,7 +70,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Unrecovered startup exhaustion remains reportable")
     func unrecoveredStartupExhaustionRemainsReportable() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "client",
                 message: "Startup recovery exhausted for stream 2 after 1 hard recovery attempt(s) (reason=startup-keyframe-timeout, waitReason=startup-hard-recovery)"
@@ -80,7 +84,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Desktop start timeouts are grouped under startup failures")
     func desktopStartTimeoutsAreGroupedUnderStartupFailures() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "client",
                 message: "Desktop stream start timed out after 30s"
@@ -94,7 +98,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Virtual display startup errors get a concrete issue kind")
     func virtualDisplayStartupErrorsGetConcreteIssueKind() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "host",
                 message: "Failed to handle desktop stream request: ",
@@ -112,7 +116,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Display topology refresh failures stay breadcrumb-only")
     func displayTopologyRefreshFailuresStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "host",
                 message: "Failed to restart desktop virtual display after display topology change: ",
@@ -131,7 +135,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("ScreenCaptureKit content list failures get a concrete issue kind")
     func screenCaptureKitContentListFailuresGetConcreteIssueKind() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "host",
                 message: "Failed to handle desktop stream request: ",
@@ -150,7 +154,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Bootstrap handoff reconnect races stay breadcrumb-only")
     func bootstrapHandoffReconnectRacesStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "bootstrap_handoff",
                 message: "Wake reconnect failed for host MacBook Pro: protocolError(\"Already connected or connecting\")"
@@ -164,7 +168,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("App window capacity rejections stay breadcrumb-only")
     func appWindowCapacityRejectionsStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "appState",
                 message: "Client error: protocolError(\"Max app windows reached for SimplyFatt\")"
@@ -178,7 +182,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
 
     @Test("Expected transport closures stay breadcrumb-only")
     func expectedTransportClosuresStayBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "client",
                 message: "Failed to send input: ",
@@ -194,9 +198,27 @@ struct MirageDiagnosticsSubmissionPolicyTests {
         #expect(classification.issueKind == "expected-transport-close")
     }
 
+    @Test("MirageCore error domain keeps Mirage error grouping")
+    func mirageCoreErrorDomainsKeepMirageErrorGrouping() {
+        let coreClassification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "host",
+                message: "Unexpected Mirage error",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "MirageCore.MirageError",
+                    domain: "MirageCore.MirageError",
+                    code: 0
+                )
+            )
+        )
+
+        #expect(coreClassification.disposition == .capture)
+        #expect(coreClassification.issueKind == "mirage-error")
+    }
+
     @Test("Protocol incompatibility is breadcrumb-only")
     func protocolIncompatibilityIsBreadcrumbOnly() {
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "client",
                 message: "Connection rejected: Mirage versions are incompatible. Host protocol 8, client protocol 7."
@@ -207,10 +229,52 @@ struct MirageDiagnosticsSubmissionPolicyTests {
         #expect(classification.issueKind == "protocol-incompatible")
     }
 
+    @Test("Loom protocol mismatch diagnostics are breadcrumb-only")
+    func loomProtocolMismatchDiagnosticsAreBreadcrumbOnly() {
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "client",
+                message: "Connection failed: The Loom session protocol version is incompatible.",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "LoomSessionHelloError",
+                    domain: "Loom.LoomSessionHelloError",
+                    code: 2
+                )
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "protocol-incompatible")
+        #expect(classification.failureStage == "bootstrap")
+        #expect(classification.recoveryOutcome == "expected-version-gate")
+        #expect(classification.suppressionKey == nil)
+    }
+
+    @Test("Mirage protocol mismatch diagnostics are breadcrumb-only")
+    func mirageProtocolMismatchDiagnosticsAreBreadcrumbOnly() {
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "host",
+                message: "Session bootstrap rejected reason=protocolVersionMismatch hostProtocol=260604 clientProtocol=260605",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "MirageCore.MirageError",
+                    domain: "MirageCore.MirageError",
+                    code: 0
+                )
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "protocol-incompatible")
+        #expect(classification.failureStage == "bootstrap")
+        #expect(classification.recoveryOutcome == "expected-version-gate")
+        #expect(classification.suppressionKey == nil)
+    }
+
     @Test("Breadcrumb-only classifications do not aggregate into Sentry captures")
     func breadcrumbOnlyClassificationsDoNotAggregateIntoSentryCaptures() {
-        var state = MirageDiagnosticsSuppressionState()
-        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+        var state = MirageDiagnostics.MirageDiagnosticsSuppressionState()
+        let classification = MirageDiagnostics.MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
                 category: "host",
                 message: "Display current Space restore remained incomplete after delayed verification"

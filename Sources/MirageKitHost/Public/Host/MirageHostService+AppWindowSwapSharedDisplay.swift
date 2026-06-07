@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -19,7 +27,7 @@ extension MirageHostService {
             return "Missing shared-display state for slot swap; direct window capture is disabled."
         }
 
-        let resolvedSpaceID = CGVirtualDisplayBridge.space(for: virtualDisplayState.displayID)
+        let resolvedSpaceID = platformVirtualDisplayBackend.space(for: virtualDisplayState.displayID)
         guard resolvedSpaceID != 0 else {
             return "Unable to resolve target display space for slot"
         }
@@ -33,7 +41,7 @@ extension MirageHostService {
         )
 
         do {
-            try await WindowSpaceManager.shared.restoreWindow(
+            try await platformVirtualDisplayBackend.restoreWindow(
                 request.currentWindowID,
                 expectedOwner: oldOwner
             )
@@ -42,7 +50,7 @@ extension MirageHostService {
         }
 
         do {
-            try await WindowSpaceManager.shared.moveWindow(
+            try await platformVirtualDisplayBackend.moveWindow(
                 request.targetWindowID,
                 toSpaceID: resolvedSpaceID,
                 displayID: virtualDisplayState.displayID,
@@ -52,7 +60,7 @@ extension MirageHostService {
             )
         } catch {
             do {
-                try await WindowSpaceManager.shared.moveWindow(
+                try await platformVirtualDisplayBackend.moveWindow(
                     request.currentWindowID,
                     toSpaceID: resolvedSpaceID,
                     displayID: virtualDisplayState.displayID,
@@ -76,7 +84,7 @@ extension MirageHostService {
             width: CGFloat(max(1, request.hiddenInfo.width)),
             height: CGFloat(max(1, request.hiddenInfo.height))
         )
-        let targetWindow = MirageWindow(
+        let targetWindow = MirageMedia.MirageWindow(
             id: request.targetWindowID,
             title: request.hiddenInfo.title,
             application: activeSessionByStreamID[request.targetSlotStreamID]?.window.application,
@@ -119,7 +127,7 @@ extension MirageHostService {
             windowID: request.targetWindowID,
             ownerGeneration: newGeneration
         )
-        activateWindow(targetWindow)
+        await activateWindow(targetWindow)
         _ = await enforceVirtualDisplayPlacementAfterActivation(windowID: request.targetWindowID, force: true)
         do {
             try await refreshSharedDisplayAppCaptureStateIfNeeded(

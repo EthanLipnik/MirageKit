@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -15,25 +23,30 @@ import ScreenCaptureKit
 extension MirageHostService {
     /// Measures the prepared source window generation and capture cadence phase.
     func measureSourcePhase(
-        stage: MirageHostCaptureBenchmarkStage,
+        stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
         source: MirageHostCaptureBenchmarkResolvedSource,
         warmupDurationSeconds: Double,
         measurementDurationSeconds: Double,
         cadenceProbe: VirtualDisplayCadenceProbe,
-        modeSelection: MirageHostCaptureBenchmarkModeSelection,
+        modeSelection: MirageDiagnostics.MirageHostCaptureBenchmarkModeSelection,
         completedStageCount: Int,
         totalStageCount: Int,
-        progressHandler: (@MainActor @Sendable (MirageHostCaptureBenchmarkProgress?) -> Void)?
+        progressHandler: (@MainActor @Sendable (MirageDiagnostics.MirageHostCaptureBenchmarkProgress?) -> Void)?
     ) async throws -> MirageHostCaptureBenchmarkPhaseMeasurement {
         let captureConfiguration = MirageEncoderConfiguration.highQuality
             .withTargetFrameRate(stage.targetFrameRate)
             .withInternalOverrides(pixelFormat: .bgra8, colorSpace: .sRGB)
-        let captureEngine = WindowCaptureEngine(
+        let captureEngine = platformCaptureEngineFactoryBackend.makeCaptureEngine(
             configuration: captureConfiguration,
             capturePressureProfile: .tuned,
             latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
             captureFrameRate: stage.targetFrameRate,
             usesDisplayRefreshCadence: true
+        )
+        let captureSourceBackend = MacOSHostCaptureSourceBackend(
+            captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+            captureContentProviderBackend: platformCaptureContentProviderBackend
         )
 
         defer {
@@ -42,18 +55,30 @@ extension MirageHostService {
         }
 
         do {
-            try await captureEngine.startCapture(
-                window: source.windowWrapper.window,
-                application: source.applicationWrapper.application,
-                display: source.displayWrapper.display,
-                onFrame: { _ in }
+            try await captureSourceBackend.startCapture(
+                MirageHostCaptureRequest(
+                    source: .window(WindowID(source.windowWrapper.window.windowID)),
+                    configuration: MirageHostCaptureConfiguration(
+                        logicalSize: source.windowWrapper.window.frame.size,
+                        targetFrameRate: stage.targetFrameRate,
+                        queueDepth: captureConfiguration.captureQueueDepth ?? 1,
+                        capturesAudio: false,
+                        audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false)
+                    )
+                ),
+                using: captureEngine,
+                onFrame: { _ in },
+                onAudio: nil
             )
 
-            _ = await captureEngine.waitForCaptureStartupReadiness(timeout: .seconds(1))
-            let capturePolicy = await captureEngine.capturePolicySnapshot.benchmarkPolicy
+            _ = await captureSourceBackend.waitForCaptureStartupReadiness(timeout: .seconds(1))
+            guard let capturePolicySnapshot = await captureSourceBackend.capturePolicySnapshot() else {
+                throw MirageCore.MirageError.protocolError("Benchmark capture source backend missing policy snapshot")
+            }
+            let capturePolicy = capturePolicySnapshot.benchmarkPolicy
 
             progressHandler?(
-                MirageHostCaptureBenchmarkProgress(
+                MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                     phase: .measuring,
                     modeSelection: modeSelection,
                     stage: stage,
@@ -64,7 +89,7 @@ extension MirageHostService {
             )
             try await sleepForBenchmark(durationSeconds: warmupDurationSeconds)
 
-            let startupReadiness = await captureEngine.captureStartupReadiness
+            let startupReadiness = await captureSourceBackend.captureStartupReadiness()
             if let invalidReason = captureBenchmarkInvalidMeasurementReason(
                 startupReadiness: startupReadiness
             ) {
@@ -75,11 +100,11 @@ extension MirageHostService {
             let measurementEnd = measurementStart + measurementDurationSeconds
             source.sourceClock?.beginMeasurement()
             cadenceProbe.beginMeasurement()
-            let telemetryBaseline = await captureEngine.captureTelemetrySnapshot
+            let telemetryBaseline = await captureSourceBackend.captureTelemetrySnapshot()
 
             try await sleepForBenchmark(durationSeconds: measurementDurationSeconds)
 
-            let telemetryFinal = await captureEngine.captureTelemetrySnapshot
+            let telemetryFinal = await captureSourceBackend.captureTelemetrySnapshot()
             let observedDisplayCadenceFPS = cadenceProbe.completeMeasurement(
                 durationSeconds: measurementDurationSeconds
             )
@@ -99,7 +124,7 @@ extension MirageHostService {
                 measurementDuration: measurementDuration
             )
 
-            await captureEngine.stopCapture()
+            await captureSourceBackend.stopCapture()
 
             return MirageHostCaptureBenchmarkPhaseMeasurement(
                 phase: phase,
@@ -108,23 +133,23 @@ extension MirageHostService {
                 capturePolicy: capturePolicy
             )
         } catch {
-            await captureEngine.stopCapture()
+            await captureSourceBackend.stopCapture()
             throw error
         }
     }
 
     /// Measures display capture throughput and encode throughput for a benchmark stage.
     func measureDisplayAndEncodePhase(
-        stage: MirageHostCaptureBenchmarkStage,
+        stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
         displayWrapper: SCDisplayWrapper,
         resolution: CGSize,
         lowPowerEnabled: Bool,
         warmupDurationSeconds: Double,
         measurementDurationSeconds: Double,
-        modeSelection: MirageHostCaptureBenchmarkModeSelection,
+        modeSelection: MirageDiagnostics.MirageHostCaptureBenchmarkModeSelection,
         completedStageCount: Int,
         totalStageCount: Int,
-        progressHandler: (@MainActor @Sendable (MirageHostCaptureBenchmarkProgress?) -> Void)?
+        progressHandler: (@MainActor @Sendable (MirageDiagnostics.MirageHostCaptureBenchmarkProgress?) -> Void)?
     ) async throws -> MirageHostCaptureBenchmarkDisplayMeasurement {
         let measurementWindow = Locked<MirageHostCaptureBenchmarkMeasurementWindow?>(nil)
         let encodedFrameCount = Locked<UInt64>(0)
@@ -132,6 +157,7 @@ extension MirageHostService {
 
         var encoder: VideoEncoder?
         var captureEngine: WindowCaptureEngine?
+        var captureSourceBackend: MacOSHostCaptureSourceBackend?
         var encodeTask: Task<Void, Never>?
 
         let captureWidth = max(1, Int(resolution.width.rounded()))
@@ -143,7 +169,9 @@ extension MirageHostService {
                 $0?.finish()
                 $0 = nil
             }
-            if let captureEngine {
+            if let captureSourceBackend {
+                await captureSourceBackend.stopCapture()
+            } else if let captureEngine {
                 await captureEngine.stopCapture()
             }
             if let encodeTask {
@@ -157,10 +185,12 @@ extension MirageHostService {
         do {
             let baseConfiguration = MirageEncoderConfiguration.highQuality
                 .withTargetFrameRate(stage.targetFrameRate)
-            let stageEncoder = VideoEncoder(
+            let stageEncoder = platformVideoEncoderFactoryBackend.makeVideoEncoder(
                 configuration: baseConfiguration,
                 latencyMode: .lowestLatency,
                 streamKind: .desktop,
+                mediaPathProfile: .unknown,
+                inFlightLimit: nil,
                 maximizePowerEfficiencyEnabled: lowPowerEnabled
             )
             encoder = stageEncoder
@@ -171,14 +201,20 @@ extension MirageHostService {
             let captureConfiguration = baseConfiguration.withInternalOverrides(
                 pixelFormat: activePixelFormat
             )
-            let stageCaptureEngine = WindowCaptureEngine(
+            let stageCaptureEngine = platformCaptureEngineFactoryBackend.makeCaptureEngine(
                 configuration: captureConfiguration,
                 capturePressureProfile: .tuned,
                 latencyMode: .lowestLatency,
+                hostBufferingPolicy: .freshestFrame,
                 captureFrameRate: stage.targetFrameRate,
                 usesDisplayRefreshCadence: true
             )
             captureEngine = stageCaptureEngine
+            let stageCaptureSourceBackend = MacOSHostCaptureSourceBackend(
+                captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+                captureContentProviderBackend: platformCaptureContentProviderBackend
+            )
+            captureSourceBackend = stageCaptureSourceBackend
 
             let stream = AsyncStream<CapturedFrame>(bufferingPolicy: .bufferingNewest(1)) { continuation in
                 frameContinuation.withLock { $0 = continuation }
@@ -207,20 +243,34 @@ extension MirageHostService {
                 }
             }
 
-            try await stageCaptureEngine.startDisplayCapture(
-                display: displayWrapper.display,
-                resolution: resolution,
-                showsCursor: false,
+            try await stageCaptureSourceBackend.startCapture(
+                MirageHostCaptureRequest(
+                    source: .display(MirageHostDisplayID(displayWrapper.display.displayID)),
+                    configuration: MirageHostCaptureConfiguration(
+                        logicalSize: resolution,
+                        captureResolution: resolution,
+                        showsCursor: false,
+                        targetFrameRate: stage.targetFrameRate,
+                        queueDepth: captureConfiguration.captureQueueDepth ?? 1,
+                        capturesAudio: false,
+                        audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false)
+                    )
+                ),
+                using: stageCaptureEngine,
                 onFrame: { frame in
                     frameContinuation.read { $0 }?.yield(frame)
-                }
+                },
+                onAudio: nil
             )
 
-            _ = await stageCaptureEngine.waitForDisplayStartupReadiness(timeout: .seconds(1))
-            let capturePolicy = await stageCaptureEngine.capturePolicySnapshot.benchmarkPolicy
+            _ = await stageCaptureSourceBackend.waitForDisplayStartupReadiness(timeout: .seconds(1))
+            guard let capturePolicySnapshot = await stageCaptureSourceBackend.capturePolicySnapshot() else {
+                throw MirageCore.MirageError.protocolError("Benchmark display capture source backend missing policy snapshot")
+            }
+            let capturePolicy = capturePolicySnapshot.benchmarkPolicy
 
             progressHandler?(
-                MirageHostCaptureBenchmarkProgress(
+                MirageDiagnostics.MirageHostCaptureBenchmarkProgress(
                     phase: .measuring,
                     modeSelection: modeSelection,
                     stage: stage,
@@ -231,7 +281,7 @@ extension MirageHostService {
             )
             try await sleepForBenchmark(durationSeconds: warmupDurationSeconds)
 
-            let startupReadiness = await stageCaptureEngine.displayStartupReadiness
+            let startupReadiness = await stageCaptureSourceBackend.displayStartupReadiness()
             if let invalidReason = captureBenchmarkInvalidMeasurementReason(
                 startupReadiness: startupReadiness
             ) {
@@ -246,12 +296,12 @@ extension MirageHostService {
                     endTime: measurementEnd
                 )
             }
-            let telemetryBaseline = await stageCaptureEngine.captureTelemetrySnapshot
+            let telemetryBaseline = await stageCaptureSourceBackend.captureTelemetrySnapshot()
 
             try await sleepForBenchmark(durationSeconds: measurementDurationSeconds)
 
             measurementWindow.withLock { $0 = nil }
-            let telemetryFinal = await stageCaptureEngine.captureTelemetrySnapshot
+            let telemetryFinal = await stageCaptureSourceBackend.captureTelemetrySnapshot()
             let averageEncodeTimeMs = await stageEncoder.averageEncodeTimeMs
 
             let measurementDuration = max(0.001, measurementEnd - measurementStart)

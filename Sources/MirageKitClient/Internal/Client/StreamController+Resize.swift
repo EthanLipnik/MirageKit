@@ -7,9 +7,17 @@
 //  Stream controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreVideo
 import Foundation
-import MirageKit
 
 extension StreamController {
     // MARK: - Resize Handling

@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+LowPower.swift
 //  MirageKit
@@ -5,7 +14,6 @@
 //  Created by Ethan Lipnik on 3/5/26.
 //
 
-import MirageKit
 
 @MainActor
 extension MirageClientService {

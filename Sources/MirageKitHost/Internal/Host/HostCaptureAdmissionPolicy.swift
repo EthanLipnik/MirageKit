@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 6/1/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 struct HostCaptureAdmissionPolicy: Sendable, Equatable {
@@ -27,8 +35,8 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
     }
 
     static func shouldDropCapturedFrame(
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy,
         pendingFrameCount: Int,
         frameCapacity: Int,
         backpressureActive: Bool,
@@ -61,8 +69,8 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
     }
 
     static func shouldDrainNewestBeforeEncode(
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy,
         pendingFrameCount: Int,
         frameCapacity: Int,
         encoderLag: EncoderLagSnapshot
@@ -99,7 +107,7 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
 
     static func isEncoderLagging(
         _ snapshot: EncoderLagSnapshot,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageMedia.MirageStreamLatencyMode
     ) -> Bool {
         guard snapshot.averageEncodeMs > 0 else { return false }
         let budget = frameBudgetMs(frameRate: snapshot.frameRate)
@@ -115,7 +123,7 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
     }
 
     static func preEncodeBacklogCapMs(
-        latencyMode: MirageStreamLatencyMode,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
         frameRate: Int
     ) -> Double {
         let budget = frameBudgetMs(frameRate: frameRate)
@@ -130,8 +138,8 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
     }
 
     private static func prefersNewestFrameReplacementUnderEncoderLag(
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy,
         pendingFrameCount: Int,
         frameCapacity: Int,
         encoderLag: EncoderLagSnapshot
@@ -166,7 +174,7 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
         1_000.0 / Double(max(1, frameRate))
     }
 
-    private static func encodeBudgetMultiplier(for latencyMode: MirageStreamLatencyMode) -> Double {
+    private static func encodeBudgetMultiplier(for latencyMode: MirageMedia.MirageStreamLatencyMode) -> Double {
         switch latencyMode {
         case .lowestLatency:
             return 1.08

@@ -11,12 +11,14 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageInput
+import MirageWire
 
 @Suite("Pencil Input Serialization")
 struct PencilInputSerializationTests {
     @Test("Mouse event with stylus payload round-trips through input message")
     func stylusRoundTrip() throws {
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 4,
             azimuthAngle: .pi / 3,
             tiltX: 0.35,
@@ -25,7 +27,7 @@ struct PencilInputSerializationTests {
             zOffset: 0.4,
             isHovering: false
         )
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: CGPoint(x: 0.25, y: 0.75),
             clickCount: 1,
@@ -33,13 +35,13 @@ struct PencilInputSerializationTests {
             pressure: 0.7,
             stylus: stylus
         )
-        let input = MirageInputEvent.mouseDragged(mouseEvent)
-        let envelope = InputEventMessage(streamID: 42, event: input)
-        let message = try ControlMessage(type: .inputEvent, payload: envelope.serializePayload())
+        let input = MirageInput.MirageInputEvent.mouseDragged(mouseEvent)
+        let envelope = MirageWire.InputEventMessage(streamID: 42, event: input)
+        let message = try MirageWire.ControlMessage(type: .inputEvent, payload: envelope.serializePayload())
 
         let serialized = message.serialize()
         let (deserialized, _) = try requireParsedControlMessage(from: serialized)
-        let decodedEnvelope = try InputEventMessage.deserializePayload(deserialized.payload)
+        let decodedEnvelope = try MirageWire.InputEventMessage.deserializePayload(deserialized.payload)
 
         guard case let .mouseDragged(decodedMouseEvent) = decodedEnvelope.event else {
             Issue.record("Expected mouseDragged event")
@@ -60,7 +62,7 @@ struct PencilInputSerializationTests {
 
     @Test("Mouse payload without stylus decodes with nil stylus")
     func mousePayloadWithoutStylusDecode() throws {
-        let mouseEventWithoutStylus = MirageMouseEvent(
+        let mouseEventWithoutStylus = MirageInput.MirageMouseEvent(
             button: .left,
             location: CGPoint(x: 0.1, y: 0.2),
             clickCount: 1,
@@ -72,38 +74,38 @@ struct PencilInputSerializationTests {
         let jsonObject = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(jsonObject["stylus"] == nil)
 
-        let decoded = try JSONDecoder().decode(MirageMouseEvent.self, from: data)
+        let decoded = try JSONDecoder().decode(MirageInput.MirageMouseEvent.self, from: data)
         #expect(decoded.stylus == nil)
         #expect(abs(decoded.pressure - mouseEventWithoutStylus.pressure) < 0.0001)
     }
 
     @Test("Binary input decoder rejects unknown mouse buttons")
     func binaryInputDecoderRejectsUnknownMouseButtons() throws {
-        let mouseEvent = MirageMouseEvent(button: .left, location: .zero)
-        let envelope = InputEventMessage(streamID: 42, event: .mouseDown(mouseEvent))
+        let mouseEvent = MirageInput.MirageMouseEvent(button: .left, location: .zero)
+        let envelope = MirageWire.InputEventMessage(streamID: 42, event: .mouseDown(mouseEvent))
         var payload = try envelope.serializePayload()
         payload[4] = UInt8.max
 
         #expect(throws: Error.self) {
-            _ = try InputEventMessage.deserializePayload(payload)
+            _ = try MirageWire.InputEventMessage.deserializePayload(payload)
         }
     }
 
     @Test("Binary input decoder rejects unknown scroll phases")
     func binaryInputDecoderRejectsUnknownScrollPhases() throws {
-        let scrollEvent = MirageScrollEvent(deltaX: 0, deltaY: -1, phase: .changed)
-        let envelope = InputEventMessage(streamID: 42, event: .scrollWheel(scrollEvent))
+        let scrollEvent = MirageInput.MirageScrollEvent(deltaX: 0, deltaY: -1, phase: .changed)
+        let envelope = MirageWire.InputEventMessage(streamID: 42, event: .scrollWheel(scrollEvent))
         var payload = try envelope.serializePayload()
         payload[21] = UInt8.max
 
         #expect(throws: Error.self) {
-            _ = try InputEventMessage.deserializePayload(payload)
+            _ = try MirageWire.InputEventMessage.deserializePayload(payload)
         }
     }
 
     @Test("Pointer sample batch preserves ordered stylus samples")
     func pointerSampleBatchRoundTripPreservesOrderedSamples() throws {
-        let stylus = MirageStylusEvent(
+        let stylus = MirageInput.MirageStylusEvent(
             altitudeAngle: .pi / 5,
             azimuthAngle: .pi / 7,
             tiltX: 0.2,
@@ -111,26 +113,26 @@ struct PencilInputSerializationTests {
             rollAngle: 0.15
         )
         let samples = [
-            MiragePointerSample(
+            MirageInput.MiragePointerSample(
                 location: CGPoint(x: 0.1, y: 0.2),
                 pressure: 0.25,
                 stylus: stylus,
                 timestamp: 10
             ),
-            MiragePointerSample(
+            MirageInput.MiragePointerSample(
                 location: CGPoint(x: 0.2, y: 0.3),
                 pressure: 0.5,
                 stylus: stylus,
                 timestamp: 11
             ),
-            MiragePointerSample(
+            MirageInput.MiragePointerSample(
                 location: CGPoint(x: 0.3, y: 0.4),
                 pressure: 0.75,
                 stylus: stylus,
                 timestamp: 12
             ),
         ]
-        let batch = MiragePointerSampleBatch(
+        let batch = MirageInput.MiragePointerSampleBatch(
             phase: .moved,
             modifiers: [.shift, .command],
             clickCount: 2,
@@ -138,12 +140,12 @@ struct PencilInputSerializationTests {
             samples: samples,
             timestamp: 20
         )
-        let envelope = InputEventMessage(streamID: 77, event: .pointerSampleBatch(batch))
-        let message = try ControlMessage(type: .inputEvent, payload: envelope.serializePayload())
+        let envelope = MirageWire.InputEventMessage(streamID: 77, event: .pointerSampleBatch(batch))
+        let message = try MirageWire.ControlMessage(type: .inputEvent, payload: envelope.serializePayload())
 
         let serialized = message.serialize()
         let (deserialized, _) = try requireParsedControlMessage(from: serialized)
-        let decodedEnvelope = try InputEventMessage.deserializePayload(deserialized.payload)
+        let decodedEnvelope = try MirageWire.InputEventMessage.deserializePayload(deserialized.payload)
 
         guard case let .pointerSampleBatch(decodedBatch) = decodedEnvelope.event else {
             Issue.record("Expected pointerSampleBatch event")

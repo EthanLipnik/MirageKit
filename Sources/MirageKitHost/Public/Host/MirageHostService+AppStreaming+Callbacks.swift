@@ -7,8 +7,16 @@
 //  App stream callbacks.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -88,7 +96,7 @@ extension MirageHostService {
         if await appStreamManager.hasTrackedWindow(bundleIdentifier: bundleID, windowID: windowID) { return }
 
         let visibleWindowIDs = Set(session.windowStreams.keys)
-        let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+        let activeOwnerClaimedWindowIDs = await platformVirtualDisplayBackend.claimedWindowIDsForActiveOwners(
             activeStreamIDs: Set(activeSessionByStreamID.keys)
         )
         let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
@@ -150,7 +158,7 @@ extension MirageHostService {
         }
 
         do {
-            let content = try await SCShareableContent.mirageHostContent()
+            let content = try await currentCaptureShareableContent()
             let captureSource = try resolveCaptureSource(
                 for: candidate.window,
                 from: content,
@@ -287,7 +295,7 @@ extension MirageHostService {
                 !candidate.windowStreams.isEmpty
         }
 
-        let terminated = AppTerminatedMessage(
+        let terminated = MirageWire.AppTerminatedMessage(
             bundleIdentifier: bundleID,
             closedWindowIDs: closedWindowIDs,
             hasRemainingWindows: hasRemainingWindows
@@ -309,10 +317,10 @@ extension MirageHostService {
         bundleIdentifier: String,
         streamID: StreamID? = nil,
         windowID: WindowID,
-        reason: WindowRemovedFromStreamMessage.RemovalReason
+        reason: MirageWire.WindowRemovedFromStreamMessage.RemovalReason
     ) async {
         let appSessionID = await appStreamManager.session(bundleIdentifier: bundleIdentifier)?.id
-        let response = WindowRemovedFromStreamMessage(
+        let response = MirageWire.WindowRemovedFromStreamMessage(
             bundleIdentifier: bundleIdentifier,
             appSessionID: appSessionID,
             streamID: streamID,
@@ -332,10 +340,10 @@ extension MirageHostService {
         windowID: WindowID,
         title: String?,
         reason: String,
-        failureCode: WindowStreamFailedMessage.FailureCode = .unknown,
+        failureCode: MirageWire.WindowStreamFailedMessage.FailureCode = .unknown,
         userMessage: String
     ) async {
-        let message = WindowStreamFailedMessage(
+        let message = MirageWire.WindowStreamFailedMessage(
             bundleIdentifier: bundleIdentifier,
             windowID: windowID,
             title: title,

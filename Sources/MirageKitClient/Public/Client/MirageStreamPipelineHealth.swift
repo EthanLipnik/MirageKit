@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 /// Returns the smallest positive sample from a sparse cadence list.
 func minimumPositive(_ values: Double?...) -> Double? {
@@ -27,7 +35,7 @@ func effectiveHealthFrameRate(
 /// Summary of whether a desktop stream appears constrained by host work, client work, or transport.
 public struct MirageStreamPipelineHealth: Sendable, Equatable {
     /// Bottleneck classification reported by the client metrics snapshot.
-    public let bottleneckKind: MirageStreamBottleneckKind
+    public let bottleneckKind: MirageDiagnostics.MirageStreamBottleneckKind
 
     /// Whether transport pressure is low enough for workload changes to be meaningful.
     public let transportIsClean: Bool
@@ -99,7 +107,7 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
 
     /// Builds a health summary from the latest client metrics snapshot.
     public static func evaluate(
-        snapshot: MirageClientMetricsSnapshot?,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot?,
         minimumHealthyFrameRate: Int? = nil
     ) -> MirageStreamPipelineHealth {
         guard let snapshot else {
@@ -116,8 +124,8 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             )
         }
 
-        let transportAssessment = MirageTransportPressure.assess(
-            sample: MirageTransportPressureSample(
+        let transportAssessment = MirageDiagnostics.MirageTransportPressure.assess(
+            sample: MirageDiagnostics.MirageTransportPressureSample(
                 queueBytes: max(0, snapshot.hostSendQueueBytes ?? 0),
                 queueStressBytes: 800_000,
                 packetPacerAverageSleepMs: max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0),
@@ -126,7 +134,9 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
                 sendStartDelayStressThresholdMs: 2.0,
                 sendCompletionAverageMs: max(0, snapshot.hostSendCompletionAverageMs ?? 0),
                 sendCompletionStressThresholdMs: 12.0,
-                transportDropCount: snapshot.hostTransportPressureDropCount
+                transportDropCount: (snapshot.hostStalePacketDrops ?? 0) +
+                    (snapshot.hostSenderLocalDeadlineDrops ?? 0) +
+                    (snapshot.hostQueuedUnreliableDropCounts?.total ?? 0)
             )
         )
 
@@ -193,7 +203,7 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
     }
 
     private static func sourceCadenceDeficient(
-        snapshot: MirageClientMetricsSnapshot,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         minimumHealthyFrameRate: Int
     ) -> Bool {
         let targetFPS = Double(max(1, minimumHealthyFrameRate))
@@ -224,7 +234,7 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
     }
 
     private static func clientPipelineDeficient(
-        snapshot: MirageClientMetricsSnapshot,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         minimumHealthyFrameRate: Int
     ) -> Bool {
         let targetFPS = Double(max(1, minimumHealthyFrameRate))

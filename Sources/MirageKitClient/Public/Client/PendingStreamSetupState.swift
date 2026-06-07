@@ -5,12 +5,20 @@
 //  Created by Ethan Lipnik on 3/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
-    func clearPendingStreamSetup(kind: StreamSetupKind? = nil, appSessionID: UUID? = nil) {
+    func clearPendingStreamSetup(kind: MirageWire.StreamSetupKind? = nil, appSessionID: UUID? = nil) {
         if let kind, pendingStreamSetupKind != kind { return }
         if let appSessionID, pendingStreamSetupAppSessionID != appSessionID { return }
         if kind == nil || kind == .app || pendingStreamSetupKind == .app {

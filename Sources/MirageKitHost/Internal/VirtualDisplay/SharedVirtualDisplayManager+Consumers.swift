@@ -7,7 +7,15 @@
 //  Shared virtual display manager extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 import Foundation
@@ -36,7 +44,7 @@ extension SharedVirtualDisplayManager {
     /// Updates the tracked color space for an active consumer after display creation falls back.
     func syncActiveConsumerColorSpace(
         _ consumer: DisplayConsumer,
-        to colorSpace: MirageColorSpace
+        to colorSpace: MirageMedia.MirageColorSpace
     ) {
         guard let info = activeConsumers[consumer], info.colorSpace != colorSpace else { return }
         activeConsumers[consumer] = ClientDisplayInfo(
@@ -65,7 +73,7 @@ extension SharedVirtualDisplayManager {
         _ consumer: DisplayConsumer,
         resolution: CGSize? = nil,
         refreshRate: Int = 60,
-        colorSpace: MirageColorSpace = .displayP3,
+        colorSpace: MirageMedia.MirageColorSpace = .displayP3,
         allowActiveUpdate: Bool = false,
         creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil

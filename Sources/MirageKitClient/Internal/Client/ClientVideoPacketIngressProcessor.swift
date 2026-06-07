@@ -5,40 +5,28 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
-
-struct ClientVideoIngressMetricsSnapshot: Sendable, Equatable {
-    let loomStreamDeliveryPPS: Double
-    let loomStreamDeliveryIntervalMaxMs: Double
-    let rawPacketIngressPPS: Double
-    let incomingBatchRate: Double
-    let incomingBatchIntervalP95Ms: Double
-    let incomingBatchIntervalP99Ms: Double
-    let incomingBatchIntervalMaxMs: Double
-    let incomingBatchMaxSize: Int
-    let incomingBatchAverageSize: Double
-    let queuedBatchCount: Int
-    let queuedPacketCount: Int
-    let queueAgeMaxMs: Double
-    let stalePacketDropCount: UInt64
-    let overloadPacketDropCount: UInt64
-    let protectedOverloadPacketDropCount: UInt64
-    let processedPacketCount: UInt64
-    let processorWakeDelayMaxMs: Double
-}
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 final class ClientVideoIngressTelemetryStore: @unchecked Sendable {
     private let lock = NSLock()
-    private var snapshotsByStream: [StreamID: ClientVideoIngressMetricsSnapshot] = [:]
+    private var snapshotsByStream: [StreamID: MirageClientVideoIngressMetricsSnapshot] = [:]
 
-    func update(_ snapshot: ClientVideoIngressMetricsSnapshot, for streamID: StreamID) {
+    func update(_ snapshot: MirageClientVideoIngressMetricsSnapshot, for streamID: StreamID) {
         lock.lock()
         snapshotsByStream[streamID] = snapshot
         lock.unlock()
     }
 
-    func snapshot(for streamID: StreamID) -> ClientVideoIngressMetricsSnapshot? {
+    func snapshot(for streamID: StreamID) -> MirageClientVideoIngressMetricsSnapshot? {
         lock.lock()
         let snapshot = snapshotsByStream[streamID]
         lock.unlock()
@@ -65,7 +53,7 @@ final class ClientVideoDirectIngressTelemetryRecorder: @unchecked Sendable {
     private var rawPacketSampler = CountRateSampler()
     private var processedPacketCount: UInt64 = 0
 
-    func recordPacket(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> ClientVideoIngressMetricsSnapshot {
+    func recordPacket(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> MirageClientVideoIngressMetricsSnapshot {
         lock.lock()
         loomStreamDeliverySampler.record(now: now)
         loomStreamDeliveryIntervalSampler.record(now: now)
@@ -76,16 +64,16 @@ final class ClientVideoDirectIngressTelemetryRecorder: @unchecked Sendable {
         return snapshot
     }
 
-    func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> ClientVideoIngressMetricsSnapshot {
+    func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> MirageClientVideoIngressMetricsSnapshot {
         lock.lock()
         let snapshot = snapshotLocked(now: now)
         lock.unlock()
         return snapshot
     }
 
-    private func snapshotLocked(now: CFAbsoluteTime) -> ClientVideoIngressMetricsSnapshot {
+    private func snapshotLocked(now: CFAbsoluteTime) -> MirageClientVideoIngressMetricsSnapshot {
         let loomDeliveryIntervals = loomStreamDeliveryIntervalSampler.snapshot(now: now)
-        return ClientVideoIngressMetricsSnapshot(
+        return MirageClientVideoIngressMetricsSnapshot(
             loomStreamDeliveryPPS: loomStreamDeliverySampler.snapshot(now: now),
             loomStreamDeliveryIntervalMaxMs: loomDeliveryIntervals.maxMs,
             rawPacketIngressPPS: rawPacketSampler.snapshot(now: now),
@@ -108,7 +96,6 @@ final class ClientVideoDirectIngressTelemetryRecorder: @unchecked Sendable {
 }
 
 final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
-    typealias Snapshot = ClientVideoIngressMetricsSnapshot
     static let defaultStaleNonRecoveryPacketAge: CFTimeInterval = 0.520
 
     private struct IngressBatch {
@@ -213,7 +200,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         condition.unlock()
     }
 
-    func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Snapshot {
+    func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> MirageClientVideoIngressMetricsSnapshot {
         condition.lock()
         trimStaleNonRecoveryPacketsLocked(now: now)
         let loomStreamDeliveryPPS = loomStreamDeliverySampler.snapshot(now: now)
@@ -235,7 +222,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         let processedPacketCount = processedPacketCount
         let processorWakeDelayMaxMs = processorWakeDelaySampler.snapshot(now: now)
         condition.unlock()
-        return Snapshot(
+        return MirageClientVideoIngressMetricsSnapshot(
             loomStreamDeliveryPPS: loomStreamDeliveryPPS,
             loomStreamDeliveryIntervalMaxMs: loomDeliveryIntervals.maxMs,
             rawPacketIngressPPS: rawPacketIngressPPS,
@@ -396,7 +383,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     }
 
     private static func isRecoveryPacket(_ data: Data) -> Bool {
-        guard data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) else {
+        guard data.count >= MirageWire.mirageHeaderSize, let header = MirageWire.FrameHeader.deserialize(from: data) else {
             return false
         }
         return header.flags.contains(.keyframe) ||
@@ -405,137 +392,5 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             header.flags.contains(.priority) ||
             header.flags.contains(.fecParity) ||
             header.fecBlockSize > 1
-    }
-}
-
-private struct CountRateSampler {
-    private struct Sample {
-        let timestamp: CFAbsoluteTime
-        let count: Int
-    }
-
-    private var samples: [Sample] = []
-    private var startIndex = 0
-    private let windowSeconds: CFAbsoluteTime = 1.0
-
-    mutating func record(count: Int = 1, now: CFAbsoluteTime) {
-        samples.append(Sample(timestamp: now, count: max(0, count)))
-        trim(now: now)
-    }
-
-    mutating func snapshot(now: CFAbsoluteTime) -> Double {
-        trim(now: now)
-        guard startIndex < samples.count else { return 0 }
-        return Double(samples[startIndex ..< samples.count].reduce(0) { $0 + $1.count })
-    }
-
-    private mutating func trim(now: CFAbsoluteTime) {
-        let cutoff = now - windowSeconds
-        while startIndex < samples.count, samples[startIndex].timestamp < cutoff {
-            startIndex += 1
-        }
-        if startIndex > 256 {
-            samples.removeFirst(startIndex)
-            startIndex = 0
-        }
-    }
-}
-
-private struct IngressIntervalSampler {
-    private struct Sample {
-        let timestamp: CFAbsoluteTime
-        let intervalMs: Double
-    }
-
-    struct Snapshot: Sendable, Equatable {
-        let p95Ms: Double
-        let p99Ms: Double
-        let maxMs: Double
-    }
-
-    private var lastSampleTime: CFAbsoluteTime = 0
-    private var samples: [Sample] = []
-    private var startIndex = 0
-    private let windowSeconds: CFAbsoluteTime = 2.0
-
-    mutating func record(now: CFAbsoluteTime) {
-        trim(now: now)
-        guard lastSampleTime > 0 else {
-            lastSampleTime = now
-            return
-        }
-        let intervalMs = max(0, (now - lastSampleTime) * 1000)
-        lastSampleTime = now
-        samples.append(Sample(timestamp: now, intervalMs: intervalMs))
-    }
-
-    mutating func snapshot(now: CFAbsoluteTime) -> Snapshot {
-        trim(now: now)
-        var active = startIndex < samples.count
-            ? samples[startIndex ..< samples.count].map(\.intervalMs)
-            : []
-        if lastSampleTime > 0 {
-            active.append(max(0, (now - lastSampleTime) * 1000))
-        }
-        guard !active.isEmpty else {
-            return Snapshot(p95Ms: 0, p99Ms: 0, maxMs: 0)
-        }
-        let sorted = active.sorted()
-        return Snapshot(
-            p95Ms: percentile(sorted: sorted, percentile: 0.95),
-            p99Ms: percentile(sorted: sorted, percentile: 0.99),
-            maxMs: active.max() ?? 0
-        )
-    }
-
-    private mutating func trim(now: CFAbsoluteTime) {
-        let cutoff = now - windowSeconds
-        while startIndex < samples.count, samples[startIndex].timestamp < cutoff {
-            startIndex += 1
-        }
-        if startIndex > 256 {
-            samples.removeFirst(startIndex)
-            startIndex = 0
-        }
-    }
-
-    private func percentile(sorted: [Double], percentile: Double) -> Double {
-        guard !sorted.isEmpty else { return 0 }
-        let clamped = max(0, min(1, percentile))
-        let index = Int(ceil(clamped * Double(sorted.count))) - 1
-        return sorted[max(0, min(sorted.count - 1, index))]
-    }
-}
-
-private struct IngressMaximumSampler {
-    private struct Sample {
-        let timestamp: CFAbsoluteTime
-        let value: Double
-    }
-
-    private var samples: [Sample] = []
-    private var startIndex = 0
-    private let windowSeconds: CFAbsoluteTime = 2.0
-
-    mutating func record(_ value: Double, now: CFAbsoluteTime) {
-        samples.append(Sample(timestamp: now, value: max(0, value)))
-        trim(now: now)
-    }
-
-    mutating func snapshot(now: CFAbsoluteTime) -> Double {
-        trim(now: now)
-        guard startIndex < samples.count else { return 0 }
-        return samples[startIndex ..< samples.count].map(\.value).max() ?? 0
-    }
-
-    private mutating func trim(now: CFAbsoluteTime) {
-        let cutoff = now - windowSeconds
-        while startIndex < samples.count, samples[startIndex].timestamp < cutoff {
-            startIndex += 1
-        }
-        if startIndex > 256 {
-            samples.removeFirst(startIndex)
-            startIndex = 0
-        }
     }
 }

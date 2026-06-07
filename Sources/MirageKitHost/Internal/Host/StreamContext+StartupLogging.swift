@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension StreamContext {
@@ -17,7 +25,7 @@ extension StreamContext {
         height: Int? = nil
     ) -> String {
         let generation = packetSender?.currentGeneration ?? 0
-        let qualityReferenceFrameRate = MirageBitrateQualityMapper.qualityReferenceFrameRate(
+        let qualityReferenceFrameRate = MirageMedia.MirageBitrateQualityMapper.qualityReferenceFrameRate(
             for: currentFrameRate
         )
         let targetBitrate = encoderConfig.bitrate ?? 0

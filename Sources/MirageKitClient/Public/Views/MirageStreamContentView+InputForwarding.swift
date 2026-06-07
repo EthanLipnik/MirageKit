@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import SwiftUI
 
 @MainActor
@@ -28,7 +36,7 @@ extension MirageStreamContentView {
     }
 
     /// Handles local shortcut interception before forwarding input to the host.
-    func sendInputEvent(_ event: MirageInputEvent) {
+    func sendInputEvent(_ event: MirageInput.MirageInputEvent) {
         if case let .keyDown(keyEvent) = event {
             if desktopExitShortcut.matches(keyEvent), let onExitDesktopStream {
                 logDesktopExitShortcutTriggered()
@@ -93,7 +101,7 @@ extension MirageStreamContentView {
     }
 
     /// Whether pointer movement should be blocked while the desktop resize mask is active.
-    func shouldSuppressDesktopPointerEventDuringResize(_ event: MirageInputEvent) -> Bool {
+    func shouldSuppressDesktopPointerEventDuringResize(_ event: MirageInput.MirageInputEvent) -> Bool {
         guard isDesktopStream,
               event.isPointerGeometryInput,
               awaitingPostResizeFirstFrame ||
@@ -105,7 +113,7 @@ extension MirageStreamContentView {
     }
 
     /// Whether app-stream pointer input should wait for current geometry to settle.
-    func shouldSuppressAppPointerEventDuringGeometryTransition(_ event: MirageInputEvent) -> Bool {
+    func shouldSuppressAppPointerEventDuringGeometryTransition(_ event: MirageInput.MirageInputEvent) -> Bool {
         guard !isDesktopStream, event.isPointerGeometryInput else { return false }
         return localPresentationPauseActive ||
             awaitingAppResizeAck ||
@@ -114,13 +122,13 @@ extension MirageStreamContentView {
     }
 
     /// Detects the platform Command-V shortcut that should sync clipboard before paste.
-    func isSharedClipboardPasteShortcut(_ keyEvent: MirageKeyEvent) -> Bool {
+    func isSharedClipboardPasteShortcut(_ keyEvent: MirageInput.MirageKeyEvent) -> Bool {
         keyEvent.keyCode == 0x09 && keyEvent.modifiers.contains(.command)
     }
 
     /// Syncs local clipboard contents before sending the paste key down/up pair to the host.
-    func sendOrderedSharedClipboardPaste(_ keyEvent: MirageKeyEvent) {
-        let keyUpEvent = MirageKeyEvent(
+    func sendOrderedSharedClipboardPaste(_ keyEvent: MirageInput.MirageKeyEvent) {
+        let keyUpEvent = MirageInput.MirageKeyEvent(
             keyCode: keyEvent.keyCode,
             characters: keyEvent.characters,
             charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
@@ -140,7 +148,7 @@ extension MirageStreamContentView {
     }
 
     /// Sends an input event to the host after focus/connection checks.
-    func forwardInputEventToHost(_ event: MirageInputEvent) {
+    func forwardInputEventToHost(_ event: MirageInput.MirageInputEvent) {
         guard canSendInputToHost else { return }
 
         #if os(macOS)
@@ -168,8 +176,8 @@ extension MirageStreamContentView {
     }
 
     /// Escape key event used when the configured shortcut remaps to remote Escape.
-    func remappedEscapeKeyEvent(isRepeat: Bool = false) -> MirageKeyEvent {
-        MirageKeyEvent(
+    func remappedEscapeKeyEvent(isRepeat: Bool = false) -> MirageInput.MirageKeyEvent {
+        MirageInput.MirageKeyEvent(
             keyCode: 0x35,
             characters: "\u{1b}",
             charactersIgnoringModifiers: "\u{1b}",
@@ -218,7 +226,7 @@ extension MirageStreamContentView {
 }
 #endif
 
-private extension MirageInputEvent {
+private extension MirageInput.MirageInputEvent {
     /// Whether the event depends on the current stream geometry.
     var isPointerGeometryInput: Bool {
         switch self {

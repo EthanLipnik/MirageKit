@@ -7,19 +7,27 @@
 //  Video encoder specification policy helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 extension VideoEncoder {
     nonisolated static func encoderSpecification(
-        latencyMode: MirageStreamLatencyMode,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
         streamKind: StreamKind,
-        codec: MirageVideoCodec = .hevc,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        codec: MirageMedia.MirageVideoCodec = .hevc,
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
+        pixelFormat: MirageMedia.MiragePixelFormat? = nil,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> [CFString: Any] {
         if codec == .proRes4444 {
             return [
@@ -44,11 +52,11 @@ extension VideoEncoder {
     }
 
     nonisolated static func standardLowLatencyVTTuningEnabled(
-        latencyMode: MirageStreamLatencyMode,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
         streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
+        pixelFormat: MirageMedia.MiragePixelFormat? = nil,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> Bool {
         guard !mediaPathProfile.usesAwdlRadioPolicy else { return false }
         guard latencyMode == .lowestLatency || latencyMode == .balanced else { return false }
@@ -61,8 +69,8 @@ extension VideoEncoder {
 
     nonisolated static func shouldSuppressStandardLowLatencyRateControl(
         streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
+        pixelFormat: MirageMedia.MiragePixelFormat? = nil
     ) -> Bool {
         !standardLowLatencyUsesSunshineRateControl(
             streamKind: streamKind,
@@ -72,11 +80,11 @@ extension VideoEncoder {
     }
 
     nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
-        latencyMode: MirageStreamLatencyMode,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
         streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
+        pixelFormat: MirageMedia.MiragePixelFormat? = nil,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> Bool {
         guard !mediaPathProfile.usesAwdlRadioPolicy else { return false }
         return (latencyMode == .lowestLatency || latencyMode == .balanced) &&
@@ -89,8 +97,8 @@ extension VideoEncoder {
 
     nonisolated static func standardLowLatencyUsesSunshineRateControl(
         streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
+        pixelFormat: MirageMedia.MiragePixelFormat? = nil
     ) -> Bool {
         streamKind == .desktop ||
             colorDepth == .ultra ||

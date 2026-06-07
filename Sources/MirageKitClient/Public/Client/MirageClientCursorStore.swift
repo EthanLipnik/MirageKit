@@ -5,20 +5,28 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Latest cursor shape and visibility received for a streamed display.
 public struct MirageCursorSnapshot: Sendable, Equatable {
     /// Cursor shape reported by the host.
-    public let cursorType: MirageCursorType
+    public let cursorType: MirageWire.MirageCursorType
     /// Whether the host cursor should be visible in the stream view.
     public let isVisible: Bool
     /// Monotonic generation that increments whenever the snapshot changes.
     public let sequence: UInt64
 
     /// Creates a cursor snapshot.
-    public init(cursorType: MirageCursorType, isVisible: Bool, sequence: UInt64) {
+    public init(cursorType: MirageWire.MirageCursorType, isVisible: Bool, sequence: UInt64) {
         self.cursorType = cursorType
         self.isVisible = isVisible
         self.sequence = sequence
@@ -35,7 +43,7 @@ public final class MirageClientCursorStore: @unchecked Sendable {
 
     /// Updates cursor state for a stream.
     /// - Returns: `true` when the cursor state changed and the sequence advanced.
-    public func updateCursor(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) -> Bool {
+    public func updateCursor(streamID: StreamID, cursorType: MirageWire.MirageCursorType, isVisible: Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
 

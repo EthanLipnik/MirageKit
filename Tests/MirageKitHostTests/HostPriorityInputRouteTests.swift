@@ -11,6 +11,9 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageCore
+import MirageInput
+import MirageWire
 
 @Suite("Host Priority Input Route")
 struct HostPriorityInputRouteTests {
@@ -18,7 +21,7 @@ struct HostPriorityInputRouteTests {
     func realtimeFallbackDuplicatesAndStaleMovementAreDropped() async throws {
         let streamID: StreamID = 801
         let queue = DispatchQueue(label: "com.mirage.tests.host-priority-input-realtime")
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordHostPriorityInputEvent(from: message, into: events)
         }
@@ -51,7 +54,7 @@ struct HostPriorityInputRouteTests {
     func continuousFallbackEnvelopeDecodesAndSchedulesOrderedSamples() async throws {
         let streamID: StreamID = 802
         let queue = DispatchQueue(label: "com.mirage.tests.host-priority-input-continuous")
-        let events = Locked<[MirageInputEvent]>([])
+        let events = Locked<[MirageInput.MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordHostPriorityInputEvent(from: message, into: events)
         }
@@ -59,15 +62,15 @@ struct HostPriorityInputRouteTests {
 
         route.handleControlInputMessage(try priorityContinuousInputMessage(
             eventID: 10,
-            batch: MirageContinuousInputBatch(
+            batch: MirageInput.MirageContinuousInputBatch(
                 streamID: streamID,
                 kind: .mouseMoved,
                 samples: [
-                    MirageContinuousInputBatch.Sample(
+                    MirageInput.MirageContinuousInputBatch.Sample(
                         timestamp: 1,
                         location: CGPoint(x: 0.1, y: 0.5)
                     ),
-                    MirageContinuousInputBatch.Sample(
+                    MirageInput.MirageContinuousInputBatch.Sample(
                         timestamp: 2,
                         location: CGPoint(x: 0.2, y: 0.5)
                     ),
@@ -86,10 +89,10 @@ struct HostPriorityInputRouteTests {
 private func priorityInputMessage(
     eventID: UInt64,
     streamID: StreamID,
-    event: MirageInputEvent
-) throws -> ControlMessage {
-    let inputMessage = InputEventMessage(streamID: streamID, event: event)
-    let envelope = MiragePriorityInputEnvelope(
+    event: MirageInput.MirageInputEvent
+) throws -> MirageWire.ControlMessage {
+    let inputMessage = MirageWire.InputEventMessage(streamID: streamID, event: event)
+    let envelope = MirageWire.MiragePriorityInputEnvelope(
         kind: .input,
         eventID: eventID,
         streamID: streamID,
@@ -97,14 +100,14 @@ private func priorityInputMessage(
         sentAtUptime: ProcessInfo.processInfo.systemUptime,
         inputPayload: try inputMessage.serializePayload()
     )
-    return ControlMessage(type: .priorityInputEvent, payload: try envelope.serialize())
+    return MirageWire.ControlMessage(type: .priorityInputEvent, payload: try envelope.serialize())
 }
 
 private func priorityContinuousInputMessage(
     eventID: UInt64,
-    batch: MirageContinuousInputBatch
-) throws -> ControlMessage {
-    let envelope = MiragePriorityInputEnvelope(
+    batch: MirageInput.MirageContinuousInputBatch
+) throws -> MirageWire.ControlMessage {
+    let envelope = MirageWire.MiragePriorityInputEnvelope(
         kind: .continuousInput,
         eventID: eventID,
         streamID: batch.streamID,
@@ -112,19 +115,19 @@ private func priorityContinuousInputMessage(
         sentAtUptime: ProcessInfo.processInfo.systemUptime,
         inputPayload: try batch.serialize()
     )
-    return ControlMessage(type: .priorityInputEvent, payload: try envelope.serialize())
+    return MirageWire.ControlMessage(type: .priorityInputEvent, payload: try envelope.serialize())
 }
 
 private func recordHostPriorityInputEvent(
-    from message: ControlMessage,
-    into events: Locked<[MirageInputEvent]>
+    from message: MirageWire.ControlMessage,
+    into events: Locked<[MirageInput.MirageInputEvent]>
 ) {
-    guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else { return }
+    guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else { return }
     events.withLock { $0.append(inputMessage.event) }
 }
 
 private func waitForHostPriorityEvents(
-    _ events: Locked<[MirageInputEvent]>,
+    _ events: Locked<[MirageInput.MirageInputEvent]>,
     count: Int
 ) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
@@ -134,8 +137,8 @@ private func waitForHostPriorityEvents(
     #expect(events.read { $0.count } >= count)
 }
 
-private func makeHostPriorityMouseEvent(timestamp: TimeInterval) -> MirageMouseEvent {
-    MirageMouseEvent(
+private func makeHostPriorityMouseEvent(timestamp: TimeInterval) -> MirageInput.MirageMouseEvent {
+    MirageInput.MirageMouseEvent(
         location: CGPoint(x: 0.5, y: 0.5),
         timestamp: timestamp
     )

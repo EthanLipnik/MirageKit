@@ -7,8 +7,16 @@
 //  Per-client host audio encode + packet send pipeline.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -30,9 +38,9 @@ actor HostAudioPipeline {
 
     init(
         sourceStreamID: StreamID,
-        audioConfiguration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        audioConfiguration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext?,
         maxQueuedDurationSeconds: Double = 0.120,
@@ -54,9 +62,9 @@ actor HostAudioPipeline {
     }
 
     func updateConfiguration(
-        _ configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile
+        _ configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) async {
         await encoder.updateConfiguration(configuration)
         pendingCompressionBitrateBps = compressionBudgetController.updateConfiguration(
@@ -100,7 +108,7 @@ actor HostAudioPipeline {
         }
     }
 
-    func recordReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
+    func recordReceiverMediaFeedback(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) {
         if let bitrate = compressionBudgetController.recordReceiverFeedback(feedback) {
             pendingCompressionBitrateBps = bitrate
         }

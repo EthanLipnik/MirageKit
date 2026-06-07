@@ -7,8 +7,16 @@
 //  HEVC decoder submission limiter extensions.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension VideoDecoder {
     struct DecodeSubmissionSnapshot: Sendable, Equatable {

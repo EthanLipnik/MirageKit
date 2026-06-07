@@ -5,19 +5,27 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension WindowSpaceManager {
     /// Stream that currently owns a temporary window-space binding.
-    struct WindowBindingOwner {
+    struct WindowBindingOwner: Sendable {
         let streamID: StreamID
     }
 
     /// Saved state used to restore a window after Mirage moves or claims it.
-    struct SavedWindowState {
+    struct SavedWindowState: Sendable {
         let windowID: WindowID
         let originalFrame: CGRect
         let originalSpaceIDs: [CGSSpaceID]
@@ -50,7 +58,7 @@ extension WindowSpaceManager {
     }
 
     /// Result of validating whether a saved window claim may be restored by a caller.
-    enum RestoreOwnerValidationResult: Equatable {
+    enum RestoreOwnerValidationResult: Equatable, Sendable {
         case allowed
         case ownerMismatch(expectedStreamID: StreamID, actualStreamID: StreamID)
     }

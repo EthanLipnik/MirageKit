@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -18,11 +26,11 @@ extension ScrollPhysicsCapturingNSView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard isInputProcessingActive else { return super.performKeyEquivalent(with: event) }
 
-        let keyEvent = MirageKeyEvent(
+        let keyEvent = MirageInput.MirageKeyEvent(
             keyCode: event.keyCode,
             characters: event.characters,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags),
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags),
             isRepeat: event.isARepeat
         )
 
@@ -43,7 +51,7 @@ extension ScrollPhysicsCapturingNSView {
 
         hideCursorForTypingUntilPointerMovement()
         onMouseEvent?(.keyDown(keyEvent))
-        onMouseEvent?(.keyUp(MirageKeyEvent(
+        onMouseEvent?(.keyUp(MirageInput.MirageKeyEvent(
             keyCode: keyEvent.keyCode,
             characters: keyEvent.characters,
             charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
@@ -79,11 +87,11 @@ extension ScrollPhysicsCapturingNSView {
             return
         }
         hideCursorForTypingUntilPointerMovement()
-        let keyEvent = MirageKeyEvent(
+        let keyEvent = MirageInput.MirageKeyEvent(
             keyCode: event.keyCode,
             characters: event.characters,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags),
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags),
             isRepeat: event.isARepeat
         )
         onMouseEvent?(.keyDown(keyEvent))
@@ -95,11 +103,11 @@ extension ScrollPhysicsCapturingNSView {
             suppressEscapeKeyUpForCursorUnlock = false
             return
         }
-        let keyEvent = MirageKeyEvent(
+        let keyEvent = MirageInput.MirageKeyEvent(
             keyCode: event.keyCode,
             characters: event.characters,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags),
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags),
             isRepeat: false
         )
         onMouseEvent?(.keyUp(keyEvent))
@@ -107,7 +115,7 @@ extension ScrollPhysicsCapturingNSView {
 
     override func flagsChanged(with event: NSEvent) {
         guard isInputProcessingActive else { return }
-        syncModifierState(MirageModifierFlags(nsEventFlags: event.modifierFlags), force: true)
+        syncModifierState(MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags), force: true)
     }
 }
 #endif

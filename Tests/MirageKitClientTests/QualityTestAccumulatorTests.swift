@@ -9,6 +9,7 @@ import Foundation
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
+import MirageWire
 
 @Suite("Quality Test Accumulator")
 struct QualityTestAccumulatorTests {
@@ -49,8 +50,8 @@ struct QualityTestAccumulatorTests {
     private func header(
         testID: UUID,
         sequenceNumber: UInt32
-    ) -> QualityTestPacketHeader {
-        QualityTestPacketHeader(
+    ) -> MirageWire.QualityTestPacketHeader {
+        MirageWire.QualityTestPacketHeader(
             testID: testID,
             stageID: 7,
             sequenceNumber: sequenceNumber,

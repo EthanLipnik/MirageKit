@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+RemoteClientStreamOptions.swift
 //  MirageKit
@@ -5,18 +14,17 @@
 //  Created by Ethan Lipnik on 4/4/26.
 //
 
-import MirageKit
 
 @MainActor
 public extension MirageClientService {
     /// Mirrors client-owned stream-option state back to the connected host UI.
     func sendRemoteClientStreamOptionsStateUpdate(
-        displayMode: MirageStreamOptionsDisplayMode,
+        displayMode: MirageWire.MirageStreamOptionsDisplayMode,
         statusOverlayEnabled: Bool,
         desktopCursorLockAvailable: Bool,
-        desktopCursorLockMode: MirageDesktopCursorLockMode
+        desktopCursorLockMode: MirageWire.MirageDesktopCursorLockMode
     ) {
-        let update = RemoteClientStreamOptionsStateMessage(
+        let update = MirageWire.RemoteClientStreamOptionsStateMessage(
             displayMode: displayMode,
             statusOverlayEnabled: statusOverlayEnabled,
             desktopCursorLockAvailable: desktopCursorLockAvailable,
@@ -29,9 +37,9 @@ public extension MirageClientService {
 @MainActor
 extension MirageClientService {
     /// Decodes host-issued remote controls and fans them out to UI-owned command handlers.
-    func handleRemoteClientStreamOptionsCommand(_ message: ControlMessage) {
+    func handleRemoteClientStreamOptionsCommand(_ message: MirageWire.ControlMessage) {
         do {
-            let command = try message.decode(RemoteClientStreamOptionsCommandMessage.self)
+            let command = try message.decode(MirageWire.RemoteClientStreamOptionsCommandMessage.self)
 
             if let displayMode = command.displayMode {
                 onRemoteClientStreamOptionsDisplayModeCommand?(displayMode)

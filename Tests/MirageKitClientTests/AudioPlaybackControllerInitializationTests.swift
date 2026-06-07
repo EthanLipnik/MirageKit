@@ -9,6 +9,8 @@
 @testable import MirageKit
 import Foundation
 import Testing
+import MirageCore
+import MirageWire
 
 @Suite("Audio Playback Controller Initialization", .serialized)
 struct AudioPlaybackControllerInitializationTests {
@@ -26,9 +28,9 @@ struct AudioPlaybackControllerInitializationTests {
     @Test("Audio stream start prewarms playback graph for announced format")
     func audioStreamStartedPrewarmsPlaybackGraph() async throws {
         let service = MirageClientService(deviceName: "Audio Start Prewarm Test")
-        let message = try ControlMessage(
+        let message = try MirageWire.ControlMessage(
             type: .audioStreamStarted,
-            content: AudioStreamStartedMessage(
+            content: MirageWire.AudioStreamStartedMessage(
                 streamID: 42,
                 codec: .pcm16LE,
                 sampleRate: 48_000,
@@ -59,9 +61,9 @@ struct AudioPlaybackControllerInitializationTests {
 
         #expect(service.pendingDecodedAudioFramesByStreamID[streamID]?.count == 1)
 
-        let message = try ControlMessage(
+        let message = try MirageWire.ControlMessage(
             type: .audioStreamStarted,
-            content: AudioStreamStartedMessage(
+            content: MirageWire.AudioStreamStartedMessage(
                 streamID: streamID,
                 codec: .pcm16LE,
                 sampleRate: 48_000,

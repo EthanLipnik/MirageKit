@@ -8,6 +8,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 private actor ReceiveCounter {
     private(set) var value = 0
@@ -24,7 +25,7 @@ struct ClientControlReceiveBufferTests {
     func reentrantHandlerCanClearBuffer() async {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
         let counter = ReceiveCounter()
-        let message = ControlMessage(type: .pong)
+        let message = MirageWire.ControlMessage(type: .pong)
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
@@ -47,7 +48,7 @@ struct ClientControlReceiveBufferTests {
     func reentrantHandlerCanAppendFollowUpData() async {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
         let counter = ReceiveCounter()
-        let message = ControlMessage(type: .pong)
+        let message = MirageWire.ControlMessage(type: .pong)
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
@@ -73,7 +74,7 @@ struct ClientControlReceiveBufferTests {
     func bufferedMessagesDropAfterDisconnectStateChange() async {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
         let counter = ReceiveCounter()
-        let message = ControlMessage(type: .pong)
+        let message = MirageWire.ControlMessage(type: .pong)
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
@@ -97,8 +98,8 @@ struct ClientControlReceiveBufferTests {
     func bootstrapTailBufferDrainsWithoutAnotherIncomingChunk() async throws {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
         let counter = ReceiveCounter()
-        let bootstrapResponse = ControlMessage(type: .sessionBootstrapResponse)
-        let tailMessage = ControlMessage(type: .pong)
+        let bootstrapResponse = MirageWire.ControlMessage(type: .sessionBootstrapResponse)
+        let tailMessage = MirageWire.ControlMessage(type: .pong)
         let stream = AsyncStream<Data> { continuation in
             continuation.yield(bootstrapResponse.serialize() + tailMessage.serialize())
             continuation.finish()

@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/3/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 /// Coordinates logical app windows, auxiliary overlays, and encoded app-atlas media frames for one client.
@@ -19,15 +27,17 @@ actor AppAtlasMediaCoordinator {
     /// Host stream context and fixed encoder settings used by the atlas media stream.
     let context: StreamContext
     let encoderConfig: MirageEncoderConfiguration
-    let latencyMode: MirageStreamLatencyMode
-    let hostBufferingPolicy: MirageHostBufferingPolicy
+    let latencyMode: MirageMedia.MirageStreamLatencyMode
+    let hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
+    let captureEngineFactoryBackend: any MirageHostCaptureEngineFactoryBackend
+    let captureContentProviderBackend: any MirageHostCaptureContentProviderBackend
     let targetFrameRate: Int
 
     /// Packet and control-message hooks supplied by the owning host service.
     private let sendPacketWithMetadata: StreamPacketSender.PacketMetadataSendHandler
     private let onSendError: @Sendable (Error) -> Void
-    private let sendMediaUpdate: @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
+    private let sendMediaUpdate: @MainActor @Sendable (MirageWire.AppAtlasMediaUpdateMessage) async -> Void
     let publishOverlayRegions: @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
 
     /// Custom stream sink and startup marker for the single packed atlas stream.
@@ -54,7 +64,7 @@ actor AppAtlasMediaCoordinator {
     var compositor: AppAtlasFrameCompositor?
     private var layoutEpoch: UInt64 = 0
     var currentLayout: AppAtlasLayout.Result?
-    private var currentPublicLayout: MirageAppAtlasLayout?
+    private var currentPublicLayout: MirageMedia.MirageAppAtlasLayout?
     var compositionTask: Task<Void, Never>?
     var isStopped = false
 
@@ -62,13 +72,16 @@ actor AppAtlasMediaCoordinator {
         mediaStreamID: StreamID,
         context: StreamContext,
         encoderConfig: MirageEncoderConfiguration,
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
+        captureEngineFactoryBackend: any MirageHostCaptureEngineFactoryBackend = MacOSHostCaptureEngineFactoryBackend(),
+        captureContentProviderBackend: any MirageHostCaptureContentProviderBackend =
+            MacOSHostCaptureContentProviderBackend(),
         targetFrameRate: Int,
         sendPacketWithMetadata: @escaping StreamPacketSender.PacketMetadataSendHandler,
         onSendError: @escaping @Sendable (Error) -> Void,
-        sendMediaUpdate: @escaping @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void,
+        sendMediaUpdate: @escaping @MainActor @Sendable (MirageWire.AppAtlasMediaUpdateMessage) async -> Void,
         publishOverlayRegions: @escaping @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
     ) {
         self.mediaStreamID = mediaStreamID
@@ -77,6 +90,8 @@ actor AppAtlasMediaCoordinator {
         self.latencyMode = latencyMode
         self.hostBufferingPolicy = hostBufferingPolicy
         self.capturePressureProfile = capturePressureProfile
+        self.captureEngineFactoryBackend = captureEngineFactoryBackend
+        self.captureContentProviderBackend = captureContentProviderBackend
         self.targetFrameRate = max(1, targetFrameRate)
         self.sendPacketWithMetadata = sendPacketWithMetadata
         self.onSendError = onSendError
@@ -116,7 +131,7 @@ actor AppAtlasMediaCoordinator {
     /// Adds a logical window to the atlas and starts its capture.
     func addWindow(
         streamID: StreamID,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper
@@ -135,7 +150,7 @@ actor AppAtlasMediaCoordinator {
     /// Replaces an existing stream binding with a new host window.
     func replaceWindow(
         streamID: StreamID,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper
@@ -154,7 +169,7 @@ actor AppAtlasMediaCoordinator {
     /// Shared attach path for new logical windows and window replacement.
     private func attachWindow(
         streamID: StreamID,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
@@ -166,15 +181,15 @@ actor AppAtlasMediaCoordinator {
         let windowID = window.id
         if let existing = logicalWindowsByWindowID[windowID] {
             guard existing.streamID == streamID else {
-                throw MirageError.protocolError("App-atlas window \(windowID) is already bound to stream \(existing.streamID)")
+                throw MirageCore.MirageError.protocolError("App-atlas window \(windowID) is already bound to stream \(existing.streamID)")
             }
             return try await attachment(for: existing)
         }
         if !replacingExistingStreamBinding, let existingWindowID = windowIDByStreamID[streamID] {
-            throw MirageError.protocolError("App-atlas stream \(streamID) is already bound to window \(existingWindowID)")
+            throw MirageCore.MirageError.protocolError("App-atlas stream \(streamID) is already bound to window \(existingWindowID)")
         }
         if capturesByWindowID[windowID] != nil {
-            throw MirageError.protocolError("App-atlas window \(windowID) capture is already starting")
+            throw MirageCore.MirageError.protocolError("App-atlas window \(windowID) capture is already starting")
         }
 
         let captureContext = AppAtlasWindowCaptureContext()
@@ -201,6 +216,8 @@ actor AppAtlasMediaCoordinator {
                 hostBufferingPolicy: hostBufferingPolicy,
                 capturePressureProfile: capturePressureProfile,
                 targetFrameRate: targetFrameRate,
+                captureEngineFactoryBackend: captureEngineFactoryBackend,
+                captureContentProviderBackend: captureContentProviderBackend,
                 onFrame: { [weak self] frame in
                     Task(priority: .userInitiated) {
                         await self?.recordFrame(frame, windowID: windowID)
@@ -316,7 +333,7 @@ actor AppAtlasMediaCoordinator {
     }
 
     /// Returns the current public atlas layout, if the media stream is active.
-    func atlasLayouts() -> [MirageAppAtlasLayout] {
+    func atlasLayouts() -> [MirageMedia.MirageAppAtlasLayout] {
         currentPublicLayout.map { [$0] } ?? []
     }
 
@@ -404,9 +421,9 @@ actor AppAtlasMediaCoordinator {
     }
 
     /// Sends the current media stream parameters and atlas layout to the client.
-    private func sendCurrentMediaUpdate(layout: MirageAppAtlasLayout) async throws {
+    private func sendCurrentMediaUpdate(layout: MirageMedia.MirageAppAtlasLayout) async throws {
         let streamStart = await context.streamStartSnapshot
-        let message = AppAtlasMediaUpdateMessage(
+        let message = MirageWire.AppAtlasMediaUpdateMessage(
             mediaStreamID: mediaStreamID,
             width: streamStart.encodedDimensions.width,
             height: streamStart.encodedDimensions.height,
@@ -425,7 +442,7 @@ actor AppAtlasMediaCoordinator {
     private func attachment(for window: AppAtlasLogicalWindow) async throws -> AppAtlasWindowAttachment {
         guard let layout = currentPublicLayout,
               let region = layout.region(for: window.windowID) else {
-            throw MirageError.protocolError("App-atlas layout missing region for window \(window.windowID)")
+            throw MirageCore.MirageError.protocolError("App-atlas layout missing region for window \(window.windowID)")
         }
         return AppAtlasWindowAttachment(
             mediaStreamID: mediaStreamID,

@@ -9,6 +9,7 @@
 @testable import MirageKitHost
 import Foundation
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Host app icon catalog store")
@@ -20,7 +21,7 @@ struct HostAppIconCatalogStoreTests {
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }
 
-        let app = MirageInstalledApp(
+        let app = MirageWire.MirageInstalledApp(
             bundleIdentifier: "com.example.TestApp",
             name: "TestApp",
             path: temporaryDirectory.path,
@@ -57,7 +58,7 @@ struct HostAppIconCatalogStoreTests {
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }
 
-        let app = MirageInstalledApp(
+        let app = MirageWire.MirageInstalledApp(
             bundleIdentifier: "com.example.TestApp",
             name: "TestApp",
             path: temporaryDirectory.path,

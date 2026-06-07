@@ -7,10 +7,18 @@
 //  Latency-mode render store with submission telemetry.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 /// Thread-safe per-stream frame queue and presentation telemetry store.
 ///
@@ -95,7 +103,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         dimensionToken: UInt16?,
         frameNumber: UInt32?,
         queueEpoch: UInt64?,
-        timeline: FrameTimeline?,
+        timeline: MirageDiagnostics.FrameTimeline?,
         for streamID: StreamID
     ) -> MirageRenderEnqueueResult {
         let state = streamState(for: streamID)
@@ -293,7 +301,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return generation
     }
 
-    func latestAcceptedFrameTimeline(for streamID: StreamID) -> FrameTimeline? {
+    func latestAcceptedFrameTimeline(for streamID: StreamID) -> MirageDiagnostics.FrameTimeline? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
         state.lock.lock()
         let timeline = state.lastAcceptedFrameTimeline
@@ -315,7 +323,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return timing
     }
 
-    func setCadenceTarget(for streamID: StreamID, target: MirageStreamCadenceTarget) {
+    func setCadenceTarget(for streamID: StreamID, target: MirageMedia.MirageStreamCadenceTarget) {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.sourceTargetFPS = target.sourceFPS
@@ -384,7 +392,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
-    func setTransportPathKind(for streamID: StreamID, pathKind: MirageNetworkPathKind) {
+    func setTransportPathKind(for streamID: StreamID, pathKind: MirageCore.MirageNetworkPathKind) {
         let state = streamState(for: streamID)
         state.lock.lock()
         if state.transportPathKind != pathKind {
@@ -402,7 +410,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
-    func setMediaPathProfile(for streamID: StreamID, profile: MirageMediaPathProfile) {
+    func setMediaPathProfile(for streamID: StreamID, profile: MirageMedia.MirageMediaPathProfile) {
         let state = streamState(for: streamID)
         state.lock.lock()
         if state.mediaPathProfile != profile {
@@ -422,7 +430,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     func setLatencyMode(
         for streamID: StreamID,
-        latencyMode: MirageStreamLatencyMode,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
         playoutDelayFrames: Int? = nil
     ) {
         let state = streamState(for: streamID)
@@ -431,7 +439,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let effectiveLatencyMode = effectiveLatencyMode(latencyMode, mediaPathProfile: resolvedProfile)
         let latencyModeChanged = state.latencyMode != effectiveLatencyMode
         state.latencyMode = effectiveLatencyMode
-        state.playoutDelayFrames = MirageStreamCadenceTarget.clampedPlayoutDelayFrames(
+        state.playoutDelayFrames = MirageMedia.MirageStreamCadenceTarget.clampedPlayoutDelayFrames(
             resolvedProfile.usesAwdlRadioPolicy
                 ? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
                 : playoutDelayFrames ?? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
@@ -444,17 +452,17 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     }
 
     private func effectiveLatencyMode(
-        _ latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile
-    ) -> MirageStreamLatencyMode {
+        _ latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
+    ) -> MirageMedia.MirageStreamLatencyMode {
         MirageAwdlMediaController.fixedLatencyMode(
             requestedLatencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile
         )
     }
 
-    private func resolvedMediaPathProfileLocked(state: MirageRenderStreamState) -> MirageMediaPathProfile {
-        MirageMediaPathProfile.resolveRealtimeProfile(
+    private func resolvedMediaPathProfileLocked(state: MirageRenderStreamState) -> MirageMedia.MirageMediaPathProfile {
+        MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: state.transportPathKind,
             mediaPathProfile: state.mediaPathProfile == .unknown ? nil : state.mediaPathProfile
         )

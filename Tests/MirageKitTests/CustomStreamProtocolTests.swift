@@ -7,14 +7,17 @@
 
 @testable import MirageKit
 import CoreVideo
+import Foundation
 import Testing
+import MirageMedia
+import MirageWire
 
 @Suite("Custom Stream Protocol")
 struct CustomStreamProtocolTests {
     @Test("Custom stream control messages round-trip through control envelope")
     func customStreamMessagesRoundTrip() throws {
         let startupRequestID = UUID()
-        let descriptor = MirageCustomStreamDescriptor(
+        let descriptor = MirageMedia.MirageCustomStreamDescriptor(
             kind: "dev.example.custom.v1",
             displayName: "Example Custom Stream",
             metadata: ["purpose": "test"],
@@ -23,7 +26,7 @@ struct CustomStreamProtocolTests {
             defaultFrameRate: 60,
             supportsInput: true
         )
-        let startRequest = StartCustomStreamMessage(
+        let startRequest = MirageWire.StartCustomStreamMessage(
             startupRequestID: startupRequestID,
             kind: descriptor.kind,
             metadata: ["scene": "primary"],
@@ -33,9 +36,9 @@ struct CustomStreamProtocolTests {
             streamScale: 1,
             mediaMaxPacketSize: 1200
         )
-        let startEnvelope = try ControlMessage(type: .startCustomStream, content: startRequest)
+        let startEnvelope = try MirageWire.ControlMessage(type: .startCustomStream, content: startRequest)
         let (decodedStartEnvelope, _) = try requireParsedControlMessage(from: startEnvelope.serialize())
-        let decodedStartRequest = try decodedStartEnvelope.decode(StartCustomStreamMessage.self)
+        let decodedStartRequest = try decodedStartEnvelope.decode(MirageWire.StartCustomStreamMessage.self)
 
         #expect(decodedStartEnvelope.type == .startCustomStream)
         #expect(decodedStartRequest.startupRequestID == startupRequestID)
@@ -43,7 +46,7 @@ struct CustomStreamProtocolTests {
         #expect(decodedStartRequest.metadata["scene"] == "primary")
         #expect(decodedStartRequest.publicRequest.requiredPixelFormat == kCVPixelFormatType_32BGRA)
 
-        let started = MirageCustomStreamStartedMessage(
+        let started = MirageWire.MirageCustomStreamStartedMessage(
             startupRequestID: startupRequestID,
             streamID: 42,
             descriptor: descriptor,
@@ -55,17 +58,17 @@ struct CustomStreamProtocolTests {
             dimensionToken: 12,
             acceptedMediaMaxPacketSize: 1200
         )
-        let startedEnvelope = try ControlMessage(type: .customStreamStarted, content: started)
+        let startedEnvelope = try MirageWire.ControlMessage(type: .customStreamStarted, content: started)
         let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
-        let decodedStarted = try decodedStartedEnvelope.decode(MirageCustomStreamStartedMessage.self)
+        let decodedStarted = try decodedStartedEnvelope.decode(MirageWire.MirageCustomStreamStartedMessage.self)
 
         #expect(decodedStartedEnvelope.type == .customStreamStarted)
         #expect(decodedStarted == started)
 
-        let stopped = MirageCustomStreamStoppedMessage(streamID: 42, reason: .clientRequested)
-        let stoppedEnvelope = try ControlMessage(type: .customStreamStopped, content: stopped)
+        let stopped = MirageWire.MirageCustomStreamStoppedMessage(streamID: 42, reason: .clientRequested)
+        let stoppedEnvelope = try MirageWire.ControlMessage(type: .customStreamStopped, content: stopped)
         let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
-        let decodedStopped = try decodedStoppedEnvelope.decode(MirageCustomStreamStoppedMessage.self)
+        let decodedStopped = try decodedStoppedEnvelope.decode(MirageWire.MirageCustomStreamStoppedMessage.self)
 
         #expect(decodedStoppedEnvelope.type == .customStreamStopped)
         #expect(decodedStopped == stopped)

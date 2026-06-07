@@ -7,9 +7,17 @@
 //  Host input controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -20,7 +28,7 @@ extension MirageHostInputController {
 
     /// Refreshes modifier state before pointer injection.
     func refreshPointerModifierState(
-        _ modifiers: MirageModifierFlags,
+        _ modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
     ) {
         if modifiers != lastSentModifiers {
@@ -41,7 +49,7 @@ extension MirageHostInputController {
     /// Applies click count and modifier metadata to a pointer event.
     func applyPointerEventMetadata(
         _ cgEvent: CGEvent,
-        from event: MirageMouseEvent,
+        from event: MirageInput.MirageMouseEvent,
         type: CGEventType
     ) {
         cgEvent.flags = event.modifiers.cgEventFlags
@@ -62,10 +70,10 @@ extension MirageHostInputController {
     /// Injects a window-relative mouse event into the host.
     func injectMouseEvent(
         _ type: CGEventType,
-        _ event: MirageMouseEvent,
+        _ event: MirageInput.MirageMouseEvent,
         _ windowFrame: CGRect,
         windowID: WindowID,
-        app: MirageApplication?
+        app: MirageMedia.MirageApplication?
     ) {
         let injectionStartedAt = Date.timeIntervalSinceReferenceDate
         defer {
@@ -150,7 +158,7 @@ extension MirageHostInputController {
     /// Returns cached traffic-light protection geometry when the sampled frame is still current.
     func cachedDynamicTrafficLightClusterSize(
         windowID: WindowID,
-        app: MirageApplication?,
+        app: MirageMedia.MirageApplication?,
         windowFrame: CGRect
     ) -> CGSize? {
         let now = CFAbsoluteTimeGetCurrent()

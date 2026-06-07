@@ -13,16 +13,18 @@ import Foundation
 import Loom
 import MirageKit
 import Testing
+import MirageCore
+import MirageWire
 
 @Suite("Stream Packet Sender Regression")
 struct StreamPacketSenderRegressionTests {
     @Test("Unreliable keyframes duplicate parameter-set packet when enabled")
     func unreliableKeyframesDuplicateParameterSetPacketWhenEnabled() async throws {
-        let sentHeaders = Locked<[FrameHeader]>([])
+        let sentHeaders = Locked<[MirageWire.FrameHeader]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 4,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -61,11 +63,11 @@ struct StreamPacketSenderRegressionTests {
 
     @Test("Parameter-set duplicates participate in packet pacing")
     func parameterSetDuplicatesParticipateInPacketPacing() async throws {
-        let sentHeaders = Locked<[FrameHeader]>([])
+        let sentHeaders = Locked<[MirageWire.FrameHeader]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 1200,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -111,7 +113,7 @@ struct StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -159,7 +161,7 @@ struct StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -207,7 +209,7 @@ struct StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -262,7 +264,7 @@ struct StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -373,13 +375,13 @@ struct StreamPacketSenderRegressionTests {
 
     @Test("Transport data drop starts dependency repair before sibling fragments complete")
     func transportDataDropStartsDependencyRepairBeforeSiblingFragmentsComplete() async throws {
-        let submittedHeaders = Locked<[FrameHeader]>([])
+        let submittedHeaders = Locked<[MirageWire.FrameHeader]>([])
         let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
         let dependencyDrops = Locked<[(frameNumber: UInt32, reason: StreamPacketSender.DependencyFrameDropReason)]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 4,
             sendPacketWithMetadata: { packet, metadata, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -634,8 +636,8 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Queued unreliable metadata converts sender deadlines to Loom uptime")
-    func queuedUnreliableMetadataConvertsSenderDeadlinesToLoomUptime() {
+    @Test("Queued unreliable metadata converts sender deadlines to Mirage uptime")
+    func queuedUnreliableMetadataConvertsSenderDeadlinesToMirageUptime() {
         let sendDeadline = CFAbsoluteTimeGetCurrent() + 0.250
         let expectedFrameID = (UInt64(42) << 32) | UInt64(880)
         let options = StreamPacketSender.TransportPacketMetadata(
@@ -647,7 +649,7 @@ struct StreamPacketSenderRegressionTests {
             isParity: false,
             isRecovery: false,
             sendDeadline: sendDeadline
-        ).loomQueuedUnreliableSendOptions
+        ).mirageQueuedUnreliableSendOptions
 
         let remainingMs = ((options.deadlineUptime ?? 0) - ProcessInfo.processInfo.systemUptime) * 1000
         #expect(options.importance == .realtimeInterFrame)
@@ -672,7 +674,7 @@ struct StreamPacketSenderRegressionTests {
             isParity: false,
             isRecovery: true,
             sendDeadline: CFAbsoluteTimeGetCurrent() + 0.250
-        ).loomQueuedUnreliableSendOptions
+        ).mirageQueuedUnreliableSendOptions
 
         #expect(options.importance == .realtimeRecovery)
         #expect(options.frameID == expectedFrameID)
@@ -680,8 +682,8 @@ struct StreamPacketSenderRegressionTests {
         #expect(!options.dropsWhenQueueFull)
     }
 
-    @Test("Queued unreliable metadata scopes Loom frame groups by Mirage stream")
-    func queuedUnreliableMetadataScopesLoomFrameGroupsByMirageStream() {
+    @Test("Queued unreliable metadata scopes frame groups by Mirage stream")
+    func queuedUnreliableMetadataScopesFrameGroupsByMirageStream() {
         let firstOptions = StreamPacketSender.TransportPacketMetadata(
             streamID: 42,
             frameNumber: 881,
@@ -691,7 +693,7 @@ struct StreamPacketSenderRegressionTests {
             isParity: false,
             isRecovery: false,
             sendDeadline: CFAbsoluteTimeGetCurrent() + 0.250
-        ).loomQueuedUnreliableSendOptions
+        ).mirageQueuedUnreliableSendOptions
         let secondOptions = StreamPacketSender.TransportPacketMetadata(
             streamID: 43,
             frameNumber: 881,
@@ -701,7 +703,7 @@ struct StreamPacketSenderRegressionTests {
             isParity: false,
             isRecovery: false,
             sendDeadline: CFAbsoluteTimeGetCurrent() + 0.250
-        ).loomQueuedUnreliableSendOptions
+        ).mirageQueuedUnreliableSendOptions
 
         #expect(firstOptions.frameID != secondOptions.frameID)
         #expect(firstOptions.frameID == ((UInt64(42) << 32) | UInt64(881)))

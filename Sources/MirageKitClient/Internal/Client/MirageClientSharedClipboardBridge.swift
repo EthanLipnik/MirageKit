@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import UniformTypeIdentifiers
 
 #if canImport(AppKit)
@@ -271,7 +279,7 @@ final class MirageClientSharedClipboardBridge {
     }
 
     func noteRemoteDeclaration(
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
     ) async {
         guard clipboardState.shouldApplyRemoteUpdate(orderingToken: orderingToken) else {
@@ -290,7 +298,7 @@ final class MirageClientSharedClipboardBridge {
     }
 
     func noteRemoteTransferObservation(
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
     ) async {
         let changeCount = await ClientClipboardSnapshotReader.shared.changeCount
@@ -306,7 +314,7 @@ final class MirageClientSharedClipboardBridge {
 
     func applyRemoteItem(
         _ item: MirageSharedClipboardItem,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
     ) async {
         guard clipboardState.shouldApplyRemoteUpdate(orderingToken: orderingToken) else {

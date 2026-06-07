@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension SharedVirtualDisplayManager {
@@ -23,16 +31,16 @@ extension SharedVirtualDisplayManager {
 
     /// Conservative 1x fallback used when a Retina virtual-display mode cannot activate.
     static func fallbackResolution(for retinaResolution: CGSize) -> CGSize {
-        let width = CGFloat(MirageStreamGeometry.alignedEncodedDimension(max(2.0, retinaResolution.width / 2.0)))
-        let height = CGFloat(MirageStreamGeometry.alignedEncodedDimension(max(2.0, retinaResolution.height / 2.0)))
+        let width = CGFloat(MirageMedia.MirageStreamGeometry.alignedEncodedDimension(max(2.0, retinaResolution.width / 2.0)))
+        let height = CGFloat(MirageMedia.MirageStreamGeometry.alignedEncodedDimension(max(2.0, retinaResolution.height / 2.0)))
         return CGSize(width: width, height: height)
     }
 
     /// Normalizes virtual-display pixel sizes to the even dimensions expected by capture/encode.
     static func normalizedPixelResolution(_ resolution: CGSize) -> CGSize {
         CGSize(
-            width: CGFloat(MirageStreamGeometry.alignedEncodedDimension(max(2.0, resolution.width))),
-            height: CGFloat(MirageStreamGeometry.alignedEncodedDimension(max(2.0, resolution.height)))
+            width: CGFloat(MirageMedia.MirageStreamGeometry.alignedEncodedDimension(max(2.0, resolution.width))),
+            height: CGFloat(MirageMedia.MirageStreamGeometry.alignedEncodedDimension(max(2.0, resolution.height)))
         )
     }
 

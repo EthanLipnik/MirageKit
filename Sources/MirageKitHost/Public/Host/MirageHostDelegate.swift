@@ -5,7 +5,16 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Loom
 
 #if os(macOS)
 
@@ -34,19 +43,29 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     /// Called when a connected client sends an input event for a host window.
     @MainActor
     func didReceiveInputEvent(
-        _ event: MirageInputEvent,
-        forWindow window: MirageWindow
+        _ event: MirageInput.MirageInputEvent,
+        forWindow window: MirageMedia.MirageWindow
     )
 
     /// Called when host session availability changes, such as lock, unlock, or sleep.
     @MainActor
     func sessionStateDidChange(_ state: LoomSessionAvailability)
 
+    /// Called when host session availability changes using Mirage-owned availability values.
+    @MainActor
+    func sessionAvailabilityDidChange(_ availability: MirageWire.MirageHostSessionAvailability)
+
     /// Called early in the incoming session when the Loom handshake completes and the peer
     /// advertisement is available, before Mirage session bootstrap finishes.
     @MainActor
     func didDiscoverPeer(advertisement: LoomPeerAdvertisement)
 
+}
+
+public extension MirageHostDelegate {
+    /// Called when host session availability changes using Mirage-owned availability values.
+    @MainActor
+    func sessionAvailabilityDidChange(_ availability: MirageWire.MirageHostSessionAvailability) {}
 }
 
 #endif

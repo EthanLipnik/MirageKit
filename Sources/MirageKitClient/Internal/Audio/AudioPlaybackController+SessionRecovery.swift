@@ -7,9 +7,17 @@
 //  Platform audio-session recovery observers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AVFAudio
 import Foundation
-import MirageKit
 
 #if os(iOS) || os(visionOS)
 @MainActor

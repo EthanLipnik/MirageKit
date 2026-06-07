@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 2/20/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -15,14 +22,14 @@ import MirageKit
 final class HostTransportRegistry: @unchecked Sendable {
     /// Registered media streams keyed by the identifier that owns their lifecycle.
     private struct State {
-        var videoByStream: [StreamID: LoomMultiplexedStream] = [:]
-        var audioByClientID: [UUID: (stream: LoomMultiplexedStream, profile: LoomQueuedUnreliableSendProfile)] = [:]
+        var videoByStream: [StreamID: any MirageQueuedUnreliableMediaStream] = [:]
+        var audioByClientID: [UUID: (stream: any MirageQueuedUnreliableMediaStream, profile: MirageMedia.MirageMediaSendProfile)] = [:]
     }
 
     private let state = Locked(State())
 
     /// Registers a stream-scoped video transport.
-    func registerVideoStream(_ stream: LoomMultiplexedStream, streamID: StreamID) {
+    func registerVideoStream(_ stream: any MirageQueuedUnreliableMediaStream, streamID: StreamID) {
         state.withLock { state in
             state.videoByStream[streamID] = stream
         }
@@ -37,9 +44,9 @@ final class HostTransportRegistry: @unchecked Sendable {
 
     /// Registers a client-scoped audio transport.
     func registerAudioStream(
-        _ stream: LoomMultiplexedStream,
+        _ stream: any MirageQueuedUnreliableMediaStream,
         clientID: UUID,
-        profile: LoomQueuedUnreliableSendProfile
+        profile: MirageMedia.MirageMediaSendProfile
     ) {
         state.withLock { $0.audioByClientID[clientID] = (stream, profile) }
     }

@@ -7,9 +7,17 @@
 //  Host input controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -20,8 +28,8 @@ extension MirageHostInputController {
 
     /// Handles input for a window stream on the accessibility queue.
     func handleInput(
-        _ event: MirageInputEvent,
-        window: MirageWindow,
+        _ event: MirageInput.MirageInputEvent,
+        window: MirageMedia.MirageWindow,
         deferredInjectionValidator: (@Sendable () -> Bool)?
     ) {
         let windowFrame = window.frame
@@ -134,7 +142,7 @@ extension MirageHostInputController {
     }
 
     /// Returns whether a scroll event should first activate its target window.
-    nonisolated static func shouldActivateWindowForScrollEvent(_ event: MirageScrollEvent) -> Bool {
+    nonisolated static func shouldActivateWindowForScrollEvent(_ event: MirageInput.MirageScrollEvent) -> Bool {
         if event.phase == .began { return true }
         return event.phase == .none && event.momentumPhase == .none
     }
@@ -142,7 +150,7 @@ extension MirageHostInputController {
     /// Activates a window with throttling for repeated same-window requests.
     private func performWindowActivation(
         windowID: WindowID,
-        app: MirageApplication?
+        app: MirageMedia.MirageApplication?
     ) {
         let now = CFAbsoluteTimeGetCurrent()
         if lastActivatedWindowID == windowID,

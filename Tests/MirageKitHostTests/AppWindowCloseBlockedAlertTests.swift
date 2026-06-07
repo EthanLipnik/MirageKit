@@ -13,6 +13,8 @@ import CoreGraphics
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
 @Suite("App Window Close-Blocked Alert")
 struct AppWindowCloseBlockedAlertTests {
@@ -65,10 +67,10 @@ struct AppWindowCloseBlockedAlertTests {
             deviceType: .mac,
             connectedAt: Date()
         )
-        let window = MirageWindow(
+        let window = MirageMedia.MirageWindow(
             id: windowID,
             title: "Window-\(windowID)",
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 100,
                 bundleIdentifier: "com.example.app",
                 name: "Example"

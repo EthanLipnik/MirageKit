@@ -7,8 +7,17 @@
 //  Frame reassembler state snapshots, trims, and reset helpers.
 //
 
-import CoreFoundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreFoundation
+import Foundation
 
 extension FrameReassembler {
     var hasReceivedPackets: Bool {

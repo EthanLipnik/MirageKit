@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/4/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 import AppKit
@@ -17,7 +25,7 @@ extension MirageHostInputController {
 
     /// Injects a native magnify gesture at the stream-relative location.
     func injectMagnifyEvent(
-        _ event: MirageMagnifyEvent,
+        _ event: MirageInput.MirageMagnifyEvent,
         bounds: CGRect,
         domain: HostKeyboardInjectionDomain
     ) {
@@ -36,7 +44,7 @@ extension MirageHostInputController {
 
     /// Injects a native rotate gesture at the stream-relative location.
     func injectRotateEvent(
-        _ event: MirageRotateEvent,
+        _ event: MirageInput.MirageRotateEvent,
         bounds: CGRect,
         domain: HostKeyboardInjectionDomain
     ) {
@@ -55,12 +63,12 @@ extension MirageHostInputController {
 
     /// Injects a native swipe gesture or maps it to a host system action.
     func injectSwipeEvent(
-        _ event: MirageSwipeEvent,
+        _ event: MirageInput.MirageSwipeEvent,
         bounds: CGRect,
         domain: HostKeyboardInjectionDomain
     ) {
         if let action = Self.hostSystemAction(for: event) {
-            executeHostSystemAction(MirageHostSystemActionRequest(action: action))
+            executeHostSystemAction(MirageInput.MirageHostSystemActionRequest(action: action))
             return
         }
 
@@ -90,7 +98,7 @@ extension MirageHostInputController {
     }
 
     /// Maps directional swipe deltas to host system actions when appropriate.
-    nonisolated static func hostSystemAction(for event: MirageSwipeEvent) -> MirageHostSystemAction? {
+    nonisolated static func hostSystemAction(for event: MirageInput.MirageSwipeEvent) -> MirageInput.MirageHostSystemAction? {
         let absX = abs(event.deltaX)
         let absY = abs(event.deltaY)
         guard max(absX, absY) > 0 else { return nil }
@@ -127,9 +135,9 @@ private enum HostPrivateGestureInjector {
     /// Posts a magnify gesture event.
     static func postMagnify(
         magnification: CGFloat,
-        phase: MirageScrollPhase,
+        phase: MirageInput.MirageScrollPhase,
         location: CGPoint,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
     ) -> Bool {
         postGesture(
@@ -146,9 +154,9 @@ private enum HostPrivateGestureInjector {
     /// Posts a rotate gesture event.
     static func postRotate(
         rotation: CGFloat,
-        phase: MirageScrollPhase,
+        phase: MirageInput.MirageScrollPhase,
         location: CGPoint,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
     ) -> Bool {
         postGesture(
@@ -166,9 +174,9 @@ private enum HostPrivateGestureInjector {
     static func postSwipe(
         deltaX: CGFloat,
         deltaY: CGFloat,
-        phase: MirageScrollPhase,
+        phase: MirageInput.MirageScrollPhase,
         location: CGPoint,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
     ) -> Bool {
         postGesture(
@@ -186,9 +194,9 @@ private enum HostPrivateGestureInjector {
     /// Builds, configures, and posts a private gesture event.
     private static func postGesture(
         subtype: GestureSubtype,
-        phase: MirageScrollPhase,
+        phase: MirageInput.MirageScrollPhase,
         location: CGPoint,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         domain: HostKeyboardInjectionDomain,
         configure: (CGEvent) -> Void
     ) -> Bool {

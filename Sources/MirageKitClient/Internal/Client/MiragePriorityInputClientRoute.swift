@@ -5,36 +5,16 @@
 //  Created by Ethan Lipnik on 5/15/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
-import Network
-
-protocol MiragePriorityInputEndpointProtocol: AnyObject, Sendable {
-    func sendRealtime(
-        _ payload: Data,
-        onComplete: @escaping @Sendable (Error?) -> Void
-    )
-
-    func sendRealtimeSequenced(
-        _ payload: Data,
-        onComplete: @escaping @Sendable (Error?) -> Void
-    )
-
-    func sendContinuous(
-        _ payload: Data,
-        onComplete: @escaping @Sendable (Error?) -> Void
-    )
-
-    func sendProtected(
-        _ payload: Data,
-        onComplete: @escaping @Sendable (Error?) -> Void
-    )
-
-    func makeIncomingPayloadStream(maxBytes: Int) -> AsyncStream<Data>
-}
-
-extension LoomPriorityInputEndpoint: MiragePriorityInputEndpointProtocol {}
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 enum MiragePriorityInputClientRouteState: String, Sendable, Equatable {
     case priority
@@ -80,7 +60,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private struct PendingRealtimeFallback {
-        let envelope: MiragePriorityInputEnvelope
+        let envelope: MirageWire.MiragePriorityInputEnvelope
         let deliveryMode: MirageInputEventSender.DeliveryMode
         let reason: RealtimeFallbackReason
     }
@@ -173,14 +153,14 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     func send(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID,
         deliveryMode: MirageInputEventSender.DeliveryMode
     ) async throws {
-        let inputPayload = try InputEventMessage(streamID: streamID, event: event).serializePayload()
+        let inputPayload = try MirageWire.InputEventMessage(streamID: streamID, event: event).serializePayload()
         let deliveryClass = deliveryClass(for: deliveryMode)
         let eventID = nextEventID()
-        let envelope = MiragePriorityInputEnvelope(
+        let envelope = MirageWire.MiragePriorityInputEnvelope(
             kind: .input,
             eventID: eventID,
             streamID: streamID,
@@ -202,11 +182,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     func sendRealtime(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         streamID: StreamID
     ) throws {
-        let inputPayload = try InputEventMessage(streamID: streamID, event: event).serializePayload()
-        let envelope = MiragePriorityInputEnvelope(
+        let inputPayload = try MirageWire.InputEventMessage(streamID: streamID, event: event).serializePayload()
+        let envelope = MirageWire.MiragePriorityInputEnvelope(
             kind: .input,
             eventID: nextEventID(),
             streamID: streamID,
@@ -221,9 +201,9 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         )
     }
 
-    func sendContinuousBatch(_ batch: MirageContinuousInputBatch) throws {
+    func sendContinuousBatch(_ batch: MirageInput.MirageContinuousInputBatch) throws {
         let eventID = nextEventID()
-        let envelope = MiragePriorityInputEnvelope(
+        let envelope = MirageWire.MiragePriorityInputEnvelope(
             kind: .continuousInput,
             eventID: eventID,
             streamID: batch.streamID,
@@ -270,7 +250,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private func sendRealtime(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         deliveryMode: MirageInputEventSender.DeliveryMode,
         transportMode: RealtimeTransportMode
     ) throws {
@@ -289,7 +269,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             )
             if let error {
                 self.recordRealtimeCoalesced()
-                if !Self.isExpectedRealtimeQueueDrop(error) {
+                if !MirageConnectionErrorClassifier.isExpectedRealtimeInputQueueDrop(error) {
                     self.recordPrioritySendError()
                     self.scheduleRealtimeFallback(
                         envelope: envelope,
@@ -316,7 +296,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private func sendContinuous(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         deliveryMode: MirageInputEventSender.DeliveryMode
     ) throws {
         let payload = try envelope.serialize()
@@ -330,7 +310,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             )
             if let error {
                 self.recordContinuousCoalesced()
-                if !Self.isExpectedRealtimeQueueDrop(error) {
+                if !MirageConnectionErrorClassifier.isExpectedRealtimeInputQueueDrop(error) {
                     self.recordPrioritySendError()
                     self.scheduleRealtimeFallback(
                         envelope: envelope,
@@ -352,7 +332,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private func sendProtected(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         deliveryMode: MirageInputEventSender.DeliveryMode
     ) async throws {
         let payload = try envelope.serialize()
@@ -380,14 +360,16 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
     private func startReceiving() {
         receiveTask = Task.detached(priority: .high) { [weak self, endpoint] in
-            for await payload in endpoint.makeIncomingPayloadStream(maxBytes: LoomPriorityInputEndpoint.maximumPayloadBytes) {
+            for await payload in endpoint.makeIncomingPayloadStream(
+                maxBytes: MiragePriorityInputEndpointLimits.maximumPayloadBytes
+            ) {
                 self?.handlePriorityPayload(payload)
             }
         }
     }
 
     private func handlePriorityPayload(_ payload: Data) {
-        guard let envelope = try? MiragePriorityInputEnvelope.deserialize(payload) else {
+        guard let envelope = try? MirageWire.MiragePriorityInputEnvelope.deserialize(payload) else {
             recordMalformedAck()
             return
         }
@@ -487,7 +469,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private func scheduleRealtimeFallback(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         deliveryMode: MirageInputEventSender.DeliveryMode,
         reason: RealtimeFallbackReason
     ) {
@@ -537,13 +519,13 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private func sendFallback(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         deliveryMode: MirageInputEventSender.DeliveryMode
     ) async throws {
         recordFallback(for: envelope)
         MirageInputLatencyTelemetry.shared.recordClientFallback(envelope: envelope)
         recordClientRouteTelemetry(envelope: envelope, route: .priorityFallback)
-        let controlMessage = try ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
+        let controlMessage = try MirageWire.ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
         try await fallbackSender(controlMessage.serialize(), deliveryMode)
     }
 
@@ -587,17 +569,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         }
     }
 
-    private static func isExpectedRealtimeQueueDrop(_ error: Error) -> Bool {
-        if let networkError = error as? NWError,
-           case .posix(.ECANCELED) = networkError {
-            return true
-        }
-
-        let nsError = error as NSError
-        return nsError.domain == NSPOSIXErrorDomain && nsError.code == 89
-    }
-
-    private func notePriorityAck(_ envelope: MiragePriorityInputEnvelope) {
+    private func notePriorityAck(_ envelope: MirageWire.MiragePriorityInputEnvelope) {
         let shouldLog = withState { state in
             state.lastPriorityAckAt = ProcessInfo.processInfo.systemUptime
             if envelope.deliveryClass == .realtime {
@@ -682,7 +654,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         }
     }
 
-    private func recordFallback(for envelope: MiragePriorityInputEnvelope) {
+    private func recordFallback(for envelope: MirageWire.MiragePriorityInputEnvelope) {
         withState { state in
             switch envelope.deliveryClass {
             case .realtime:
@@ -736,7 +708,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
     private func deliveryClass(
         for deliveryMode: MirageInputEventSender.DeliveryMode
-    ) -> MiragePriorityInputDeliveryClass {
+    ) -> MirageWire.MiragePriorityInputDeliveryClass {
         switch deliveryMode {
         case .droppableRealtime:
             .realtime
@@ -756,7 +728,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         }
     }
 
-    private static func realtimeTransportMode(for event: MirageInputEvent) -> RealtimeTransportMode {
+    private static func realtimeTransportMode(for event: MirageInput.MirageInputEvent) -> RealtimeTransportMode {
         switch event {
         case .mouseMoved,
              .mouseDragged,
@@ -782,13 +754,13 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     }
 
     private func recordClientRouteTelemetry(
-        envelope: MiragePriorityInputEnvelope,
+        envelope: MirageWire.MiragePriorityInputEnvelope,
         route: MirageInputLatencyClientRoute
     ) {
         guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
         let routeSnapshot = snapshot()
         if envelope.kind == .continuousInput,
-           let batch = try? MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
+           let batch = try? MirageInput.MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
             for event in batch.inputEvents() {
                 MirageInputLatencyTelemetry.shared.recordClientRoute(
                     event: event,
@@ -801,7 +773,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             return
         }
 
-        guard let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else { return }
+        guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(envelope.inputPayload) else { return }
         MirageInputLatencyTelemetry.shared.recordClientRoute(
             event: inputMessage.event,
             streamID: inputMessage.streamID,

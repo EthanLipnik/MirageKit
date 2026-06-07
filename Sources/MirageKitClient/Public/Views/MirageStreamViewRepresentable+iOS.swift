@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import Foundation
 import SwiftUI
@@ -22,7 +30,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     public let contentRectOverride: CGRect?
 
     /// Callback for sending input events to the host
-    public var onInputEvent: ((MirageInputEvent) -> Void)?
+    public var onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?
 
     /// Callback when drawable metrics change - reports actual pixel dimensions and scale
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
@@ -76,10 +84,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     public var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
     /// Unified actions triggered by shortcuts, gestures, or the control bar.
-    public var actions: [MirageAction]
+    public var actions: [MirageInput.MirageAction]
 
     /// Callback when a unified action is triggered.
-    public var onActionTriggered: ((MirageAction) -> Void)?
+    public var onActionTriggered: ((MirageInput.MirageAction) -> Void)?
 
     /// Callback when a Pencil gesture maps to a client-side action.
     public var onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?
@@ -146,7 +154,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         streamID: StreamID,
         mediaStreamID: StreamID,
         contentRectOverride: CGRect? = nil,
-        onInputEvent: ((MirageInputEvent) -> Void)? = nil,
+        onInputEvent: ((MirageInput.MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
         onContainerSizeChanged: ((CGSize) -> Void)? = nil,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
@@ -164,8 +172,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
-        actions: [MirageAction] = [],
-        onActionTriggered: ((MirageAction) -> Void)? = nil,
+        actions: [MirageInput.MirageAction] = [],
+        onActionTriggered: ((MirageInput.MirageAction) -> Void)? = nil,
         onPencilGestureAction: ((MiragePencilGestureAction) -> Void)? = nil,
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
@@ -328,7 +336,7 @@ package struct MirageStreamViewControllerState {
     let inputEnabled: Bool
     let pencilGestureConfiguration: MiragePencilGestureConfiguration
     let clientShortcuts: [MirageClientShortcut]
-    let actions: [MirageAction]
+    let actions: [MirageInput.MirageAction]
     let dictationToggleRequestID: UInt64
     let dictationMode: MirageDictationMode
     let dictationLocalePreference: MirageDictationLocalePreference

@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/8/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// Formats a bitrate for compact diagnostics and stream startup logs.

@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -69,7 +77,7 @@ extension MirageHostService {
             height: CGFloat(currentEncodedDimensions.height)
         )
         let currentEncoderMaxDimensions = await context.encoderMaxDimensions
-        let requestedEncodedResolution = await MirageStreamGeometry.resolveEncodedPlan(
+        let requestedEncodedResolution = await MirageMedia.MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: pixelResolution,
             requestedStreamScale: context.requestedStreamScale,
             encoderMaxWidth: currentEncoderMaxDimensions.width ?? Int(StreamContext.maxEncodedWidth),
@@ -150,7 +158,7 @@ extension MirageHostService {
                 message: "Failed to apply app/window resize request #\(requestNumber) for stream \(streamID): "
             )
             if let clientContext = findClientContext(clientID: session.client.id) {
-                let errorMessage = ErrorMessage(
+                let errorMessage = MirageWire.ErrorMessage(
                     code: .virtualDisplayResizeFailed,
                     message: "Failed to update dedicated display for stream \(streamID): \(error.localizedDescription)"
                 )
@@ -196,7 +204,7 @@ extension MirageHostService {
         let resolvedWindowFrame = virtualDisplayBounds(windowID: currentSession.window.id)
             ?? currentWindowFrame(for: currentSession.window.id)
             ?? currentSession.window.frame
-        let updatedWindow = MirageWindow(
+        let updatedWindow = MirageMedia.MirageWindow(
             id: currentSession.window.id,
             title: currentSession.window.title,
             application: currentSession.window.application,
@@ -219,7 +227,7 @@ extension MirageHostService {
         let streamStart = await context.streamStartSnapshot
         let appSession = await appStreamManager.sessionForStreamID(streamID)
         let mediaStreamID = appSession?.windowStreams[updatedWindow.id]?.mediaStreamID ?? streamID
-        let message = StreamStartedMessage(
+        let message = MirageWire.StreamStartedMessage(
             streamID: streamID,
             windowID: updatedWindow.id,
             width: streamStart.encodedDimensions.width,
@@ -371,7 +379,7 @@ extension MirageHostService {
             width: max(1, newResolution.width),
             height: max(1, newResolution.height)
         )
-        let resizeResult = await WindowSpaceManager.shared.resizeWindowWithAccessibilityResult(
+        let resizeResult = await platformVirtualDisplayBackend.resizeWindowWithAccessibilityResult(
             session.window.id,
             to: targetSize
         )
@@ -395,7 +403,7 @@ extension MirageHostService {
             origin: session.window.frame.origin,
             size: targetSize
         )
-        let updatedWindow = MirageWindow(
+        let updatedWindow = MirageMedia.MirageWindow(
             id: session.window.id,
             title: session.window.title,
             application: session.window.application,
@@ -448,7 +456,7 @@ extension MirageHostService {
         streamID: StreamID,
         requestedSize: CGSize,
         appSession: MirageAppStreamSession,
-        outcome: MirageAppWindowResizeResultOutcome,
+        outcome: MirageWire.MirageAppWindowResizeResultOutcome,
         observedFrame: CGRect?,
         reason: String?
     ) async {
@@ -458,7 +466,7 @@ extension MirageHostService {
         }
         let windowInfo = appSession.windowStreams[session.window.id]
         let minSize = await resolvedMinimumSize(for: session.window)
-        let result = AppWindowResizeResultMessage(
+        let result = MirageWire.AppWindowResizeResultMessage(
             streamID: streamID,
             mediaStreamID: windowInfo?.mediaStreamID ?? streamID,
             windowID: session.window.id,

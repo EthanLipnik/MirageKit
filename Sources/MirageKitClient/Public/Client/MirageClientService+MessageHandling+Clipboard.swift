@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
     /// Applies the host's shared-clipboard availability state.
-    func handleSharedClipboardStatus(_ message: ControlMessage) {
+    func handleSharedClipboardStatus(_ message: MirageWire.ControlMessage) {
         do {
-            let status = try message.decode(SharedClipboardStatusMessage.self)
+            let status = try message.decode(MirageWire.SharedClipboardStatusMessage.self)
             sharedClipboardEnabled = status.enabled
             MirageLogger.client("Shared clipboard host status received: enabled=\(status.enabled)")
             Task { await refreshSharedClipboardBridgeState() }
@@ -23,7 +31,7 @@ extension MirageClientService {
     }
 
     /// Validates and decrypts a host clipboard update before handing payload chunks to the bridge.
-    func handleSharedClipboardUpdate(_ message: ControlMessage) {
+    func handleSharedClipboardUpdate(_ message: MirageWire.ControlMessage) {
         guard Self.shouldEnableSharedClipboard(
             connectionState: connectionState,
             hostSharedClipboardEnabled: sharedClipboardEnabled,
@@ -42,7 +50,7 @@ extension MirageClientService {
         let secCtx = mediaSecurityContext
         Task.detached(priority: .utility) { [weak self] in
             do {
-                let update = try message.decode(SharedClipboardUpdateMessage.self)
+                let update = try message.decode(MirageWire.SharedClipboardUpdateMessage.self)
                 let decryptedPayload: Data? = if let encryptedPayload = update.encryptedPayload {
                     try MirageMediaSecurity.decryptClipboardPayload(
                         encryptedPayload,
@@ -67,9 +75,9 @@ extension MirageClientService {
 
     /// Reassembles and validates remote clipboard chunks before applying the completed item.
     private func applyReceivedClipboardChunk(
-        representation: SharedClipboardRepresentation,
+        representation: MirageWire.SharedClipboardRepresentation,
         payload: Data?,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         sentAtMs: Int64,
         chunkIndex: Int,
         chunkCount: Int
@@ -118,7 +126,7 @@ extension MirageClientService {
     /// Delays clipboard application while active media recovery may still be presenting stale frames.
     private func applyReceivedClipboardItemWhenMediaStable(
         _ item: MirageSharedClipboardItem,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         sentAtMs: Int64,
         attempt: Int = 0
     ) async {

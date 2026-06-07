@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -47,7 +55,7 @@ final class ScrollPhysicsCapturingView: UIView {
     var directTouchPanGestureRecognizer: UIPanGestureRecognizer { scrollView.panGestureRecognizer }
 
     /// Callback for scroll events: (deltaX, deltaY, phase, momentumPhase, source)
-    var onScroll: ((CGFloat, CGFloat, MirageScrollPhase, MirageScrollPhase, InputSource) -> Void)?
+    var onScroll: ((CGFloat, CGFloat, MirageInput.MirageScrollPhase, MirageInput.MirageScrollPhase, InputSource) -> Void)?
 
     var isIndirectScrollActive: Bool {
         guard !scrollView.hasDirectTouchContact else { return false }
@@ -60,7 +68,7 @@ final class ScrollPhysicsCapturingView: UIView {
     }
 
     /// Callback for rotation events: (rotationDegrees, phase)
-    var onRotation: ((CGFloat, MirageScrollPhase) -> Void)?
+    var onRotation: ((CGFloat, MirageInput.MirageScrollPhase) -> Void)?
 
     /// Whether direct one-finger touches should drive native scroll physics.
     var directTouchScrollEnabled: Bool = false {
@@ -337,8 +345,8 @@ final class ScrollPhysicsCapturingView: UIView {
         let deltaY = lastOffset.y - currentOffset.y
         setLastContentOffset(currentOffset)
 
-        let phase: MirageScrollPhase = isTracking ? .changed : .none
-        let momentumPhase: MirageScrollPhase = scrollView.isDecelerating ? .changed : .none
+        let phase: MirageInput.MirageScrollPhase = isTracking ? .changed : .none
+        let momentumPhase: MirageInput.MirageScrollPhase = scrollView.isDecelerating ? .changed : .none
 
         if deltaX != 0 || deltaY != 0 {
             onScroll?(deltaX, deltaY, phase, momentumPhase, inputSource)
@@ -485,7 +493,7 @@ final class ScrollPhysicsCapturingView: UIView {
 
     @objc
     private func handleRotation(_ gesture: UIRotationGestureRecognizer) {
-        let phase = MirageScrollPhase(gestureState: gesture.state)
+        let phase = MirageInput.MirageScrollPhase(gestureState: gesture.state)
 
         switch gesture.state {
         case .began:

@@ -7,8 +7,16 @@
 //  Shared ping waiter coordination for RTT sampling.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -39,9 +47,9 @@ extension MirageClientService {
         sendPing: (@MainActor @Sendable () async throws -> Void)? = nil
     ) async throws {
         guard case .connected = connectionState else {
-            throw MirageError.protocolError("Not connected")
+            throw MirageCore.MirageError.protocolError("Not connected")
         }
-        let message = ControlMessage(type: .ping)
+        let message = MirageWire.ControlMessage(type: .ping)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let registration = registerPingWaiter(continuation, timeout: timeout)
             guard registration.startedNewRequest else { return }
@@ -86,7 +94,7 @@ extension MirageClientService {
             }
             self.completePingRequest(
                 expectedRequestID: requestID,
-                result: .failure(MirageError.protocolError("Ping timed out"))
+                result: .failure(MirageCore.MirageError.protocolError("Ping timed out"))
             )
         }
 

@@ -5,16 +5,24 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 @MainActor
 public extension MirageHostService {
     /// Refreshes host-side stream state after a streamed window changes size.
-    func notifyWindowResized(_ window: MirageWindow) async {
+    func notifyWindowResized(_ window: MirageMedia.MirageWindow) async {
         let latestFrame = currentWindowFrame(for: window.id) ?? window.frame
-        let updatedWindow = MirageWindow(
+        let updatedWindow = MirageMedia.MirageWindow(
             id: window.id,
             title: window.title,
             application: window.application,
@@ -57,7 +65,7 @@ public extension MirageHostService {
                 let minWidth = Int(minSize.width)
                 let minHeight = Int(minSize.height)
 
-                let message = StreamStartedMessage(
+                let message = MirageWire.StreamStartedMessage(
                     streamID: session.id,
                     windowID: window.id,
                     width: streamStart.encodedDimensions.width,
@@ -95,7 +103,7 @@ public extension MirageHostService {
 
         let latestFrame = currentWindowFrame(for: windowID) ?? session.window.frame
 
-        let updatedWindow = MirageWindow(
+        let updatedWindow = MirageMedia.MirageWindow(
             id: session.window.id,
             title: session.window.title,
             application: session.window.application,
@@ -121,7 +129,7 @@ public extension MirageHostService {
                 let minWidth = Int(minSize.width)
                 let minHeight = Int(minSize.height)
 
-                let message = StreamStartedMessage(
+                let message = MirageWire.StreamStartedMessage(
                     streamID: session.id,
                     windowID: windowID,
                     width: width,

@@ -5,16 +5,24 @@
 //  Created by Ethan Lipnik on 5/28/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
 struct HostAdaptiveAudioBudgetPolicy: Equatable {
     struct Request: Equatable {
-        let configuration: MirageAudioConfiguration
-        let transportPathKind: MirageNetworkPathKind
-        let mediaPathProfile: MirageMediaPathProfile
+        let configuration: MirageMedia.MirageAudioConfiguration
+        let transportPathKind: MirageCore.MirageNetworkPathKind
+        let mediaPathProfile: MirageMedia.MirageMediaPathProfile
     }
 
     struct Decision: Equatable {
@@ -90,8 +98,8 @@ struct HostAdaptiveAudioBudgetPolicy: Equatable {
     }
 
     private static func budget(
-        for mediaPathProfile: MirageMediaPathProfile,
-        pathKind: MirageNetworkPathKind
+        for mediaPathProfile: MirageMedia.MirageMediaPathProfile,
+        pathKind: MirageCore.MirageNetworkPathKind
     ) -> PathBudget {
         switch mediaPathProfile {
         case .awdlRadio:

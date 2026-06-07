@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 @Suite("App List Progress Dispatch")
 struct AppListProgressDispatchTests {
@@ -17,7 +18,7 @@ struct AppListProgressDispatchTests {
     func inlineIconProgressUpdatesAvailableAppsInArrivalOrder() async throws {
         let service = MirageClientService()
         var progressCallbackCount = 0
-        var latestProgressApps: [MirageInstalledApp] = []
+        var latestProgressApps: [MirageWire.MirageInstalledApp] = []
         service.onAppListProgress = { apps in
             progressCallbackCount += 1
             latestProgressApps = apps
@@ -27,23 +28,23 @@ struct AppListProgressDispatchTests {
         service.activeAppListRequestID = requestID
 
         let editorIconData = try Self.validPNGData()
-        let progress = AppListProgressMessage(
+        let progress = MirageWire.AppListProgressMessage(
             requestID: requestID,
             apps: [
-                MirageInstalledApp(
+                MirageWire.MirageInstalledApp(
                     bundleIdentifier: "com.example.Editor",
                     name: "Editor",
                     path: "/Applications/Editor.app",
                     iconData: editorIconData
                 ),
-                MirageInstalledApp(
+                MirageWire.MirageInstalledApp(
                     bundleIdentifier: "com.example.Terminal",
                     name: "Terminal",
                     path: "/Applications/Utilities/Terminal.app"
                 ),
             ]
         )
-        await service.handleAppListProgress(try ControlMessage(type: .appListProgress, content: progress))
+        await service.handleAppListProgress(try MirageWire.ControlMessage(type: .appListProgress, content: progress))
 
         #expect(progressCallbackCount == 1)
         #expect(service.availableApps.map(\.bundleIdentifier) == [
@@ -63,12 +64,12 @@ struct AppListProgressDispatchTests {
 
         let iconData = try Self.validPNGData()
         await service.handleAppListProgress(
-            try ControlMessage(
+            try MirageWire.ControlMessage(
                 type: .appListProgress,
-                content: AppListProgressMessage(
+                content: MirageWire.AppListProgressMessage(
                     requestID: requestID,
                     apps: [
-                        MirageInstalledApp(
+                        MirageWire.MirageInstalledApp(
                             bundleIdentifier: "com.example.Editor",
                             name: "Editor",
                             path: "/Applications/Editor.app",
@@ -80,12 +81,12 @@ struct AppListProgressDispatchTests {
         )
 
         await service.handleAppListProgress(
-            try ControlMessage(
+            try MirageWire.ControlMessage(
                 type: .appListProgress,
-                content: AppListProgressMessage(
+                content: MirageWire.AppListProgressMessage(
                     requestID: requestID,
                     apps: [
-                        MirageInstalledApp(
+                        MirageWire.MirageInstalledApp(
                             bundleIdentifier: "com.example.Editor",
                             name: "Editor",
                             path: "/Applications/Editor.app"
@@ -105,13 +106,13 @@ struct AppListProgressDispatchTests {
         let service = MirageClientService()
         let requestID = UUID()
         let iconData = try Self.validPNGData()
-        let editor = MirageInstalledApp(
+        let editor = MirageWire.MirageInstalledApp(
             bundleIdentifier: "com.example.Editor",
             name: "Editor",
             path: "/Applications/Editor.app",
             iconData: iconData
         )
-        let deleted = MirageInstalledApp(
+        let deleted = MirageWire.MirageInstalledApp(
             bundleIdentifier: "com.example.Deleted",
             name: "Deleted",
             path: "/Applications/Deleted.app",
@@ -122,12 +123,12 @@ struct AppListProgressDispatchTests {
         service.activeAppListRequestID = requestID
 
         await service.handleAppListProgress(
-            try ControlMessage(
+            try MirageWire.ControlMessage(
                 type: .appListProgress,
-                content: AppListProgressMessage(
+                content: MirageWire.AppListProgressMessage(
                     requestID: requestID,
                     apps: [
-                        MirageInstalledApp(
+                        MirageWire.MirageInstalledApp(
                             bundleIdentifier: "com.example.Editor",
                             name: "Editor",
                             path: "/Applications/Editor.app"
@@ -144,9 +145,9 @@ struct AppListProgressDispatchTests {
         #expect(service.availableApps.first?.iconData == iconData)
 
         service.handleAppListComplete(
-            try ControlMessage(
+            try MirageWire.ControlMessage(
                 type: .appListComplete,
-                content: AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+                content: MirageWire.AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
             )
         )
 
@@ -163,12 +164,12 @@ struct AppListProgressDispatchTests {
 
         let invalidIconData = Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02, 0x03])
         await service.handleAppListProgress(
-            try ControlMessage(
+            try MirageWire.ControlMessage(
                 type: .appListProgress,
-                content: AppListProgressMessage(
+                content: MirageWire.AppListProgressMessage(
                     requestID: requestID,
                     apps: [
-                        MirageInstalledApp(
+                        MirageWire.MirageInstalledApp(
                             bundleIdentifier: "com.example.Editor",
                             name: "Editor",
                             path: "/Applications/Editor.app",

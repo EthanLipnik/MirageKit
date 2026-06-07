@@ -8,6 +8,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageDiagnostics
 
 #if os(macOS)
 @Suite("Automatic Desktop Workload Controller")
@@ -224,8 +225,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         height: Int,
         targetFrameRate: Int,
         cadenceFPS: Double
-    ) -> MirageClientMetricsSnapshot {
-        var snapshot = MirageClientMetricsSnapshot(
+    ) -> MirageDiagnostics.MirageClientMetricsSnapshot {
+        var snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(
             decodedFPS: cadenceFPS,
             receivedFPS: cadenceFPS,
             submittedFPS: cadenceFPS,
@@ -253,7 +254,7 @@ struct AutomaticDesktopWorkloadControllerTests {
 
     func advanceThroughPipelinePressure(
         controller: inout MirageAutomaticDesktopWorkloadController,
-        snapshot: MirageClientMetricsSnapshot,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         minimumTargetFrameRate: Int = 30,
         maximumTargetFrameRate: Int = 60,
         minimumHealthyFrameRate: Int? = nil,

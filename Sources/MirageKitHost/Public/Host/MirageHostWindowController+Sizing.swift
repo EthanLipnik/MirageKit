@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -32,7 +40,7 @@ extension MirageHostWindowController {
     /// Probes the app's actual minimum size and restores the original frame.
     /// - Parameter window: Window to probe.
     /// - Returns: The discovered minimum size in points, if AX probing succeeded.
-    func discoverMinimumSize(for window: MirageWindow) async -> CGSize? {
+    func discoverMinimumSize(for window: MirageMedia.MirageWindow) async -> CGSize? {
         if let cached = minimumWindowSizes[window.id] { return cached }
         guard let axWindow = cachedAXWindow(for: window) else { return nil }
 
@@ -97,7 +105,7 @@ extension MirageHostWindowController {
 
     /// Returns the maximum allowed window size for a streamed window.
     /// - Parameter window: Window to evaluate.
-    func maxWindowSize(for window: MirageWindow) -> CGSize? {
+    func maxWindowSize(for window: MirageMedia.MirageWindow) -> CGSize? {
         if let virtualBounds = hostService?.virtualDisplayBounds(windowID: window.id) { return virtualBounds.size }
 
         guard let currentFrame = currentWindowFrame(for: window.id) else { return nil }
@@ -108,7 +116,7 @@ extension MirageHostWindowController {
 
     /// Returns the visible frame for sizing a streamed window.
     /// - Parameter window: Window to evaluate.
-    func maxWindowSizeRect(for window: MirageWindow) -> CGRect? {
+    func maxWindowSizeRect(for window: MirageMedia.MirageWindow) -> CGRect? {
         if let virtualBounds = hostService?.virtualDisplayBounds(windowID: window.id) { return virtualBounds }
 
         guard let currentFrame = currentWindowFrame(for: window.id) else { return nil }
@@ -121,7 +129,7 @@ extension MirageHostWindowController {
     /// - Parameters:
     ///   - window: Window whose containing display should be resolved.
     ///   - fallbackFrame: Frame to use when the latest CGWindowList frame is unavailable.
-    func screenScaleFactor(for window: MirageWindow, fallbackFrame: CGRect? = nil) -> CGFloat {
+    func screenScaleFactor(for window: MirageMedia.MirageWindow, fallbackFrame: CGRect? = nil) -> CGFloat {
         let referenceFrame = currentWindowFrame(for: window.id) ?? fallbackFrame ?? window.frame
         let windowCenter = CGPoint(x: referenceFrame.midX, y: referenceFrame.midY)
         let screen = NSScreen.screens.first(where: { $0.frame.contains(windowCenter) }) ?? NSScreen.main

@@ -8,6 +8,7 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Client Streaming Anomaly Diagnostic")
@@ -20,10 +21,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "decode-submission",
                 decodedFPS: 88,
                 receivedFPS: 120,
-                layerEnqueueFPS: 88,
-                uniqueLayerEnqueueFPS: 88,
+                submittedFPS: 88,
+                uniqueSubmittedFPS: 88,
                 visibleFrameFPS: 88,
-                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 8,
                 overwrittenPendingFrames: 0,
@@ -57,10 +57,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "decode-submission",
                 decodedFPS: 29,
                 receivedFPS: 29,
-                layerEnqueueFPS: 29,
-                uniqueLayerEnqueueFPS: 29,
+                submittedFPS: 29,
+                uniqueSubmittedFPS: 29,
                 visibleFrameFPS: 29,
-                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
@@ -96,10 +95,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "awdl-telemetry",
                 decodedFPS: 45,
                 receivedFPS: 45,
-                layerEnqueueFPS: 45,
-                uniqueLayerEnqueueFPS: 45,
+                submittedFPS: 45,
+                uniqueSubmittedFPS: 45,
                 visibleFrameFPS: 45,
-                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 12,
                 overwrittenPendingFrames: 0,
@@ -143,10 +141,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "decode-submission",
                 decodedFPS: 29,
                 receivedFPS: 29,
-                layerEnqueueFPS: 29,
-                uniqueLayerEnqueueFPS: 29,
+                submittedFPS: 29,
+                uniqueSubmittedFPS: 29,
                 visibleFrameFPS: 29,
-                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
@@ -179,10 +176,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 decodedFPS: 120,
                 receivedFPS: 120,
                 submitAttemptFPS: 120,
-                layerEnqueueFPS: 72,
-                uniqueLayerEnqueueFPS: 72,
+                submittedFPS: 72,
+                uniqueSubmittedFPS: 72,
                 visibleFrameFPS: 72,
-                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 28,
                 overwrittenPendingFrames: 4,
@@ -205,8 +201,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.bottleneckKind == .presentationBound)
         #expect(diagnostic.label == "presentation-bound")
         #expect(diagnostic.message.contains("submitAttempt=120.0fps"))
-        #expect(diagnostic.message.contains("layerEnqueueFPS=72.0fps"))
-        #expect(diagnostic.message.contains("uniqueLayerEnqueueFPS=72.0fps"))
+        #expect(diagnostic.message.contains("submittedFPS=72.0fps"))
+        #expect(diagnostic.message.contains("uniqueSubmittedFPS=72.0fps"))
         #expect(diagnostic.message.contains("visibleFrameFPS=72.0fps"))
         #expect(diagnostic.message.contains("layerBackpressure=3"))
         #expect(diagnostic.message.contains("overwritten=4"))
@@ -223,9 +219,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 displayTickFPS: 30,
                 submitAttemptFPS: 30,
                 layerAcceptedFPS: 2,
-                visibleFrameFPS: 2,
                 submittedFPS: 2,
                 uniqueSubmittedFPS: 2,
+                visibleFrameFPS: 2,
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
@@ -258,10 +254,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 decodedFPS: 0,
                 receivedFPS: 0,
                 submitAttemptFPS: 60,
-                layerEnqueueFPS: 60,
-                uniqueLayerEnqueueFPS: 0,
+                submittedFPS: 60,
+                uniqueSubmittedFPS: 0,
                 visibleFrameFPS: 0,
-                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 1_433,
                 overwrittenPendingFrames: 0,
@@ -284,8 +279,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
         )
 
         #expect(diagnostic.bottleneckKind == .presentationBound)
-        #expect(diagnostic.message.contains("layerEnqueueFPS=60.0fps"))
-        #expect(diagnostic.message.contains("uniqueLayerEnqueueFPS=0.0fps"))
+        #expect(diagnostic.message.contains("submittedFPS=60.0fps"))
+        #expect(diagnostic.message.contains("uniqueSubmittedFPS=0.0fps"))
         #expect(diagnostic.message.contains("visibleFrameFPS=0.0fps"))
     }
 
@@ -304,8 +299,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
         captureAdmissionDrops: UInt64? = 0,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = 5.0
-    ) -> StreamMetricsMessage {
-        StreamMetricsMessage(
+    ) -> MirageWire.StreamMetricsMessage {
+        MirageWire.StreamMetricsMessage(
             streamID: 1,
             encodedFPS: encodedFPS,
             idleEncodedFPS: 0,

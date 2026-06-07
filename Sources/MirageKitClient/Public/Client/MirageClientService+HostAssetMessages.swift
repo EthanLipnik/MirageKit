@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
     /// Delivers host hardware icon metadata for the currently connected host.
-    func handleHostHardwareIcon(_ message: ControlMessage) {
+    func handleHostHardwareIcon(_ message: MirageWire.ControlMessage) {
         do {
-            let hostIcon = try message.decode(HostHardwareIconMessage.self)
+            let hostIcon = try message.decode(MirageWire.HostHardwareIconMessage.self)
             guard let hostID = connectedHost?.deviceID else {
                 MirageLogger.client("Ignoring host hardware icon payload without a connected host ID")
                 return
@@ -35,14 +43,14 @@ extension MirageClientService {
     }
 
     /// Completes a pending host wallpaper request with either image data or a protocol error.
-    func handleHostWallpaper(_ message: ControlMessage) {
+    func handleHostWallpaper(_ message: MirageWire.ControlMessage) {
         let interval = MirageLogger.beginInterval(.client, "HostWallpaper.Receive")
         defer {
             MirageLogger.endInterval(interval)
         }
 
         do {
-            let wallpaper = try message.decode(HostWallpaperMessage.self)
+            let wallpaper = try message.decode(MirageWire.HostWallpaperMessage.self)
             guard let requestID = wallpaper.requestID,
                   requestID == hostWallpaperRequestID else {
                 MirageLogger.client("Ignoring stale host wallpaper response")
@@ -53,7 +61,7 @@ extension MirageClientService {
                !errorMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 MirageLogger.client("Host wallpaper request failed: \(errorMessage)")
                 completeHostWallpaperRequest(
-                    .failure(MirageError.protocolError(errorMessage))
+                    .failure(MirageCore.MirageError.protocolError(errorMessage))
                 )
                 return
             }
@@ -63,7 +71,7 @@ extension MirageClientService {
                   let hostID = connectedHost?.deviceID else {
                 MirageLogger.client("Ignoring incomplete host wallpaper payload")
                 completeHostWallpaperRequest(
-                    .failure(MirageError.protocolError("Host wallpaper payload was empty"))
+                    .failure(MirageCore.MirageError.protocolError("Host wallpaper payload was empty"))
                 )
                 return
             }

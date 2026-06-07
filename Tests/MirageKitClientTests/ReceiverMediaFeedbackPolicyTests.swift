@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageWire
 
 @Suite("Receiver Media Feedback Policy")
 struct ReceiverMediaFeedbackPolicyTests {
@@ -41,7 +42,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             """#.utf8
         )
 
-        let feedback = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: payload)
+        let feedback = try JSONDecoder().decode(MirageWire.ReceiverMediaFeedbackMessage.self, from: payload)
         #expect(feedback.pFrameTimingSamples.isEmpty)
         #expect(feedback.recoveryState == .idle)
     }
@@ -55,14 +56,14 @@ struct ReceiverMediaFeedbackPolicyTests {
             targetFPS: 60,
             recoveryState: .idle,
             pFrameTimingSamples: [
-                ReceiverPFrameTimingSample(
+                MirageWire.ReceiverPFrameTimingSample(
                     frameNumber: 40,
                     packetSpanMs: 6.5,
                     completionGapMs: 16.7,
                     completionAgeAtFeedbackMs: 3.0,
                     firstPacketGapMs: 16.6
                 ),
-                ReceiverPFrameTimingSample(
+                MirageWire.ReceiverPFrameTimingSample(
                     frameNumber: 41,
                     packetSpanMs: 12.25,
                     completionGapMs: 18.5,
@@ -86,17 +87,17 @@ struct ReceiverMediaFeedbackPolicyTests {
         )
 
         let encoded = try JSONEncoder().encode(feedback)
-        let decoded = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: encoded)
+        let decoded = try JSONDecoder().decode(MirageWire.ReceiverMediaFeedbackMessage.self, from: encoded)
 
         #expect(decoded.pFrameTimingSamples == [
-            ReceiverPFrameTimingSample(
+            MirageWire.ReceiverPFrameTimingSample(
                 frameNumber: 40,
                 packetSpanMs: 6.5,
                 completionGapMs: 16.7,
                 completionAgeAtFeedbackMs: 3.0,
                 firstPacketGapMs: 16.6
             ),
-            ReceiverPFrameTimingSample(
+            MirageWire.ReceiverPFrameTimingSample(
                 frameNumber: 41,
                 packetSpanMs: 12.25,
                 completionGapMs: 18.5,
@@ -348,15 +349,15 @@ struct ReceiverMediaFeedbackPolicyTests {
             targetFPS: 60,
             recoveryState: .idle,
             ackRanges: [
-                MediaFeedbackFrameRange(startFrame: 40, endFrame: 42),
-                MediaFeedbackFrameRange(startFrame: 45, endFrame: 45)
+                MirageWire.MediaFeedbackFrameRange(startFrame: 40, endFrame: 42),
+                MirageWire.MediaFeedbackFrameRange(startFrame: 45, endFrame: 45)
             ],
             metrics: metrics()
         )
 
         #expect(feedback.ackRanges == [
-            MediaFeedbackFrameRange(startFrame: 40, endFrame: 42),
-            MediaFeedbackFrameRange(startFrame: 45, endFrame: 45)
+            MirageWire.MediaFeedbackFrameRange(startFrame: 40, endFrame: 42),
+            MirageWire.MediaFeedbackFrameRange(startFrame: 45, endFrame: 45)
         ])
     }
 
@@ -365,8 +366,8 @@ struct ReceiverMediaFeedbackPolicyTests {
         let ranges = FrameReassembler.completedFrameAckRanges(from: [10, 11, 12, 15, 16])
 
         #expect(ranges == [
-            MediaFeedbackFrameRange(startFrame: 10, endFrame: 12),
-            MediaFeedbackFrameRange(startFrame: 15, endFrame: 16)
+            MirageWire.MediaFeedbackFrameRange(startFrame: 10, endFrame: 12),
+            MirageWire.MediaFeedbackFrameRange(startFrame: 15, endFrame: 16)
         ])
     }
 
@@ -377,8 +378,8 @@ struct ReceiverMediaFeedbackPolicyTests {
         )
 
         #expect(ranges == [
-            MediaFeedbackFrameRange(startFrame: UInt32.max - 1, endFrame: UInt32.max),
-            MediaFeedbackFrameRange(startFrame: 0, endFrame: 1)
+            MirageWire.MediaFeedbackFrameRange(startFrame: UInt32.max - 1, endFrame: UInt32.max),
+            MirageWire.MediaFeedbackFrameRange(startFrame: 0, endFrame: 1)
         ])
     }
 
@@ -441,7 +442,7 @@ struct ReceiverMediaFeedbackPolicyTests {
     @Test("Receiver feedback keeps newest 128 timing samples")
     func receiverFeedbackKeepsNewest128TimingSamples() {
         let samples = (0..<140).map {
-            ReceiverPFrameTimingSample(
+            MirageWire.ReceiverPFrameTimingSample(
                 frameNumber: UInt32($0),
                 packetSpanMs: Double($0),
                 completionGapMs: Double($0) + 1,

@@ -11,7 +11,9 @@
 @testable import MirageKit
 @testable import MirageKitHost
 import Foundation
+import MirageConnectivity
 import Testing
+import MirageWire
 
 @Suite("Host Disconnect Notification", .serialized)
 struct HostDisconnectNotificationTests {
@@ -50,7 +52,7 @@ struct HostDisconnectNotificationTests {
             sessionID: sessionID,
             client: client,
             controlChannel: serverControl,
-            transferEngine: LoomTransferEngine(session: pair.server),
+            transferEngine: MirageTransferEngine(session: pair.server),
             pathSnapshot: nil
         )
         host.connectedClients = [client]
@@ -68,7 +70,7 @@ struct HostDisconnectNotificationTests {
         do {
             let message = try await receiveTask.value
             #expect(message.type == .disconnect)
-            let disconnect = try message.decode(DisconnectMessage.self)
+            let disconnect = try message.decode(MirageWire.DisconnectMessage.self)
             #expect(disconnect.reason == .userRequested)
 
             await disconnectTask.value

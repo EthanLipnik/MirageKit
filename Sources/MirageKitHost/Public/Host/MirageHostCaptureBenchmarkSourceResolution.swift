@@ -7,9 +7,17 @@
 //  ScreenCaptureKit source resolution for host capture benchmarks.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 import ScreenCaptureKit
 
 #if os(macOS)
@@ -29,7 +37,7 @@ extension MirageHostService {
 
         for attempt in 1 ... attempts {
             do {
-                let content = try await SCShareableContent.mirageHostContent()
+                let content = try await currentCaptureShareableContent()
 
                 if let resolvedWindow = content.windows.first(where: { $0.windowID == preparedSource.windowID }),
                    let resolvedApplication = content.applications.first(where: {

@@ -10,6 +10,8 @@
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
 @Suite("App Stream Window Catalog")
 struct AppStreamWindowCatalogTests {
@@ -168,11 +170,11 @@ struct AppStreamWindowCatalogTests {
     private func makeWindow(
         id: WindowID,
         frame: CGRect
-    ) -> MirageWindow {
-        MirageWindow(
+    ) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: "Window \(id)",
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 1,
                 bundleIdentifier: "com.example.app",
                 name: "Example"

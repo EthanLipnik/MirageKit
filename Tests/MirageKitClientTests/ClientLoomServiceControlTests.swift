@@ -9,6 +9,8 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageConnectivity
+import MirageWire
 
 #if os(macOS)
 extension ClientLoomControlPlaneTests {
@@ -30,7 +32,7 @@ extension ClientLoomControlPlaneTests {
             service.controlChannel = clientControl
             service.connectionState = .connected(host: "Loopback Host")
 
-            let request = AppListRequestMessage(
+            let request = MirageWire.AppListRequestMessage(
                 forceRefresh: true,
                 forceIconReset: true,
                 priorityBundleIdentifiers: ["com.apple.Terminal"],
@@ -40,12 +42,12 @@ extension ClientLoomControlPlaneTests {
 
             let receivedRequestEnvelope = try await serverReceiver.next()
             #expect(receivedRequestEnvelope.type == .appListRequest)
-            let receivedRequest = try receivedRequestEnvelope.decode(AppListRequestMessage.self)
+            let receivedRequest = try receivedRequestEnvelope.decode(MirageWire.AppListRequestMessage.self)
             #expect(receivedRequest.forceRefresh == true)
             #expect(receivedRequest.forceIconReset == true)
             #expect(receivedRequest.priorityBundleIdentifiers == ["com.apple.terminal"])
 
-            #expect(service.sendControlMessageBestEffort(ControlMessage(type: .ping)) == true)
+            #expect(service.sendControlMessageBestEffort(MirageWire.ControlMessage(type: .ping)) == true)
             let receivedPing = try await serverReceiver.next()
             #expect(receivedPing.type == .ping)
 
@@ -114,7 +116,7 @@ extension ClientLoomControlPlaneTests {
         let service = MirageClientService(deviceName: "Loopback Client")
 
         do {
-            let rejection = MirageSessionBootstrapResponse(
+            let rejection = MirageWire.MirageSessionBootstrapResponse(
                 accepted: false,
                 hostID: UUID(),
                 hostName: "Loopback Host",
@@ -131,7 +133,7 @@ extension ClientLoomControlPlaneTests {
                 timeoutMessage: "Timed out waiting for host bootstrap response from Loopback Host"
             )
             #expect(responseEnvelope.type == .sessionBootstrapResponse)
-            let response = try responseEnvelope.decode(MirageSessionBootstrapResponse.self)
+            let response = try responseEnvelope.decode(MirageWire.MirageSessionBootstrapResponse.self)
             #expect(response.accepted == false)
             #expect(response.rejectionReason == .hostBusy)
             #expect(await pair.client.state == .ready)

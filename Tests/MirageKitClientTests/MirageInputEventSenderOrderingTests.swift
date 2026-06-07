@@ -9,6 +9,9 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
+import MirageCore
+import MirageInput
+import MirageWire
 
 @Suite("Input Sender Ordering")
 struct MirageInputEventSenderOrderingTests {
@@ -17,15 +20,15 @@ struct MirageInputEventSenderOrderingTests {
         let sender = MirageInputEventSender()
         let recorder = EventOrderRecorder()
         let streamID: StreamID = 905
-        let keyEvent = MirageKeyEvent(keyCode: 0x7E, modifiers: .control)
+        let keyEvent = MirageInput.MirageKeyEvent(keyCode: 0x7E, modifiers: .control)
 
         sender.updateSendHandler { data, _ in
-            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+            guard case let .success(message, _) = MirageWire.ControlMessage.deserialize(from: data) else {
                 Issue.record("Expected a serialized control message")
                 return
             }
 
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            let inputMessage = try MirageWire.InputEventMessage.deserializePayload(message.payload)
             if case .flagsChanged = inputMessage.event {
                 try await Task.sleep(for: .milliseconds(40))
             }
@@ -44,7 +47,7 @@ struct MirageInputEventSenderOrderingTests {
         #expect(await recorder.snapshot() == ["flagsChanged", "keyDown", "keyUp"])
     }
 
-    private static func label(for event: MirageInputEvent) -> String {
+    private static func label(for event: MirageInput.MirageInputEvent) -> String {
         switch event {
         case .flagsChanged:
             "flagsChanged"

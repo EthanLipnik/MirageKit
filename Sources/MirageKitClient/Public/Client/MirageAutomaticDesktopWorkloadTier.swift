@@ -7,8 +7,16 @@
 //  Desktop workload tier values for automatic stream reconfiguration.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 /// A desktop streaming workload level expressed as encoded pixels and target refresh rate.
 public struct MirageAutomaticDesktopWorkloadTier: Sendable, Equatable {
@@ -20,7 +28,7 @@ public struct MirageAutomaticDesktopWorkloadTier: Sendable, Equatable {
 
     /// Creates a workload tier from a requested encoded size and frame rate.
     public init(encodedPixelSize: CGSize, targetFrameRate: Int) {
-        self.encodedPixelSize = MirageStreamGeometry.alignedEncodedSize(encodedPixelSize)
+        self.encodedPixelSize = MirageMedia.MirageStreamGeometry.alignedEncodedSize(encodedPixelSize)
         self.targetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(targetFrameRate)
     }
 

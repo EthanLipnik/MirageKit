@@ -7,15 +7,23 @@
 //  Fast input path handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension MirageHostService {
     /// Fast input event handler - runs on inputQueue, NOT MainActor.
     nonisolated func handleInputEventFast(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from client: MirageConnectedClient,
         sessionID: UUID
     ) {
@@ -23,7 +31,7 @@ extension MirageHostService {
         guard sessionActive else { return }
 
         do {
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            let inputMessage = try MirageWire.InputEventMessage.deserializePayload(message.payload)
             HostKeyboardInputDiagnostics.logReceive(
                 event: inputMessage.event,
                 streamID: inputMessage.streamID,
@@ -104,18 +112,30 @@ extension MirageHostService {
                 }
             }
 
-            if let handler = onInputEvent { handler(inputTarget.event, inputTarget.window, inputTarget.client) } else {
-                inputController.handleInputEvent(
-                    inputTarget.event,
-                    window: inputTarget.window,
-                    deferredInjectionValidator: { [weak self] in
-                        guard let self else { return false }
-                        guard self.streamRegistry.isInputSessionActive(sessionID, clientID: client.id) else {
-                            return false
-                        }
-                        return self.inputStreamCache.entry(for: inputMessage.streamID) != nil
+            if let handler = onInputEvent {
+                handler(inputTarget.event, inputTarget.window, inputTarget.client)
+            } else {
+                let inputBackend = platformInputInjectionBackend
+                let streamRegistry = streamRegistry
+                let inputStreamCache = inputStreamCache
+                let inputStreamID = inputMessage.streamID
+                let clientID = client.id
+                Task(priority: .userInitiated) {
+                    do {
+                        try await inputBackend.inject(
+                            inputTarget.event,
+                            target: .window(inputTarget.window),
+                            deferredInjectionValidator: {
+                                guard streamRegistry.isInputSessionActive(sessionID, clientID: clientID) else {
+                                    return false
+                                }
+                                return inputStreamCache.entry(for: inputStreamID) != nil
+                            }
+                        )
+                    } catch {
+                        MirageLogger.error(.host, error: error, message: "Failed to inject input event: ")
                     }
-                )
+                }
             }
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode input event: ")
@@ -127,9 +147,9 @@ extension MirageHostService {
 private extension MirageHostService {
     nonisolated func logAppPointerTargetResolutionIfNeeded(
         streamID: StreamID,
-        originalEvent: MirageInputEvent,
-        routedEvent: MirageInputEvent,
-        window: MirageWindow
+        originalEvent: MirageInput.MirageInputEvent,
+        routedEvent: MirageInput.MirageInputEvent,
+        window: MirageMedia.MirageWindow
     ) {
         guard window.id != 0,
               let routedPointer = AppPointerTargetDiagnostic(event: routedEvent) else {
@@ -162,7 +182,7 @@ private struct AppPointerTargetDiagnostic {
     let location: CGPoint
     let clickCount: Int
 
-    init?(event: MirageInputEvent) {
+    init?(event: MirageInput.MirageInputEvent) {
         switch event {
         case let .mouseDown(event):
             self.init(eventName: "mouseDown", event: event)
@@ -188,7 +208,7 @@ private struct AppPointerTargetDiagnostic {
         }
     }
 
-    private init(eventName: String, event: MirageMouseEvent) {
+    private init(eventName: String, event: MirageInput.MirageMouseEvent) {
         self.init(eventName: eventName, location: event.location, clickCount: event.clickCount)
     }
 

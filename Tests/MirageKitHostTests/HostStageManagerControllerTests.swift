@@ -11,6 +11,7 @@
 @testable import MirageKitHost
 import CoreGraphics
 import Foundation
+import MirageWire
 import Testing
 
 @Suite("Host Stage Manager controller")

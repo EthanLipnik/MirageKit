@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import Foundation
 import Testing
+import MirageCore
 
 #if os(macOS)
 @Suite("Global Decode Budget Controller", .serialized)

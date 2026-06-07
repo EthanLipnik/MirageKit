@@ -7,13 +7,21 @@
 //  Host-side quality test handling.
 //
 
-import Loom
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    nonisolated static let qualityTestResetQueueProfiles: [LoomQueuedUnreliableSendProfile] = [
+    nonisolated static let qualityTestResetQueueProfiles: [MirageMedia.MirageMediaSendProfile] = [
         .interactiveMedia,
         .throughputProbe,
     ]
@@ -23,14 +31,14 @@ extension MirageHostService {
     nonisolated static let qualityTestReplayKeyframeMultiplier = 8.0
     nonisolated static let qualityTestDeliveryFloor = 0.90
 
-    /// Returns whether the quality-test sender can queue another packet without exceeding Loom limits.
+    /// Returns whether the quality-test sender can queue another packet without exceeding transport limits.
     nonisolated static func qualityTestCanEnqueuePacket(
         outstandingPackets: Int,
         outstandingBytes: Int,
         packetBytes: Int,
-        profile: LoomQueuedUnreliableSendProfile = .throughputProbe
+        profile: MirageMedia.MirageMediaSendProfile = .throughputProbe
     ) -> Bool {
-        let limits = profile.recommendedLimits
+        let limits = profile.queuedUnreliableRecommendedLimits
         guard packetBytes > 0 else { return true }
         if outstandingPackets >= limits.maxOutstandingPackets {
             return false
@@ -41,10 +49,10 @@ extension MirageHostService {
         return outstandingBytes + packetBytes <= limits.maxOutstandingBytes
     }
 
-    /// Selects the Loom queue profile that matches the quality-test probe behavior.
+    /// Selects the queue profile that matches the quality-test probe behavior.
     nonisolated static func qualityTestQueueProfile(
-        for probeKind: MirageQualityTestPlan.ProbeKind
-    ) -> LoomQueuedUnreliableSendProfile {
+        for probeKind: MirageDiagnostics.MirageQualityTestPlan.ProbeKind
+    ) -> MirageMedia.MirageMediaSendProfile {
         switch probeKind {
         case .transport:
             .throughputProbe
@@ -90,12 +98,12 @@ extension MirageHostService {
     }
 
     func handleQualityTestRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
-        let request: QualityTestRequestMessage
+        let request: MirageWire.QualityTestRequestMessage
         do {
-            request = try message.decode(QualityTestRequestMessage.self)
+            request = try message.decode(MirageWire.QualityTestRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode quality test request: ")
             return
@@ -135,7 +143,7 @@ extension MirageHostService {
             return
         }
 
-        let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
+        let pathSnapshot = clientContext.pathSnapshot.map { MirageConnectivity.MirageNetworkPathClassifier.classify($0) }
         let pathKind = pathSnapshot?.kind
         let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
             requested: request.mediaMaxPacketSize,
@@ -144,10 +152,10 @@ extension MirageHostService {
         )
         let payloadBytes = min(
             request.payloadBytes,
-            miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
+            MirageWire.miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
         )
 
-        let qualityStream: LoomMultiplexedStream
+        let qualityStream: any MirageQueuedUnreliableMediaStream
         do {
             qualityStream = try await clientContext.controlChannel.session.openStream(
                 label: "quality-test/\(request.testID)"
@@ -204,12 +212,12 @@ extension MirageHostService {
     }
 
     func handleQualityTestCancel(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
-        let request: QualityTestCancelMessage
+        let request: MirageWire.QualityTestCancelMessage
         do {
-            request = try message.decode(QualityTestCancelMessage.self)
+            request = try message.decode(MirageWire.QualityTestCancelMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode quality test cancellation request: ")
             return

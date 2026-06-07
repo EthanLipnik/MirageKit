@@ -9,6 +9,7 @@
 
 @testable import MirageKit
 import Testing
+import MirageWire
 
 @Suite("AWDL Media Controller")
 struct MirageAwdlMediaControllerTests {
@@ -586,9 +587,9 @@ struct MirageAwdlMediaControllerTests {
         presentationUnderfillFrames: Int? = nil,
         displayTickNoFrameCount: UInt64? = nil,
         pendingFrameNotReadyDisplayTickCount: UInt64? = nil,
-        recoveryState: MirageMediaFeedbackRecoveryState = .idle
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState = .idle
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 1,
             sequence: 1,
             sentAtUptime: 0,

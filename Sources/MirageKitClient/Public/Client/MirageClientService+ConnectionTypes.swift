@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
-import MirageKit
 
 /// Waits for an outbound disconnect notice to be sent before teardown continues.
 final class MirageDisconnectNoticeWaiter: @unchecked Sendable {
@@ -91,12 +99,12 @@ actor ConnectSessionContinuationBox {
 
 actor ConnectSessionBootstrapProgressTracker {
     private let startedAt = ContinuousClock.now
-    private var latestProgress = LoomAuthenticatedSessionBootstrapProgress(phase: .idle)
+    private var latestProgress = MirageSessionBootstrapProgress(phase: .idle)
     private var lastProgressAt = ContinuousClock.now
 
     /// Records a distinct bootstrap progress update and its observation time.
     func record(
-        _ progress: LoomAuthenticatedSessionBootstrapProgress,
+        _ progress: MirageSessionBootstrapProgress,
         now: ContinuousClock.Instant = ContinuousClock.now
     ) {
         guard progress != latestProgress else { return }
@@ -149,7 +157,7 @@ actor ConnectSessionBootstrapProgressTracker {
         return now - lastProgressAt >= idleTimeout
     }
 
-    func phase() -> LoomAuthenticatedSessionBootstrapPhase {
+    func phase() -> MirageSessionBootstrapPhase {
         latestProgress.phase
     }
 }

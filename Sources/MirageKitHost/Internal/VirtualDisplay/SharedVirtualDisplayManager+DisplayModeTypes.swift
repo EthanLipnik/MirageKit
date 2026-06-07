@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 
@@ -53,7 +61,7 @@ extension SharedVirtualDisplayManager {
     struct DisplayCreationAttempt {
         let resolution: CGSize
         let hiDPI: Bool
-        let colorSpace: MirageColorSpace
+        let colorSpace: MirageMedia.MirageColorSpace
         let label: String
     }
 }

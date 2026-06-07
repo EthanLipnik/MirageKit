@@ -5,15 +5,26 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Loom
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 
 @MainActor
 extension MirageHostService {
     /// Closes a media stream removed from host bookkeeping and logs cleanup failures.
-    func closeRemovedMediaStream(_ stream: LoomMultiplexedStream, streamID: StreamID, kind: String) {
+    func closeRemovedMediaStream(
+        _ stream: any MirageQueuedUnreliableMediaStream,
+        streamID: StreamID,
+        kind: String
+    ) {
         Task {
             do {
                 try await stream.close()
@@ -50,7 +61,7 @@ extension MirageHostService {
         await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: streamID)
         inputStreamCache.remove(streamID)
-        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+        if let videoStream = videoMediaStreamsByStreamID.removeValue(forKey: streamID) {
             closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
         }
         transportRegistry.unregisterVideoStream(streamID: streamID)

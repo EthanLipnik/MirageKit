@@ -12,6 +12,7 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageWire
 
 @Suite("App Window Inventory Governance")
 struct AppWindowInventoryGovernanceTests {
@@ -128,17 +129,17 @@ struct AppWindowInventoryGovernanceTests {
             streamID: 101,
             windowID: 1001,
             encoderConfig: .highQuality,
-            maxPacketSize: mirageDefaultMaxPacketSize
+            maxPacketSize: MirageWire.mirageDefaultMaxPacketSize
         )
         await context.configureRunningForPolicyApplierTest()
 
-        let first = MirageStreamPolicy(
+        let first = MirageWire.MirageStreamPolicy(
             streamID: 101,
             tier: .activeLive,
             targetFPS: 60,
             targetBitrateBps: 24_000_000
         )
-        let second = MirageStreamPolicy(
+        let second = MirageWire.MirageStreamPolicy(
             streamID: 101,
             tier: .activeLive,
             targetFPS: 120,

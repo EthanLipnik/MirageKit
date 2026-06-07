@@ -7,6 +7,13 @@
 //  Central policy owner for AWDL realtime display behavior.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package struct MirageAwdlMediaController: Sendable, Equatable {
@@ -47,7 +54,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     }
 
     package struct Signal: Sendable, Equatable {
-        package var mediaPathProfile: MirageMediaPathProfile
+        package var mediaPathProfile: MirageMedia.MirageMediaPathProfile
         package var currentFrameRate: Int
         package var targetFrameRate: Int
         package var requestedFrameRateCeiling: Int?
@@ -76,10 +83,10 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         package var displayTickNoFrameCount: UInt64
         package var pendingFrameNotReadyDisplayTickCount: UInt64
         package var fecRecoveredFragmentCount: UInt64
-        package var recoveryState: MirageMediaFeedbackRecoveryState
+        package var recoveryState: MirageWire.MirageMediaFeedbackRecoveryState
 
         package init(
-            mediaPathProfile: MirageMediaPathProfile,
+            mediaPathProfile: MirageMedia.MirageMediaPathProfile,
             currentFrameRate: Int,
             targetFrameRate: Int,
             requestedFrameRateCeiling: Int? = nil,
@@ -108,7 +115,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             displayTickNoFrameCount: UInt64 = 0,
             pendingFrameNotReadyDisplayTickCount: UInt64 = 0,
             fecRecoveredFragmentCount: UInt64 = 0,
-            recoveryState: MirageMediaFeedbackRecoveryState = .idle
+            recoveryState: MirageWire.MirageMediaFeedbackRecoveryState = .idle
         ) {
             self.mediaPathProfile = mediaPathProfile
             self.currentFrameRate = max(1, currentFrameRate)
@@ -143,9 +150,9 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         }
 
         package init(
-            feedback: ReceiverMediaFeedbackMessage,
+            feedback: MirageWire.ReceiverMediaFeedbackMessage,
             currentFrameRate: Int,
-            mediaPathProfile: MirageMediaPathProfile,
+            mediaPathProfile: MirageMedia.MirageMediaPathProfile,
             requestedFrameRateCeiling: Int? = nil,
             targetBitrateBps: Int? = nil
         ) {
@@ -252,15 +259,15 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     }
 
     package static func fixedLatencyMode(
-        requestedLatencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile
-    ) -> MirageStreamLatencyMode {
+        requestedLatencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
+    ) -> MirageMedia.MirageStreamLatencyMode {
         mediaPathProfile.usesAwdlRadioPolicy ? .balanced : requestedLatencyMode
     }
 
     package static func fixedDisplayTargetFrameRate(
         requestedFrameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> Int {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return max(1, requestedFrameRate) }
         return min(max(1, requestedFrameRate), 60)
@@ -280,7 +287,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     package static func playoutDelayMs(
         jitterP99Ms: Double = 0,
         presentationStallCount: UInt64 = 0,
-        recoveryState: MirageMediaFeedbackRecoveryState = .idle,
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState = .idle,
         hasRecentInteraction: Bool = false
     ) -> Double {
         let gapPressureMs = jitterP99Ms
@@ -597,7 +604,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         resolutionScale: Double,
         playoutDelayMs: Double,
         qualityReductionAllowed: Bool,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> SelectedLever {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return .observe }
         if state == .recovering ||
@@ -630,7 +637,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         trigger: Trigger,
         currentFrameRate: Int,
         requestedFrameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> Int {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return max(1, requestedFrameRate) }
         let ceiling = min(max(1, requestedFrameRate), 60)

@@ -8,12 +8,15 @@
 import Foundation
 @testable import MirageKit
 import Testing
+import MirageDiagnostics
+import MirageKit
+import MirageWire
 
 @Suite("MirageKit Stream Control Serialization")
 struct MirageKitStreamControlSerializationTests {
     @Test("Audio packet header serialization")
     func audioPacketHeaderSerialization() {
-        let header = AudioPacketHeader(
+        let header = MirageWire.AudioPacketHeader(
             codec: .pcm16LE,
             flags: [.discontinuity],
             streamID: 7,
@@ -31,11 +34,11 @@ struct MirageKitStreamControlSerializationTests {
         )
 
         let serialized = header.serialize()
-        #expect(serialized.count == mirageAudioHeaderSize)
-        let decoded = AudioPacketHeader.deserialize(from: serialized)
+        #expect(serialized.count == MirageWire.mirageAudioHeaderSize)
+        let decoded = MirageWire.AudioPacketHeader.deserialize(from: serialized)
         #expect(decoded != nil)
         #expect(decoded?.version == 260604)
-        #expect(decoded?.version == MirageKit.protocolVersion)
+        #expect(decoded?.version == MirageKit.mediaPacketProtocolVersion)
         #expect(decoded?.codec == .pcm16LE)
         #expect(decoded?.flags.contains(.discontinuity) == true)
         #expect(decoded?.streamID == 7)
@@ -46,7 +49,7 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Stream encoder settings message serialization")
     func streamEncoderSettingsSerialization() throws {
-        let request = StreamEncoderSettingsChangeMessage(
+        let request = MirageWire.StreamEncoderSettingsChangeMessage(
             streamID: 7,
             colorDepth: .pro,
             bitrate: 120_000_000,
@@ -54,13 +57,13 @@ struct MirageKitStreamControlSerializationTests {
             targetFrameRate: 30
         )
 
-        let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
+        let message = try MirageWire.ControlMessage(type: .streamEncoderSettingsChange, content: request)
         let serialized = message.serialize()
         let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: serialized)
         #expect(consumed == serialized.count)
         #expect(decodedEnvelope.type == .streamEncoderSettingsChange)
 
-        let decodedRequest = try decodedEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+        let decodedRequest = try decodedEnvelope.decode(MirageWire.StreamEncoderSettingsChangeMessage.self)
         #expect(decodedRequest.streamID == 7)
         #expect(decodedRequest.colorDepth == .pro)
         #expect(decodedRequest.bitrate == 120_000_000)
@@ -71,7 +74,7 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Start stream request latency mode serialization")
     func startStreamLatencyModeSerialization() throws {
-        let request = StartStreamMessage(
+        let request = MirageWire.StartStreamMessage(
             windowID: 9,
             targetFrameRate: 120,
             scaleFactor: 2.0,
@@ -90,9 +93,9 @@ struct MirageKitStreamControlSerializationTests {
             audioConfiguration: .default
         )
 
-        let envelope = try ControlMessage(type: .startStream, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .startStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StartStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .smoothest)
         #expect(decoded.hostBufferingPolicy == .stability)
@@ -104,7 +107,7 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Select app request latency mode serialization")
     func selectAppLatencyModeSerialization() throws {
-        let request = SelectAppMessage(
+        let request = MirageWire.SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
             targetFrameRate: 90,
             scaleFactor: 2.0,
@@ -122,9 +125,9 @@ struct MirageKitStreamControlSerializationTests {
             audioConfiguration: .default
         )
 
-        let envelope = try ControlMessage(type: .selectApp, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .selectApp, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.SelectAppMessage.self)
         #expect(decoded.targetFrameRate == 90)
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.hostBufferingPolicy == .freshestFrame)
@@ -135,44 +138,44 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Stream startup requests serialize media packet sizing")
     func streamStartupRequestsSerializeMediaPacketSizing() throws {
-        let startStream = StartStreamMessage(
+        let startStream = MirageWire.StartStreamMessage(
             windowID: 12,
             targetFrameRate: 60,
             mediaMaxPacketSize: 1400
         )
-        let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
+        let startStreamEnvelope = try MirageWire.ControlMessage(type: .startStream, content: startStream)
         let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
-        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
+        let decodedStartStream = try decodedStartStreamEnvelope.decode(MirageWire.StartStreamMessage.self)
         #expect(decodedStartStream.mediaMaxPacketSize == 1400)
 
-        let selectApp = SelectAppMessage(
+        let selectApp = MirageWire.SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
             targetFrameRate: 60,
             maxConcurrentVisibleWindows: 2,
             mediaMaxPacketSize: 1400
         )
-        let selectAppEnvelope = try ControlMessage(type: .selectApp, content: selectApp)
+        let selectAppEnvelope = try MirageWire.ControlMessage(type: .selectApp, content: selectApp)
         let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
-        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
+        let decodedSelectApp = try decodedSelectAppEnvelope.decode(MirageWire.SelectAppMessage.self)
         #expect(decodedSelectApp.mediaMaxPacketSize == 1400)
 
-        let startDesktop = StartDesktopStreamMessage(
+        let startDesktop = MirageWire.StartDesktopStreamMessage(
             scaleFactor: nil,
             displayWidth: 3008,
             displayHeight: 1692,
             targetFrameRate: 60,
             mediaMaxPacketSize: 1200
         )
-        let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
+        let startDesktopEnvelope = try MirageWire.ControlMessage(type: .startDesktopStream, content: startDesktop)
         let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
-        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
+        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(decodedStartDesktop.mediaMaxPacketSize == 1200)
     }
 
     @Test("Stream startup requests serialize client path fields")
     func streamStartupRequestsSerializeClientPathFields() throws {
         let pathSignature = "status=satisfied|kind=wifi|media=localWiFi"
-        let startStream = StartStreamMessage(
+        let startStream = MirageWire.StartStreamMessage(
             windowID: 12,
             targetFrameRate: 60,
             clientTransportPathKind: .wifi,
@@ -181,16 +184,16 @@ struct MirageKitStreamControlSerializationTests {
             clientPolicyPathKind: .vpn,
             clientPolicyMediaPathProfile: .vpnOrOverlay
         )
-        let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
+        let startStreamEnvelope = try MirageWire.ControlMessage(type: .startStream, content: startStream)
         let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
-        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
+        let decodedStartStream = try decodedStartStreamEnvelope.decode(MirageWire.StartStreamMessage.self)
         #expect(decodedStartStream.clientTransportPathKind == .wifi)
         #expect(decodedStartStream.clientMediaPathProfile == .localWiFi)
         #expect(decodedStartStream.clientPathSignature == pathSignature)
         #expect(decodedStartStream.clientPolicyPathKind == .vpn)
         #expect(decodedStartStream.clientPolicyMediaPathProfile == .vpnOrOverlay)
 
-        let selectApp = SelectAppMessage(
+        let selectApp = MirageWire.SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
             targetFrameRate: 60,
             maxConcurrentVisibleWindows: 2,
@@ -200,16 +203,16 @@ struct MirageKitStreamControlSerializationTests {
             clientPolicyPathKind: .vpn,
             clientPolicyMediaPathProfile: .vpnOrOverlay
         )
-        let selectAppEnvelope = try ControlMessage(type: .selectApp, content: selectApp)
+        let selectAppEnvelope = try MirageWire.ControlMessage(type: .selectApp, content: selectApp)
         let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
-        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
+        let decodedSelectApp = try decodedSelectAppEnvelope.decode(MirageWire.SelectAppMessage.self)
         #expect(decodedSelectApp.clientTransportPathKind == .awdl)
         #expect(decodedSelectApp.clientMediaPathProfile == .awdlRadio)
         #expect(decodedSelectApp.clientPathSignature == pathSignature)
         #expect(decodedSelectApp.clientPolicyPathKind == .vpn)
         #expect(decodedSelectApp.clientPolicyMediaPathProfile == .vpnOrOverlay)
 
-        let startDesktop = StartDesktopStreamMessage(
+        let startDesktop = MirageWire.StartDesktopStreamMessage(
             scaleFactor: nil,
             displayWidth: 3008,
             displayHeight: 1692,
@@ -220,16 +223,16 @@ struct MirageKitStreamControlSerializationTests {
             clientPolicyPathKind: .vpn,
             clientPolicyMediaPathProfile: .vpnOrOverlay
         )
-        let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
+        let startDesktopEnvelope = try MirageWire.ControlMessage(type: .startDesktopStream, content: startDesktop)
         let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
-        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
+        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(decodedStartDesktop.clientTransportPathKind == .wired)
         #expect(decodedStartDesktop.clientMediaPathProfile == .wired)
         #expect(decodedStartDesktop.clientPathSignature == pathSignature)
         #expect(decodedStartDesktop.clientPolicyPathKind == .vpn)
         #expect(decodedStartDesktop.clientPolicyMediaPathProfile == .vpnOrOverlay)
 
-        let custom = StartCustomStreamMessage(
+        let custom = MirageWire.StartCustomStreamMessage(
             kind: "test",
             displayWidth: 1280,
             displayHeight: 720,
@@ -240,9 +243,9 @@ struct MirageKitStreamControlSerializationTests {
             clientPolicyPathKind: .vpn,
             clientPolicyMediaPathProfile: .vpnOrOverlay
         )
-        let customEnvelope = try ControlMessage(type: .startCustomStream, content: custom)
+        let customEnvelope = try MirageWire.ControlMessage(type: .startCustomStream, content: custom)
         let (decodedCustomEnvelope, _) = try requireParsedControlMessage(from: customEnvelope.serialize())
-        let decodedCustom = try decodedCustomEnvelope.decode(StartCustomStreamMessage.self)
+        let decodedCustom = try decodedCustomEnvelope.decode(MirageWire.StartCustomStreamMessage.self)
         #expect(decodedCustom.clientTransportPathKind == .wifi)
         #expect(decodedCustom.clientMediaPathProfile == .localWiFi)
         #expect(decodedCustom.clientPathSignature == pathSignature)
@@ -255,8 +258,8 @@ struct MirageKitStreamControlSerializationTests {
         let startupRequestID = UUID()
         let appSessionID = UUID()
         let oldWindowPayload = Data(#"{"windowID":12,"targetFrameRate":60}"#.utf8)
-        let oldWindow = try ControlMessage(type: .startStream, payload: oldWindowPayload)
-            .decode(StartStreamMessage.self)
+        let oldWindow = try MirageWire.ControlMessage(type: .startStream, payload: oldWindowPayload)
+            .decode(MirageWire.StartStreamMessage.self)
         #expect(oldWindow.clientTransportPathKind == nil)
         #expect(oldWindow.clientMediaPathProfile == nil)
         #expect(oldWindow.clientPathSignature == nil)
@@ -268,7 +271,7 @@ struct MirageKitStreamControlSerializationTests {
             {"startupRequestID":"\(startupRequestID.uuidString)","appSessionID":"\(appSessionID.uuidString)","bundleIdentifier":"com.example.Editor","targetFrameRate":60,"maxConcurrentVisibleWindows":1}
             """.utf8
         )
-        let oldApp = try ControlMessage(type: .selectApp, payload: oldAppPayload).decode(SelectAppMessage.self)
+        let oldApp = try MirageWire.ControlMessage(type: .selectApp, payload: oldAppPayload).decode(MirageWire.SelectAppMessage.self)
         #expect(oldApp.clientTransportPathKind == nil)
         #expect(oldApp.clientMediaPathProfile == nil)
         #expect(oldApp.clientPathSignature == nil)
@@ -280,8 +283,8 @@ struct MirageKitStreamControlSerializationTests {
             {"startupRequestID":"\(startupRequestID.uuidString)","displayWidth":3008,"displayHeight":1692,"targetFrameRate":60}
             """.utf8
         )
-        let oldDesktop = try ControlMessage(type: .startDesktopStream, payload: oldDesktopPayload)
-            .decode(StartDesktopStreamMessage.self)
+        let oldDesktop = try MirageWire.ControlMessage(type: .startDesktopStream, payload: oldDesktopPayload)
+            .decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(oldDesktop.clientTransportPathKind == nil)
         #expect(oldDesktop.clientMediaPathProfile == nil)
         #expect(oldDesktop.clientPathSignature == nil)
@@ -293,8 +296,8 @@ struct MirageKitStreamControlSerializationTests {
             {"startupRequestID":"\(startupRequestID.uuidString)","kind":"test","metadata":{},"displayWidth":1280,"displayHeight":720,"targetFrameRate":60}
             """.utf8
         )
-        let oldCustom = try ControlMessage(type: .startCustomStream, payload: oldCustomPayload)
-            .decode(StartCustomStreamMessage.self)
+        let oldCustom = try MirageWire.ControlMessage(type: .startCustomStream, payload: oldCustomPayload)
+            .decode(MirageWire.StartCustomStreamMessage.self)
         #expect(oldCustom.clientTransportPathKind == nil)
         #expect(oldCustom.clientMediaPathProfile == nil)
         #expect(oldCustom.clientPathSignature == nil)
@@ -305,7 +308,7 @@ struct MirageKitStreamControlSerializationTests {
     @Test("Desktop stream restart copy preserves client path fields")
     func desktopStreamRestartCopyPreservesClientPathFields() {
         let contractID = UUID()
-        let request = StartDesktopStreamMessage(
+        let request = MirageWire.StartDesktopStreamMessage(
             scaleFactor: nil,
             displayWidth: 3008,
             displayHeight: 1692,
@@ -324,7 +327,7 @@ struct MirageKitStreamControlSerializationTests {
             desktopGeometryRefreshTargetHz: 60
         )
 
-        let copy = StartDesktopStreamMessage(copying: request, startupRequestID: UUID())
+        let copy = MirageWire.StartDesktopStreamMessage(copying: request, startupRequestID: UUID())
 
         #expect(copy.clientTransportPathKind == request.clientTransportPathKind)
         #expect(copy.clientMediaPathProfile == request.clientMediaPathProfile)
@@ -344,7 +347,7 @@ struct MirageKitStreamControlSerializationTests {
     func desktopGeometryContractFieldsSerializeOnStartupResizeAndAcceptance() throws {
         let contractID = UUID()
 
-        let startDesktop = StartDesktopStreamMessage(
+        let startDesktop = MirageWire.StartDesktopStreamMessage(
             scaleFactor: nil,
             displayWidth: 1376,
             displayHeight: 1032,
@@ -357,9 +360,9 @@ struct MirageKitStreamControlSerializationTests {
             desktopGeometryEncodedPixelHeight: 1806,
             desktopGeometryRefreshTargetHz: 60
         )
-        let startEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
+        let startEnvelope = try MirageWire.ControlMessage(type: .startDesktopStream, content: startDesktop)
         let (decodedStartEnvelope, _) = try requireParsedControlMessage(from: startEnvelope.serialize())
-        let decodedStart = try decodedStartEnvelope.decode(StartDesktopStreamMessage.self)
+        let decodedStart = try decodedStartEnvelope.decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(decodedStart.desktopGeometryContractID == contractID)
         #expect(decodedStart.desktopGeometrySceneIdentity == "iPad-main-scene")
         #expect(decodedStart.desktopGeometryDisplayPixelWidth == 2752)
@@ -368,7 +371,7 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decodedStart.desktopGeometryEncodedPixelHeight == 1806)
         #expect(decodedStart.desktopGeometryRefreshTargetHz == 60)
 
-        let resize = DisplayResolutionChangeMessage(
+        let resize = MirageWire.DisplayResolutionChangeMessage(
             streamID: 7,
             displayWidth: 1376,
             displayHeight: 1032,
@@ -381,14 +384,14 @@ struct MirageKitStreamControlSerializationTests {
             desktopGeometrySceneIdentity: "iPad-main-scene",
             desktopGeometryRefreshTargetHz: 45
         )
-        let resizeEnvelope = try ControlMessage(type: .displayResolutionChange, content: resize)
+        let resizeEnvelope = try MirageWire.ControlMessage(type: .displayResolutionChange, content: resize)
         let (decodedResizeEnvelope, _) = try requireParsedControlMessage(from: resizeEnvelope.serialize())
-        let decodedResize = try decodedResizeEnvelope.decode(DisplayResolutionChangeMessage.self)
+        let decodedResize = try decodedResizeEnvelope.decode(MirageWire.DisplayResolutionChangeMessage.self)
         #expect(decodedResize.desktopGeometryContractID == contractID)
         #expect(decodedResize.desktopGeometrySceneIdentity == "iPad-main-scene")
         #expect(decodedResize.desktopGeometryRefreshTargetHz == 45)
 
-        let desktopStarted = DesktopStreamStartedMessage(
+        let desktopStarted = MirageWire.DesktopStreamStartedMessage(
             streamID: 7,
             desktopSessionID: UUID(),
             width: 2408,
@@ -407,9 +410,9 @@ struct MirageKitStreamControlSerializationTests {
             desktopGeometryEncodedPixelHeight: 1806,
             desktopGeometryRefreshTargetHz: 45
         )
-        let startedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
+        let startedEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
         let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
-        let decodedStarted = try decodedStartedEnvelope.decode(DesktopStreamStartedMessage.self)
+        let decodedStarted = try decodedStartedEnvelope.decode(MirageWire.DesktopStreamStartedMessage.self)
         #expect(decodedStarted.desktopGeometryContractID == contractID)
         #expect(decodedStarted.desktopGeometrySceneIdentity == "iPad-main-scene")
         #expect(decodedStarted.desktopGeometryDisplayPixelWidth == 2752)
@@ -421,27 +424,27 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Stream startup requests default missing host buffering policy to freshest frame")
     func streamStartupRequestsDefaultMissingHostBufferingPolicyToFreshestFrame() throws {
-        let startStreamEnvelope = try ControlMessage(
+        let startStreamEnvelope = try MirageWire.ControlMessage(
             type: .startStream,
-            content: StartStreamMessage(windowID: 12, targetFrameRate: 60)
+            content: MirageWire.StartStreamMessage(windowID: 12, targetFrameRate: 60)
         )
         let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
-        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
+        let decodedStartStream = try decodedStartStreamEnvelope.decode(MirageWire.StartStreamMessage.self)
         #expect(decodedStartStream.hostBufferingPolicy == nil)
         #expect(decodedStartStream.resolvedHostBufferingPolicy == .freshestFrame)
 
-        let selectAppEnvelope = try ControlMessage(
+        let selectAppEnvelope = try MirageWire.ControlMessage(
             type: .selectApp,
-            content: SelectAppMessage(bundleIdentifier: "com.example.Editor", targetFrameRate: 60)
+            content: MirageWire.SelectAppMessage(bundleIdentifier: "com.example.Editor", targetFrameRate: 60)
         )
         let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
-        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
+        let decodedSelectApp = try decodedSelectAppEnvelope.decode(MirageWire.SelectAppMessage.self)
         #expect(decodedSelectApp.hostBufferingPolicy == nil)
         #expect(decodedSelectApp.resolvedHostBufferingPolicy == .freshestFrame)
 
-        let startDesktopEnvelope = try ControlMessage(
+        let startDesktopEnvelope = try MirageWire.ControlMessage(
             type: .startDesktopStream,
-            content: StartDesktopStreamMessage(
+            content: MirageWire.StartDesktopStreamMessage(
                 scaleFactor: nil,
                 displayWidth: 3008,
                 displayHeight: 1692,
@@ -449,13 +452,13 @@ struct MirageKitStreamControlSerializationTests {
             )
         )
         let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
-        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
+        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(decodedStartDesktop.hostBufferingPolicy == nil)
         #expect(decodedStartDesktop.resolvedHostBufferingPolicy == .freshestFrame)
 
-        let customEnvelope = try ControlMessage(
+        let customEnvelope = try MirageWire.ControlMessage(
             type: .startCustomStream,
-            content: StartCustomStreamMessage(
+            content: MirageWire.StartCustomStreamMessage(
                 kind: "test",
                 displayWidth: 1280,
                 displayHeight: 720,
@@ -463,29 +466,29 @@ struct MirageKitStreamControlSerializationTests {
             )
         )
         let (decodedCustomEnvelope, _) = try requireParsedControlMessage(from: customEnvelope.serialize())
-        let decodedCustom = try decodedCustomEnvelope.decode(StartCustomStreamMessage.self)
+        let decodedCustom = try decodedCustomEnvelope.decode(MirageWire.StartCustomStreamMessage.self)
         #expect(decodedCustom.hostBufferingPolicy == nil)
         #expect(decodedCustom.resolvedHostBufferingPolicy == .freshestFrame)
     }
 
     @Test("Quality test and started messages serialize accepted media packet sizing")
     func qualityTestAndStartedMessagesSerializeMediaPacketSizing() throws {
-        let qualityRequest = QualityTestRequestMessage(
+        let qualityRequest = MirageWire.QualityTestRequestMessage(
             testID: UUID(),
-            plan: MirageQualityTestPlan(stages: []),
+            plan: MirageDiagnostics.MirageQualityTestPlan(stages: []),
             payloadBytes: 1188,
             mediaMaxPacketSize: 1400,
             stopAfterFirstBreach: true,
             transferByteCount: 100_000_000
         )
-        let qualityEnvelope = try ControlMessage(type: .qualityTestRequest, content: qualityRequest)
+        let qualityEnvelope = try MirageWire.ControlMessage(type: .qualityTestRequest, content: qualityRequest)
         let (decodedQualityEnvelope, _) = try requireParsedControlMessage(from: qualityEnvelope.serialize())
-        let decodedQualityRequest = try decodedQualityEnvelope.decode(QualityTestRequestMessage.self)
+        let decodedQualityRequest = try decodedQualityEnvelope.decode(MirageWire.QualityTestRequestMessage.self)
         #expect(decodedQualityRequest.mediaMaxPacketSize == 1400)
         #expect(decodedQualityRequest.stopAfterFirstBreach)
         #expect(decodedQualityRequest.transferByteCount == 100_000_000)
 
-        let started = StreamStartedMessage(
+        let started = MirageWire.StreamStartedMessage(
             streamID: 42,
             windowID: 12,
             width: 1920,
@@ -494,12 +497,12 @@ struct MirageKitStreamControlSerializationTests {
             codec: .hevc,
             acceptedMediaMaxPacketSize: 1400
         )
-        let startedEnvelope = try ControlMessage(type: .streamStarted, content: started)
+        let startedEnvelope = try MirageWire.ControlMessage(type: .streamStarted, content: started)
         let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
-        let decodedStarted = try decodedStartedEnvelope.decode(StreamStartedMessage.self)
+        let decodedStarted = try decodedStartedEnvelope.decode(MirageWire.StreamStartedMessage.self)
         #expect(decodedStarted.acceptedMediaMaxPacketSize == 1400)
 
-        let desktopStarted = DesktopStreamStartedMessage(
+        let desktopStarted = MirageWire.DesktopStreamStartedMessage(
             streamID: 77,
             desktopSessionID: UUID(),
             width: 3008,
@@ -509,33 +512,33 @@ struct MirageKitStreamControlSerializationTests {
             displayCount: 1,
             acceptedMediaMaxPacketSize: 1200
         )
-        let desktopStartedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
+        let desktopStartedEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
         let (decodedDesktopStartedEnvelope, _) = try requireParsedControlMessage(from: desktopStartedEnvelope.serialize())
-        let decodedDesktopStarted = try decodedDesktopStartedEnvelope.decode(DesktopStreamStartedMessage.self)
+        let decodedDesktopStarted = try decodedDesktopStartedEnvelope.decode(MirageWire.DesktopStreamStartedMessage.self)
         #expect(decodedDesktopStarted.acceptedMediaMaxPacketSize == 1200)
     }
 
     @Test("Desktop stream failed payload serialization")
     func desktopStreamFailedSerialization() throws {
-        let payload = DesktopStreamFailedMessage(reason: "Virtual display failed activation")
+        let payload = MirageWire.DesktopStreamFailedMessage(reason: "Virtual display failed activation")
 
-        let envelope = try ControlMessage(type: .desktopStreamFailed, content: payload)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamFailed, content: payload)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(DesktopStreamFailedMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.DesktopStreamFailedMessage.self)
         #expect(decoded.reason == "Virtual display failed activation")
     }
 
     @Test("Stop stream origin serialization")
     func stopStreamOriginSerialization() throws {
-        let payload = StopStreamMessage(
+        let payload = MirageWire.StopStreamMessage(
             streamID: 55,
             minimizeWindow: false,
             origin: .clientWindowClosed
         )
 
-        let envelope = try ControlMessage(type: .stopStream, content: payload)
+        let envelope = try MirageWire.ControlMessage(type: .stopStream, content: payload)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StopStreamMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StopStreamMessage.self)
         #expect(decoded.streamID == 55)
         #expect(decoded.minimizeWindow == false)
         #expect(decoded.origin == .clientWindowClosed)
@@ -543,7 +546,7 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Start desktop request latency mode serialization")
     func startDesktopLatencyModeSerialization() throws {
-        let request = StartDesktopStreamMessage(
+        let request = MirageWire.StartDesktopStreamMessage(
             scaleFactor: 2.0,
             displayWidth: 3008,
             displayHeight: 1692,
@@ -564,9 +567,9 @@ struct MirageKitStreamControlSerializationTests {
             dataPort: 63220
         )
 
-        let envelope = try ControlMessage(type: .startDesktopStream, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .startDesktopStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.hostBufferingPolicy == .freshestFrame)
@@ -580,13 +583,13 @@ struct MirageKitStreamControlSerializationTests {
 
     @Test("Start desktop request cursor presentation serialization")
     func startDesktopCursorPresentationSerialization() throws {
-        let request = StartDesktopStreamMessage(
+        let request = MirageWire.StartDesktopStreamMessage(
             scaleFactor: 2.0,
             displayWidth: 3008,
             displayHeight: 1692,
             targetFrameRate: 60,
             mode: .secondary,
-            cursorPresentation: MirageDesktopCursorPresentation(
+            cursorPresentation: MirageWire.MirageDesktopCursorPresentation(
                 source: .host,
                 lockClientCursorWhenUsingMirageCursor: true,
                 lockClientCursorWhenUsingHostCursor: false
@@ -595,9 +598,9 @@ struct MirageKitStreamControlSerializationTests {
             dataPort: 63220
         )
 
-        let envelope = try ControlMessage(type: .startDesktopStream, content: request)
+        let envelope = try MirageWire.ControlMessage(type: .startDesktopStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.StartDesktopStreamMessage.self)
         #expect(decoded.cursorPresentation?.source == .host)
         #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingMirageCursor == true)
         #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingHostCursor == false)

@@ -11,6 +11,9 @@
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("Session Minimum Size Generation")
 struct SessionMinimumSizeGenerationTests {
@@ -178,13 +181,13 @@ struct SessionMinimumSizeGenerationTests {
         )
 
         store.applyHostStreamPolicies([
-            MirageStreamPolicy(
+            MirageWire.MirageStreamPolicy(
                 streamID: 31,
                 tier: .activeLive,
                 targetFPS: 60,
                 targetBitrateBps: 12_000_000
             ),
-            MirageStreamPolicy(
+            MirageWire.MirageStreamPolicy(
                 streamID: 32,
                 tier: .passiveSnapshot,
                 targetFPS: 1,
@@ -266,7 +269,7 @@ struct SessionMinimumSizeGenerationTests {
             minSize: nil
         )
         store.applyHostStreamPolicies([
-            MirageStreamPolicy(
+            MirageWire.MirageStreamPolicy(
                 streamID: 70,
                 tier: .passiveSnapshot,
                 targetFPS: 1,
@@ -283,7 +286,7 @@ struct SessionMinimumSizeGenerationTests {
     @MainActor
     func atlasRegionIsStoredOnLogicalSession() {
         let store = MirageClientSessionStore()
-        let initialRegion = MirageAppAtlasRegion(
+        let initialRegion = MirageMedia.MirageAppAtlasRegion(
             windowID: 8101,
             x: 10,
             y: 20,
@@ -301,7 +304,7 @@ struct SessionMinimumSizeGenerationTests {
 
         #expect(store.session(for: sessionID)?.atlasRegion == initialRegion)
 
-        let updatedRegion = MirageAppAtlasRegion(
+        let updatedRegion = MirageMedia.MirageAppAtlasRegion(
             windowID: 8102,
             x: 100,
             y: 120,
@@ -344,21 +347,21 @@ struct SessionMinimumSizeGenerationTests {
             minSize: nil
         )
 
-        let firstRegion = MirageAppAtlasRegion(
+        let firstRegion = MirageMedia.MirageAppAtlasRegion(
             windowID: 9101,
             x: 0,
             y: 0,
             width: 640,
             height: 480
         )
-        let secondRegion = MirageAppAtlasRegion(
+        let secondRegion = MirageMedia.MirageAppAtlasRegion(
             windowID: 9201,
             x: 640,
             y: 0,
             width: 800,
             height: 600
         )
-        let layout = MirageAppAtlasLayout(
+        let layout = MirageMedia.MirageAppAtlasLayout(
             mediaStreamID: 90,
             layoutEpoch: 3,
             width: 2048,
@@ -394,8 +397,8 @@ struct SessionMinimumSizeGenerationTests {
     }
 
     @MainActor
-    private func testWindow(id: WindowID) -> MirageWindow {
-        MirageWindow(
+    private func testWindow(id: WindowID) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: "Test Window",
             application: nil,

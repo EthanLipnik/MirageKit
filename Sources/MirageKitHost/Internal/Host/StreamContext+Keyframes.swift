@@ -7,9 +7,17 @@
 //  Keyframe scheduling and motion heuristics.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension StreamContext {
@@ -470,7 +478,7 @@ extension StreamContext {
     }
 
     func recoveryCauseBypassesAdaptiveKeyframeCooldown(
-        _ recoveryCause: MirageMediaFeedbackRecoveryCause
+        _ recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause
     ) -> Bool {
         recoveryCause == .decodeError ||
             recoveryCause == .freezeTimeout ||
@@ -479,7 +487,7 @@ extension StreamContext {
     }
 
     func recoveryCauseRequiresImmediateChainRepair(
-        _ recoveryCause: MirageMediaFeedbackRecoveryCause
+        _ recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause
     ) -> Bool {
         recoveryCause == .decodeError
     }
@@ -739,8 +747,8 @@ extension StreamContext {
 
     nonisolated static func mediaPacingOverride(
         isKeyframe: Bool,
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         targetBitrateBps: Int?,
         maxPayloadSize: Int,
         awdlDecision: MirageAwdlMediaController.Decision? = nil
@@ -769,13 +777,13 @@ extension StreamContext {
             transportPathKind: .unknown,
             mediaPathProfile: .unknown,
             targetBitrateBps: nil,
-            maxPayloadSize: miragePayloadSize(maxPacketSize: mirageDefaultMaxPacketSize)
+            maxPayloadSize: MirageWire.miragePayloadSize(maxPacketSize: MirageWire.mirageDefaultMaxPacketSize)
         )
     }
 
     nonisolated static func keyframePacingOverride(
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         targetBitrateBps: Int?,
         maxPayloadSize: Int,
         awdlDecision: MirageAwdlMediaController.Decision? = nil

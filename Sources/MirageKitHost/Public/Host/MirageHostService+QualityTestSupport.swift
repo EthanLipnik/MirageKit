@@ -7,19 +7,27 @@
 //  Host quality-test send support types.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
-import Loom
 
 #if os(macOS)
 /// Thread-safe accounting for packets queued during one host quality-test stage.
 final class QualityTestStageSendState: @unchecked Sendable {
     private let lock = NSLock()
-    private let queueProfile: LoomQueuedUnreliableSendProfile
+    private let queueProfile: MirageMedia.MirageMediaSendProfile
     private var outstandingPackets = 0
     private var outstandingBytes = 0
     private var sendErrorDescription: String?
 
-    init(queueProfile: LoomQueuedUnreliableSendProfile) {
+    init(queueProfile: MirageMedia.MirageMediaSendProfile) {
         self.queueProfile = queueProfile
     }
 

@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -21,7 +29,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     static let modifierPollInterval: TimeInterval = 0.1
 
     /// Minimum interval between non-forced locked-cursor view refreshes.
-    static let lockedCursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
+    static let lockedCursorRefreshInterval: CFTimeInterval = MirageMedia.MirageInteractionCadence.frameInterval120Seconds
 
     /// Duration after local cursor input during which host cursor updates are ignored.
     static let cursorLocalHoldInterval: CFTimeInterval = 0.12
@@ -190,10 +198,10 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Callback for scroll events: (deltaX, deltaY, location, phase, momentumPhase, modifiers, isPrecise)
     /// Location is normalized in stream space and may exceed 0...1 for secondary desktop travel.
-    var onScroll: ((CGFloat, CGFloat, CGPoint?, MirageScrollPhase, MirageScrollPhase, MirageModifierFlags, Bool) -> Void)?
+    var onScroll: ((CGFloat, CGFloat, CGPoint?, MirageInput.MirageScrollPhase, MirageInput.MirageScrollPhase, MirageInput.MirageModifierFlags, Bool) -> Void)?
 
     /// Callback for mouse events - used for forwarding clicks to host
-    var onMouseEvent: ((MirageInputEvent) -> Void)?
+    var onMouseEvent: ((MirageInput.MirageInputEvent) -> Void)?
 
     /// Callback when the platform container/window bounds change.
     var onContainerSizeChanged: ((CGSize) -> Void)? {
@@ -212,13 +220,13 @@ final class ScrollPhysicsCapturingNSView: NSView {
     var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
     /// Unified actions that can be triggered by shortcuts.
-    var actions: [MirageAction] = []
+    var actions: [MirageInput.MirageAction] = []
 
     /// Callback when a unified action is triggered.
-    var onActionTriggered: ((MirageAction) -> Void)?
+    var onActionTriggered: ((MirageInput.MirageAction) -> Void)?
 
     /// Track current modifier state
-    var currentModifiers: MirageModifierFlags = []
+    var currentModifiers: MirageInput.MirageModifierFlags = []
     var modifierPollTimer: Timer?
 
     /// Last known mouse location in stream space for scroll events.
@@ -239,7 +247,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     var lockedCursorSmoothingTimer: Timer?
     var mirroredSystemCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var mirroredSystemCursorVisible: Bool = true
-    var mirroredSystemCursorType: MirageCursorType = .arrow
+    var mirroredSystemCursorType: MirageWire.MirageCursorType = .arrow
     var mirroredSystemCursorPositionSequence: UInt64 = 0
     var mirroredSystemCursorTypeSequence: UInt64 = 0
     var cursorLockAnchor: CGPoint = .zero

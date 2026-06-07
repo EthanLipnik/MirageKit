@@ -7,8 +7,16 @@
 //  Shared audio-session arbitration for playback and dictation on iOS and visionOS.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(iOS) || os(visionOS)
 import AVFAudio

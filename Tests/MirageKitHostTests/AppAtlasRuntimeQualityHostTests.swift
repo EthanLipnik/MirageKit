@@ -9,8 +9,12 @@
 @testable import MirageKitHost
 import CoreGraphics
 import Foundation
+import MirageConnectivity
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("App Atlas Runtime Quality Host")
 struct AppAtlasRuntimeQualityHostTests {
@@ -34,7 +38,7 @@ struct AppAtlasRuntimeQualityHostTests {
         )
 
         await host.handleStreamEncoderSettingsChange(
-            StreamEncoderSettingsChangeMessage(
+            MirageWire.StreamEncoderSettingsChangeMessage(
                 streamID: logicalStreamID,
                 bitrate: 24_000_000,
                 bitrateAdaptationCeiling: 40_000_000,
@@ -74,7 +78,7 @@ struct AppAtlasRuntimeQualityHostTests {
         )
 
         await host.handleStreamEncoderSettingsChange(
-            StreamEncoderSettingsChangeMessage(
+            MirageWire.StreamEncoderSettingsChangeMessage(
                 streamID: logicalStreamID,
                 streamScale: 0.5
             ),
@@ -127,7 +131,7 @@ struct AppAtlasRuntimeQualityHostTests {
                 from: harness.clientControl,
                 matching: { $0.type == .streamPolicyUpdate }
             )
-            let update = try updateMessage.decode(StreamPolicyUpdateMessage.self)
+            let update = try updateMessage.decode(MirageWire.StreamPolicyUpdateMessage.self)
             let appSession = try #require(await host.appStreamManager.session(bundleIdentifier: bundleID))
 
             #expect(update.policies.count == 2)
@@ -185,7 +189,7 @@ struct AppAtlasRuntimeQualityHostTests {
                 from: harness.clientControl,
                 matching: { $0.type == .streamPolicyUpdate }
             )
-            let update = try updateMessage.decode(StreamPolicyUpdateMessage.self)
+            let update = try updateMessage.decode(MirageWire.StreamPolicyUpdateMessage.self)
             let appSession = try #require(await host.appStreamManager.session(bundleIdentifier: bundleID))
 
             #expect(update.policies.count == 2)
@@ -233,7 +237,7 @@ struct AppAtlasRuntimeQualityHostTests {
             sessionID: pair.server.id,
             client: client,
             controlChannel: serverControl,
-            transferEngine: LoomTransferEngine(session: pair.server),
+            transferEngine: MirageTransferEngine(session: pair.server),
             pathSnapshot: nil
         )
         host.connectedClients = [client]
@@ -301,7 +305,7 @@ struct AppAtlasRuntimeQualityHostTests {
             streamID: streamID,
             windowID: windowID,
             encoderConfig: .highQuality,
-            maxPacketSize: mirageDefaultMaxPacketSize
+            maxPacketSize: MirageWire.mirageDefaultMaxPacketSize
         )
         await context.configureRunningForAppAtlasRuntimeQualityHostTest()
         return context
@@ -326,11 +330,11 @@ struct AppAtlasRuntimeQualityHostTests {
         )
     }
 
-    private static func window(id: WindowID, title: String) -> MirageWindow {
-        MirageWindow(
+    private static func window(id: WindowID, title: String) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: title,
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 1,
                 bundleIdentifier: "com.example.Editor",
                 name: "Editor"

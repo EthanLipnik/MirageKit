@@ -8,11 +8,14 @@
 //
 
 #if os(macOS)
+@testable import MirageKit
 @testable import MirageKitHost
 import CoreGraphics
 import CoreMedia
 import Foundation
 import Testing
+import MirageCore
+import MirageWire
 
 @Suite("Host Packetizer Checksums")
 struct PacketizerChecksumTests {
@@ -27,7 +30,7 @@ struct PacketizerChecksumTests {
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: makeSecurityContext(),
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else { return }
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else { return }
                 captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
                 onComplete(nil)
             }
@@ -67,7 +70,7 @@ struct PacketizerChecksumTests {
             #expect(packet.header.checksum == 0)
             #expect(packet.header.fragmentCount == UInt16(expectedFragments))
             #expect(packet.header.payloadLength == expectedPayloadLength)
-            let wirePayload = Data(packet.packet.dropFirst(mirageHeaderSize))
+            let wirePayload = Data(packet.packet.dropFirst(MirageWire.mirageHeaderSize))
             #expect(wirePayload.count == Int(expectedPayloadLength) + MirageMediaSecurity.authTagLength)
         }
 
@@ -84,7 +87,7 @@ struct PacketizerChecksumTests {
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else { return }
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else { return }
                 captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
                 onComplete(nil)
             }
@@ -122,14 +125,14 @@ struct PacketizerChecksumTests {
             let start = index * maxPayloadSize
             let end = min(payload.count, start + maxPayloadSize)
             let expectedPayload = Data(payload[start ..< end])
-            let expectedChecksum = CRC32.calculate(expectedPayload)
+            let expectedChecksum = MirageWire.CRC32.calculate(expectedPayload)
 
             #expect(!packet.header.flags.contains(.encryptedPayload))
             #expect(packet.header.checksum == expectedChecksum)
             #expect(packet.header.fragmentCount == UInt16(expectedFragments))
             #expect(packet.header.payloadLength == UInt32(expectedPayload.count))
 
-            let wirePayload = Data(packet.packet.dropFirst(mirageHeaderSize))
+            let wirePayload = Data(packet.packet.dropFirst(MirageWire.mirageHeaderSize))
             #expect(wirePayload == expectedPayload)
         }
 
@@ -142,7 +145,7 @@ struct PacketizerChecksumTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     onComplete(nil)
                     return
                 }
@@ -254,7 +257,7 @@ struct PacketizerChecksumTests {
         #expect(encryptedPackets.count == expectedFragments)
 
         for (index, packet) in encryptedPackets.enumerated() {
-            guard let header = AudioPacketHeader.deserialize(from: packet) else {
+            guard let header = MirageWire.AudioPacketHeader.deserialize(from: packet) else {
                 Issue.record("Failed to deserialize encrypted audio packet header")
                 return
             }
@@ -263,7 +266,7 @@ struct PacketizerChecksumTests {
             #expect(header.checksum == 0)
             #expect(header.fragmentCount == UInt16(expectedFragments))
             #expect(Int(header.payloadLength) == expectedPayloadLength)
-            let wirePayload = Data(packet.dropFirst(mirageAudioHeaderSize))
+            let wirePayload = Data(packet.dropFirst(MirageWire.mirageAudioHeaderSize))
             #expect(wirePayload.count == expectedPayloadLength + MirageMediaSecurity.authTagLength)
         }
 
@@ -272,17 +275,17 @@ struct PacketizerChecksumTests {
         #expect(plainPackets.count == expectedFragments)
 
         for (index, packet) in plainPackets.enumerated() {
-            guard let header = AudioPacketHeader.deserialize(from: packet) else {
+            guard let header = MirageWire.AudioPacketHeader.deserialize(from: packet) else {
                 Issue.record("Failed to deserialize unencrypted audio packet header")
                 return
             }
             let start = index * maxPayloadSize
             let end = min(payload.count, start + maxPayloadSize)
             let expectedPayload = Data(payload[start ..< end])
-            let wirePayload = Data(packet.dropFirst(mirageAudioHeaderSize))
+            let wirePayload = Data(packet.dropFirst(MirageWire.mirageAudioHeaderSize))
 
             #expect(!header.flags.contains(.encryptedPayload))
-            #expect(header.checksum == CRC32.calculate(expectedPayload))
+            #expect(header.checksum == MirageWire.CRC32.calculate(expectedPayload))
             #expect(Int(header.payloadLength) == expectedPayload.count)
             #expect(wirePayload == expectedPayload)
         }
@@ -350,7 +353,7 @@ struct PacketizerChecksumTests {
 
 private struct CapturedVideoPacket: Sendable {
     let packet: Data
-    let header: FrameHeader
+    let header: MirageWire.FrameHeader
 }
 
 private final class CheckedContinuationBox: @unchecked Sendable {

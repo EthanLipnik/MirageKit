@@ -5,11 +5,18 @@
 //  Created by Ethan Lipnik on 1/5/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import Loom
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -25,7 +32,7 @@ actor StreamContext {
     var baseCaptureSize: CGSize = .zero
     var currentEncodedSize: CGSize = .zero
     var currentCaptureSize: CGSize = .zero
-    var activePixelFormat: MiragePixelFormat
+    var activePixelFormat: MirageMedia.MiragePixelFormat
     var lastWindowFrame: CGRect = .zero
     var applicationProcessID: pid_t = 0
     var isAppStream: Bool = false
@@ -37,14 +44,14 @@ actor StreamContext {
     }
 
     let mediaMaxPacketSize: Int
-    var mediaSendProfile: LoomQueuedUnreliableSendProfile?
+    var mediaSendProfile: MirageMedia.MirageMediaSendProfile?
     var mediaSendProfileRawValue: String?
     var mediaSendProfileMaxOutstandingPackets: Int?
     var mediaSendProfileMaxOutstandingBytes: Int?
     var mediaSendProfileMaxQueuedPackets: Int?
-    var mediaSendProfileReference: Locked<LoomQueuedUnreliableSendProfile>?
+    var mediaSendProfileReference: Locked<MirageMedia.MirageMediaSendProfile>?
     var mediaSendDiagnosticsProvider:
-        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)?
+        (@Sendable (MirageMedia.MirageMediaSendProfile) async -> MirageQueuedUnreliableSendDiagnostics?)?
 
     var captureMode: CaptureMode = .window
     /// Max payload size per UDP packet (excludes Mirage header).
@@ -54,14 +61,16 @@ actor StreamContext {
 
     /// Window capture engine (used for window and virtual-display modes).
     var captureEngine: WindowCaptureEngine?
+    /// Backend that owns the active capture source start/stop path when runtime capture is backend-routed.
+    var captureSourceBackend: MacOSHostCaptureSourceBackend?
 
     // Virtual display components (provides window isolation)
     // Uses SharedVirtualDisplayManager dedicated stream displays.
-    var virtualDisplayContext: SharedVirtualDisplayManager.DisplaySnapshot?
+    var virtualDisplayContext: MirageHostVirtualDisplaySnapshot?
     var virtualDisplayVisibleBounds: CGRect = .zero
     var virtualDisplayCaptureSourceRect: CGRect = .zero
     var virtualDisplayCapturePresentationRect: CGRect = .zero
-    var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
+    var displayP3CoverageStatusOverride: MirageMedia.MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true
     var captureShowsCursor: Bool = false
     var desktopCaptureUsesDisplayRefreshCadenceOverride: Bool?
@@ -109,7 +118,7 @@ actor StreamContext {
     var lastNonIdleCapturedFrameTime: CFAbsoluteTime = 0
     var cachedStartupFrame: CapturedFrame?
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
-    var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
+    var metricsUpdateHandler: (@Sendable (MirageWire.StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
     var activeQuality: Float
     var qualityFloor: Float
@@ -147,8 +156,8 @@ actor StreamContext {
     let recoveryScaleRestoreCleanPFrameCount = 90
     let emergencyKeyframeBudgetRatio: Double = 0.70
     var lastSuccessfulKeyframeSendTime: CFAbsoluteTime = 0
-    var latestReceiverRecoveryCause: MirageMediaFeedbackRecoveryCause = .none
-    var lastAcceptedExplicitKeyframeRequestCause: MirageMediaFeedbackRecoveryCause = .none
+    var latestReceiverRecoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause = .none
+    var lastAcceptedExplicitKeyframeRequestCause: MirageWire.MirageMediaFeedbackRecoveryCause = .none
     var lastAcceptedExplicitKeyframeRequestTime: CFAbsoluteTime = 0
     let explicitKeyframeRequestDuplicateWindow: CFAbsoluteTime = 1.0
     var frameChainRepairKeyframeRetryTask: Task<Void, Never>?
@@ -209,7 +218,7 @@ actor StreamContext {
     var lastCaptureIngressFPS: Double?
     var lastCaptureFPS: Double?
     var lastEncodeAttemptFPS: Double?
-    var lastCaptureCadenceMetrics: StreamCaptureCadenceMetrics?
+    var lastCaptureCadenceMetrics: MirageWire.StreamCaptureCadenceMetrics?
     var lastCapturedFrameTime: CFAbsoluteTime = 0
     var latestEncodeStartCaptureAgeMs: Double = 0
     var worstEncodeStartCaptureAgeMs: Double = 0
@@ -364,33 +373,33 @@ actor StreamContext {
     /// Host callback used to announce AWDL-driven desktop dimension changes before the recovery keyframe.
     var onAwdlInteractiveDesktopGeometryUpdate: (@MainActor @Sendable (StreamID) async -> Void)?
     /// Requested ScreenCaptureKit audio capture channel count for this stream.
-    var requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount
+    var requestedAudioChannelCount: Int = MirageMedia.MirageAudioChannelLayout.stereo.channelCount
 
     /// Serializes packet fragmentation/sending to preserve frame order
     var packetSender: StreamPacketSender?
 
     /// Base flags to include on all frames for this stream
-    let baseFrameFlags: FrameFlags
+    let baseFrameFlags: MirageWire.FrameFlags
 
     /// Dynamic flags applied to the next encoded frame.
-    nonisolated(unsafe) var dynamicFrameFlags: FrameFlags = []
+    nonisolated(unsafe) var dynamicFrameFlags: MirageWire.FrameFlags = []
 
     /// Stream epoch for discontinuity boundaries.
     /// Incremented when the host resets capture or send state.
     nonisolated(unsafe) var epoch: UInt16 = 0
 
     /// Latency preference for buffering behavior.
-    let latencyMode: MirageStreamLatencyMode
+    let latencyMode: MirageMedia.MirageStreamLatencyMode
     /// Client/requested latency preference before media-path policy normalization.
-    let requestedLatencyMode: MirageStreamLatencyMode
+    let requestedLatencyMode: MirageMedia.MirageStreamLatencyMode
     /// Host-side capture-to-encode buffering preference.
-    let hostBufferingPolicy: MirageHostBufferingPolicy
+    let hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
     /// Client/requested host buffering preference before media-path policy normalization.
-    let requestedHostBufferingPolicy: MirageHostBufferingPolicy
+    let requestedHostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy
     /// Classified transport path used for proximity-specific media policy.
-    let transportPathKind: MirageNetworkPathKind
+    let transportPathKind: MirageCore.MirageNetworkPathKind
     /// Media behavior profile used for real-time pacing and admission policy.
-    let mediaPathProfile: MirageMediaPathProfile
+    let mediaPathProfile: MirageMedia.MirageMediaPathProfile
     /// Raw/client policy/effective path summary captured at stream startup for boundary diagnostics.
     let mediaPathDiagnosticSummary: String
     /// Video transport contract selected for dependency-coded media packets.
@@ -414,6 +423,10 @@ actor StreamContext {
     var encoderMaxHeight: Int?
     /// When true, request VideoToolbox power-efficiency preference on the encoder session.
     var encoderLowPowerEnabled: Bool
+    let videoEncoderFactoryBackend: any MirageHostVideoEncoderFactoryBackend
+    let captureEngineFactoryBackend: any MirageHostCaptureEngineFactoryBackend
+    let captureContentProviderBackend: any MirageHostCaptureContentProviderBackend
+    let virtualDisplayBackend: any MirageHostVirtualDisplayBackend
     /// Capture pressure profile for SCK buffering/copy behavior.
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     nonisolated static let minAudioCaptureChannelCount: Int = 1
@@ -424,10 +437,10 @@ actor StreamContext {
     }
 
     nonisolated static func resolvedMediaPathProfile(
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile?
-    ) -> MirageMediaPathProfile {
-        MirageMediaPathProfile.resolveRealtimeProfile(
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile?
+    ) -> MirageMedia.MirageMediaPathProfile {
+        MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile
         )
@@ -439,26 +452,31 @@ actor StreamContext {
         streamKind: VideoEncoder.StreamKind = .window,
         encoderConfig: MirageEncoderConfiguration,
         streamScale: CGFloat = 1.0,
-        requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount,
-        maxPacketSize: Int = mirageDefaultMaxPacketSize,
+        requestedAudioChannelCount: Int = MirageMedia.MirageAudioChannelLayout.stereo.channelCount,
+        maxPacketSize: Int = MirageWire.mirageDefaultMaxPacketSize,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
-        additionalFrameFlags: FrameFlags = [],
+        additionalFrameFlags: MirageWire.FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
         encoderCatchUpQualityAdjustmentEnabled: Bool = true,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = false,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil,
         mediaPathDiagnosticSummary: String? = nil,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
-        captureShowsCursor: Bool = false
+        captureShowsCursor: Bool = false,
+        videoEncoderFactoryBackend: any MirageHostVideoEncoderFactoryBackend = MacOSHostVideoEncoderFactoryBackend(),
+        captureEngineFactoryBackend: any MirageHostCaptureEngineFactoryBackend = MacOSHostCaptureEngineFactoryBackend(),
+        captureContentProviderBackend: any MirageHostCaptureContentProviderBackend =
+            MacOSHostCaptureContentProviderBackend(),
+        virtualDisplayBackend: any MirageHostVirtualDisplayBackend = MacOSHostVirtualDisplayBackend()
     ) {
         var resolvedEncoderConfig = encoderConfig
         if let bitrateAdaptationCeiling,
@@ -477,7 +495,7 @@ actor StreamContext {
             mediaPathProfile: resolvedMediaPathProfile
         )
         let effectiveHostBufferingPolicy = resolvedMediaPathProfile.usesAwdlRadioPolicy
-            ? MirageHostBufferingPolicy.stability
+            ? MirageMedia.MirageHostBufferingPolicy.stability
             : hostBufferingPolicy
         resolvedEncoderConfig.targetFrameRate = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
             requestedFrameRate: resolvedEncoderConfig.targetFrameRate,
@@ -505,7 +523,7 @@ actor StreamContext {
         baseFrameFlags = resolvedEncoderConfig.codec == .proRes4444
             ? additionalFrameFlags.union(.proResCodec)
             : additionalFrameFlags
-        maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
+        maxPayloadSize = MirageWire.miragePayloadSize(maxPacketSize: maxPacketSize)
         mediaMaxPacketSize = maxPacketSize
         self.mediaSecurityContext = mediaSecurityContext
         currentFrameRate = resolvedEncoderConfig.targetFrameRate
@@ -522,6 +540,10 @@ actor StreamContext {
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
         self.encoderLowPowerEnabled = encoderLowPowerEnabled
+        self.videoEncoderFactoryBackend = videoEncoderFactoryBackend
+        self.captureEngineFactoryBackend = captureEngineFactoryBackend
+        self.captureContentProviderBackend = captureContentProviderBackend
+        self.virtualDisplayBackend = virtualDisplayBackend
         self.capturePressureProfile = capturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
         activePixelFormat = resolvedEncoderConfig.pixelFormat

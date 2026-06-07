@@ -7,12 +7,20 @@
 //  Capture engine helper calculations.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
 import os
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -31,8 +39,8 @@ extension WindowCaptureEngine {
         width: Int,
         height: Int,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame,
         overrideDepth: Int?,
         usesDisplayRefreshCadence: Bool = false
     ) -> Int {
@@ -84,7 +92,7 @@ extension WindowCaptureEngine {
     nonisolated static func resolveStallPolicy(
         windowID: CGWindowID,
         captureMode: CaptureMode,
-        latencyMode: MirageStreamLatencyMode,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
         configuredSoftStallLimit: CFAbsoluteTime,
         displayStallThreshold: CFAbsoluteTime = 0.6,
         windowStallThreshold: CFAbsoluteTime = 8.0

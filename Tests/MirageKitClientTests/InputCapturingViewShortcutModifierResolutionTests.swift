@@ -10,6 +10,7 @@
 import MirageKit
 import Testing
 import UIKit
+import MirageInput
 
 @Suite("Input capturing view shortcut modifier resolution")
 struct InputCapturingViewShortcutModifierResolutionTests {
@@ -22,7 +23,7 @@ struct InputCapturingViewShortcutModifierResolutionTests {
 
         #expect(
             MirageClientShortcut.defaultDesktopExit.matches(
-                MirageKeyEvent(
+                MirageInput.MirageKeyEvent(
                     keyCode: MirageClientShortcut.defaultDesktopExit.keyCode,
                     modifiers: resolvedModifiers
                 )
@@ -124,7 +125,7 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         ]
 
         for keyCode in keyCodes {
-            let keyEvent = MirageKeyEvent(keyCode: keyCode, modifiers: .control)
+            let keyEvent = MirageInput.MirageKeyEvent(keyCode: keyCode, modifiers: .control)
             let repeatEvent = InputCapturingView.modifiedKeyRepeatEvent(for: keyEvent)
 
             #expect(repeatEvent.keyCode == keyCode)
@@ -159,7 +160,7 @@ struct InputCapturingViewShortcutModifierResolutionTests {
 
     @Test("Modified key repeat key-up uses current modifiers without marking repeat")
     func modifiedKeyRepeatKeyUpUsesCurrentModifiersWithoutMarkingRepeat() {
-        let initialEvent = MirageKeyEvent(
+        let initialEvent = MirageInput.MirageKeyEvent(
             keyCode: 0x04,
             characters: "h",
             charactersIgnoringModifiers: "h",
@@ -187,8 +188,8 @@ struct InputCapturingViewShortcutModifierResolutionTests {
             .customHostKeyBinding(
                 id: "hyperEscape",
                 displayName: "Hyper Escape",
-                hostKeyEvent: MirageKeyEvent(keyCode: 0x35),
-                shortcut: MirageClientShortcutBinding(
+                hostKeyEvent: MirageInput.MirageKeyEvent(keyCode: 0x35),
+                shortcut: MirageInput.MirageClientShortcutBinding(
                     keyCode: 0x35,
                     modifiers: [.control, .option, .shift, .capsLock, .numericPad, .function]
                 )

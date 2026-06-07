@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/14/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 private struct ReceiverPFrameTimingApplication {
@@ -16,7 +24,7 @@ private struct ReceiverPFrameTimingApplication {
 }
 
 extension StreamContext {
-    func applyReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
+    func applyReceiverMediaFeedback(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) async {
         let now = CFAbsoluteTimeGetCurrent()
         lastReceiverFeedbackTime = now
         receiverReassemblyBacklogFrames = feedback.reassemblyBacklogFrames
@@ -158,7 +166,7 @@ extension StreamContext {
         awdlHostEncoderStructuralQualityReductionDeadline = 0
     }
 
-    func resolvedReceiverPresentationBacklogFrames(_ feedback: ReceiverMediaFeedbackMessage) -> Int {
+    func resolvedReceiverPresentationBacklogFrames(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) -> Int {
         let queueBacklog = feedback.presentationQueueDepth.map { queueDepth in
             guard let targetFrames = feedback.presentationTargetFrames else { return 0 }
             return max(0, queueDepth - targetFrames)
@@ -167,7 +175,7 @@ extension StreamContext {
     }
 
     private func scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(
-        _ feedback: ReceiverMediaFeedbackMessage,
+        _ feedback: MirageWire.ReceiverMediaFeedbackMessage,
         now: CFAbsoluteTime
     ) async {
         let needsKeyframe: Bool = switch feedback.recoveryState {
@@ -244,7 +252,7 @@ extension StreamContext {
         )
     }
 
-    private func receiverFeedbackHasTransportRecoveryEvidence(_ feedback: ReceiverMediaFeedbackMessage) -> Bool {
+    private func receiverFeedbackHasTransportRecoveryEvidence(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) -> Bool {
         feedback.lostFrameCount > 0 ||
             feedback.discardedPacketCount > 0 ||
             feedback.reassemblyBacklogFrames > 0 ||
@@ -256,7 +264,7 @@ extension StreamContext {
             feedback.reliabilityCauses.contains(.noProgressTimeout)
     }
 
-    private func receiverFeedbackHasConfirmedNoProgressFreeze(_ feedback: ReceiverMediaFeedbackMessage) -> Bool {
+    private func receiverFeedbackHasConfirmedNoProgressFreeze(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) -> Bool {
         guard feedback.recoveryCause == .freezeTimeout,
               feedback.recoveryState == .keyframeRecovery || feedback.recoveryState == .hardRecovery else {
             return false
@@ -274,7 +282,7 @@ extension StreamContext {
     }
 
     private func applyReceiverFrameAcknowledgements(
-        _ ranges: [MediaFeedbackFrameRange],
+        _ ranges: [MirageWire.MediaFeedbackFrameRange],
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision? {
         guard !ranges.isEmpty else { return nil }
@@ -298,7 +306,7 @@ extension StreamContext {
     }
 
     private func noteReceiverAcceptedKeyframeIfNeeded(
-        in ranges: [MediaFeedbackFrameRange],
+        in ranges: [MirageWire.MediaFeedbackFrameRange],
         now: CFAbsoluteTime
     ) {
         guard let pendingReceiverAcceptedKeyframeFrameNumber else { return }
@@ -315,7 +323,7 @@ extension StreamContext {
     }
 
     private func noteReceiverAcceptedKeyframeIfNeeded(
-        _ feedback: ReceiverMediaFeedbackMessage,
+        _ feedback: MirageWire.ReceiverMediaFeedbackMessage,
         now: CFAbsoluteTime
     ) {
         guard let pendingFrameNumber = pendingReceiverAcceptedKeyframeFrameNumber else { return }
@@ -336,7 +344,7 @@ extension StreamContext {
         latestFrame == pendingFrame || isFrameNumber(latestFrame, newerThan: pendingFrame)
     }
 
-    private func frameNumber(_ frameNumber: UInt32, isInside range: MediaFeedbackFrameRange) -> Bool {
+    private func frameNumber(_ frameNumber: UInt32, isInside range: MirageWire.MediaFeedbackFrameRange) -> Bool {
         if range.startFrame <= range.endFrame {
             return frameNumber >= range.startFrame && frameNumber <= range.endFrame
         }
@@ -344,7 +352,7 @@ extension StreamContext {
     }
 
     private func noteReceiverPresentationRecoveryEvidenceIfNeeded(
-        _ feedback: ReceiverMediaFeedbackMessage,
+        _ feedback: MirageWire.ReceiverMediaFeedbackMessage,
         now: CFAbsoluteTime
     ) {
         guard let pendingFrameNumber = pendingReceiverAcceptedKeyframeFrameNumber,
@@ -364,7 +372,7 @@ extension StreamContext {
     }
 
     private func applyReceiverPFrameTimingSamples(
-        _ samples: [ReceiverPFrameTimingSample],
+        _ samples: [MirageWire.ReceiverPFrameTimingSample],
         awdlQualityReductionAllowed: Bool,
         now: CFAbsoluteTime
     ) -> ReceiverPFrameTimingApplication {
@@ -845,7 +853,7 @@ extension StreamContext {
 
     private func logAwdlReceiverFeedbackIfNeeded(
         now: CFAbsoluteTime,
-        feedback: ReceiverMediaFeedbackMessage,
+        feedback: MirageWire.ReceiverMediaFeedbackMessage,
         decision: HostStreamTransportController.Decision?
     ) async {
         let trigger = decision?.awdlPacingTrigger ?? decision?.pressureTrigger ?? .none
@@ -991,7 +999,7 @@ extension StreamContext {
     }
 }
 
-private extension MirageMediaFeedbackRecoveryCause {
+private extension MirageWire.MirageMediaFeedbackRecoveryCause {
     var allowsReceiverFeedbackKeyframeRecovery: Bool {
         switch self {
         case .decodeError,

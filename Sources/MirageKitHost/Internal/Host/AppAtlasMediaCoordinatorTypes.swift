@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -25,14 +33,15 @@ struct AppAtlasWindowAttachment {
     /// Region height in atlas pixels.
     let height: Int
     /// Client-visible region occupied by the logical window.
-    let atlasRegion: MirageAppAtlasRegion
+    let atlasRegion: MirageMedia.MirageAppAtlasRegion
     /// Current atlas layouts that describe the media stream.
-    let atlasLayouts: [MirageAppAtlasLayout]
+    let atlasLayouts: [MirageMedia.MirageAppAtlasLayout]
 }
 
 /// Owns the capture engine for one logical or auxiliary atlas window.
 actor AppAtlasWindowCaptureContext {
     private(set) var captureEngine: WindowCaptureEngine?
+    private var captureSourceBackend: MacOSHostCaptureSourceBackend?
     private(set) var isCapturing = false
 
     /// Starts window capture once and forwards captured frames to the coordinator.
@@ -41,15 +50,17 @@ actor AppAtlasWindowCaptureContext {
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
         encoderConfig: MirageEncoderConfiguration,
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
         targetFrameRate: Int,
+        captureEngineFactoryBackend: any MirageHostCaptureEngineFactoryBackend,
+        captureContentProviderBackend: any MirageHostCaptureContentProviderBackend,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void
     ) async throws {
         guard !isCapturing else { return }
 
-        let engine = WindowCaptureEngine(
+        let engine = captureEngineFactoryBackend.makeCaptureEngine(
             configuration: encoderConfig,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
@@ -58,12 +69,21 @@ actor AppAtlasWindowCaptureContext {
             usesDisplayRefreshCadence: false
         )
         captureEngine = engine
-        try await engine.startCapture(
-            window: windowWrapper.window,
-            application: applicationWrapper.application,
-            display: displayWrapper.display,
-            outputScale: 1.0,
-            onFrame: onFrame
+        let backend = MacOSHostCaptureSourceBackend(
+            captureEngineFactoryBackend: captureEngineFactoryBackend,
+            captureContentProviderBackend: captureContentProviderBackend
+        )
+        captureSourceBackend = backend
+        try await backend.startCapture(
+            Self.captureRequest(
+                windowID: WindowID(windowWrapper.window.windowID),
+                windowSize: windowWrapper.window.frame.size,
+                encoderConfig: encoderConfig,
+                targetFrameRate: targetFrameRate
+            ),
+            using: engine,
+            onFrame: onFrame,
+            onAudio: nil
         )
         isCapturing = true
     }
@@ -75,8 +95,31 @@ actor AppAtlasWindowCaptureContext {
             return
         }
         isCapturing = false
-        await captureEngine?.stopCapture()
+        if let captureSourceBackend {
+            await captureSourceBackend.stopCapture()
+            self.captureSourceBackend = nil
+        } else {
+            await captureEngine?.stopCapture()
+        }
         captureEngine = nil
+    }
+
+    nonisolated static func captureRequest(
+        windowID: WindowID,
+        windowSize: CGSize,
+        encoderConfig: MirageEncoderConfiguration,
+        targetFrameRate: Int
+    ) -> MirageHostCaptureRequest {
+        MirageHostCaptureRequest(
+            source: .window(windowID),
+            configuration: MirageHostCaptureConfiguration(
+                logicalSize: windowSize,
+                targetFrameRate: targetFrameRate,
+                queueDepth: encoderConfig.captureQueueDepth ?? 1,
+                capturesAudio: false,
+                audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false)
+            )
+        )
     }
 }
 
@@ -107,7 +150,7 @@ struct AppAtlasAuxiliaryOverlay {
     /// Host window ID of the parent window that receives the overlay.
     var parentWindowID: WindowID
     /// Latest auxiliary window metadata.
-    var window: MirageWindow
+    var window: MirageMedia.MirageWindow
     /// Whether Accessibility reports the auxiliary as focused.
     var isFocused: Bool
     /// Whether Accessibility reports the auxiliary as main.

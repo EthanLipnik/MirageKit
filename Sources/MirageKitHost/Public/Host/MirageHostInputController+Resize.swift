@@ -7,8 +7,16 @@
 //  Host input controller extensions.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 import AppKit
@@ -19,7 +27,7 @@ extension MirageHostInputController {
 
     /// Applies an absolute host-window resize from a client resize event.
     @MainActor
-    func handleWindowResize(_ window: MirageWindow, resizeEvent: MirageResizeEvent) {
+    func handleWindowResize(_ window: MirageMedia.MirageWindow, resizeEvent: MirageInput.MirageResizeEvent) {
         guard let windowController else { return }
         if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
             MirageLogger.host(
@@ -71,7 +79,7 @@ extension MirageHostInputController {
 
     /// Applies a relative resize request while preserving the client-requested aspect ratio.
     @MainActor
-    func handleRelativeResize(_ window: MirageWindow, event: MirageRelativeResizeEvent) {
+    func handleRelativeResize(_ window: MirageMedia.MirageWindow, event: MirageInput.MirageRelativeResizeEvent) {
         guard let windowController else { return }
         if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
             MirageLogger.host(
@@ -135,7 +143,7 @@ extension MirageHostInputController {
 
     /// Applies a pixel-size resize request to a directly captured host window.
     @MainActor
-    func handlePixelResize(_ window: MirageWindow, event: MiragePixelResizeEvent) {
+    func handlePixelResize(_ window: MirageMedia.MirageWindow, event: MirageInput.MiragePixelResizeEvent) {
         guard let windowController else { return }
         if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
             MirageLogger.host(
@@ -172,8 +180,8 @@ extension MirageHostInputController {
 
     /// Notifies the host service after an accessibility resize changes a streamed window frame.
     @MainActor
-    private func notifyWindowResized(_ window: MirageWindow, with updatedFrame: CGRect) {
-        let updatedWindow = MirageWindow(
+    private func notifyWindowResized(_ window: MirageMedia.MirageWindow, with updatedFrame: CGRect) {
+        let updatedWindow = MirageMedia.MirageWindow(
             id: window.id,
             title: window.title,
             application: window.application,

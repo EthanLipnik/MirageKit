@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 4/16/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Actor-isolated in-memory cache for encoded app icon payloads.
@@ -42,7 +50,7 @@ actor HostAppIconCatalogStore {
 
     /// Returns a cached icon payload or loads and stores it when missing.
     func payload(
-        for app: MirageInstalledApp,
+        for app: MirageWire.MirageInstalledApp,
         maxPixelSize: Int,
         heifCompressionQuality: Double,
         loader: @Sendable () async -> Data?
@@ -70,7 +78,7 @@ actor HostAppIconCatalogStore {
     }
 
     private func cacheKey(
-        for app: MirageInstalledApp,
+        for app: MirageWire.MirageInstalledApp,
         maxPixelSize: Int,
         heifCompressionQuality: Double
     ) -> CacheKey {

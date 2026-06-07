@@ -7,6 +7,15 @@
 //  Pure stream recovery timing helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 #if canImport(UIKit)
 import UIKit

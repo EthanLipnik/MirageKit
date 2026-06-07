@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -45,7 +52,7 @@ extension MirageHostService {
                 deferDisplayTeardown: true,
                 cleanupReason: "desktop_setup_client_disconnected_after_audio_activation"
             )
-            throw MirageError.protocolError("Desktop stream client disconnected during startup")
+            throw MirageCore.MirageError.protocolError("Desktop stream client disconnected during startup")
         }
         desktopStreamClientContext = activeClientContext
 
@@ -63,7 +70,8 @@ extension MirageHostService {
         let mediaSendProfile = await activeClientContext.controlChannel.session.mirageMediaSendProfile(
             resolvedMediaPathProfile: streamContext.mediaPathProfile,
             streamID: streamID,
-            phase: "desktop_activation"
+            phase: "desktop_activation",
+            logHostEvent: { message in MirageLogger.host(message) }
         )
 
         do {
@@ -91,11 +99,11 @@ extension MirageHostService {
 
     /// Activates desktop audio when requested, falling back to video-only startup on failure.
     func activateDesktopAudioIfPossible(
-        _ audioConfiguration: MirageAudioConfiguration,
+        _ audioConfiguration: MirageMedia.MirageAudioConfiguration,
         clientContext: ClientContext,
         streamID: StreamID,
         streamContext: StreamContext
-    ) async -> MirageAudioConfiguration {
+    ) async -> MirageMedia.MirageAudioConfiguration {
         var effectiveAudioConfiguration = audioConfiguration
         guard effectiveAudioConfiguration.enabled else { return effectiveAudioConfiguration }
 
@@ -144,7 +152,7 @@ extension MirageHostService {
             physicalBounds: mainDisplayBounds,
             virtualResolution: activation.captureResolution
         )
-        let desktopWindow = MirageWindow(
+        let desktopWindow = MirageMedia.MirageWindow(
             id: 0,
             title: "Desktop",
             application: nil,
@@ -173,14 +181,14 @@ extension MirageHostService {
     func openDesktopVideoStream(
         streamID: StreamID,
         activeClientContext: ClientContext,
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         startupRequestID: UUID
-    ) async throws -> LoomMultiplexedStream {
+    ) async throws -> any MirageQueuedUnreliableMediaStream {
         do {
             let openedVideoStream = try await activeClientContext.controlChannel.session.openStream(
                 label: "video/\(streamID)"
             )
-            loomVideoStreamsByStreamID[streamID] = openedVideoStream
+            videoMediaStreamsByStreamID[streamID] = openedVideoStream
             transportRegistry.registerVideoStream(openedVideoStream, streamID: streamID)
             MirageLogger.host("Opened Loom video stream for desktop stream \(streamID)")
             try await ensureDesktopStreamStartupCanContinue(
@@ -205,16 +213,16 @@ extension MirageHostService {
     /// Starts desktop display capture and retries without audio if capture startup fails.
     func startDesktopDisplayCapture(
         _ activation: DesktopStreamActivation,
-        activeVideoStream: LoomMultiplexedStream,
-        mediaSendProfile: LoomQueuedUnreliableSendProfile,
+        activeVideoStream: any MirageQueuedUnreliableMediaStream,
+        mediaSendProfile: MirageMedia.MirageMediaSendProfile,
         excludedWindows: [SCWindowWrapper],
-        audioConfiguration: inout MirageAudioConfiguration
+        audioConfiguration: inout MirageMedia.MirageAudioConfiguration
     ) async throws {
         let firstSuccessfulVideoPacketSent = Locked(false)
         let mediaSendProfileReference = await activation.streamContext.setMediaSendProfile(
             mediaSendProfile,
             diagnosticsProvider: { profile in
-                await activeVideoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+                await activeVideoStream.mirageQueuedUnreliableSendDiagnostics(profile: profile)
             }
         )
         let startDesktopDisplay: () async throws -> Void = {
@@ -227,7 +235,7 @@ extension MirageHostService {
                     activeVideoStream.sendUnreliableQueued(
                         packetData,
                         profile: activeMediaSendProfile,
-                        options: metadata.loomQueuedUnreliableSendOptions
+                        options: metadata.mirageQueuedUnreliableSendOptions
                     ) { error in
                         if error == nil {
                             self.markDesktopFirstVideoPacketIfNeeded(
@@ -292,11 +300,11 @@ extension MirageHostService {
     /// Waits for desktop capture to produce a usable startup frame, with one recovery retry.
     func waitForDesktopCaptureStartupReadiness(
         streamContext: StreamContext,
-        mode: MirageDesktopStreamMode,
+        mode: MirageMedia.MirageDesktopStreamMode,
         clientID: UUID,
-        audioConfiguration: MirageAudioConfiguration
+        audioConfiguration: MirageMedia.MirageAudioConfiguration
     )
-    async throws -> MirageAudioConfiguration {
+    async throws -> MirageMedia.MirageAudioConfiguration {
         guard mode == .unified || mode == .secondary else { return audioConfiguration }
 
         var effectiveAudioConfiguration = audioConfiguration
@@ -360,7 +368,7 @@ extension MirageHostService {
                 recoveryAttempted = false
                 continue
             }
-            throw MirageError.protocolError(
+            throw MirageCore.MirageError.protocolError(
                 "\(mode.displayName) desktop startup failed waiting for first display sample (\(readiness.rawValue))"
             )
         }
@@ -382,41 +390,6 @@ extension MirageHostService {
                 "Desktop start: capture readiness satisfied (\(readiness.rawValue))"
             )
         }
-    }
-}
-
-extension StreamPacketSender.TransportPacketMetadata {
-    var loomQueuedUnreliableSendOptions: LoomQueuedUnreliableSendOptions {
-        let importance: LoomQueuedUnreliableSendOptions.Importance = if isKeyframe {
-            .realtimeKeyframe
-        } else if isParity {
-            .realtimeParity
-        } else if isRecovery {
-            .realtimeRecovery
-        } else {
-            .realtimeInterFrame
-        }
-        let dropsWhenExpired = !isKeyframe
-        let dropsWhenQueueFull = !isKeyframe && !isRecovery
-        return LoomQueuedUnreliableSendOptions(
-            deadlineUptime: loomDeadlineUptime,
-            importance: importance,
-            frameID: loomFrameID,
-            fragmentIndex: fragmentIndex,
-            fragmentCount: fragmentCount,
-            dropsWhenExpired: dropsWhenExpired,
-            dropsWhenQueueFull: dropsWhenQueueFull
-        )
-    }
-
-    private var loomFrameID: UInt64 {
-        (UInt64(streamID) << 32) | UInt64(frameNumber)
-    }
-
-    private var loomDeadlineUptime: TimeInterval? {
-        guard sendDeadline.isFinite else { return nil }
-        let remainingSeconds = sendDeadline - CFAbsoluteTimeGetCurrent()
-        return ProcessInfo.processInfo.systemUptime + remainingSeconds
     }
 }
 

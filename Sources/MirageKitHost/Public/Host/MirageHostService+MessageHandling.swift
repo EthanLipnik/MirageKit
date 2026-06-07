@@ -7,18 +7,26 @@
 //  Control message routing.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     func sendControlError(
-        _ code: ErrorMessage.ErrorCode,
+        _ code: MirageWire.ErrorMessage.ErrorCode,
         message: String,
         to clientContext: ClientContext
     ) {
-        let payload = ErrorMessage(code: code, message: message)
+        let payload = MirageWire.ErrorMessage(code: code, message: message)
         guard clientContext.sendBestEffort(.error, content: payload) else {
             MirageLogger.error(.host, "Failed to encode error response: \(message)")
             return
@@ -136,7 +144,7 @@ extension MirageHostService {
     }
 
     func handleClientMessage(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     )
     async {
@@ -157,14 +165,14 @@ extension MirageHostService {
         }
     }
 
-    nonisolated static func shouldLogReceivedControlMessageType(_ type: ControlMessageType) -> Bool {
+    nonisolated static func shouldLogReceivedControlMessageType(_ type: MirageWire.ControlMessageType) -> Bool {
         type != .receiverMediaFeedback
     }
 
-    private func handleStopStreamMessage(_ message: ControlMessage) async {
-        let request: StopStreamMessage
+    private func handleStopStreamMessage(_ message: MirageWire.ControlMessage) async {
+        let request: MirageWire.StopStreamMessage
         do {
-            request = try message.decode(StopStreamMessage.self)
+            request = try message.decode(MirageWire.StopStreamMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle stopStream: ")
             return
@@ -185,9 +193,9 @@ extension MirageHostService {
         await stopStream(session, minimizeWindow: request.minimizeWindow)
     }
 
-    private func handleStreamReadyMessage(_ message: ControlMessage) async {
+    private func handleStreamReadyMessage(_ message: MirageWire.ControlMessage) async {
         do {
-            let ready = try message.decode(StreamReadyMessage.self)
+            let ready = try message.decode(MirageWire.StreamReadyMessage.self)
             await acknowledgePendingStartupAttempt(
                 streamID: ready.streamID,
                 startupAttemptID: ready.startupAttemptID,
@@ -199,10 +207,10 @@ extension MirageHostService {
         }
     }
 
-    private func handleKeyframeRequestMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
-        let request: KeyframeRequestMessage
+    private func handleKeyframeRequestMessage(_ message: MirageWire.ControlMessage, from clientContext: ClientContext) async {
+        let request: MirageWire.KeyframeRequestMessage
         do {
-            request = try message.decode(KeyframeRequestMessage.self)
+            request = try message.decode(MirageWire.KeyframeRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle keyframeRequest: ")
             return
@@ -215,7 +223,7 @@ extension MirageHostService {
             MirageLogger.host(
                 "Keyframe request rejected for stream \(request.streamID) from \(clientContext.client.name): no owned stream"
             )
-            let ack = KeyframeRecoveryAckMessage(
+            let ack = MirageWire.KeyframeRecoveryAckMessage(
                 streamID: request.streamID,
                 deadlineMilliseconds: 500,
                 accepted: false,
@@ -233,10 +241,10 @@ extension MirageHostService {
         clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
     }
 
-    private func handleReceiverMediaFeedbackMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
-        let feedback: ReceiverMediaFeedbackMessage
+    private func handleReceiverMediaFeedbackMessage(_ message: MirageWire.ControlMessage, from clientContext: ClientContext) async {
+        let feedback: MirageWire.ReceiverMediaFeedbackMessage
         do {
-            feedback = try message.decode(ReceiverMediaFeedbackMessage.self)
+            feedback = try message.decode(MirageWire.ReceiverMediaFeedbackMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle receiverMediaFeedback: ")
             return
@@ -304,9 +312,9 @@ extension MirageHostService {
         return false
     }
 
-    private func handleInputEventMessage(_ message: ControlMessage) async {
+    private func handleInputEventMessage(_ message: MirageWire.ControlMessage) async {
         do {
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            let inputMessage = try MirageWire.InputEventMessage.deserializePayload(message.payload)
             if let streamContext = streamsByID[inputMessage.streamID] {
                 await streamContext.noteClientInput()
             }
@@ -329,10 +337,10 @@ extension MirageHostService {
         }
     }
 
-    private func handleDisconnectMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
+    private func handleDisconnectMessage(_ message: MirageWire.ControlMessage, from clientContext: ClientContext) async {
         let client = clientContext.client
         do {
-            let disconnect = try message.decode(DisconnectMessage.self)
+            let disconnect = try message.decode(MirageWire.DisconnectMessage.self)
             MirageLogger.host("Client \(client.name) disconnected: \(disconnect.reason.rawValue)")
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode disconnect message: ")

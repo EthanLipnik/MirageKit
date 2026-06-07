@@ -7,10 +7,18 @@
 //  Blackout overlays, display dimming, and shortcut recovery for Lights Out mode.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AppKit
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -38,6 +46,7 @@ final class HostLightsOutController {
     var screenChangeObserver: Any?
     var brightnessSnapshot: [CGDirectDisplayID: HostLightsOutGammaSnapshot] = [:]
     private let hotKeyRegistrar: any HostLightsOutHotKeyRegistering
+    var virtualDisplayBackend: any MirageHostVirtualDisplayBackend
     let revealClock = ContinuousClock()
     var revealUntil: ContinuousClock.Instant?
 
@@ -54,8 +63,12 @@ final class HostLightsOutController {
     }
 
     /// Creates a controller using a Carbon hotkey registrar by default.
-    init(hotKeyRegistrar: any HostLightsOutHotKeyRegistering = HostLightsOutHotKeyRegistrar()) {
+    init(
+        hotKeyRegistrar: any HostLightsOutHotKeyRegistering = HostLightsOutHotKeyRegistrar(),
+        virtualDisplayBackend: any MirageHostVirtualDisplayBackend = MacOSHostVirtualDisplayBackend()
+    ) {
         self.hotKeyRegistrar = hotKeyRegistrar
+        self.virtualDisplayBackend = virtualDisplayBackend
         self.hotKeyRegistrar.onTrigger = { [weak self] in
             self?.handleEmergencyShortcut()
         }
@@ -64,7 +77,7 @@ final class HostLightsOutController {
     /// Activates, retargets, or deactivates Lights Out for the requested display scope.
     func updateTarget(
         _ newTarget: Target?,
-        emergencyShortcut: MirageClientShortcutBinding
+        emergencyShortcut: MirageInput.MirageClientShortcutBinding
     ) -> Bool {
         guard let newTarget else {
             deactivate()
@@ -137,7 +150,7 @@ final class HostLightsOutController {
 
     private func updateOverlays(
         for displayIDs: Set<CGDirectDisplayID>,
-        emergencyShortcut: MirageClientShortcutBinding
+        emergencyShortcut: MirageInput.MirageClientShortcutBinding
     ) {
         let previousWindowIDs = Set(overlayWindowIDs)
         let message = Self.overlayMessage(for: emergencyShortcut, title: messageTitleText)
@@ -201,7 +214,7 @@ final class HostLightsOutController {
 
     /// Builds the overlay recovery message for the configured emergency shortcut.
     nonisolated static func overlayMessage(
-        for emergencyShortcut: MirageClientShortcutBinding,
+        for emergencyShortcut: MirageInput.MirageClientShortcutBinding,
         title: String = "Streaming with Mirage"
     ) -> String {
         "\(title)\nPress \(emergencyShortcut.displayString) to Force Stop Streams"
@@ -217,14 +230,8 @@ final class HostLightsOutController {
     }
 
     private func physicalDisplayIDs() -> Set<CGDirectDisplayID> {
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return [] }
-
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
-
-        let physicalDisplays = displays.filter { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
+        let displays = virtualDisplayBackend.onlineDisplayIDs()
+        let physicalDisplays = displays.filter { !virtualDisplayBackend.isVirtualDisplay($0) }
         return Set(physicalDisplays)
     }
 

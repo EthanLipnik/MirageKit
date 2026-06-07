@@ -5,11 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import Foundation
-import Loom
-import MirageKit
 
 #if os(macOS)
 
@@ -28,7 +35,7 @@ struct QueuedUnreliableDropCounts: Sendable, Equatable {
         total == 0
     }
 
-    mutating func record(_ reason: LoomQueuedUnreliableSendDrop.Reason) {
+    mutating func record(_ reason: MirageQueuedUnreliableSendDropReason) {
         switch reason {
         case .deadlineExpired:
             deadlineExpired &+= 1
@@ -129,7 +136,7 @@ final class TransportCompletionTracker: @unchecked Sendable {
 
     /// Records an intentional nonfatal transport drop for one registered packet submission.
     func finishDroppedSubmission(
-        _ drop: LoomQueuedUnreliableSendDrop,
+        _ drop: MirageQueuedUnreliableSendDrop,
         countsAsFrameDrop: Bool = true
     ) {
         let finalState = state.withLock { state -> FinalState? in
@@ -233,7 +240,7 @@ extension StreamPacketSender {
         let streamID: StreamID
         let frameNumber: UInt32
         let sequenceNumberStart: UInt32
-        let additionalFlags: FrameFlags
+        let additionalFlags: MirageWire.FrameFlags
         let dimensionToken: UInt16
         let epoch: UInt16
         let fecBlockSize: Int
@@ -256,7 +263,7 @@ extension StreamPacketSender {
             streamID: StreamID,
             frameNumber: UInt32,
             sequenceNumberStart: UInt32,
-            additionalFlags: FrameFlags,
+            additionalFlags: MirageWire.FrameFlags,
             dimensionToken: UInt16,
             epoch: UInt16,
             fecBlockSize: Int,
@@ -305,6 +312,39 @@ extension StreamPacketSender {
         let isParity: Bool
         let isRecovery: Bool
         let sendDeadline: CFAbsoluteTime
+
+        var mirageQueuedUnreliableSendOptions: MirageQueuedUnreliableSendOptions {
+            let importance: MirageQueuedUnreliableSendOptions.Importance = if isKeyframe {
+                .realtimeKeyframe
+            } else if isParity {
+                .realtimeParity
+            } else if isRecovery {
+                .realtimeRecovery
+            } else {
+                .realtimeInterFrame
+            }
+            let dropsWhenExpired = !isKeyframe
+            let dropsWhenQueueFull = !isKeyframe && !isRecovery
+            return MirageQueuedUnreliableSendOptions(
+                deadlineUptime: mirageDeadlineUptime,
+                importance: importance,
+                frameID: mirageFrameID,
+                fragmentIndex: fragmentIndex,
+                fragmentCount: fragmentCount,
+                dropsWhenExpired: dropsWhenExpired,
+                dropsWhenQueueFull: dropsWhenQueueFull
+            )
+        }
+
+        private var mirageFrameID: UInt64 {
+            (UInt64(streamID) << 32) | UInt64(frameNumber)
+        }
+
+        private var mirageDeadlineUptime: TimeInterval? {
+            guard sendDeadline.isFinite else { return nil }
+            let remainingSeconds = sendDeadline - CFAbsoluteTimeGetCurrent()
+            return ProcessInfo.processInfo.systemUptime + remainingSeconds
+        }
     }
 
     /// Snapshot of sender delay, pacing, and drop telemetry for one reporting window.
@@ -556,7 +596,7 @@ extension StreamPacketSender {
         isEnabled: Bool,
         isKeyframe: Bool,
         fragmentIndex: Int,
-        flags: FrameFlags
+        flags: MirageWire.FrameFlags
     ) -> Bool {
         guard isEnabled else { return false }
         guard isKeyframe else { return false }

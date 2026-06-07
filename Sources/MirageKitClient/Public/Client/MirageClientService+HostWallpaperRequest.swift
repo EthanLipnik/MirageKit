@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+HostWallpaperRequest.swift
 //  MirageKit
@@ -7,7 +16,6 @@
 //  Host wallpaper request bookkeeping.
 //
 
-import MirageKit
 
 @MainActor
 extension MirageClientService {

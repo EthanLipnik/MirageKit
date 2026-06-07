@@ -8,6 +8,7 @@
 @testable import MirageKitClient
 import MirageKit
 import Testing
+import MirageInput
 
 @Suite("Client key event builder")
 struct MirageClientKeyEventBuilderTests {
@@ -20,7 +21,7 @@ struct MirageClientKeyEventBuilderTests {
             )
         )
 
-        #expect(event.keyCode == MirageKeyEvent.unicodeScalarFallbackKeyCode)
+        #expect(event.keyCode == MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode)
         #expect(event.characters == "🙂")
         #expect(event.charactersIgnoringModifiers == "🙂")
         #expect(event.modifiers == [.command])
@@ -35,7 +36,7 @@ struct MirageClientKeyEventBuilderTests {
             modifiers: [.option]
         )
 
-        #expect(event.keyCode == MirageKeyEvent.unicodeScalarFallbackKeyCode)
+        #expect(event.keyCode == MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode)
         #expect(event.characters == "@")
         #expect(event.charactersIgnoringModifiers == "0")
         #expect(event.modifiers == [.option])

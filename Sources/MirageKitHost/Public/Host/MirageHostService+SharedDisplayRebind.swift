@@ -7,16 +7,24 @@
 //  Shared virtual display generation rebind handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Rebinds host stream state after the shared virtual display is recreated.
     func handleSharedDisplayGenerationChange(
-        newContext: SharedVirtualDisplayManager.DisplaySnapshot,
+        newContext: MirageHostVirtualDisplaySnapshot,
         previousGeneration: UInt64
     )
     async {
@@ -24,7 +32,7 @@ extension MirageHostService {
 
         clearCurrentDesktopGeometryContract()
 
-        let displayBounds = CGVirtualDisplayBridge.displayBounds(
+        let displayBounds = platformVirtualDisplayBackend.displayBounds(
             newContext.displayID,
             knownResolution: SharedVirtualDisplayManager.logicalResolution(
                 for: newContext.resolution,
@@ -47,7 +55,7 @@ extension MirageHostService {
 
     /// Retargets the desktop stream to the new shared-display generation.
     private func handleDesktopStreamSharedDisplayGenerationChange(
-        newContext: SharedVirtualDisplayManager.DisplaySnapshot,
+        newContext: MirageHostVirtualDisplaySnapshot,
         previousGeneration: UInt64,
         displayBounds: CGRect
     )

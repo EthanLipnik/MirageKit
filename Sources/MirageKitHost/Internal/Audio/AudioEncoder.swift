@@ -7,16 +7,24 @@
 //  Host-side audio encoding helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AVFAudio
 import CoreMedia
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
 struct EncodedAudioFrame: Sendable {
     let data: Data
-    let codec: MirageAudioCodec
+    let codec: MirageMedia.MirageAudioCodec
     let sampleRate: Int
     let channelCount: Int
     let samplesPerFrame: Int
@@ -24,7 +32,7 @@ struct EncodedAudioFrame: Sendable {
 }
 
 struct AudioEncodeSettings: Sendable, Equatable {
-    let codec: MirageAudioCodec
+    let codec: MirageMedia.MirageAudioCodec
     let sampleRate: Double
     let channelCount: AVAudioChannelCount
     let bitrate: Int?
@@ -36,7 +44,7 @@ struct AudioEncodeSettings: Sendable, Equatable {
 }
 
 struct AudioConverterKey: Hashable {
-    let codec: MirageAudioCodec
+    let codec: MirageMedia.MirageAudioCodec
     let sampleRate: Int
     let channelCount: UInt32
     let bitrate: Int?
@@ -69,16 +77,16 @@ final class AudioConverterInputProvider: @unchecked Sendable {
 }
 
 actor AudioEncoder {
-    private var audioConfiguration: MirageAudioConfiguration
+    private var audioConfiguration: MirageMedia.MirageAudioConfiguration
     private var activeFallbackSettings: AudioEncodeSettings?
     private var loggedFallbackDescription: String?
     var aacConverters: [AudioConverterKey: AVAudioConverter] = [:]
 
-    init(audioConfiguration: MirageAudioConfiguration) {
+    init(audioConfiguration: MirageMedia.MirageAudioConfiguration) {
         self.audioConfiguration = audioConfiguration
     }
 
-    func updateConfiguration(_ configuration: MirageAudioConfiguration) {
+    func updateConfiguration(_ configuration: MirageMedia.MirageAudioConfiguration) {
         audioConfiguration = configuration
         activeFallbackSettings = nil
         loggedFallbackDescription = nil
@@ -123,14 +131,14 @@ actor AudioEncoder {
         return nil
     }
 
-    private func encodingCandidates(for configuration: MirageAudioConfiguration) -> [AudioEncodeSettings] {
+    private func encodingCandidates(for configuration: MirageMedia.MirageAudioConfiguration) -> [AudioEncodeSettings] {
         let primary = settings(for: configuration, fallbackChannelCount: nil)
         var candidates = [primary]
 
         if configuration.channelLayout == .surround51, primary.codec == .aacLC {
             let stereoAAC = settings(
                 for: configuration,
-                fallbackChannelCount: AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount)
+                fallbackChannelCount: AVAudioChannelCount(MirageMedia.MirageAudioChannelLayout.stereo.channelCount)
             )
             if !candidates.contains(stereoAAC) {
                 candidates.append(stereoAAC)
@@ -148,14 +156,14 @@ actor AudioEncoder {
     }
 
     private func settings(
-        for configuration: MirageAudioConfiguration,
+        for configuration: MirageMedia.MirageAudioConfiguration,
         fallbackChannelCount: AVAudioChannelCount?
     ) -> AudioEncodeSettings {
         let requestedChannelCount = configuration.channelLayout.channelCount
         let channelCount = max(1, Int(fallbackChannelCount ?? AVAudioChannelCount(requestedChannelCount)))
         let sampleRate = 48_000.0
 
-        let codec: MirageAudioCodec
+        let codec: MirageMedia.MirageAudioCodec
         let bitrate: Int?
         switch configuration.quality {
         case .lossless:

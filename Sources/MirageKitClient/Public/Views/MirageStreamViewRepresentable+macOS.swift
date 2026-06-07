@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import SwiftUI
 
@@ -19,7 +27,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public let contentRectOverride: CGRect?
 
     /// Callback for sending input events to the host
-    public var onInputEvent: ((MirageInputEvent) -> Void)?
+    public var onInputEvent: ((MirageInput.MirageInputEvent) -> Void)?
 
     /// Callback when drawable metrics change - reports pixel size and scale factor
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
@@ -88,17 +96,17 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
     /// Unified actions triggered by shortcuts, gestures, or the control bar.
-    public var actions: [MirageAction]
+    public var actions: [MirageInput.MirageAction]
 
     /// Callback when a unified action is triggered.
-    public var onActionTriggered: ((MirageAction) -> Void)?
+    public var onActionTriggered: ((MirageInput.MirageAction) -> Void)?
 
     /// Creates an AppKit-backed stream view with rendering, cursor, input, and action bindings.
     public init(
         streamID: StreamID,
         mediaStreamID: StreamID,
         contentRectOverride: CGRect? = nil,
-        onInputEvent: ((MirageInputEvent) -> Void)? = nil,
+        onInputEvent: ((MirageInput.MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
         onContainerSizeChanged: ((CGSize) -> Void)? = nil,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
@@ -121,8 +129,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         containerSizingMode: MirageStreamContainerSizingMode = .contentLayout,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
-        actions: [MirageAction] = [],
-        onActionTriggered: ((MirageAction) -> Void)? = nil
+        actions: [MirageInput.MirageAction] = [],
+        onActionTriggered: ((MirageInput.MirageAction) -> Void)? = nil
     ) {
         self.streamID = streamID
         self.mediaStreamID = mediaStreamID
@@ -192,7 +200,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
-        wrapper.desktopPresentationReferenceSize = MirageStreamPresentationPolicy.localAspectFitReferenceSize(
+        wrapper.desktopPresentationReferenceSize = MirageKitClientPresentation.MirageStreamPresentationPolicy.localAspectFitReferenceSize(
             prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
             hostDisplayPointSize: hostDisplayPointSize
         )
@@ -212,7 +220,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         // Configure scroll callback for native trackpad physics
         wrapper
             .onScroll = { [weak coordinator = context.coordinator] deltaX, deltaY, location, phase, momentumPhase, modifiers, isPrecise in
-                let event = MirageScrollEvent(
+                let event = MirageInput.MirageScrollEvent(
                     deltaX: deltaX,
                     deltaY: deltaY,
                     location: location,
@@ -254,7 +262,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
-            wrapper.desktopPresentationReferenceSize = MirageStreamPresentationPolicy.localAspectFitReferenceSize(
+            wrapper.desktopPresentationReferenceSize = MirageKitClientPresentation.MirageStreamPresentationPolicy.localAspectFitReferenceSize(
                 prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
                 hostDisplayPointSize: hostDisplayPointSize
             )

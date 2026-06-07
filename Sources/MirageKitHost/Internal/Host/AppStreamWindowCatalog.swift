@@ -7,7 +7,15 @@
 //  Shared app-stream window cataloging and classification helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import ApplicationServices
@@ -21,7 +29,7 @@ enum AppStreamWindowClassification: String {
 
 /// Window candidate with ScreenCaptureKit and Accessibility classification metadata.
 struct AppStreamWindowCandidate {
-    let window: MirageWindow
+    let window: MirageMedia.MirageWindow
     let classification: AppStreamWindowClassification
     let role: String?
     let subrole: String?
@@ -32,7 +40,7 @@ struct AppStreamWindowCandidate {
     let windowListOrder: Int
 
     init(
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         classification: AppStreamWindowClassification,
         role: String?,
         subrole: String?,
@@ -82,14 +90,17 @@ enum AppStreamWindowCatalog {
     /// Returns app-stream candidates grouped by normalized bundle identifier.
     static func catalog(
         for bundleIdentifiers: [String],
-        minimumWindowSize: CGSize = CGSize(width: 160, height: 120)
+        minimumWindowSize: CGSize = CGSize(width: 160, height: 120),
+        captureContentProviderBackend: any MirageHostCaptureContentProviderBackend =
+            MacOSHostCaptureContentProviderBackend()
     )
     async throws -> [String: [AppStreamWindowCandidate]] {
         let normalizedBundleIDs = Set(bundleIdentifiers.map { $0.lowercased() })
         guard !normalizedBundleIDs.isEmpty else { return [:] }
 
         let runningPIDsByBundleID = runningProcessIDs(for: normalizedBundleIDs)
-        let content = try await SCShareableContent.mirageHostContent()
+        let contentWrapper = try await captureContentProviderBackend.shareableContent()
+        let content = contentWrapper.content
         let windowMetadata = fetchWindowMetadata()
 
         var candidatesByBundleID: [String: [AppStreamWindowCandidate]] = [:]
@@ -104,13 +115,13 @@ enum AppStreamWindowCatalog {
                 runningPIDsByBundleID: runningPIDsByBundleID
             ) else { continue }
 
-            let appModel = MirageApplication(
+            let appModel = MirageMedia.MirageApplication(
                 id: app.processID,
                 bundleIdentifier: app.bundleIdentifier,
                 name: app.applicationName,
                 iconData: nil
             )
-            let normalizedWindow = MirageWindow(
+            let normalizedWindow = MirageMedia.MirageWindow(
                 id: WindowID(window.windowID),
                 title: window.title,
                 application: appModel,

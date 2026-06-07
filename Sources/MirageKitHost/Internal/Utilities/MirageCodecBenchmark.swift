@@ -7,10 +7,18 @@
 //  Local codec benchmarking helpers for connection quality diagnostics.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 import VideoToolbox
 
 enum MirageCodecBenchmark {
@@ -28,9 +36,11 @@ enum MirageCodecBenchmark {
             pixelFormat: .p010,
             bitrate: targetBitrate
         )
-        let encoder = VideoEncoder(
+        let encoder = MacOSHostVideoEncoderFactoryBackend().makeVideoEncoder(
             configuration: config,
             latencyMode: .lowestLatency,
+            streamKind: .window,
+            mediaPathProfile: .unknown,
             inFlightLimit: 1
         )
         try await encoder.createSession(width: benchmarkWidth, height: benchmarkHeight)
@@ -58,7 +68,7 @@ enum MirageCodecBenchmark {
                 pixelFormat: kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
                 frameIndex: frameIndex
             ) else {
-                throw MirageError.protocolError("Encode benchmark failed: pixel buffer unavailable")
+                throw MirageCore.MirageError.protocolError("Encode benchmark failed: pixel buffer unavailable")
             }
 
             let presentationTime = CMTime(
@@ -80,7 +90,7 @@ enum MirageCodecBenchmark {
             case .accepted:
                 let waitResult = await MirageCodecBenchmarkRunner.waitForGroup(group, timeout: .seconds(2))
                 if waitResult == .timedOut {
-                    throw MirageError.protocolError("Encode benchmark timed out")
+                    throw MirageCore.MirageError.protocolError("Encode benchmark timed out")
                 }
                 let deltaMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
                 if frameIndex >= 5 {
@@ -94,7 +104,7 @@ enum MirageCodecBenchmark {
         await encoder.stopEncoding()
 
         guard !encodeTimes.isEmpty else {
-            throw MirageError.protocolError("Encode benchmark failed: no samples")
+            throw MirageCore.MirageError.protocolError("Encode benchmark failed: no samples")
         }
 
         return MirageCodecBenchmarkRunner.average(encodeTimes)

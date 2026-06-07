@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import AVFAudio
 import Speech
@@ -85,7 +93,7 @@ extension InputCapturingView {
             guard let self else { return }
             requestResponderRecovery(.interaction)
             syncModifiersForInput()
-            let event = MirageRotateEvent(rotation: rotation, phase: phase)
+            let event = MirageInput.MirageRotateEvent(rotation: rotation, phase: phase)
             onInputEvent?(.rotate(event))
         }
         scrollPhysicsView.configurePencilTouchHandlers(

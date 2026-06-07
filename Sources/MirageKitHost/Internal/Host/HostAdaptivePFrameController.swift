@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/31/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 struct HostFrameBudgetDecision: Sendable, Equatable {
@@ -116,8 +124,8 @@ struct HostAdaptivePFrameController: Equatable {
         let startupFrameWireBytesAt60FPS: Int
 
         static func policy(
-            for latencyMode: MirageStreamLatencyMode,
-            mediaPathProfile: MirageMediaPathProfile = .unknown,
+            for latencyMode: MirageMedia.MirageStreamLatencyMode,
+            mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
             receiverPlayoutDelayTargetMs: Double? = nil
         ) -> ModePolicy {
             if mediaPathProfile.usesAwdlRadioPolicy {
@@ -319,7 +327,7 @@ struct HostAdaptivePFrameController: Equatable {
     }
 
     mutating func update(
-        with feedback: ReceiverMediaFeedbackMessage,
+        with feedback: MirageWire.ReceiverMediaFeedbackMessage,
         currentBitrateBps: Int?,
         requestedTargetBitrateBps: Int?,
         startupCeilingBps: Int?,
@@ -329,8 +337,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
         now: CFAbsoluteTime
@@ -405,8 +413,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
         now: CFAbsoluteTime
@@ -685,8 +693,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
         now: CFAbsoluteTime
@@ -931,8 +939,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
         now: CFAbsoluteTime
@@ -986,8 +994,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
         now: CFAbsoluteTime
@@ -1044,8 +1052,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
         now: CFAbsoluteTime
@@ -1112,7 +1120,7 @@ struct HostAdaptivePFrameController: Equatable {
         startupCeilingBps: Int?,
         minimumBitrateFloorBps: Int,
         maxPayloadSize: Int,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) {
         let oldRate = max(1, previousFrameRate)
         let newRate = max(1, currentFrameRate)
@@ -1158,7 +1166,7 @@ struct HostAdaptivePFrameController: Equatable {
     }
 
     private func frameBudgetReductionAllowed(
-        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         awdlQualityReductionAllowed: Bool
     ) -> Bool {
         !mediaPathProfile.usesAwdlRadioPolicy || awdlQualityReductionAllowed
@@ -1175,8 +1183,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentQuality: Float,
         qualityFloor: Float,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision {
         let currentTarget = currentTargetFrameWireBytes(
@@ -1218,8 +1226,8 @@ struct HostAdaptivePFrameController: Equatable {
         currentFrameRate: Int,
         maxPayloadSize: Int,
         steadyQualityCeiling: Float,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision {
         let targetBytes = currentTargetFrameWireBytes(
@@ -1270,7 +1278,7 @@ struct HostAdaptivePFrameController: Equatable {
         boundedQuality: Float,
         steadyQualityCeiling: Float,
         input: BudgetInput,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> Float {
         guard state != .observing else { return steadyQualityCeiling }
         let pressureCeiling = max(0.02, min(steadyQualityCeiling, boundedQuality * 1.08))
@@ -1301,8 +1309,8 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) {
         guard targetFrameWireBytes == nil else { return }
@@ -1341,8 +1349,8 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Int {
         let policy = ModePolicy.policy(
@@ -1365,7 +1373,7 @@ struct HostAdaptivePFrameController: Equatable {
         startupCeilingBps: Int?,
         minimumBitrateFloorBps: Int,
         currentFrameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> BudgetInput {
         let requested = max(1, requestedTargetBitrateBps ?? currentBitrateBps ?? startupCeilingBps ?? minimumBitrateFloorBps)
         let current = max(1, currentBitrateBps ?? requested)
@@ -1397,7 +1405,7 @@ struct HostAdaptivePFrameController: Equatable {
     }
 
     private static func usesOptimizedVPNProfile(
-        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         currentFrameRate: Int,
         requestedBitrateBps: Int,
         startupCeilingBps: Int?
@@ -1541,8 +1549,8 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Double {
         let learned = learnedBytesPerMs ?? defaultBytesPerMs(
@@ -1560,8 +1568,8 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Double {
         let policy = ModePolicy.policy(
@@ -1584,8 +1592,8 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Int {
         let policy = ModePolicy.policy(
@@ -1607,8 +1615,8 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Int {
         let learned = learnedBytesPerMs ?? defaultBytesPerMs(
@@ -1657,7 +1665,7 @@ struct HostAdaptivePFrameController: Equatable {
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageMedia.MirageStreamLatencyMode
     ) -> Int? {
         let overshootBytes = wireBytes - targetBytes
         guard wireBytes >= Self.catastrophicPFrameMinimumWireBytes,
@@ -1867,7 +1875,7 @@ struct HostAdaptivePFrameController: Equatable {
         _ baseTargetClearMs: Double,
         currentQuality: Float,
         input: BudgetInput,
-        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         receiverHealthy: Bool,
         senderHealthy: Bool
     ) -> Double {
@@ -1889,7 +1897,7 @@ struct HostAdaptivePFrameController: Equatable {
         currentFrameRate: Int,
         currentQuality: Float,
         input: BudgetInput,
-        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         receiverHealthy: Bool,
         senderHealthy: Bool
     ) -> CFAbsoluteTime {
@@ -1925,7 +1933,7 @@ struct HostAdaptivePFrameController: Equatable {
     private func vpnReadableQualityTimingScale(
         currentQuality: Float,
         input: BudgetInput,
-        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         receiverHealthy: Bool,
         senderHealthy: Bool
     ) -> Double {
@@ -1955,7 +1963,7 @@ struct HostAdaptivePFrameController: Equatable {
     }
 
     private func vpnReadableQualityTimingPolicy(
-        mediaPathProfile: MirageMediaPathProfile,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         usesOptimizedVPNProfile: Bool
     ) -> VPNReadableQualityTimingPolicy {
         guard mediaPathProfile == .vpnOrOverlay,

@@ -7,8 +7,16 @@
 //  Host input controller extensions.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 import AppKit
@@ -42,7 +50,7 @@ extension MirageHostInputController {
     /// Releases tracked modifiers that have not received fresh events before the timeout.
     private func checkForStuckModifiers() {
         let now = CACurrentMediaTime()
-        var stuckModifiers: MirageModifierFlags = []
+        var stuckModifiers: MirageInput.MirageModifierFlags = []
 
         for (flag, timestamp) in modifierLastEventTimes {
             if now - timestamp > modifierStuckTimeoutSeconds { stuckModifiers.insert(flag) }
@@ -64,7 +72,7 @@ extension MirageHostInputController {
     func clearUnexpectedSystemModifiers(domain: HostKeyboardInjectionDomain) {
         let systemFlags = CGEventSource.flagsState(Self.systemStateSource(for: domain))
 
-        var actualModifiers: MirageModifierFlags = []
+        var actualModifiers: MirageInput.MirageModifierFlags = []
         for (cgFlag, mirageFlag) in Self.cgFlagToMirageFlag {
             if systemFlags.contains(cgFlag) { actualModifiers.insert(mirageFlag) }
         }

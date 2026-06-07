@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -40,7 +48,7 @@ extension InputCapturingView {
         currentRightClickCount = clickCount
 
         let modifiers = currentPencilModifiers()
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: clickCount,

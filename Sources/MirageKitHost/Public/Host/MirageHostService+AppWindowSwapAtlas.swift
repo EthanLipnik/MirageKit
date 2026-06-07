@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -22,8 +30,8 @@ extension MirageHostService {
         previousWindowInfo: WindowStreamInfo,
         clientContext: ClientContext,
         clientID: UUID,
-        failure: (String) -> AppWindowSwapResultMessage
-    ) async -> AppWindowSwapResultMessage {
+        failure: (String) -> MirageWire.AppWindowSwapResultMessage
+    ) async -> MirageWire.AppWindowSwapResultMessage {
         do {
             let started = try await replaceAppAtlasWindowCapture(
                 streamSession: streamSession,
@@ -63,7 +71,7 @@ extension MirageHostService {
             await markAppStreamInteraction(streamID: targetSlotStreamID, reason: "app atlas slot swap")
             await sendAppWindowInventoryUpdate(bundleIdentifier: bundleIdentifier, clientID: clientID)
             await recomputeAppSessionBitrateBudget(bundleIdentifier: bundleIdentifier, reason: "app atlas slot swap")
-            return AppWindowSwapResultMessage(
+            return MirageWire.AppWindowSwapResultMessage(
                 bundleIdentifier: bundleIdentifier,
                 targetSlotStreamID: targetSlotStreamID,
                 mediaStreamID: attachment.mediaStreamID,

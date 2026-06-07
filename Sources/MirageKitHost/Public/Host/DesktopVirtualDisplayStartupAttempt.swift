@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 3/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 private let desktopVirtualDisplayStartupTargetDefaultsPrefix = "MirageDesktopVirtualDisplayStartupTarget.v1"
@@ -29,7 +37,7 @@ enum DesktopVirtualDisplayStartupFallbackKind: Equatable {
 struct DesktopVirtualDisplayStartupAttempt: Equatable {
     let backingScale: DesktopBackingScaleResolution
     let refreshRate: Int
-    let colorSpace: MirageColorSpace
+    let colorSpace: MirageMedia.MirageColorSpace
     let label: String
     let fallbackKind: DesktopVirtualDisplayStartupFallbackKind
     let isConservativeRetry: Bool
@@ -51,8 +59,8 @@ struct DesktopVirtualDisplayStartupRequest: Equatable, Codable {
     let requestedPixelWidth: Int
     let requestedPixelHeight: Int
     let requestedRefreshRate: Int
-    let requestedColorDepth: MirageStreamColorDepth
-    let requestedColorSpace: MirageColorSpace
+    let requestedColorDepth: MirageMedia.MirageStreamColorDepth
+    let requestedColorSpace: MirageMedia.MirageColorSpace
     let requestedHiDPI: Bool
     let requestedStreamScaleBasis: Int
 }
@@ -69,7 +77,7 @@ private struct DesktopVirtualDisplayStartupCacheEntry: Equatable, Codable {
     let pixelHeight: Int
     let hiDPI: Bool
     let refreshRate: Int
-    let colorSpace: MirageColorSpace
+    let colorSpace: MirageMedia.MirageColorSpace
 }
 
 /// Returns the UserDefaults key for a cached startup target.
@@ -113,7 +121,7 @@ func recordDesktopVirtualDisplayStartupTargetSuccess(
     pixelResolution: CGSize,
     scaleFactor: CGFloat,
     refreshRate: Int,
-    colorSpace: MirageColorSpace,
+    colorSpace: MirageMedia.MirageColorSpace,
     targetTier: DesktopVirtualDisplayStartupTargetTier,
     for request: DesktopVirtualDisplayStartupRequest
 ) {
@@ -162,11 +170,11 @@ func desktopVirtualDisplayStartupPlan(
     logicalResolution: CGSize,
     requestedScaleFactor: CGFloat,
     requestedRefreshRate: Int,
-    requestedColorDepth: MirageStreamColorDepth,
-    requestedColorSpace: MirageColorSpace,
+    requestedColorDepth: MirageMedia.MirageStreamColorDepth,
+    requestedColorSpace: MirageMedia.MirageColorSpace,
     requestedStreamScale: CGFloat = 1.0
 ) -> DesktopVirtualDisplayStartupPlan {
-    let normalizedLogicalResolution = MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
+    let normalizedLogicalResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
     let primary = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
             logicalResolution: normalizedLogicalResolution,
@@ -189,7 +197,7 @@ func desktopVirtualDisplayStartupPlan(
         requestedColorDepth: requestedColorDepth,
         requestedColorSpace: requestedColorSpace,
         requestedHiDPI: primary.backingScale.scaleFactor > 1.5,
-        requestedStreamScaleBasis: Int((MirageStreamGeometry.clampStreamScale(requestedStreamScale) * 1000).rounded())
+        requestedStreamScaleBasis: Int((MirageMedia.MirageStreamGeometry.clampStreamScale(requestedStreamScale) * 1000).rounded())
     )
 
     let conservative = DesktopVirtualDisplayStartupAttempt(
@@ -239,7 +247,7 @@ func desktopVirtualDisplayStartupPlan(
     }
     appendAttempt(primary)
     if requestedColorSpace != .sRGB {
-        for candidateColorSpace in MirageColorSpace.allCases where candidateColorSpace != requestedColorSpace {
+        for candidateColorSpace in MirageMedia.MirageColorSpace.allCases where candidateColorSpace != requestedColorSpace {
             appendAttempt(
                 DesktopVirtualDisplayStartupAttempt(
                     backingScale: primary.backingScale,

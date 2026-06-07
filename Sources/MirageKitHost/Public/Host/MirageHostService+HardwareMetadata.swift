@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import Darwin
@@ -28,9 +36,9 @@ extension MirageHostService {
         return String.mirageDecodedCString(buffer)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func detectSupportedColorDepths() -> [MirageStreamColorDepth] {
+    static func detectSupportedColorDepths() -> [MirageMedia.MirageStreamColorDepth] {
         let ultraProbe = UltraColorDepthProbeCache.result
-        var supported: [MirageStreamColorDepth] = [.standard, .pro]
+        var supported: [MirageMedia.MirageStreamColorDepth] = [.standard, .pro]
         if ultraProbe.supportsUltra444 {
             supported.append(.ultra)
         }
@@ -62,7 +70,7 @@ extension MirageHostService {
         static let supported = VideoEncoder.probeProRes4444Support()
     }
 
-    func effectiveVideoCodec(for requested: MirageVideoCodec?) -> MirageVideoCodec? {
+    func effectiveVideoCodec(for requested: MirageMedia.MirageVideoCodec?) -> MirageMedia.MirageVideoCodec? {
         guard requested == .proRes4444 else { return requested }
         guard supportsProRes4444 else {
             MirageLogger.host("ProRes 4444 request ignored because this host does not support ProRes 4444")
@@ -72,9 +80,9 @@ extension MirageHostService {
     }
 
     func effectiveColorDepth(
-        for requested: MirageStreamColorDepth?,
-        codec: MirageVideoCodec? = nil
-    ) -> MirageStreamColorDepth? {
+        for requested: MirageMedia.MirageStreamColorDepth?,
+        codec: MirageMedia.MirageVideoCodec? = nil
+    ) -> MirageMedia.MirageStreamColorDepth? {
         guard let requested else { return nil }
         if codec == .proRes4444, requested == .ultra, supportsProRes4444 {
             return .ultra

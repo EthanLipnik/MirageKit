@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 import Foundation
 
 extension CGVirtualDisplayBridge {
     struct DisplayColorSpaceValidationResult: Sendable {
-        let coverageStatus: MirageDisplayP3CoverageStatus
+        let coverageStatus: MirageMedia.MirageDisplayP3CoverageStatus
         let observedName: String?
 
         var isAcceptableForDisplayP3: Bool {
@@ -23,7 +31,7 @@ extension CGVirtualDisplayBridge {
 
     static func displayColorSpaceValidation(
         observedColorSpace: CGColorSpace,
-        expectedColorSpace: MirageColorSpace
+        expectedColorSpace: MirageMedia.MirageColorSpace
     ) -> DisplayColorSpaceValidationResult {
         let observedName = observedColorSpace.name.map { $0 as String }
         let expectedNames = expectedColorSpaceNames(for: expectedColorSpace)
@@ -120,7 +128,7 @@ extension CGVirtualDisplayBridge {
 
     static func displayColorSpaceValidation(
         displayID: CGDirectDisplayID,
-        expectedColorSpace: MirageColorSpace
+        expectedColorSpace: MirageMedia.MirageColorSpace
     ) -> DisplayColorSpaceValidationResult {
         let observedColorSpace = CGDisplayCopyColorSpace(displayID)
         return displayColorSpaceValidation(
@@ -129,7 +137,7 @@ extension CGVirtualDisplayBridge {
         )
     }
 
-    private static func expectedColorSpaceNames(for colorSpace: MirageColorSpace) -> Set<String> {
+    private static func expectedColorSpaceNames(for colorSpace: MirageMedia.MirageColorSpace) -> Set<String> {
         switch colorSpace {
         case .displayP3:
             return [
@@ -145,7 +153,7 @@ extension CGVirtualDisplayBridge {
         }
     }
 
-    private static func expectedColorSpaces(for colorSpace: MirageColorSpace) -> [CGColorSpace] {
+    private static func expectedColorSpaces(for colorSpace: MirageMedia.MirageColorSpace) -> [CGColorSpace] {
         expectedColorSpaceNames(for: colorSpace).compactMap { name in
             CGColorSpace(name: name as CFString)
         }

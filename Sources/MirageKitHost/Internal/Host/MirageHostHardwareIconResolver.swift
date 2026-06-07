@@ -5,11 +5,19 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 import Foundation
 import ImageIO
-import MirageKit
 import UniformTypeIdentifiers
 
 enum MirageHostHardwareIconResolver {

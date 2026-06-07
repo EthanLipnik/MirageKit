@@ -4,19 +4,26 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Loom media stream receive loops.
+//  Media stream receive loops.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import Network
 
 @MainActor
 extension MirageClientService {
-    // MARK: - Loom Media Stream Listener
+    // MARK: - Media Stream Listener
 
-    /// Start listening for incoming media streams on the authenticated Loom session.
+    /// Start listening for incoming media streams on the authenticated session.
     func startMediaStreamListener() {
         guard let session = loomSession else { return }
         stopMediaStreamListener()
@@ -74,8 +81,11 @@ extension MirageClientService {
 
     // MARK: - Video Stream Receive
 
-    /// Start receiving video packets from a Loom multiplexed stream.
-    private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
+    /// Start receiving video packets from a multiplexed media stream.
+    private func startVideoStreamReceiveLoop(
+        stream: any MirageIncomingMediaStream,
+        streamID: StreamID
+    ) {
         videoStreamReceiveTasks[streamID]?.cancel()
         videoPacketIngressProcessors[streamID]?.finish()
         stream.clearIncomingBytesBatchHandler()
@@ -123,7 +133,7 @@ extension MirageClientService {
     }
 
     private func startQualityTestStreamReceiveLoop(
-        stream: LoomMultiplexedStream,
+        stream: any MirageIncomingMediaStream,
         testID: UUID,
         label: String
     ) {
@@ -146,7 +156,7 @@ extension MirageClientService {
 
     /// Process a single video packet received from a Loom stream.
     nonisolated func processIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
-        guard data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) else {
+        guard data.count >= MirageWire.mirageHeaderSize, let header = MirageWire.FrameHeader.deserialize(from: data) else {
             return
         }
 
@@ -187,7 +197,7 @@ extension MirageClientService {
             return
         }
 
-        let wirePayload = data.dropFirst(mirageHeaderSize)
+        let wirePayload = data.dropFirst(MirageWire.mirageHeaderSize)
         // Local media encryption adds packet-level auth tags on top of the Loom session.
         let expectedWireLength =
             header.flags.contains(.encryptedPayload)
@@ -247,8 +257,8 @@ extension MirageClientService {
     }
 
     private nonisolated func handleIncomingQualityTestData(_ data: Data, expectedTestID: UUID) {
-        guard data.count >= mirageQualityTestHeaderSize,
-              let header = QualityTestPacketHeader.deserialize(from: data),
+        guard data.count >= MirageWire.mirageQualityTestHeaderSize,
+              let header = MirageWire.QualityTestPacketHeader.deserialize(from: data),
               header.testID == expectedTestID else {
             return
         }
@@ -304,7 +314,7 @@ extension MirageClientService {
     }
 
     private func handleObservedIncomingMediaStream(
-        _ stream: LoomMultiplexedStream,
+        _ stream: any MirageIncomingMediaStream,
         label: String,
         sessionID: UUID
     ) async {
@@ -414,12 +424,12 @@ extension MirageClientService {
         let recoveryCause = sessionStore.sessionByStreamID(streamID)?.clientRecoveryCause ??
             sessionStore.sessionByMediaStreamID(streamID)?.clientRecoveryCause ??
             .none
-        let mediaRecoveryCause = MirageMediaFeedbackRecoveryCause(recoveryCause)
-        let request = KeyframeRequestMessage(
+        let mediaRecoveryCause = MirageWire.MirageMediaFeedbackRecoveryCause(recoveryCause)
+        let request = MirageWire.KeyframeRequestMessage(
             streamID: streamID,
             recoveryCause: mediaRecoveryCause
         )
-        guard let message = try? ControlMessage(type: .keyframeRequest, content: request) else {
+        guard let message = try? MirageWire.ControlMessage(type: .keyframeRequest, content: request) else {
             MirageLogger.error(.client, "Failed to create keyframe request message")
             return false
         }
@@ -437,10 +447,10 @@ extension MirageClientService {
         return true
     }
 
-    func handleKeyframeRecoveryAck(_ message: ControlMessage) {
-        let ack: KeyframeRecoveryAckMessage
+    func handleKeyframeRecoveryAck(_ message: MirageWire.ControlMessage) {
+        let ack: MirageWire.KeyframeRecoveryAckMessage
         do {
-            ack = try message.decode(KeyframeRecoveryAckMessage.self)
+            ack = try message.decode(MirageWire.KeyframeRecoveryAckMessage.self)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode keyframe recovery ack: "
@@ -463,7 +473,7 @@ extension MirageClientService {
     }
 }
 
-private extension MirageMediaFeedbackRecoveryCause {
+private extension MirageWire.MirageMediaFeedbackRecoveryCause {
     init(_ cause: MirageStreamClientRecoveryCause) {
         self = switch cause {
         case .none:

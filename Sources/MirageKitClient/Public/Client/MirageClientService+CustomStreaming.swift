@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 4/30/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 public extension MirageClientService {
@@ -20,19 +28,19 @@ public extension MirageClientService {
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil
     ) async throws -> ClientStreamSession {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
         await cancelActiveQualityTest(reason: "custom stream startup", notifyHost: true)
         _ = await refreshCurrentControlPathKind()
 
         let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else {
-            throw MirageError.protocolError("Custom stream kind is required")
+            throw MirageCore.MirageError.protocolError("Custom stream kind is required")
         }
 
         let baseResolution = displayResolution ?? mainDisplayResolution
-        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(baseResolution)
+        let effectiveDisplayResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(baseResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
-            throw MirageError.protocolError("Display size unavailable for custom streaming")
+            throw MirageCore.MirageError.protocolError("Display size unavailable for custom streaming")
         }
 
         let startupRequestID = UUID()
@@ -40,7 +48,7 @@ public extension MirageClientService {
         pendingStreamSetupKind = .custom
         pendingStreamSetupAppSessionID = nil
 
-        var request = StartCustomStreamMessage(
+        var request = MirageWire.StartCustomStreamMessage(
             startupRequestID: startupRequestID,
             kind: trimmedKind,
             metadata: metadata,
@@ -74,7 +82,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
+            requestedStreamScale: MirageMedia.MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight,
             disableResolutionCap: request.disableResolutionCap == true
@@ -103,7 +111,7 @@ public extension MirageClientService {
     /// Requests host-side custom stream shutdown and clears the local stream session.
     func stopCustomStream(_ session: ClientStreamSession) async {
         let streamID = session.id
-        let request = StopCustomStreamMessage(streamID: streamID)
+        let request = MirageWire.StopCustomStreamMessage(streamID: streamID)
         queueControlMessageBestEffort(.stopCustomStream, content: request)
         await forceStopCustomStreamLocally(
             streamID: streamID,
@@ -114,9 +122,9 @@ public extension MirageClientService {
 
 @MainActor
 extension MirageClientService {
-    func handleCustomStreamStarted(_ message: ControlMessage) async {
+    func handleCustomStreamStarted(_ message: MirageWire.ControlMessage) async {
         do {
-            let started = try message.decode(MirageCustomStreamStartedMessage.self)
+            let started = try message.decode(MirageWire.MirageCustomStreamStartedMessage.self)
             let streamID = started.streamID
             let startupAttemptID = started.startupAttemptID
             guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
@@ -195,9 +203,9 @@ extension MirageClientService {
         }
     }
 
-    func handleCustomStreamStopped(_ message: ControlMessage) async {
+    func handleCustomStreamStopped(_ message: MirageWire.ControlMessage) async {
         do {
-            let stopped = try message.decode(MirageCustomStreamStoppedMessage.self)
+            let stopped = try message.decode(MirageWire.MirageCustomStreamStoppedMessage.self)
             await forceStopCustomStreamLocally(
                 streamID: stopped.streamID,
                 notifyStopReason: stopped.reason
@@ -207,28 +215,28 @@ extension MirageClientService {
         }
     }
 
-    func handleCustomStreamFailed(_ message: ControlMessage) {
+    func handleCustomStreamFailed(_ message: MirageWire.ControlMessage) {
         do {
-            let failed = try message.decode(CustomStreamFailedMessage.self)
+            let failed = try message.decode(MirageWire.CustomStreamFailedMessage.self)
             if let continuation = customStreamStartedContinuations.removeValue(forKey: failed.startupRequestID) {
-                continuation.resume(throwing: MirageError.protocolError(failed.reason))
+                continuation.resume(throwing: MirageCore.MirageError.protocolError(failed.reason))
             }
             clearPendingStreamSetup(kind: .custom)
-            delegate?.didEncounterError(MirageError.protocolError(failed.reason))
+            delegate?.didEncounterError(MirageCore.MirageError.protocolError(failed.reason))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode custom stream failed: ")
         }
     }
 
     private func syntheticCustomStreamWindow(
-        for started: MirageCustomStreamStartedMessage
-    ) -> MirageWindow {
-        let app = MirageApplication(
+        for started: MirageWire.MirageCustomStreamStartedMessage
+    ) -> MirageMedia.MirageWindow {
+        let app = MirageMedia.MirageApplication(
             id: 0,
             bundleIdentifier: started.descriptor.kind,
             name: started.descriptor.displayName
         )
-        return MirageWindow(
+        return MirageMedia.MirageWindow(
             id: 0,
             title: started.descriptor.displayName,
             application: app,
@@ -240,7 +248,7 @@ extension MirageClientService {
 
     private func forceStopCustomStreamLocally(
         streamID: StreamID,
-        notifyStopReason: MirageCustomStreamStoppedMessage.Reason?
+        notifyStopReason: MirageWire.MirageCustomStreamStoppedMessage.Reason?
     ) async {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
@@ -277,7 +285,7 @@ extension MirageClientService {
 
         if let notifyStopReason {
             onCustomStreamStopped?(
-                MirageCustomStreamStoppedMessage(streamID: streamID, reason: notifyStopReason)
+                MirageWire.MirageCustomStreamStoppedMessage(streamID: streamID, reason: notifyStopReason)
             )
         }
     }

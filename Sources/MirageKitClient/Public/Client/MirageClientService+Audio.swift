@@ -4,12 +4,19 @@
 //
 //  Created by Ethan Lipnik on 2/6/26.
 //
-//  Loom stream audio transport and playback handling.
+//  Media stream audio transport and playback handling.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -40,8 +47,11 @@ extension MirageClientService {
         }
     }
 
-    /// Start receiving audio packets from a Loom multiplexed stream.
-    func startAudioStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) async {
+    /// Start receiving audio packets from a multiplexed media stream.
+    func startAudioStreamReceiveLoop(
+        stream: any MirageIncomingMediaStream,
+        streamID: StreamID
+    ) async {
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
         let streamChanged = audioRegisteredStreamID != streamID
@@ -91,8 +101,8 @@ extension MirageClientService {
 
     /// Process a single audio packet received from a Loom stream.
     private nonisolated func handleIncomingAudioData(_ data: Data, expectedStreamID: StreamID) {
-        guard data.count >= mirageAudioHeaderSize,
-              let header = AudioPacketHeader.deserialize(from: data) else {
+        guard data.count >= MirageWire.mirageAudioHeaderSize,
+              let header = MirageWire.AudioPacketHeader.deserialize(from: data) else {
             return
         }
 
@@ -104,7 +114,7 @@ extension MirageClientService {
         }
 
         let generation = audioPacketIngressQueue.currentGeneration
-        let wirePayload = data.dropFirst(mirageAudioHeaderSize)
+        let wirePayload = data.dropFirst(MirageWire.mirageAudioHeaderSize)
         // Local media encryption adds packet-level auth tags on top of the Loom session.
         let expectedWireLength = header.flags.contains(.encryptedPayload)
             ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
@@ -134,7 +144,7 @@ extension MirageClientService {
             payloadData = Data(wirePayload)
         }
         if !header.flags.contains(.encryptedPayload) {
-            guard CRC32.calculate(payloadData) == header.checksum else {
+            guard MirageWire.CRC32.calculate(payloadData) == header.checksum else {
                 return
             }
         }
@@ -147,9 +157,9 @@ extension MirageClientService {
         )
     }
 
-    func handleAudioStreamStarted(_ message: ControlMessage) {
+    func handleAudioStreamStarted(_ message: MirageWire.ControlMessage) {
         do {
-            let started = try message.decode(AudioStreamStartedMessage.self)
+            let started = try message.decode(MirageWire.AudioStreamStartedMessage.self)
             let previous = activeAudioStreamMessage
             let isReplacingActiveAudioStream = previous != nil && previous != started
             let playbackController = audioPlaybackController
@@ -195,7 +205,7 @@ extension MirageClientService {
     }
 
     private func publishAudioStreamStarted(
-        _ started: AudioStreamStartedMessage,
+        _ started: MirageWire.AudioStreamStartedMessage,
         preferredChannels: Int,
         audioPlaybackController: AudioPlaybackController,
         generation: UInt64
@@ -220,9 +230,9 @@ extension MirageClientService {
         }
     }
 
-    func handleAudioStreamStopped(_ message: ControlMessage) {
+    func handleAudioStreamStopped(_ message: MirageWire.ControlMessage) {
         do {
-            let stopped = try message.decode(AudioStreamStoppedMessage.self)
+            let stopped = try message.decode(MirageWire.AudioStreamStoppedMessage.self)
             MirageLogger.client("Audio stream stopped: stream=\(stopped.streamID), reason=\(stopped.reason)")
             let shouldReset = activeAudioStreamMessage?.streamID == stopped.streamID
             guard shouldReset else { return }

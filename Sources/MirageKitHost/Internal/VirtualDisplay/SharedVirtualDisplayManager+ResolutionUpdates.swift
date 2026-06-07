@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import CoreGraphics
 import Foundation
@@ -17,7 +25,7 @@ extension SharedVirtualDisplayManager {
         consumer: DisplayConsumer,
         newResolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         resizeRequest: DesktopVirtualDisplayResizeRequest?
     ) async throws {
         if consumer == .desktopStream,
@@ -41,7 +49,7 @@ extension SharedVirtualDisplayManager {
                 )
                 if let updatedDisplay = sharedDisplay {
                     recordDesktopVirtualDisplayResizeTargetSuccess(
-                        snapshot: snapshot(from: updatedDisplay),
+                        snapshot: MirageHostVirtualDisplaySnapshot(snapshot: snapshot(from: updatedDisplay)),
                         for: resizeRequest
                     )
                 }
@@ -86,7 +94,7 @@ extension SharedVirtualDisplayManager {
            let resizeRequest,
            let updatedDisplay = sharedDisplay {
             recordDesktopVirtualDisplayResizeTargetSuccess(
-                snapshot: snapshot(from: updatedDisplay),
+                snapshot: MirageHostVirtualDisplaySnapshot(snapshot: snapshot(from: updatedDisplay)),
                 for: resizeRequest
             )
         }
@@ -213,7 +221,7 @@ extension SharedVirtualDisplayManager {
                let resizeRequest,
                let updatedDisplay = sharedDisplay {
                 recordDesktopVirtualDisplayResizeTargetSuccess(
-                    snapshot: snapshot(from: updatedDisplay),
+                    snapshot: MirageHostVirtualDisplaySnapshot(snapshot: snapshot(from: updatedDisplay)),
                     for: resizeRequest
                 )
             }

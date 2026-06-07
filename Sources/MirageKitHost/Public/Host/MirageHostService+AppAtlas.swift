@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/3/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -20,15 +28,15 @@ extension MirageHostService {
     }
 
     func startAppAtlasWindowCapture(
-        app: MirageInstalledApp,
-        window: MirageWindow,
+        app: MirageWire.MirageInstalledApp,
+        window: MirageMedia.MirageWindow,
         clientContext: ClientContext,
-        selectRequest: SelectAppMessage,
+        selectRequest: MirageWire.SelectAppMessage,
         targetFrameRate: Int,
         requestedBitrate: Int?,
         mediaMaxPacketSize: Int
     ) async throws -> AppAtlasStartedWindow {
-        let content = try await SCShareableContent.mirageHostContent()
+        let content = try await currentCaptureShareableContent()
         let disallowedWindowIDs = Set(activeStreamIDByWindowID.keys)
         let captureSource = try resolveCaptureSource(
             for: window,
@@ -50,13 +58,13 @@ extension MirageHostService {
         let logicalStreamID = nextStreamID
         nextStreamID += 1
 
-        let resolvedWindowApplication = MirageApplication(
+        let resolvedWindowApplication = MirageMedia.MirageApplication(
             id: scApplication.processID,
             bundleIdentifier: scApplication.bundleIdentifier,
             name: scApplication.applicationName
         )
         let latestFrame = currentWindowFrame(for: resolvedWindowID) ?? scWindow.frame
-        let resolvedWindow = MirageWindow(
+        let resolvedWindow = MirageMedia.MirageWindow(
             id: resolvedWindowID,
             title: scWindow.title ?? window.title,
             application: resolvedWindowApplication,
@@ -87,7 +95,7 @@ extension MirageHostService {
         )
         registerActiveStreamSession(session)
         inputStreamCache.set(logicalStreamID, window: resolvedWindow, client: clientContext.client)
-        activateWindow(resolvedWindow)
+        await activateWindow(resolvedWindow)
 
         if let app = resolvedWindow.application {
             await startMenuBarMonitoring(streamID: logicalStreamID, app: app, clientContext: clientContext)
@@ -115,10 +123,10 @@ extension MirageHostService {
         clientContext: ClientContext
     ) async throws -> AppAtlasStartedWindow {
         guard let coordinator = appAtlasCoordinatorsByClientID[clientContext.client.id] else {
-            throw MirageError.protocolError("App-atlas coordinator is unavailable")
+            throw MirageCore.MirageError.protocolError("App-atlas coordinator is unavailable")
         }
 
-        let requestedWindow = MirageWindow(
+        let requestedWindow = MirageMedia.MirageWindow(
             id: targetWindowID,
             title: hiddenInfo.title,
             application: streamSession.window.application,
@@ -131,7 +139,7 @@ extension MirageHostService {
             isOnScreen: true,
             windowLayer: 0
         )
-        let content = try await SCShareableContent.mirageHostContent()
+        let content = try await currentCaptureShareableContent()
         let disallowedWindowIDs = Set(activeStreamIDByWindowID.keys).subtracting([currentWindowID])
         let captureSource = try resolveCaptureSource(
             for: requestedWindow,
@@ -143,7 +151,7 @@ extension MirageHostService {
         let scApplication = captureSource.application
         let resolvedWindowID = WindowID(scWindow.windowID)
         guard resolvedWindowID == targetWindowID else {
-            throw MirageError.windowNotFound
+            throw MirageCore.MirageError.windowNotFound
         }
         if let existingStreamID = activeStreamIDByWindowID[resolvedWindowID],
            existingStreamID != streamSession.id {
@@ -153,13 +161,13 @@ extension MirageHostService {
             )
         }
 
-        let resolvedWindowApplication = MirageApplication(
+        let resolvedWindowApplication = MirageMedia.MirageApplication(
             id: scApplication.processID,
             bundleIdentifier: scApplication.bundleIdentifier,
             name: scApplication.applicationName
         )
         let latestFrame = currentWindowFrame(for: resolvedWindowID) ?? scWindow.frame
-        let resolvedWindow = MirageWindow(
+        let resolvedWindow = MirageMedia.MirageWindow(
             id: resolvedWindowID,
             title: scWindow.title ?? hiddenInfo.title,
             application: resolvedWindowApplication,
@@ -184,7 +192,7 @@ extension MirageHostService {
             )
         )
         inputStreamCache.set(streamSession.id, window: resolvedWindow, client: streamSession.client)
-        activateWindow(resolvedWindow)
+        await activateWindow(resolvedWindow)
 
         if let app = resolvedWindow.application {
             await startMenuBarMonitoring(streamID: streamSession.id, app: app, clientContext: clientContext)

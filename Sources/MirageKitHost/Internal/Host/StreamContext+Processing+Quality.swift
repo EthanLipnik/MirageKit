@@ -7,9 +7,17 @@
 //  Pipeline metrics, in-flight depth, and runtime quality adjustment.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 extension StreamContext {
@@ -199,7 +207,7 @@ extension StreamContext {
 
         if lastInFlightAdjustmentTime > 0, now - lastInFlightAdjustmentTime < inFlightAdjustmentCooldown { return }
 
-        let cadenceTarget = MirageStreamCadenceTarget(
+        let cadenceTarget = MirageMedia.MirageStreamCadenceTarget(
             sourceFPS: currentFrameRate,
             displayFPS: currentFrameRate,
             latencyMode: latencyMode
@@ -241,7 +249,7 @@ extension StreamContext {
             return
         }
 
-        let cadenceTarget = MirageStreamCadenceTarget(
+        let cadenceTarget = MirageMedia.MirageStreamCadenceTarget(
             sourceFPS: currentFrameRate,
             displayFPS: currentFrameRate,
             latencyMode: latencyMode
@@ -835,7 +843,7 @@ extension StreamContext {
     }
 
     func updateReceiverCapacityLearningQuarantine(
-        _ feedback: ReceiverMediaFeedbackMessage,
+        _ feedback: MirageWire.ReceiverMediaFeedbackMessage,
         now: CFAbsoluteTime
     ) {
         let decodeDepth = feedback.decodeQueueDepth ?? feedback.decodeBacklogFrames

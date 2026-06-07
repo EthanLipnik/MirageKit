@@ -7,9 +7,17 @@
 //  Shared-display app-stream layout helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -54,7 +62,8 @@ extension StreamContext {
         if let normalizedBundleIdentifier {
             do {
                 let candidates = try await AppStreamWindowCatalog.catalog(
-                    for: [normalizedBundleIdentifier]
+                    for: [normalizedBundleIdentifier],
+                    captureContentProviderBackend: captureContentProviderBackend
                 )[normalizedBundleIdentifier]
                 if let candidates,
                    let cluster = AppStreamWindowCatalog.capturedWindowCluster(
@@ -68,7 +77,7 @@ extension StreamContext {
             }
         }
 
-        let content = try await SCShareableContent.mirageHostContent()
+        let content = try await currentCaptureShareableContent()
         let windowsByID = Dictionary(uniqueKeysWithValues: content.windows.map { (WindowID($0.windowID), $0) })
         let includedWindowWrappers = clusterWindowIDs.compactMap { windowID in
             windowsByID[windowID].map { SCWindowWrapper(window: $0) }
@@ -151,7 +160,7 @@ extension StreamContext {
             label: label
         )
         let displayBounds = displayWrapper.display.frame.standardized
-        let visibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+        let visibleBounds = virtualDisplayBackend.displayVisibleBounds(
             displayWrapper.display.displayID,
             knownBounds: displayBounds
         )
@@ -207,7 +216,7 @@ extension StreamContext {
 
     nonisolated static func targetWindowAspectRatio(
         requestedLogicalSize: CGSize,
-        sizePreset: MirageDisplaySizePreset
+        sizePreset: MirageMedia.MirageDisplaySizePreset
     ) -> CGFloat {
         let presetAspectRatio = sizePreset.contentAspectRatio
         guard presetAspectRatio.isFinite, presetAspectRatio > 0 else {

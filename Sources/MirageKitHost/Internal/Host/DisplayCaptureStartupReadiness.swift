@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 4/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 
 /// Quality of ScreenCaptureKit samples observed before measuring display capture startup.

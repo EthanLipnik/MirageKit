@@ -9,6 +9,7 @@ import Foundation
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
+import MirageWire
 
 @Suite("Remote Client Stream Options")
 struct RemoteClientStreamOptionsTests {
@@ -16,10 +17,10 @@ struct RemoteClientStreamOptionsTests {
     @Test("Host command updates client callbacks for stream-option and stop actions")
     func remoteClientCommandUpdatesCallbacks() throws {
         let service = MirageClientService()
-        var receivedDisplayMode: MirageStreamOptionsDisplayMode?
+        var receivedDisplayMode: MirageWire.MirageStreamOptionsDisplayMode?
         var receivedStatusOverlayEnabled: Bool?
-        var receivedCursorPresentation: MirageDesktopCursorPresentation?
-        var receivedCursorLockMode: MirageDesktopCursorLockMode?
+        var receivedCursorPresentation: MirageWire.MirageDesktopCursorPresentation?
+        var receivedCursorLockMode: MirageWire.MirageDesktopCursorLockMode?
         var receivedStoppedAppBundleIdentifier: String?
         var receivedStopDesktopStream = false
 
@@ -30,12 +31,12 @@ struct RemoteClientStreamOptionsTests {
         service.onRemoteClientStopAppStreamCommand = { receivedStoppedAppBundleIdentifier = $0 }
         service.onRemoteClientStopDesktopStreamCommand = { receivedStopDesktopStream = true }
 
-        let presentation = MirageDesktopCursorPresentation(
+        let presentation = MirageWire.MirageDesktopCursorPresentation(
             source: .host,
             lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: false
         )
-        let command = RemoteClientStreamOptionsCommandMessage(
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(
             displayMode: .hostMenuBar,
             statusOverlayEnabled: true,
             desktopCursorPresentation: presentation,
@@ -43,7 +44,7 @@ struct RemoteClientStreamOptionsTests {
             stopAppBundleIdentifier: "com.example.app",
             stopDesktopStream: true
         )
-        let envelope = try ControlMessage(type: .remoteClientStreamOptionsCommand, content: command)
+        let envelope = try MirageWire.ControlMessage(type: .remoteClientStreamOptionsCommand, content: command)
 
         service.handleRemoteClientStreamOptionsCommand(envelope)
 
@@ -57,7 +58,7 @@ struct RemoteClientStreamOptionsTests {
 
     @Test("Remote client stream-option state preserves cursor lock availability")
     func remoteClientStatePreservesCursorLockAvailability() throws {
-        let state = RemoteClientStreamOptionsStateMessage(
+        let state = MirageWire.RemoteClientStreamOptionsStateMessage(
             displayMode: .inStream,
             statusOverlayEnabled: false,
             desktopCursorLockAvailable: true,
@@ -65,7 +66,7 @@ struct RemoteClientStreamOptionsTests {
         )
 
         let data = try JSONEncoder().encode(state)
-        let decoded = try JSONDecoder().decode(RemoteClientStreamOptionsStateMessage.self, from: data)
+        let decoded = try JSONDecoder().decode(MirageWire.RemoteClientStreamOptionsStateMessage.self, from: data)
 
         #expect(decoded.displayMode == .inStream)
         #expect(decoded.statusOverlayEnabled == false)

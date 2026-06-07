@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 1/15/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -17,7 +24,7 @@ actor StreamPacketSender {
     let mediaSecurityKey: MirageMediaPacketKey?
     let sendPacket: PacketMetadataSendHandler
     let queuedUnreliableDiagnosticsProvider:
-        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)?
+        (@Sendable (MirageMedia.MirageMediaSendProfile) async -> MirageQueuedUnreliableSendDiagnostics?)?
     let onSendError: (@Sendable (Error) -> Void)?
     let duplicatesParameterSetPackets: Bool
     nonisolated let onDependencyFrameDropped:
@@ -76,7 +83,7 @@ actor StreamPacketSender {
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         sendPacketWithMetadata: @escaping PacketMetadataSendHandler,
         queuedUnreliableDiagnosticsProvider:
-        (@Sendable (LoomQueuedUnreliableSendProfile) async -> LoomQueuedUnreliableSendDiagnostics?)? = nil,
+        (@Sendable (MirageMedia.MirageMediaSendProfile) async -> MirageQueuedUnreliableSendDiagnostics?)? = nil,
         onSendError: (@Sendable (Error) -> Void)? = nil,
         duplicatesParameterSetPackets: Bool = false,
         onDependencyFrameDropped:
@@ -93,7 +100,7 @@ actor StreamPacketSender {
         self.onDependencyFrameDropped = onDependencyFrameDropped
         self.onFrameTransportCompleted = onFrameTransportCompleted
         packetBufferPool = PacketBufferPool(
-            capacity: mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
+            capacity: MirageWire.mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
         )
     }
 }

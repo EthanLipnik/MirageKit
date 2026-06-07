@@ -5,13 +5,21 @@
 //  Created by Ethan Lipnik on 5/31/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 struct HostFrameFreshnessPolicy: Sendable, Equatable {
-    let latencyMode: MirageStreamLatencyMode
+    let latencyMode: MirageMedia.MirageStreamLatencyMode
     let frameRate: Int
     let inputActiveWindow: CFTimeInterval
     let stillContentWindow: CFTimeInterval
@@ -30,9 +38,9 @@ struct HostFrameFreshnessPolicy: Sendable, Equatable {
     let stillQualityKeyframeInterval: CFTimeInterval
 
     static func policy(
-        for latencyMode: MirageStreamLatencyMode,
+        for latencyMode: MirageMedia.MirageStreamLatencyMode,
         frameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> HostFrameFreshnessPolicy {
         let safeFrameRate = max(1, frameRate)

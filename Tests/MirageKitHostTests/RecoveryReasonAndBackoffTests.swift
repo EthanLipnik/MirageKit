@@ -12,6 +12,7 @@
 import MirageKit
 import Foundation
 import Testing
+import MirageCore
 
 @Suite("Recovery Reason Mapping")
 struct RecoveryReasonMappingTests {
@@ -249,8 +250,8 @@ struct RecoveryReasonMappingTests {
     }
 
     private func makeContext(
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,

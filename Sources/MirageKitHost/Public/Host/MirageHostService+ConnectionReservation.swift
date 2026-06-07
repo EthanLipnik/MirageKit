@@ -5,9 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
@@ -22,11 +29,11 @@ extension MirageHostService {
 
     /// Resolves why a busy host should reject an incoming takeover request, if at all.
     func busyHostTakeoverRejectionReason(
-        for request: MirageSessionBootstrapRequest,
-        trustEvaluation: LoomTrustEvaluation,
+        for request: MirageWire.MirageSessionBootstrapRequest,
+        trustEvaluation: MirageTrustEvaluationSnapshot,
         existingClient: MirageConnectedClient? = nil,
-        incomingPeerIdentity: LoomPeerIdentity? = nil
-    ) -> MirageSessionBootstrapRejectionReason? {
+        incomingPeerIdentity: MirageAuthenticatedPeerIdentity? = nil
+    ) -> MirageWire.MirageSessionBootstrapRejectionReason? {
         if let existingClient,
            let incomingPeerIdentity,
            shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) {
@@ -46,9 +53,9 @@ extension MirageHostService {
             return .hostBusy
         }
 
-        guard trustEvaluation.decision == .trusted else {
+        guard trustEvaluation.authorizesBusyHostTakeover else {
             MirageLogger.host(
-                "Rejecting busy-host takeover by untrusted client trustDecision=\(String(describing: trustEvaluation.decision)) " +
+                "Rejecting busy-host takeover by untrusted client trustDecision=\(trustEvaluation.decision.rawValue) " +
                     "existingClientID=\(existingClient?.id.uuidString.lowercased() ?? "nil") " +
                     "incomingClientID=\(incomingPeerIdentity?.deviceID.uuidString.lowercased() ?? "nil")"
             )
@@ -66,38 +73,38 @@ extension MirageHostService {
     /// Returns whether an incoming peer should supersede an existing connected client.
     func shouldPreemptExistingClient(
         _ existingClient: MirageConnectedClient,
-        for incomingPeerIdentity: LoomPeerIdentity
+        for incomingPeerIdentity: MirageAuthenticatedPeerIdentity
     ) -> Bool {
         existingClient.id == incomingPeerIdentity.deviceID
     }
 
     /// Disconnects an existing client when the same trusted device reconnects.
-    func preemptExistingClientIfSuperseded(by incomingPeerIdentity: LoomPeerIdentity) async {
+    func preemptExistingClientIfSuperseded(by incomingPeerIdentity: MirageAuthenticatedPeerIdentity) async {
         guard let existingClient = clientsBySessionID.values.first?.client else { return }
         guard shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) else { return }
 
         MirageLogger.host(
-            "Preempting existing client \(existingClient.name) for reconnect from \(incomingPeerIdentity.name)"
+            "Preempting existing client \(existingClient.name) for reconnect from \(incomingPeerIdentity.displayName)"
         )
         await disconnectClient(existingClient)
     }
 
     /// Waits briefly for an in-flight disconnect to finish before accepting a reconnect.
     func waitForDisconnectCompletionIfNeeded(
-        for incomingPeerIdentity: LoomPeerIdentity,
+        for incomingPeerIdentity: MirageAuthenticatedPeerIdentity,
         timeout: Duration = .seconds(5)
     ) async {
         guard shouldWaitForDisconnectCompletion(for: incomingPeerIdentity) else { return }
 
         let deadline = ContinuousClock.now + timeout
         MirageLogger.host(
-            "Waiting for disconnect teardown to finish before accepting reconnect from \(incomingPeerIdentity.name)"
+            "Waiting for disconnect teardown to finish before accepting reconnect from \(incomingPeerIdentity.displayName)"
         )
 
         while shouldWaitForDisconnectCompletion(for: incomingPeerIdentity) {
             if ContinuousClock.now >= deadline {
                 MirageLogger.host(
-                    "Timed out waiting for disconnect teardown before reconnect from \(incomingPeerIdentity.name)"
+                    "Timed out waiting for disconnect teardown before reconnect from \(incomingPeerIdentity.displayName)"
                 )
                 return
             }
@@ -110,7 +117,7 @@ extension MirageHostService {
         }
     }
 
-    private func shouldWaitForDisconnectCompletion(for incomingPeerIdentity: LoomPeerIdentity) -> Bool {
+    private func shouldWaitForDisconnectCompletion(for incomingPeerIdentity: MirageAuthenticatedPeerIdentity) -> Bool {
         if disconnectingClientIDs.contains(incomingPeerIdentity.deviceID) {
             return true
         }

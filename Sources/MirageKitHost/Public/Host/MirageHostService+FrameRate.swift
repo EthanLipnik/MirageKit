@@ -7,8 +7,16 @@
 //  Frame rate helpers for host-side stream setup.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 extension MirageHostService {
     /// Clamps a requested target frame rate to the host's supported streaming range.

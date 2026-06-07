@@ -7,8 +7,16 @@
 //  Lock-based frame metrics sampling for client streams.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 final class ClientFrameMetricsTracker: @unchecked Sendable {
     struct Snapshot: Equatable {

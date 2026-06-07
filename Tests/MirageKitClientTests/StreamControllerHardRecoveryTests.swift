@@ -11,6 +11,7 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import Testing
+import MirageCore
 
 #if os(macOS)
 @Suite("Stream Controller Hard Recovery", .serialized)

@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 3/15/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Network
 
 /// User-selectable preference for which network interface to prioritize during connection.

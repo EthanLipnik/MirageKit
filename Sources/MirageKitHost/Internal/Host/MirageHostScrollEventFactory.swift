@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/7/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 enum MirageHostScrollEventFactory {
@@ -19,7 +27,7 @@ enum MirageHostScrollEventFactory {
     }
 
     static func makeScrollEvent(
-        from event: MirageScrollEvent,
+        from event: MirageInput.MirageScrollEvent,
         integerDeltaX: Int32,
         integerDeltaY: Int32
     ) -> CGEvent? {
@@ -49,7 +57,7 @@ enum MirageHostScrollEventFactory {
     }
 
     private static func applyNativeScrollMetadata(
-        from event: MirageScrollEvent,
+        from event: MirageInput.MirageScrollEvent,
         to cgEvent: CGEvent
     ) {
         cgEvent.setIntegerValueField(
@@ -67,7 +75,7 @@ enum MirageHostScrollEventFactory {
     }
 }
 
-private extension MirageScrollPhase {
+private extension MirageInput.MirageScrollPhase {
     var cgScrollPhaseValue: Int64 {
         switch self {
         case .none:

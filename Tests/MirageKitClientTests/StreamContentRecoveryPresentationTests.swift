@@ -9,6 +9,8 @@
 @testable import MirageKitClient
 import CoreGraphics
 import Testing
+import MirageCore
+import MirageMedia
 
 @Suite("Stream Content Recovery Presentation", .serialized)
 struct StreamContentRecoveryPresentationTests {
@@ -83,7 +85,7 @@ struct StreamContentRecoveryPresentationTests {
         let sessionID = store.createSession(
             streamID: streamID,
             mediaStreamID: streamID,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 60101,
                 title: "Desktop",
                 application: nil,

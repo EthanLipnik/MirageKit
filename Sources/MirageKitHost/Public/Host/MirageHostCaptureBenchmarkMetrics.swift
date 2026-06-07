@@ -7,19 +7,28 @@
 //  Capture benchmark measurement helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
-import MirageKit
+@_spi(HostApp) import MirageDiagnostics
 
 #if os(macOS)
 /// Produces benchmark warnings from display cadence and measured bottleneck state.
 func captureBenchmarkWarnings(
-    stage: MirageHostCaptureBenchmarkStage,
+    stage: MirageDiagnostics.MirageHostCaptureBenchmarkStage,
     reportedDisplayRefreshRate: Double?,
     observedDisplayCadenceFPS: Double?,
-    bottleneck: MirageHostCaptureBenchmarkBottleneck?
-) -> [MirageHostCaptureBenchmarkWarning] {
-    var warnings: [MirageHostCaptureBenchmarkWarning] = []
+    bottleneck: MirageDiagnostics.MirageHostCaptureBenchmarkBottleneck?
+) -> [MirageDiagnostics.MirageHostCaptureBenchmarkWarning] {
+    var warnings: [MirageDiagnostics.MirageHostCaptureBenchmarkWarning] = []
 
     if let reportedDisplayRefreshRate,
        Int(reportedDisplayRefreshRate.rounded()) >= stage.refreshRate,
@@ -50,10 +59,10 @@ func captureBenchmarkWarnings(
 
 /// Removes repeated benchmark warnings while preserving first-seen order.
 func deduplicatedBenchmarkWarnings(
-    _ warnings: [MirageHostCaptureBenchmarkWarning]
-) -> [MirageHostCaptureBenchmarkWarning] {
-    var seen = Set<MirageHostCaptureBenchmarkWarning>()
-    var ordered: [MirageHostCaptureBenchmarkWarning] = []
+    _ warnings: [MirageDiagnostics.MirageHostCaptureBenchmarkWarning]
+) -> [MirageDiagnostics.MirageHostCaptureBenchmarkWarning] {
+    var seen = Set<MirageDiagnostics.MirageHostCaptureBenchmarkWarning>()
+    var ordered: [MirageDiagnostics.MirageHostCaptureBenchmarkWarning] = []
     for warning in warnings where seen.insert(warning).inserted {
         ordered.append(warning)
     }
@@ -147,20 +156,20 @@ func captureBenchmarkTelemetryDelta(
 
 /// Builds a phase result from a telemetry delta and measured duration.
 func captureBenchmarkPhaseResult(
-    kind: MirageHostCaptureBenchmarkPhaseKind,
+    kind: MirageDiagnostics.MirageHostCaptureBenchmarkPhaseKind,
     telemetryDelta: MirageHostCaptureBenchmarkTelemetryDelta,
     startupReadiness: DisplayCaptureStartupReadiness,
     measurementDuration: Double
-) -> MirageHostCaptureBenchmarkPhaseResult {
+) -> MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult {
     let duration = max(0.001, measurementDuration)
-    return MirageHostCaptureBenchmarkPhaseResult(
+    return MirageDiagnostics.MirageHostCaptureBenchmarkPhaseResult(
         kind: kind,
         rawIngressFPS: Double(telemetryDelta.rawCallbackCount) / duration,
         validSampleFPS: Double(telemetryDelta.validSampleCount) / duration,
         renderableIngressFPS: Double(telemetryDelta.renderableSampleCount) / duration,
         cadenceAdmittedFPS: Double(telemetryDelta.cadenceAdmittedCount) / duration,
         deliveryFPS: Double(telemetryDelta.deliveryCount) / duration,
-        startupReadiness: MirageHostCaptureBenchmarkStartupReadiness(startupReadiness),
+        startupReadiness: MirageDiagnostics.MirageHostCaptureBenchmarkStartupReadiness(startupReadiness),
         averageCallbackTimeMs: telemetryDelta.averageCallbackTimeMs,
         maximumCallbackTimeMs: telemetryDelta.maximumCallbackTimeMs,
         rawCallbackCount: telemetryDelta.rawCallbackCount,

@@ -7,9 +7,17 @@
 //  Unified adaptive streaming workload policy.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 public enum MirageAdaptiveStreamingRecoveryPhase: String, Sendable, Equatable {
     case startupAdmission
@@ -51,14 +59,14 @@ package enum MirageTopologyMutationReason: String, Sendable, Equatable {
 }
 
 public struct MirageStreamingHealthSample: Sendable, Equatable {
-    public let bottleneckKind: MirageStreamBottleneckKind
+    public let bottleneckKind: MirageDiagnostics.MirageStreamBottleneckKind
     public let transportIsClean: Bool
     public let observedPixelRate: Double?
     public let hostPipelinePixelRate: Double?
     public let currentTier: MirageAutomaticDesktopWorkloadTier?
 
     public init(
-        bottleneckKind: MirageStreamBottleneckKind,
+        bottleneckKind: MirageDiagnostics.MirageStreamBottleneckKind,
         transportIsClean: Bool,
         observedPixelRate: Double?,
         hostPipelinePixelRate: Double?,
@@ -141,7 +149,7 @@ public struct MirageAdaptiveStreamingController: Sendable {
     }
 
     public mutating func advance(
-        snapshot: MirageClientMetricsSnapshot?,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot?,
         resizeCriticalSectionActive: Bool,
         minimumTargetFrameRate: Int = 30,
         maximumTargetFrameRate: Int = 60,

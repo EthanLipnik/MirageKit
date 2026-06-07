@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 2/28/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 actor StreamPolicyApplier {
@@ -14,14 +22,14 @@ actor StreamPolicyApplier {
     private static let minimumApplyInterval: CFAbsoluteTime = 0.500
 
     private struct AppliedStreamState: Sendable {
-        var lastPolicy: MirageStreamPolicy?
+        var lastPolicy: MirageWire.MirageStreamPolicy?
         var lastAppliedAt: CFAbsoluteTime = 0
     }
 
     private var statesByStreamID: [StreamID: AppliedStreamState] = [:]
 
     func apply(
-        policy: MirageStreamPolicy,
+        policy: MirageWire.MirageStreamPolicy,
         context: StreamContext,
         requestRecoveryKeyframe: Bool
     ) async {

@@ -7,9 +7,17 @@
 //  Runtime audio compression budget adaptation for host audio streaming.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -22,9 +30,9 @@ struct HostAudioCompressionBudgetController {
         case recovery = "recovery"
     }
 
-    private var configuration: MirageAudioConfiguration
-    private var transportPathKind: MirageNetworkPathKind
-    private var mediaPathProfile: MirageMediaPathProfile
+    private var configuration: MirageMedia.MirageAudioConfiguration
+    private var transportPathKind: MirageCore.MirageNetworkPathKind
+    private var mediaPathProfile: MirageMedia.MirageMediaPathProfile
     private var minimumBitrateBps: Int
     private var maximumBitrateBps: Int
     private(set) var currentBitrateBps: Int?
@@ -34,9 +42,9 @@ struct HostAudioCompressionBudgetController {
     private var lastLogTime: CFAbsoluteTime = 0
 
     init(
-        configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) {
         self.configuration = configuration
         self.transportPathKind = transportPathKind
@@ -53,9 +61,9 @@ struct HostAudioCompressionBudgetController {
 
     @discardableResult
     mutating func updateConfiguration(
-        _ configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind? = nil,
-        mediaPathProfile: MirageMediaPathProfile? = nil
+        _ configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind? = nil,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> Int? {
         let previousBitrate = currentBitrateBps
         self.configuration = configuration
@@ -115,7 +123,7 @@ struct HostAudioCompressionBudgetController {
         )
     }
 
-    mutating func recordReceiverFeedback(_ feedback: ReceiverMediaFeedbackMessage) -> Int? {
+    mutating func recordReceiverFeedback(_ feedback: MirageWire.ReceiverMediaFeedbackMessage) -> Int? {
         guard canAdapt else { return nil }
         var severity = 0
         if feedback.decodeBacklogFrames > 1 || feedback.presentationBacklogFrames > 1 {
@@ -229,9 +237,9 @@ struct HostAudioCompressionBudgetController {
     }
 
     private static func budgetRange(
-        for configuration: MirageAudioConfiguration,
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile
+        for configuration: MirageMedia.MirageAudioConfiguration,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> (minimum: Int, maximum: Int, current: Int?) {
         guard configuration.enabled,
               configuration.quality != .lossless else {

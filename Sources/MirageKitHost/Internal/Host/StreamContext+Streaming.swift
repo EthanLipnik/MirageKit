@@ -7,10 +7,18 @@
 //  Shared streaming pipeline setup used by all capture modes.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -71,7 +79,7 @@ extension StreamContext {
         width: Int,
         height: Int
     ) async throws {
-        let encoder = VideoEncoder(
+        let encoder = videoEncoderFactoryBackend.makeVideoEncoder(
             configuration: encoderConfig,
             latencyMode: latencyMode,
             streamKind: streamKind,
@@ -142,7 +150,7 @@ extension StreamContext {
         pinnedContentRect: CGRect?,
         logPrefix: String,
         callbackSequencer: StreamEncodingCallbackSequencer,
-        baseFrameFlagsSnapshot: FrameFlags
+        baseFrameFlagsSnapshot: MirageWire.FrameFlags
     ) async {
         guard let packetSender else { return }
         guard shouldEncodeFrames else {
@@ -335,7 +343,7 @@ extension StreamContext {
         }
         activePixelFormat = resolvedPixelFormat
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
-        let engine = WindowCaptureEngine(
+        let engine = captureEngineFactoryBackend.makeCaptureEngine(
             configuration: captureConfig,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
@@ -383,11 +391,28 @@ extension StreamContext {
         return engine
     }
 
+    func makeCaptureSourceBackend() -> MacOSHostCaptureSourceBackend {
+        let backend = MacOSHostCaptureSourceBackend(
+            captureEngineFactoryBackend: captureEngineFactoryBackend,
+            captureContentProviderBackend: captureContentProviderBackend
+        )
+        captureSourceBackend = backend
+        return backend
+    }
+
     func waitForDisplayStartupReadiness(
         timeout: Duration,
         pollInterval: Duration = .milliseconds(50)
     ) async -> DisplayCaptureStartupReadiness {
-        guard captureMode == .display, let captureEngine else { return .noScreenSamples }
+        guard captureMode == .display else { return .noScreenSamples }
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            return await captureSourceBackend.waitForDisplayStartupReadiness(
+                timeout: timeout,
+                pollInterval: pollInterval
+            )
+        }
+        guard let captureEngine else { return .noScreenSamples }
         return await captureEngine.waitForDisplayStartupReadiness(
             timeout: timeout,
             pollInterval: pollInterval
@@ -396,11 +421,21 @@ extension StreamContext {
 
     func restartDisplayCaptureForStartupRecovery(reason: String) async {
         guard captureMode == .display else { return }
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            await captureSourceBackend.restartCapture(reason: reason)
+            return
+        }
         await captureEngine?.restartCapture(reason: reason)
     }
 
     func hasObservedDisplayStartupSample() async -> Bool {
-        guard captureMode == .display, let captureEngine else { return false }
+        guard captureMode == .display else { return false }
+        if let captureSourceBackend,
+           captureSourceBackend.hasActiveCaptureEngine {
+            return await captureSourceBackend.hasObservedDisplayStartupSample()
+        }
+        guard let captureEngine else { return false }
         return await captureEngine.hasObservedDisplayStartupSample
     }
 
@@ -412,11 +447,17 @@ extension StreamContext {
         guard captureMode == .display,
               startupFrameCachingEnabled,
               cachedStartupFrame == nil,
-              let captureEngine else {
+              captureSourceBackend?.hasActiveCaptureEngine == true || captureEngine != nil else {
             return cachedStartupFrame != nil
         }
 
-        guard let seededFrame = await captureEngine.captureDisplayStartupSeedFrame() else {
+        let seededFrame = if let captureSourceBackend,
+                             captureSourceBackend.hasActiveCaptureEngine {
+            await captureSourceBackend.captureDisplayStartupSeedFrame()
+        } else {
+            await captureEngine?.captureDisplayStartupSeedFrame()
+        }
+        guard let seededFrame else {
             return false
         }
 

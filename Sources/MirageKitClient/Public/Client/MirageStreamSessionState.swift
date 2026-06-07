@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import Observation
 
 /// Observable state for one logical stream session in the client UI.
@@ -23,7 +31,7 @@ public final class MirageStreamSessionState: Identifiable {
     public let mediaStreamID: StreamID
 
     /// Latest host window metadata associated with the stream.
-    public var window: MirageWindow
+    public var window: MirageMedia.MirageWindow
 
     /// Display name of the host that owns the stream.
     public let hostName: String
@@ -32,13 +40,13 @@ public final class MirageStreamSessionState: Identifiable {
     public let appSessionID: UUID?
 
     /// Whether this session represents an app, desktop, or custom stream.
-    public let streamKind: MirageStreamKind
+    public let streamKind: MirageMedia.MirageStreamKind
 
     /// Stable logical target used to map host updates back to the session.
     public let logicalTarget: MirageStreamLogicalTarget
 
     /// Current atlas placement for multi-window app streams.
-    public var atlasRegion: MirageAppAtlasRegion?
+    public var atlasRegion: MirageMedia.MirageAppAtlasRegion?
 
     /// Latest stream statistics received from the host.
     public var statistics: MirageStreamStatistics?
@@ -66,12 +74,12 @@ public final class MirageStreamSessionState: Identifiable {
         id: StreamSessionID,
         streamID: StreamID,
         mediaStreamID: StreamID,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         hostName: String,
         appSessionID: UUID? = nil,
-        streamKind: MirageStreamKind = .app,
+        streamKind: MirageMedia.MirageStreamKind = .app,
         logicalTarget: MirageStreamLogicalTarget? = nil,
-        atlasRegion: MirageAppAtlasRegion? = nil,
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil,
         statistics: MirageStreamStatistics? = nil,
         clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
         clientRecoveryCause: MirageStreamClientRecoveryCause = .none,

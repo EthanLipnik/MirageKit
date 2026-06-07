@@ -7,18 +7,25 @@
 //  Detached host quality-test stage runner.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension MirageHostService {
     nonisolated static func runQualityTestSession(
-        request: QualityTestRequestMessage,
+        request: MirageWire.QualityTestRequestMessage,
         payloadBytes: Int,
-        via stream: LoomMultiplexedStream,
+        via stream: any MirageQueuedUnreliableMediaStream,
         clientContext: ClientContext,
-        hostCaptureCapability: MirageHostCaptureCapability?
+        hostCaptureCapability: MirageDiagnostics.MirageHostCaptureCapability?
     ) async {
         for stage in request.plan.stages {
             if Task.isCancelled { return }
@@ -31,7 +38,7 @@ extension MirageHostService {
                 return
             }
 
-            let completionMessage = QualityTestStageCompleteMessage(
+            let completionMessage = MirageWire.QualityTestStageCompleteMessage(
                 testID: request.testID,
                 stageID: stage.id,
                 probeKind: stage.probeKind,
@@ -73,8 +80,8 @@ extension MirageHostService {
 
     nonisolated static func makeQualityTestBenchmarkMessage(
         testID: UUID,
-        hostCaptureCapability: MirageHostCaptureCapability?
-    ) async -> QualityTestBenchmarkMessage {
+        hostCaptureCapability: MirageDiagnostics.MirageHostCaptureCapability?
+    ) async -> MirageWire.QualityTestBenchmarkMessage {
         let encodeMs: Double?
         do {
             encodeMs = try await MirageCodecBenchmark.runEncodeBenchmark()
@@ -83,7 +90,7 @@ extension MirageHostService {
             encodeMs = nil
         }
 
-        return QualityTestBenchmarkMessage(
+        return MirageWire.QualityTestBenchmarkMessage(
             testID: testID,
             encodeMs: encodeMs,
             hostCaptureCapability: hostCaptureCapability
@@ -91,11 +98,11 @@ extension MirageHostService {
     }
 
     nonisolated static func runQualityTestTransferSession(
-        request: QualityTestRequestMessage,
+        request: MirageWire.QualityTestRequestMessage,
         transferByteCount: UInt64,
-        transferEngine: LoomTransferEngine,
+        transferEngine: MirageTransferEngine,
         clientContext: ClientContext,
-        hostCaptureCapability: MirageHostCaptureCapability?
+        hostCaptureCapability: MirageDiagnostics.MirageHostCaptureCapability?
     ) async {
         do {
             let incomingTransfer = try await awaitQualityTestTransfer(
@@ -105,25 +112,24 @@ extension MirageHostService {
             )
             guard incomingTransfer.offer.byteLength == transferByteCount else {
                 try await incomingTransfer.decline()
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Connection test transfer size mismatch: expected \(transferByteCount), got \(incomingTransfer.offer.byteLength)"
                 )
             }
 
-            let sink = MirageQualityTestDiscardSink()
-            try await incomingTransfer.accept(using: sink)
+            let sink = try await incomingTransfer.acceptDiscardingQualityTestTransfer()
             let terminalProgress = await MirageTransferProgress.terminalProgress(
                 from: incomingTransfer.progressEvents
             )
             guard terminalProgress?.state == .completed else {
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Connection test transfer did not complete"
                 )
             }
 
             let metrics = await sink.metrics()
             let bytesWritten = Int(clamping: metrics.bytesWritten)
-            let completionMessage = QualityTestStageCompleteMessage(
+            let completionMessage = MirageWire.QualityTestStageCompleteMessage(
                 testID: request.testID,
                 stageID: MirageQualityTestTransfer.stageID,
                 probeKind: .transport,
@@ -135,7 +141,7 @@ extension MirageHostService {
             )
             try await clientContext.send(.qualityTestStageComplete, content: completionMessage)
 
-            let benchmarkMessage = QualityTestBenchmarkMessage(
+            let benchmarkMessage = MirageWire.QualityTestBenchmarkMessage(
                 testID: request.testID,
                 encodeMs: nil,
                 hostCaptureCapability: hostCaptureCapability
@@ -162,10 +168,10 @@ extension MirageHostService {
 
     nonisolated private static func awaitQualityTestTransfer(
         testID: UUID,
-        transferEngine: LoomTransferEngine,
+        transferEngine: MirageTransferEngine,
         timeout: Duration
-    ) async throws -> LoomIncomingTransfer {
-        try await withThrowingTaskGroup(of: LoomIncomingTransfer.self) { group in
+    ) async throws -> MirageIncomingTransfer {
+        try await withThrowingTaskGroup(of: MirageIncomingTransfer.self) { group in
             group.addTask {
                 for await transfer in transferEngine.incomingTransfers {
                     guard MirageQualityTestTransfer.isMatchingTransfer(
@@ -176,19 +182,19 @@ extension MirageHostService {
                     }
                     return transfer
                 }
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Connection test transfer stream closed before an offer arrived."
                 )
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Timed out waiting for connection test transfer offer."
                 )
             }
 
             let transfer = try await group.next() ?? {
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Connection test transfer wait ended unexpectedly."
                 )
             }()
@@ -198,14 +204,14 @@ extension MirageHostService {
     }
 
     nonisolated static func sendQualityTestStage(
-        _ stage: MirageQualityTestPlan.Stage,
+        _ stage: MirageDiagnostics.MirageQualityTestPlan.Stage,
         testID: UUID,
         payloadBytes: Int,
-        via stream: LoomMultiplexedStream
+        via stream: any MirageQueuedUnreliableMediaStream
     ) async -> QualityTestStageSendMetrics? {
         let payloadLength = UInt16(clamping: payloadBytes)
         let payload = qualityTestPayload(testID: testID, stageID: stage.id, payloadBytes: payloadBytes)
-        let packetBytes = payloadBytes + mirageQualityTestHeaderSize
+        let packetBytes = payloadBytes + MirageWire.mirageQualityTestHeaderSize
         let queueProfile = qualityTestQueueProfile(for: stage.probeKind)
         let stageSendState = QualityTestStageSendState(queueProfile: queueProfile)
         var sequence: UInt32 = 0
@@ -250,7 +256,7 @@ extension MirageHostService {
                 pacer = localPacer
             }
             let timestampNs = UInt64(CFAbsoluteTimeGetCurrent() * 1_000_000_000)
-            let header = QualityTestPacketHeader(
+            let header = MirageWire.QualityTestPacketHeader(
                 testID: testID,
                 stageID: UInt16(stage.id),
                 sequenceNumber: sequence,

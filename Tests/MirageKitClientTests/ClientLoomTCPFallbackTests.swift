@@ -9,6 +9,8 @@
 import Foundation
 import Loom
 import Testing
+import MirageConnectivity
+import MirageWire
 
 #if os(macOS)
 extension ClientLoomControlPlaneTests {
@@ -49,7 +51,7 @@ extension ClientLoomControlPlaneTests {
         }
         do {
             for index in expectedVideoPayloads.indices {
-                try await clientControl.send(ControlMessage(type: .ping))
+                try await clientControl.send(MirageWire.ControlMessage(type: .ping))
                 let receivedPing = try await serverReceiver.next()
                 #expect(receivedPing.type == .ping)
 

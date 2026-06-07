@@ -7,8 +7,16 @@
 //  Capture-to-encode buffer sizing policy.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Capture-to-encode queue sizing selected for a stream at startup.
@@ -31,9 +39,9 @@ extension StreamContext {
     static func resolvedBufferPolicy(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         useLowLatencyPipeline: Bool
     ) -> StreamBufferPolicy {
         if mediaPathProfile.usesAwdlRadioPolicy {
@@ -139,7 +147,7 @@ extension StreamContext {
     static func frameBufferDepth(
         useLowLatencyPipeline: Bool,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageMedia.MirageStreamLatencyMode
     )
     -> Int {
         if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
@@ -162,7 +170,7 @@ extension StreamContext {
     static func inFlightCap(
         useLowLatencyPipeline: Bool,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageMedia.MirageStreamLatencyMode
     )
     -> Int {
         if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
@@ -184,7 +192,7 @@ extension StreamContext {
     static func minInFlightFrames(
         useLowLatencyPipeline: Bool,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageMedia.MirageStreamLatencyMode
     )
     -> Int {
         if useLowLatencyPipeline { return 1 }
@@ -206,8 +214,8 @@ extension StreamContext {
     static func usesStandardDesktopLowLatency60HzBufferPolicy(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame
     )
     -> Bool {
         streamKind == .desktop &&
@@ -220,8 +228,8 @@ extension StreamContext {
     static func lowLatencyPipelineInFlightLimit(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .freshestFrame
     ) -> Int {
         if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
             return 1

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import ScreenCaptureKit
 
 #if os(macOS)
@@ -23,9 +31,15 @@ extension MirageHostService {
         let display: SCDisplay
     }
 
+    /// Refreshes capture content through the platform backend.
+    func currentCaptureShareableContent() async throws -> SCShareableContent {
+        let contentWrapper = try await platformCaptureContentProviderBackend.shareableContent()
+        return contentWrapper.content
+    }
+
     /// Resolves the CaptureKit source for a requested window, optionally remapping to a fallback.
     func resolveCaptureSource(
-        for requestedWindow: MirageWindow,
+        for requestedWindow: MirageMedia.MirageWindow,
         from content: SCShareableContent,
         disallowedWindowIDs: Set<WindowID> = [],
         allowFallbackRemap: Bool = true
@@ -38,7 +52,7 @@ extension MirageHostService {
         }
 
         guard allowFallbackRemap else {
-            throw MirageError.windowNotFound
+            throw MirageCore.MirageError.windowNotFound
         }
 
         let requestedBundleID = requestedWindow.application?.bundleIdentifier?.lowercased()
@@ -82,7 +96,7 @@ extension MirageHostService {
             return StreamCaptureSource(window: candidate, application: candidateApp, display: candidateDisplay)
         }
 
-        throw MirageError.windowNotFound
+        throw MirageCore.MirageError.windowNotFound
     }
 
     /// Chooses the display that contains or best overlaps a capture window.

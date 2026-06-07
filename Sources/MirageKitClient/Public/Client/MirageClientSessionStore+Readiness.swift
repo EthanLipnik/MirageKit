@@ -7,8 +7,16 @@
 //  First-frame readiness and recovery state for client stream sessions.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// First-frame and recovery-state updates for active or pending client stream sessions.
 @MainActor

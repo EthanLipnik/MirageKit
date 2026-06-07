@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 6/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -31,7 +39,7 @@ extension MirageHostService {
         if let fallbackLogicalResolution,
            fallbackLogicalResolution.width > 0,
            fallbackLogicalResolution.height > 0 {
-            return MirageStreamGeometry.normalizedLogicalSize(fallbackLogicalResolution)
+            return MirageMedia.MirageStreamGeometry.normalizedLogicalSize(fallbackLogicalResolution)
         }
 
         let scaleFactor = max(

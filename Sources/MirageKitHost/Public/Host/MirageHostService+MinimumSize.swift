@@ -7,8 +7,16 @@
 //  Stream minimum size tracking.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 @MainActor
@@ -27,7 +35,7 @@ public extension MirageHostService {
     }
 
     /// Resolves the minimum size to enforce before streaming a window.
-    func resolvedMinimumSize(for window: MirageWindow) async -> CGSize {
+    func resolvedMinimumSize(for window: MirageMedia.MirageWindow) async -> CGSize {
         if let minSize = minimumSizesByWindowID[window.id] { return minSize }
         if let discovered = await windowController.discoverMinimumSize(for: window) {
             return discovered

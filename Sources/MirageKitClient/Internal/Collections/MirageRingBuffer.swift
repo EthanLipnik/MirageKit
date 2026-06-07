@@ -7,6 +7,15 @@
 //  Lock-friendly ring buffer for hot frame/decode queues.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// FIFO ring buffer that keeps append/pop operations cheap for hot client queues.

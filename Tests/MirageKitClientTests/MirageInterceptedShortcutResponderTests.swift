@@ -10,6 +10,7 @@
 import MirageKit
 import Testing
 import UIKit
+import MirageInput
 
 @MainActor
 @Suite("Intercepted shortcut responder routing")
@@ -17,8 +18,8 @@ struct MirageInterceptedShortcutResponderTests {
     @Test("Cmd+B forwards once when both keyCommand and edit action paths fire")
     func cmdBForwardsOnceAcrossResponderEntryPoints() {
         let view = InputCapturingView(frame: .zero)
-        var keyDownEvents: [MirageKeyEvent] = []
-        var keyUpEvents: [MirageKeyEvent] = []
+        var keyDownEvents: [MirageInput.MirageKeyEvent] = []
+        var keyUpEvents: [MirageInput.MirageKeyEvent] = []
         var flagsChangedCount = 0
 
         view.onInputEvent = { event in
@@ -64,8 +65,8 @@ struct MirageInterceptedShortcutResponderTests {
         let view = InputCapturingView(frame: .zero)
         let shortcut = MirageClientShortcut(keyCode: 0x0B, modifiers: [.command])
         var triggeredShortcuts: [MirageClientShortcut] = []
-        var keyDownEvents: [MirageKeyEvent] = []
-        var keyUpEvents: [MirageKeyEvent] = []
+        var keyDownEvents: [MirageInput.MirageKeyEvent] = []
+        var keyUpEvents: [MirageInput.MirageKeyEvent] = []
 
         view.clientShortcuts = [shortcut]
         view.onClientShortcut = { triggeredShortcuts.append($0) }
@@ -103,8 +104,8 @@ struct MirageInterceptedShortcutResponderTests {
     @Test("Standard responder actions forward intercepted command shortcuts")
     func standardResponderActionsForwardInterceptedCommandShortcuts() {
         let view = InputCapturingView(frame: .zero)
-        var keyDownEvents: [MirageKeyEvent] = []
-        var keyUpEvents: [MirageKeyEvent] = []
+        var keyDownEvents: [MirageInput.MirageKeyEvent] = []
+        var keyUpEvents: [MirageInput.MirageKeyEvent] = []
 
         view.onInputEvent = { event in
             switch event {
@@ -166,8 +167,8 @@ struct MirageInterceptedShortcutResponderTests {
     @Test("Cmd+F forwards once when both keyCommand and find action paths fire")
     func cmdFForwardsOnceAcrossResponderEntryPoints() {
         let view = InputCapturingView(frame: .zero)
-        var keyDownEvents: [MirageKeyEvent] = []
-        var keyUpEvents: [MirageKeyEvent] = []
+        var keyDownEvents: [MirageInput.MirageKeyEvent] = []
+        var keyUpEvents: [MirageInput.MirageKeyEvent] = []
 
         view.onInputEvent = { event in
             switch event {
@@ -202,8 +203,8 @@ struct MirageInterceptedShortcutResponderTests {
         let view = InputCapturingView(frame: .zero)
         let shortcut = MirageClientShortcut(keyCode: 0x03, modifiers: [.command])
         var triggeredShortcuts: [MirageClientShortcut] = []
-        var keyDownEvents: [MirageKeyEvent] = []
-        var keyUpEvents: [MirageKeyEvent] = []
+        var keyDownEvents: [MirageInput.MirageKeyEvent] = []
+        var keyUpEvents: [MirageInput.MirageKeyEvent] = []
 
         view.clientShortcuts = [shortcut]
         view.onClientShortcut = { triggeredShortcuts.append($0) }

@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
 import Loom
-import MirageKit
 import Network
 import Observation
 
@@ -29,14 +37,14 @@ public final class MirageClientService {
     /// Last completed disconnect reason from the host or local client lifecycle.
     public internal(set) var lastDisconnectReason: String?
     /// Current host authorization/trust evaluation state.
-    public internal(set) var authorizationState: AuthorizationState = .idle
+    public internal(set) var authorizationState: MirageIdentity.MirageAuthorizationState = .idle
     /// Whether the host connection is awaiting explicit manual approval.
     public var isAwaitingManualApproval: Bool {
         authorizationState == .awaitingManualApproval
     }
 
     /// Available windows on the connected host
-    public internal(set) var availableWindows: [MirageWindow] = []
+    public internal(set) var availableWindows: [MirageMedia.MirageWindow] = []
 
     /// Active stream views
     public internal(set) var activeStreams: [ClientStreamSession] = []
@@ -46,6 +54,8 @@ public final class MirageClientService {
 
     /// Current session state of the connected host (locked, unlocked, etc.)
     public internal(set) var hostSessionState: LoomSessionAvailability?
+    /// Mirage-owned projection of the connected host's login-session availability.
+    public internal(set) var hostSessionAvailability: MirageWire.MirageHostSessionAvailability?
     /// Whether the host currently allows shared clipboard for this connection.
     public internal(set) var sharedClipboardEnabled: Bool = false
     /// Whether the client sends its clipboard to the host before forwarding paste commands.
@@ -69,18 +79,18 @@ public final class MirageClientService {
     /// Effective backing scale of the host desktop stream.
     public internal(set) var desktopStreamDisplayScaleFactor: CGFloat?
     /// Effective host capture source for the current desktop stream.
-    package internal(set) var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
+    package internal(set) var desktopCaptureSource: MirageWire.MirageDesktopCaptureSource = .virtualDisplay
     /// Whether the host currently accepts client-driven desktop resize requests.
     public internal(set) var desktopStreamAllowsClientResize: Bool = true
 
     /// Active codec per stream for codec-specific fallback decisions.
-    var activeStreamCodecs: [StreamID: MirageVideoCodec] = [:]
+    var activeStreamCodecs: [StreamID: MirageMedia.MirageVideoCodec] = [:]
 
     /// Desktop stream mode (mirrored vs secondary display)
-    public internal(set) var desktopStreamMode: MirageDesktopStreamMode?
+    public internal(set) var desktopStreamMode: MirageMedia.MirageDesktopStreamMode?
 
     /// Effective desktop cursor presentation for the active or pending desktop stream.
-    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation?
+    public internal(set) var desktopCursorPresentation: MirageWire.MirageDesktopCursorPresentation?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
     /// Last host-authoritative desktop presentation generation per active session.
@@ -90,7 +100,7 @@ public final class MirageClientService {
     /// Last app/window stream-start acknowledgement per stream.
     var appStreamStartAcknowledgementByStreamID: [StreamID: StreamStartAcknowledgement] = [:]
     /// Last terminal app-window resize result per stream.
-    var appWindowResizeResultByStreamID: [StreamID: AppWindowResizeResultMessage] = [:]
+    var appWindowResizeResultByStreamID: [StreamID: MirageWire.AppWindowResizeResultMessage] = [:]
     /// Desktop stream currently acting as a locked-host app-stream placeholder.
     var appStreamPlaceholderDesktopStreamID: StreamID?
     var appStreamPlaceholderAppSessionID: UUID?
@@ -106,7 +116,7 @@ public final class MirageClientService {
     var observedFrameRateByStream: [StreamID: Int] = [:]
 
     /// Preferred low-power policy for local decoder sessions.
-    public var decoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto {
+    public var decoderLowPowerModePreference: MirageMedia.MirageCodecLowPowerModePreference = .auto {
         didSet {
             guard oldValue != decoderLowPowerModePreference else { return }
             scheduleDecoderLowPowerPolicyApply(reason: "preference_change")
@@ -126,13 +136,13 @@ public final class MirageClientService {
     public var onDesktopStreamStarted: ((StreamID, CGSize, Int) -> Void)?
 
     /// Callback when desktop stream stops
-    public var onDesktopStreamStopped: ((StreamID, DesktopStreamStopReason) -> Void)?
+    public var onDesktopStreamStopped: ((StreamID, MirageWire.DesktopStreamStopReason) -> Void)?
 
     /// Handler for minimum window size updates from the host
     public var onStreamMinimumSizeUpdate: ((StreamID, CGSize) -> Void)?
 
     /// Handler for cursor updates from the host
-    public var onCursorUpdate: ((StreamID, MirageCursorType, Bool) -> Void)?
+    public var onCursorUpdate: ((StreamID, MirageWire.MirageCursorType, Bool) -> Void)?
 
     /// Thread-safe cursor position store for desktop cursor sync
     public let cursorPositionStore = MirageClientCursorPositionStore()
@@ -140,7 +150,7 @@ public final class MirageClientService {
     // MARK: - App-Centric Streaming Properties
 
     /// Available apps on the connected host
-    public internal(set) var availableApps: [MirageInstalledApp] = []
+    public internal(set) var availableApps: [MirageWire.MirageInstalledApp] = []
 
     /// Whether we've received the initial app list from the host
     public internal(set) var hasReceivedAppList: Bool = false
@@ -150,16 +160,16 @@ public final class MirageClientService {
     /// Bundle identifiers received for the active app-list request.
     var activeAppListReceivedBundleIdentifiers: Set<String> = []
     /// Incremental app-list state keyed by normalized bundle identifier.
-    var availableAppsByBundleIdentifier: [String: MirageInstalledApp] = [:]
+    var availableAppsByBundleIdentifier: [String: MirageWire.MirageInstalledApp] = [:]
     /// Stable app-list order for the active app-list request.
     var orderedAvailableAppBundleIdentifiers: [String] = []
     /// Active stream setup request used for scoped cancellation before a stream ID exists.
     var pendingStreamSetupRequestID: UUID?
-    var pendingStreamSetupKind: StreamSetupKind?
+    var pendingStreamSetupKind: MirageWire.StreamSetupKind?
     var pendingStreamSetupAppSessionID: UUID?
     var customStreamStartedContinuations: [UUID: CheckedContinuation<ClientStreamSession, Error>] = [:]
     /// Custom stream descriptors keyed by active stream ID.
-    public internal(set) var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
+    public internal(set) var customStreamDescriptorsByStreamID: [StreamID: MirageMedia.MirageCustomStreamDescriptor] = [:]
     /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
     var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
@@ -188,15 +198,15 @@ public final class MirageClientService {
     /// Currently streaming app's bundle identifier
     public internal(set) var streamingAppBundleID: String?
     /// Latest host-owned inventory for the currently streamed app session.
-    public internal(set) var appWindowInventory: AppWindowInventoryMessage?
+    public internal(set) var appWindowInventory: MirageWire.AppWindowInventoryMessage?
     /// App-atlas layouts indexed by physical media stream and layout epoch.
-    public internal(set) var appAtlasLayoutsByMediaStreamID: [StreamID: [UInt64: MirageAppAtlasLayout]] = [:]
+    public internal(set) var appAtlasLayoutsByMediaStreamID: [StreamID: [UInt64: MirageMedia.MirageAppAtlasLayout]] = [:]
 
     /// Callback when app list is received
-    public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
+    public var onAppListReceived: (([MirageWire.MirageInstalledApp]) -> Void)?
 
     /// Callback when metadata-only app-list progress advances the in-memory app snapshot.
-    public var onAppListProgress: (([MirageInstalledApp]) -> Void)?
+    public var onAppListProgress: (([MirageWire.MirageInstalledApp]) -> Void)?
 
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
@@ -217,57 +227,57 @@ public final class MirageClientService {
     public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
 
     /// Callback when app streaming starts
-    public var onAppStreamStarted: ((AppStreamStartedMessage) -> Void)?
+    public var onAppStreamStarted: ((MirageWire.AppStreamStartedMessage) -> Void)?
 
     /// Callback when an app stream fails before any initial window becomes active.
     public var onAppStreamStartupFailed: ((AppStreamStartupFailure) -> Void)?
 
     /// Callback when a generic custom stream starts.
-    public var onCustomStreamStarted: ((MirageCustomStreamStartedMessage) -> Void)?
+    public var onCustomStreamStarted: ((MirageWire.MirageCustomStreamStartedMessage) -> Void)?
 
     /// Callback when a generic custom stream stops.
-    public var onCustomStreamStopped: ((MirageCustomStreamStoppedMessage) -> Void)?
+    public var onCustomStreamStopped: ((MirageWire.MirageCustomStreamStoppedMessage) -> Void)?
 
     /// Callback when host publishes app-window slot inventory updates.
-    public var onAppWindowInventoryUpdate: ((AppWindowInventoryMessage) -> Void)?
+    public var onAppWindowInventoryUpdate: ((MirageWire.AppWindowInventoryMessage) -> Void)?
 
     /// Callback when a new window is added to app stream
-    public var onWindowAddedToStream: ((WindowAddedToStreamMessage) -> Void)?
+    public var onWindowAddedToStream: ((MirageWire.WindowAddedToStreamMessage) -> Void)?
 
     /// Callback when a requested slot swap succeeds or fails.
-    public var onAppWindowSwapResult: ((AppWindowSwapResultMessage) -> Void)?
+    public var onAppWindowSwapResult: ((MirageWire.AppWindowSwapResultMessage) -> Void)?
 
     /// Callback when host close is blocked by an alert after a client window close request.
-    public var onAppWindowCloseBlockedAlert: ((AppWindowCloseBlockedAlertMessage) -> Void)?
+    public var onAppWindowCloseBlockedAlert: ((MirageWire.AppWindowCloseBlockedAlertMessage) -> Void)?
 
     /// Callback for host close-alert action execution results.
-    public var onAppWindowCloseAlertActionResult: ((AppWindowCloseAlertActionResultMessage) -> Void)?
+    public var onAppWindowCloseAlertActionResult: ((MirageWire.AppWindowCloseAlertActionResultMessage) -> Void)?
 
     /// Callback when a window is removed from app streaming.
-    public var onWindowRemovedFromStream: ((WindowRemovedFromStreamMessage) -> Void)?
+    public var onWindowRemovedFromStream: ((MirageWire.WindowRemovedFromStreamMessage) -> Void)?
 
     /// Callback when host fails to start streaming a candidate window.
-    public var onWindowStreamFailed: ((WindowStreamFailedMessage) -> Void)?
+    public var onWindowStreamFailed: ((MirageWire.WindowStreamFailedMessage) -> Void)?
 
     /// Callback when app terminates
-    public var onAppTerminated: ((AppTerminatedMessage) -> Void)?
+    public var onAppTerminated: ((MirageWire.AppTerminatedMessage) -> Void)?
 
     // MARK: - Menu Bar Passthrough Properties
 
     /// Callback when menu bar structure is received from host
-    public var onMenuBarUpdate: ((StreamID, MirageMenuBar?) -> Void)?
+    public var onMenuBarUpdate: ((StreamID, MirageWire.MirageMenuBar?) -> Void)?
 
     /// Callback when the host requests a status-overlay change on the client.
     public var onRemoteClientStreamStatusOverlayCommand: ((Bool) -> Void)?
 
     /// Callback when the host requests a stream-options display-mode change on the client.
-    public var onRemoteClientStreamOptionsDisplayModeCommand: ((MirageStreamOptionsDisplayMode) -> Void)?
+    public var onRemoteClientStreamOptionsDisplayModeCommand: ((MirageWire.MirageStreamOptionsDisplayMode) -> Void)?
 
     /// Callback when the host requests a desktop cursor presentation change on the client.
-    public var onRemoteClientDesktopCursorPresentationCommand: ((MirageDesktopCursorPresentation) -> Void)?
+    public var onRemoteClientDesktopCursorPresentationCommand: ((MirageWire.MirageDesktopCursorPresentation) -> Void)?
 
     /// Callback when the host requests a desktop cursor lock mode change on the client.
-    public var onRemoteClientDesktopCursorLockModeCommand: ((MirageDesktopCursorLockMode) -> Void)?
+    public var onRemoteClientDesktopCursorLockModeCommand: ((MirageWire.MirageDesktopCursorLockMode) -> Void)?
 
     /// Callback when the host requests the client stop a specific app stream.
     public var onRemoteClientStopAppStreamCommand: ((String) -> Void)?
@@ -303,7 +313,7 @@ public final class MirageClientService {
     public internal(set) var connectedHostIdentityKeyID: String?
 
     /// Canonical connected-host identity and aliases validated by bootstrap.
-    public internal(set) var connectedHostIdentity: MirageConnectedHostIdentity?
+    public internal(set) var connectedHostIdentity: MirageIdentity.MirageConnectedHostIdentity?
 
     /// Whether the connected host explicitly allows this client to use host-published off-LAN reachability.
     public internal(set) var connectedHostAllowsRemoteAccess: Bool?
@@ -331,13 +341,13 @@ public final class MirageClientService {
     /// Active authenticated Loom session, when connected.
     public internal(set) var loomSession: LoomAuthenticatedSession?
     /// Transfer engine attached to the current Loom session for out-of-band payloads.
-    @ObservationIgnored var transferEngine: LoomTransferEngine?
+    @ObservationIgnored var transferEngine: MirageTransferEngine?
     /// Task observing incoming transfer announcements from the active transfer engine.
     @ObservationIgnored var transferObserverTask: Task<Void, Never>?
     /// Incoming transfers retained until the matching request path consumes them.
-    var pendingIncomingTransfersByKey: [String: LoomIncomingTransfer] = [:]
+    var pendingIncomingTransfersByKey: [String: MirageIncomingTransfer] = [:]
     /// Continuations waiting for a transfer announcement keyed by transfer purpose.
-    var transferWaitersByKey: [String: CheckedContinuation<LoomIncomingTransfer, Error>] = [:]
+    var transferWaitersByKey: [String: CheckedContinuation<MirageIncomingTransfer, Error>] = [:]
     /// Task mirroring Loom control-session state into client connection state.
     @ObservationIgnored var controlSessionStateObserverTask: Task<Void, Never>?
     /// Task mirroring Loom path changes into network path status and history.
@@ -356,11 +366,11 @@ public final class MirageClientService {
     var hasCompletedBootstrap = false
     var mediaSecurityContext: MirageMediaSecurityContext?
 
-    var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
+    var controlMessageHandlers: [MirageWire.ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
     /// Current local network path kind observed by the client monitor.
-    public var currentLocalPathKind: MirageNetworkPathKind {
+    public var currentLocalPathKind: MirageCore.MirageNetworkPathKind {
         localNetworkMonitor.snapshot.currentPathKind
     }
 
@@ -370,7 +380,7 @@ public final class MirageClientService {
     }
 
     /// Current network path kind used by the active control session.
-    public internal(set) var currentControlPathKind: MirageNetworkPathKind?
+    public internal(set) var currentControlPathKind: MirageCore.MirageNetworkPathKind?
 
     /// Current control-session path status exposed to app UI.
     public internal(set) var currentControlPathStatus: MirageClientNetworkPathStatus?
@@ -379,13 +389,13 @@ public final class MirageClientService {
     public internal(set) var controlPathHistory: [MirageClientNetworkPathHistoryEntry] = []
 
     /// Recent control-session routing attempts included in support diagnostics.
-    public internal(set) var recentControlSessionAttemptSummaries: [MirageClientControlSessionAttemptSummary] = []
+    public internal(set) var recentControlSessionAttemptSummaries: [MirageDiagnostics.MirageClientControlSessionAttemptSummary] = []
 
-    var controlPathSnapshot: MirageNetworkPathSnapshot?
+    var controlPathSnapshot: MirageConnectivity.MirageNetworkPathSnapshot?
     /// App-selected policy path kind used for stream budgeting when route intent should override raw path observation.
-    @ObservationIgnored var streamingPolicyPathKindOverride: MirageNetworkPathKind?
+    @ObservationIgnored var streamingPolicyPathKindOverride: MirageCore.MirageNetworkPathKind?
     /// App-selected policy media profile used for stream budgeting when route intent should override raw path observation.
-    @ObservationIgnored var streamingPolicyMediaPathProfileOverride: MirageMediaPathProfile?
+    @ObservationIgnored var streamingPolicyMediaPathProfileOverride: MirageMedia.MirageMediaPathProfile?
     /// Last successful direct host endpoint remembered per device for Bonjour fallback.
     @ObservationIgnored var rememberedDirectEndpointHostByDeviceID: [UUID: NWEndpoint.Host] = [:]
     /// Number of observed control-session path switches onto AWDL.
@@ -427,11 +437,11 @@ public final class MirageClientService {
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
     let bootstrapResponseTimeout: Duration = .seconds(45)
 
-    /// Task accepting incoming Loom multiplexed media streams.
+    /// Task accepting incoming multiplexed media streams.
     @ObservationIgnored var mediaStreamListenerTask: Task<Void, Never>?
 
-    /// Active Loom media streams keyed by transport stream name.
-    var activeMediaStreams: [String: LoomMultiplexedStream] = [:]
+    /// Active media streams keyed by transport stream name.
+    var activeMediaStreams: [String: any MirageIncomingMediaStream] = [:]
 
     /// Per-video-stream receive loops.
     var videoStreamReceiveTasks: [StreamID: Task<Void, Never>] = [:]
@@ -455,7 +465,7 @@ public final class MirageClientService {
     var audioRegisteredStreamID: StreamID?
 
     /// Latest audio stream-start message received from the host.
-    var activeAudioStreamMessage: AudioStreamStartedMessage?
+    var activeAudioStreamMessage: MirageWire.AudioStreamStartedMessage?
 
     /// Generation counter for host audio configuration changes.
     var audioStreamConfigurationGeneration: UInt64 = 0
@@ -504,7 +514,7 @@ public final class MirageClientService {
     }
 
     /// Audio streaming configuration negotiated for future and active streams.
-    public var audioConfiguration: MirageAudioConfiguration = .default {
+    public var audioConfiguration: MirageMedia.MirageAudioConfiguration = .default {
         didSet {
             guard oldValue != audioConfiguration else { return }
             if !audioConfiguration.enabled { stopAudioConnection() }
@@ -554,7 +564,7 @@ public final class MirageClientService {
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
 
     /// Last desktop start request retained for one bounded restart attempt.
-    var lastDesktopStreamStartRequest: StartDesktopStreamMessage?
+    var lastDesktopStreamStartRequest: MirageWire.StartDesktopStreamMessage?
 
     /// Number of desktop stream restart attempts for the current request.
     var desktopStreamRestartAttempts: Int = 0
@@ -605,11 +615,11 @@ public final class MirageClientService {
     // MARK: - Quality Test State
 
     /// Continuation waiting for a quality-test benchmark result from the host.
-    var qualityTestBenchmarkContinuation: CheckedContinuation<QualityTestBenchmarkMessage?, Never>?
+    var qualityTestBenchmarkContinuation: CheckedContinuation<MirageWire.QualityTestBenchmarkMessage?, Never>?
     /// Continuation waiting for the next quality-test stage completion.
-    var qualityTestStageCompletionContinuation: CheckedContinuation<QualityTestStageCompleteMessage?, Never>?
+    var qualityTestStageCompletionContinuation: CheckedContinuation<MirageWire.QualityTestStageCompleteMessage?, Never>?
     /// Stage completion messages that arrived before a waiter was installed.
-    var qualityTestStageCompletionBuffer: [QualityTestStageCompleteMessage] = []
+    var qualityTestStageCompletionBuffer: [MirageWire.QualityTestStageCompleteMessage] = []
     /// Quality-test identifier currently awaiting benchmark or stage-completion responses.
     var qualityTestPendingTestID: UUID?
     /// Monotonic waiter token used to invalidate stale benchmark timeouts.
@@ -672,22 +682,22 @@ public final class MirageClientService {
     var refreshRateFallbackTargets: [StreamID: Int] = [:]
 
     /// Decoder color-depth fallback state used after repeated decode failures.
-    var decoderCompatibilityCurrentColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
-    var decoderCompatibilityBaselineColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
+    var decoderCompatibilityCurrentColorDepthByStream: [StreamID: MirageMedia.MirageStreamColorDepth] = [:]
+    var decoderCompatibilityBaselineColorDepthByStream: [StreamID: MirageMedia.MirageStreamColorDepth] = [:]
 
     /// Requested color depth and latency modes retained while a stream setup is in flight.
-    var pendingRequestedColorDepthByWindowID: [WindowID: MirageStreamColorDepth] = [:]
-    var pendingDesktopRequestedColorDepth: MirageStreamColorDepth?
-    var pendingAppRequestedColorDepth: MirageStreamColorDepth?
-    var pendingDesktopRequestedLatencyMode: MirageStreamLatencyMode?
-    var pendingAppRequestedLatencyMode: MirageStreamLatencyMode?
-    var pendingStreamSetupLatencyMode: MirageStreamLatencyMode?
+    var pendingRequestedColorDepthByWindowID: [WindowID: MirageMedia.MirageStreamColorDepth] = [:]
+    var pendingDesktopRequestedColorDepth: MirageMedia.MirageStreamColorDepth?
+    var pendingAppRequestedColorDepth: MirageMedia.MirageStreamColorDepth?
+    var pendingDesktopRequestedLatencyMode: MirageMedia.MirageStreamLatencyMode?
+    var pendingAppRequestedLatencyMode: MirageMedia.MirageStreamLatencyMode?
+    var pendingStreamSetupLatencyMode: MirageMedia.MirageStreamLatencyMode?
 
     /// Render latency mode currently applied per active stream.
-    var renderLatencyModeByStream: [StreamID: MirageStreamLatencyMode] = [:]
+    var renderLatencyModeByStream: [StreamID: MirageMedia.MirageStreamLatencyMode] = [:]
 
-    /// Diagnostics context registration token for appending client runtime state to Loom diagnostics.
-    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
+    /// Diagnostics context registration token for appending client runtime state to diagnostics.
+    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
 
     /// Power-state monitor backing decoder low-power policy.
     let decoderPowerStateMonitor = MiragePowerStateMonitor()
@@ -699,7 +709,7 @@ public final class MirageClientService {
     )
 
     /// Client protocol version used for session bootstrap.
-    public static let clientProtocolVersion = Int(MirageKit.protocolVersion)
+    public static let clientProtocolVersion = Int(MirageKit.controlProtocolVersion)
 
     /// Creates a client service with optional device, transport, and session-store overrides.
     public init(
@@ -742,7 +752,7 @@ public final class MirageClientService {
         }
         guard let diagnosticsContextProviderToken else { return }
         Task {
-            await LoomDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
+            await MirageDiagnosticsContextRegistry.unregisterContextProvider(diagnosticsContextProviderToken)
         }
     }
 }

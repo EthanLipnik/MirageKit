@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+MessageHandling+SoftwareUpdate.swift
 //  MirageKit
@@ -7,26 +16,25 @@
 //  Host software update control message handling.
 //
 
-import MirageKit
 
 @MainActor
 extension MirageClientService {
-    func handleHostSoftwareUpdateStatus(_ message: ControlMessage) {
+    func handleHostSoftwareUpdateStatus(_ message: MirageWire.ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsHostSoftwareUpdateRefresh = true
             return
         }
         do {
-            let statusMessage = try message.decode(HostSoftwareUpdateStatusMessage.self)
+            let statusMessage = try message.decode(MirageWire.HostSoftwareUpdateStatusMessage.self)
             onHostSoftwareUpdateStatus?(HostSoftwareUpdateStatus(message: statusMessage))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode host software update status: ")
         }
     }
 
-    func handleHostSoftwareUpdateInstallResult(_ message: ControlMessage) {
+    func handleHostSoftwareUpdateInstallResult(_ message: MirageWire.ControlMessage) {
         do {
-            let installResultMessage = try message.decode(HostSoftwareUpdateInstallResultMessage.self)
+            let installResultMessage = try message.decode(MirageWire.HostSoftwareUpdateInstallResultMessage.self)
             onHostSoftwareUpdateInstallResult?(HostSoftwareUpdateInstallResult(message: installResultMessage))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode host software update install result: ")
@@ -36,7 +44,7 @@ extension MirageClientService {
 
 private extension MirageClientService.HostSoftwareUpdateStatus {
     /// Converts the host wire payload into the client-facing software-update model.
-    init(message: HostSoftwareUpdateStatusMessage) {
+    init(message: MirageWire.HostSoftwareUpdateStatusMessage) {
         self.init(
             isSparkleAvailable: message.isSparkleAvailable,
             isCheckingForUpdates: message.isCheckingForUpdates,
@@ -65,7 +73,7 @@ private extension MirageClientService.HostSoftwareUpdateStatus {
 
 private extension MirageClientService.HostSoftwareUpdateInstallResult {
     /// Converts a host install-result wire payload into the client-facing result model.
-    init(message: HostSoftwareUpdateInstallResultMessage) {
+    init(message: MirageWire.HostSoftwareUpdateInstallResultMessage) {
         self.init(
             accepted: message.resultCode == .started,
             message: message.message,

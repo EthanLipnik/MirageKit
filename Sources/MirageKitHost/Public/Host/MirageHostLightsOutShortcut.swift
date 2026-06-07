@@ -7,20 +7,29 @@
 //  Host Lights Out emergency shortcut defaults and validation.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 #if os(macOS)
 /// Default shortcut and validation helpers for the host Lights Out emergency control.
 public enum MirageHostLightsOutShortcut {
     /// Default emergency shortcut: Control-Option-Escape.
-    public static let defaultEmergencyShortcut = MirageClientShortcutBinding(
+    public static let defaultEmergencyShortcut = MirageInput.MirageClientShortcutBinding(
         keyCode: 0x35,
         modifiers: [.control, .option]
     )
 
     /// Returns a validation error when the shortcut cannot safely trigger Lights Out.
     public static func validationError(
-        for shortcut: MirageClientShortcutBinding
+        for shortcut: MirageInput.MirageClientShortcutBinding
     ) -> MirageHostLightsOutShortcutValidationError? {
         let normalizedModifiers = shortcut.modifiers.normalizedForShortcutMatching
         if normalizedModifiers.isEmpty {
@@ -36,9 +45,9 @@ public enum MirageHostLightsOutShortcut {
 
     /// Normalizes shortcut modifiers before storage or comparison.
     public static func normalized(
-        _ shortcut: MirageClientShortcutBinding
-    ) -> MirageClientShortcutBinding {
-        MirageClientShortcutBinding(
+        _ shortcut: MirageInput.MirageClientShortcutBinding
+    ) -> MirageInput.MirageClientShortcutBinding {
+        MirageInput.MirageClientShortcutBinding(
             keyCode: shortcut.keyCode,
             modifiers: shortcut.modifiers.normalizedForShortcutMatching
         )

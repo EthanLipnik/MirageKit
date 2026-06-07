@@ -7,10 +7,18 @@
 //  Audio frame decode and downmix helpers for playback.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AVFAudio
 import AudioToolbox
 import Foundation
-import MirageKit
 
 struct DecodedPCMFrame: Sendable {
     let sampleRate: Int
@@ -55,7 +63,7 @@ private final class AudioDecoderInputProvider: @unchecked Sendable {
 
 actor AudioDecoder {
     private struct ConverterKey: Hashable {
-        let codec: MirageAudioCodec
+        let codec: MirageMedia.MirageAudioCodec
         let inputSampleRate: Int
         let inputChannels: Int
         let outputChannels: Int

@@ -11,6 +11,9 @@ import CoreGraphics
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("Host Adaptive Stream Budget Policy")
 struct HostAdaptiveStreamBudgetPolicyTests {
@@ -192,7 +195,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
         let expectedReadabilityFloor = try #require(
-            MirageBitrateQualityMapper.targetBitrateBps(
+            MirageMedia.MirageBitrateQualityMapper.targetBitrateBps(
                 forFrameQuality: 0.65,
                 width: 6000,
                 height: 3376,
@@ -812,8 +815,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         outputWidth: Double = 1920,
         outputHeight: Double = 1080,
         frameRate: Int = 60,
-        mediaPathProfile: MirageMediaPathProfile,
-        transportPathKind: MirageNetworkPathKind = .wifi
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .wifi
     ) -> HostAdaptiveStreamBudgetPolicy.Request {
         HostAdaptiveStreamBudgetPolicy.Request(
             requestedBitrateBps: requestedBitrateBps,
@@ -837,7 +840,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         maxBitrateBps: Int
     ) throws -> Int {
         return try #require(
-            MirageBitrateQualityMapper.targetBitrateBps(
+            MirageMedia.MirageBitrateQualityMapper.targetBitrateBps(
                 forFrameQuality: frameQuality,
                 width: outputWidth,
                 height: outputHeight,
@@ -853,8 +856,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderCatchUpQualityAdjustmentEnabled: Bool = true,
-        transportPathKind: MirageNetworkPathKind,
-        mediaPathProfile: MirageMediaPathProfile,
+        transportPathKind: MirageCore.MirageNetworkPathKind,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile,
         mediaPathDiagnosticSummary: String? = nil
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
@@ -884,15 +887,15 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         frameNumber: UInt32,
         packetSpanMs: Double,
         completionGapMs: Double
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 3,
             sequence: sequence,
             sentAtUptime: 0,
             targetFPS: 60,
             ackRanges: [],
             pFrameTimingSamples: [
-                ReceiverPFrameTimingSample(
+                MirageWire.ReceiverPFrameTimingSample(
                     frameNumber: frameNumber,
                     packetSpanMs: packetSpanMs,
                     completionGapMs: completionGapMs,

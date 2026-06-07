@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 1/6/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -31,8 +39,8 @@ actor SharedVirtualDisplayManager {
         let resolution: CGSize
         let scaleFactor: CGFloat
         let refreshRate: Double
-        let colorSpace: MirageColorSpace
-        let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
+        let colorSpace: MirageMedia.MirageColorSpace
+        let displayP3CoverageStatus: MirageMedia.MirageDisplayP3CoverageStatus
         let generation: UInt64
         let createdAt: Date
 
@@ -47,8 +55,8 @@ actor SharedVirtualDisplayManager {
         let resolution: CGSize
         let scaleFactor: CGFloat
         let refreshRate: Double
-        let colorSpace: MirageColorSpace
-        let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
+        let colorSpace: MirageMedia.MirageColorSpace
+        let displayP3CoverageStatus: MirageMedia.MirageDisplayP3CoverageStatus
         let generation: UInt64
         let createdAt: Date
     }
@@ -82,7 +90,7 @@ actor SharedVirtualDisplayManager {
     struct ClientDisplayInfo: Sendable {
         let resolution: CGSize
         let windowID: WindowID
-        let colorSpace: MirageColorSpace
+        let colorSpace: MirageMedia.MirageColorSpace
         let acquiredAt: Date
     }
 

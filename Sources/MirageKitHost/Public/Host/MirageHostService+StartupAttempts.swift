@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 3/26/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension MirageHostService {
@@ -14,8 +22,8 @@ extension MirageHostService {
         let startupAttemptID: UUID
         let sessionID: UUID
         let clientID: UUID
-        let kind: MirageStartupStreamKind
-        let desktopGeometryContract: StreamReadyDesktopGeometryContract?
+        let kind: MirageWire.MirageStartupStreamKind
+        let desktopGeometryContract: MirageWire.StreamReadyDesktopGeometryContract?
     }
 
     func registerPendingStartupAttempt(
@@ -23,8 +31,8 @@ extension MirageHostService {
         startupAttemptID: UUID,
         sessionID: UUID,
         clientID: UUID,
-        kind: MirageStartupStreamKind,
-        desktopGeometryContract: StreamReadyDesktopGeometryContract? = nil
+        kind: MirageWire.MirageStartupStreamKind,
+        desktopGeometryContract: MirageWire.StreamReadyDesktopGeometryContract? = nil
     ) {
         cancelPendingStartupAttempt(streamID: streamID)
         pendingStartupAttemptsByStreamID[streamID] = PendingStartupAttempt(
@@ -55,8 +63,8 @@ extension MirageHostService {
     func acknowledgePendingStartupAttempt(
         streamID: StreamID,
         startupAttemptID: UUID,
-        kind: MirageStartupStreamKind,
-        desktopGeometryContract: StreamReadyDesktopGeometryContract? = nil
+        kind: MirageWire.MirageStartupStreamKind,
+        desktopGeometryContract: MirageWire.StreamReadyDesktopGeometryContract? = nil
     ) async {
         guard let pending = pendingStartupAttemptsByStreamID[streamID] else { return }
         guard pending.startupAttemptID == startupAttemptID, pending.kind == kind else {
@@ -83,28 +91,28 @@ extension MirageHostService {
         switch kind {
         case .desktop:
             if streamID == desktopStreamID, let desktopContext = desktopStreamContext,
-               loomVideoStreamsByStreamID[streamID] != nil {
+               videoMediaStreamsByStreamID[streamID] != nil {
                 await desktopContext.allowEncodingAfterRegistration()
                 MirageLogger.host(
                     "Desktop startup ready ack accepted for stream \(streamID); encoding enabled"
                 )
             }
         case .window:
-            if let context = streamsByID[streamID], loomVideoStreamsByStreamID[streamID] != nil {
+            if let context = streamsByID[streamID], videoMediaStreamsByStreamID[streamID] != nil {
                 await context.allowEncodingAfterRegistration()
                 MirageLogger.host(
                     "Window startup ready ack accepted for stream \(streamID); encoding enabled"
                 )
             }
         case .custom:
-            if let context = streamsByID[streamID], loomVideoStreamsByStreamID[streamID] != nil {
+            if let context = streamsByID[streamID], videoMediaStreamsByStreamID[streamID] != nil {
                 await context.allowEncodingAfterRegistration()
                 MirageLogger.host(
                     "Custom startup ready ack accepted for stream \(streamID); encoding enabled"
                 )
             }
         case .appAtlas:
-            if let context = streamsByID[streamID], loomVideoStreamsByStreamID[streamID] != nil {
+            if let context = streamsByID[streamID], videoMediaStreamsByStreamID[streamID] != nil {
                 await context.allowEncodingAfterRegistration()
                 MirageLogger.host(
                     "App atlas startup ready ack accepted for stream \(streamID); encoding enabled"
@@ -127,7 +135,7 @@ extension MirageHostService {
         case .desktop:
             if let clientContext = findClientContext(sessionID: pending.sessionID),
                clientContext.client.id == pending.clientID {
-                let failure = DesktopStreamFailedMessage(
+                let failure = MirageWire.DesktopStreamFailedMessage(
                     reason: "Desktop startup timed out waiting for client readiness acknowledgement."
                 )
                 do {
@@ -144,7 +152,7 @@ extension MirageHostService {
             if let clientContext = findClientContext(sessionID: pending.sessionID),
                clientContext.client.id == pending.clientID {
                 sendControlError(
-                    ErrorMessage.ErrorCode.networkError,
+                    MirageWire.ErrorMessage.ErrorCode.networkError,
                     message: "Stream startup timed out waiting for client readiness acknowledgement.",
                     to: clientContext
                 )
@@ -159,7 +167,7 @@ extension MirageHostService {
             if let clientContext = findClientContext(sessionID: pending.sessionID),
                clientContext.client.id == pending.clientID,
                customStreamDescriptorsByStreamID[streamID] != nil {
-                let failed = CustomStreamFailedMessage(
+                let failed = MirageWire.CustomStreamFailedMessage(
                     startupRequestID: customStreamStartupRequestIDByStreamID[streamID] ?? pending.startupAttemptID,
                     reason: "Custom stream startup timed out waiting for client readiness acknowledgement."
                 )
@@ -177,7 +185,7 @@ extension MirageHostService {
             if let clientContext = findClientContext(sessionID: pending.sessionID),
                clientContext.client.id == pending.clientID {
                 sendControlError(
-                    ErrorMessage.ErrorCode.networkError,
+                    MirageWire.ErrorMessage.ErrorCode.networkError,
                     message: "App atlas startup timed out waiting for client readiness acknowledgement.",
                     to: clientContext
                 )
@@ -197,8 +205,8 @@ enum StreamReadyDesktopGeometryAcceptanceDecision: Equatable {
 }
 
 func streamReadyDesktopGeometryAcceptanceDecision(
-    expected: StreamReadyDesktopGeometryContract?,
-    acknowledged: StreamReadyDesktopGeometryContract?
+    expected: MirageWire.StreamReadyDesktopGeometryContract?,
+    acknowledged: MirageWire.StreamReadyDesktopGeometryContract?
 ) -> StreamReadyDesktopGeometryAcceptanceDecision {
     guard let expected else { return .acceptNoExpectedContract }
     guard let acknowledged else { return .rejectMismatchedContract }

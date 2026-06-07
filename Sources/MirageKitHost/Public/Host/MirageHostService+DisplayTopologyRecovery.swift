@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -45,9 +53,9 @@ extension MirageHostService {
         await desktopContext.suspendEncodingForDesktopResize()
 
         do {
-            var displaySnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot
+            var displaySnapshot = await platformVirtualDisplayBackend.displaySnapshot
             if let displayID = desktopVirtualDisplayID,
-               let observedSnapshot = await SharedVirtualDisplayManager.shared.updateSharedDisplayObservedResolution(
+               let observedSnapshot = await platformVirtualDisplayBackend.updateSharedDisplayObservedResolution(
                    displayID: displayID,
                    resolution: virtualResolution
                ) {
@@ -58,7 +66,7 @@ extension MirageHostService {
                 desktopVirtualDisplayID = displaySnapshot.displayID
                 sharedVirtualDisplayGeneration = displaySnapshot.generation
                 sharedVirtualDisplayScaleFactor = max(1.0, displaySnapshot.scaleFactor)
-                desktopDisplayBounds = CGVirtualDisplayBridge.displayBounds(
+                desktopDisplayBounds = platformVirtualDisplayBackend.displayBounds(
                     displaySnapshot.displayID,
                     knownResolution: SharedVirtualDisplayManager.logicalResolution(
                         for: displaySnapshot.resolution,
@@ -131,7 +139,7 @@ extension MirageHostService {
                 refreshTargetHz: streamStart.targetFrameRate
             )
             desktopPresentationGeneration &+= 1
-            let message = DesktopStreamStartedMessage(
+            let message = MirageWire.DesktopStreamStartedMessage(
                 streamID: streamID,
                 desktopSessionID: desktopSessionID,
                 width: Int(displayResolution.width),
@@ -224,7 +232,7 @@ extension MirageHostService {
         }
 
         do {
-            if let snapshot = await SharedVirtualDisplayManager.shared.updateSharedDisplayObservedResolution(
+            if let snapshot = await platformVirtualDisplayBackend.updateSharedDisplayObservedResolution(
                 displayID: displayID,
                 resolution: virtualResolution
             ) {

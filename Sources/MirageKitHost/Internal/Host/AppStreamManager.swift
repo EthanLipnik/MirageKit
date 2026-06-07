@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import Foundation
 import OSLog
@@ -54,12 +62,12 @@ actor AppStreamManager {
 
     /// Application scanner for getting installed apps
     let applicationScanner: ApplicationScanner
-    var cachedAppsWithIcons: [MirageInstalledApp] = []
-    var cachedAppsWithoutIcons: [MirageInstalledApp] = []
+    var cachedAppsWithIcons: [MirageWire.MirageInstalledApp] = []
+    var cachedAppsWithoutIcons: [MirageWire.MirageInstalledApp] = []
     var lastAppsScanWithIconsAt: Date?
     var lastAppsScanWithoutIconsAt: Date?
-    var appScanTaskWithIcons: Task<[MirageInstalledApp], Never>?
-    var appScanTaskWithoutIcons: Task<[MirageInstalledApp], Never>?
+    var appScanTaskWithIcons: Task<[MirageWire.MirageInstalledApp], Never>?
+    var appScanTaskWithoutIcons: Task<[MirageWire.MirageInstalledApp], Never>?
     let appScanWithIconsTTL: TimeInterval = 120
     let appScanWithoutIconsTTL: TimeInterval = 30
 

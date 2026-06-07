@@ -9,6 +9,8 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
+import MirageWire
 
 @Suite("Quality Test Waiters", .serialized)
 struct QualityTestWaiterTests {
@@ -123,11 +125,11 @@ struct QualityTestWaiterTests {
 
         try await Task.sleep(for: .milliseconds(120))
 
-        let expectedResult = QualityTestBenchmarkMessage(
+        let expectedResult = MirageWire.QualityTestBenchmarkMessage(
             testID: secondTestID,
             encodeMs: 4.2
         )
-        let message = try ControlMessage(
+        let message = try MirageWire.ControlMessage(
             type: .qualityTestResult,
             content: expectedResult
         )
@@ -145,7 +147,7 @@ struct QualityTestWaiterTests {
         let testID = UUID()
         service.qualityTestPendingTestID = testID
 
-        let expectedResult = QualityTestStageCompleteMessage(
+        let expectedResult = MirageWire.QualityTestStageCompleteMessage(
             testID: testID,
             stageID: 4,
             probeKind: .streamingReplay,
@@ -155,7 +157,7 @@ struct QualityTestWaiterTests {
             sentPayloadBytes: 1_024 * 1_024,
             deliveryWindowMissed: false
         )
-        let message = try ControlMessage(
+        let message = try MirageWire.ControlMessage(
             type: .qualityTestStageComplete,
             content: expectedResult
         )
@@ -206,7 +208,7 @@ struct QualityTestWaiterTests {
 
         try await Task.sleep(for: .milliseconds(120))
 
-        let expectedResult = QualityTestStageCompleteMessage(
+        let expectedResult = MirageWire.QualityTestStageCompleteMessage(
             testID: secondTestID,
             stageID: 2,
             probeKind: .transport,
@@ -216,7 +218,7 @@ struct QualityTestWaiterTests {
             sentPayloadBytes: 2_048 * 1_024,
             deliveryWindowMissed: false
         )
-        let message = try ControlMessage(
+        let message = try MirageWire.ControlMessage(
             type: .qualityTestStageComplete,
             content: expectedResult
         )
@@ -254,7 +256,7 @@ struct QualityTestWaiterTests {
         #expect(service.qualityTestPendingTestID == nil)
         #expect(service.qualityTestStageCompletionBuffer.isEmpty)
 
-        let completion = QualityTestStageCompleteMessage(
+        let completion = MirageWire.QualityTestStageCompleteMessage(
             testID: testID,
             stageID: 7,
             probeKind: .transport,
@@ -264,7 +266,7 @@ struct QualityTestWaiterTests {
             sentPayloadBytes: 12_800,
             deliveryWindowMissed: false
         )
-        let message = try ControlMessage(
+        let message = try MirageWire.ControlMessage(
             type: .qualityTestStageComplete,
             content: completion
         )
@@ -317,5 +319,5 @@ private func waitForPingRequest(
         waiters=\(service.pingContinuations.count)
         """
     )
-    throw MirageError.timeout
+    throw MirageCore.MirageError.timeout
 }

@@ -10,6 +10,9 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageMedia
 
 #if os(macOS)
 @MainActor
@@ -37,7 +40,7 @@ struct DesktopResizeCoordinatorTests {
         service.sessionStore.registerSession(
             streamID: streamID,
             mediaStreamID: streamID,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: WindowID(streamID),
                 title: "Desktop",
                 application: nil,
@@ -408,7 +411,7 @@ struct DesktopResizeCoordinatorTests {
         service.sessionStore.registerSession(
             streamID: streamID,
             mediaStreamID: streamID,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 9001,
                 title: "Desktop",
                 application: nil,
@@ -458,7 +461,7 @@ struct DesktopResizeCoordinatorTests {
         service.sessionStore.registerSession(
             streamID: streamID,
             mediaStreamID: streamID,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 9002,
                 title: "Desktop",
                 application: nil,
@@ -584,8 +587,8 @@ struct DesktopResizeCoordinatorTests {
         service.clearDesktopResizeState(streamID: streamID)
     }
 
-    private static func awdlRadioSnapshot() -> MirageNetworkPathSnapshot {
-        MirageNetworkPathClassifier.classify(
+    private static func awdlRadioSnapshot() -> MirageConnectivity.MirageNetworkPathSnapshot {
+        MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["awdl0"],
             usesWiFi: false,
             usesWired: false,

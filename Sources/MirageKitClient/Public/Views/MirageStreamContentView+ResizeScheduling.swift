@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -156,7 +164,7 @@ extension MirageStreamContentView {
                 #if os(visionOS)
                 let baseDisplaySize = visionOSDisplaySize
                 #else
-                let baseDisplaySize = MirageStreamGeometry.normalizedLogicalSize(targetViewSize)
+                let baseDisplaySize = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(targetViewSize)
                 #endif
                 guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
                     if isResizing, !awaitingAppResizeAck { isResizing = false }

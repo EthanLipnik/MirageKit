@@ -7,16 +7,24 @@
 //  App-centric streaming message handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 extension MirageClientService {
     /// Publishes app-stream startup metadata and resets stale inventory state.
-    func handleAppStreamStarted(_ message: ControlMessage) {
+    func handleAppStreamStarted(_ message: MirageWire.ControlMessage) {
         do {
-            let started = try message.decode(AppStreamStartedMessage.self)
+            let started = try message.decode(MirageWire.AppStreamStartedMessage.self)
             MirageLogger.client("App stream started: \(started.appName) with \(started.windows.count) windows")
             appStreamStartTimeoutTask?.cancel()
             appStreamStartTimeoutTask = nil
@@ -30,9 +38,9 @@ extension MirageClientService {
     }
 
     /// Applies app-atlas media metadata and prepares or refreshes the media stream controller.
-    func handleAppAtlasMediaUpdate(_ message: ControlMessage) async {
+    func handleAppAtlasMediaUpdate(_ message: MirageWire.ControlMessage) async {
         do {
-            let update = try message.decode(AppAtlasMediaUpdateMessage.self)
+            let update = try message.decode(MirageWire.AppAtlasMediaUpdateMessage.self)
             let mediaStreamID = update.mediaStreamID
             guard shouldAcceptStartupAttempt(update.startupAttemptID, for: mediaStreamID) else {
                 MirageLogger.client(
@@ -53,7 +61,7 @@ extension MirageClientService {
             let isExistingStream = activeStreamIDsForFiltering.contains(mediaStreamID) || hasController
             let previousDimensionToken = appDimensionTokenByStream[mediaStreamID]
             let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(update.acceptedPacketSize)
-            let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[mediaStreamID] ?? mirageDefaultMaxPacketSize
+            let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[mediaStreamID] ?? MirageWire.mirageDefaultMaxPacketSize
             let packetSizeChanged = hasController && previousMediaMaxPacketSize != acceptedMediaMaxPacketSize
             let didAdvanceDimensionToken =
                 if let previousDimensionToken, let dimensionToken = update.dimensionToken {
@@ -120,9 +128,9 @@ extension MirageClientService {
     }
 
     /// Stores the latest app-window inventory and any atlas layouts bundled with it.
-    func handleAppWindowInventory(_ message: ControlMessage) {
+    func handleAppWindowInventory(_ message: MirageWire.ControlMessage) {
         do {
-            let inventory = try message.decode(AppWindowInventoryMessage.self)
+            let inventory = try message.decode(MirageWire.AppWindowInventoryMessage.self)
             storeAppAtlasLayouts(inventory.atlasLayouts)
             appWindowInventory = inventory
             onAppWindowInventoryUpdate?(inventory)
@@ -132,9 +140,9 @@ extension MirageClientService {
     }
 
     /// Applies a terminal host-side app-window resize result.
-    func handleAppWindowResizeResult(_ message: ControlMessage) {
+    func handleAppWindowResizeResult(_ message: MirageWire.ControlMessage) {
         do {
-            let result = try message.decode(AppWindowResizeResultMessage.self)
+            let result = try message.decode(MirageWire.AppWindowResizeResultMessage.self)
             appWindowResizeResultByStreamID[result.streamID] = result
             if let observedWidth = result.observedWidth,
                let observedHeight = result.observedHeight,
@@ -159,9 +167,9 @@ extension MirageClientService {
     }
 
     /// Forwards a host close-blocked alert for app-window UI presentation.
-    func handleAppWindowCloseBlockedAlert(_ message: ControlMessage) {
+    func handleAppWindowCloseBlockedAlert(_ message: MirageWire.ControlMessage) {
         do {
-            let alert = try message.decode(AppWindowCloseBlockedAlertMessage.self)
+            let alert = try message.decode(MirageWire.AppWindowCloseBlockedAlertMessage.self)
             onAppWindowCloseBlockedAlert?(alert)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app-window close blocked alert: ")
@@ -169,9 +177,9 @@ extension MirageClientService {
     }
 
     /// Reports that a hidden app window was promoted into a visible stream.
-    func handleWindowAddedToStream(_ message: ControlMessage) {
+    func handleWindowAddedToStream(_ message: MirageWire.ControlMessage) {
         do {
-            let added = try message.decode(WindowAddedToStreamMessage.self)
+            let added = try message.decode(MirageWire.WindowAddedToStreamMessage.self)
             MirageLogger.client("Window added to stream: \(added.windowID)")
             storeAppAtlasLayouts(added.atlasLayouts)
             clearPendingStreamSetup(kind: .app)
@@ -182,9 +190,9 @@ extension MirageClientService {
     }
 
     /// Reports that a window left an app stream and forwards the host removal reason.
-    func handleWindowRemovedFromStream(_ message: ControlMessage) async {
+    func handleWindowRemovedFromStream(_ message: MirageWire.ControlMessage) async {
         do {
-            let removed = try message.decode(WindowRemovedFromStreamMessage.self)
+            let removed = try message.decode(MirageWire.WindowRemovedFromStreamMessage.self)
             MirageLogger.client("Window removed from stream: \(removed.windowID), reason=\(removed.reason.rawValue)")
             onWindowRemovedFromStream?(removed)
             if let streamID = removed.streamID {
@@ -196,9 +204,9 @@ extension MirageClientService {
     }
 
     /// Reports a host-side failure to start or maintain a specific window stream.
-    func handleWindowStreamFailed(_ message: ControlMessage) {
+    func handleWindowStreamFailed(_ message: MirageWire.ControlMessage) {
         do {
-            let failed = try message.decode(WindowStreamFailedMessage.self)
+            let failed = try message.decode(MirageWire.WindowStreamFailedMessage.self)
             MirageLogger.client("Window stream failed: \(failed.windowID) reason=\(failed.reason)")
             onWindowStreamFailed?(failed)
         } catch {
@@ -207,9 +215,9 @@ extension MirageClientService {
     }
 
     /// Applies app-window swap results and updates the target session atlas region on success.
-    func handleAppWindowSwapResult(_ message: ControlMessage) {
+    func handleAppWindowSwapResult(_ message: MirageWire.ControlMessage) {
         do {
-            let result = try message.decode(AppWindowSwapResultMessage.self)
+            let result = try message.decode(MirageWire.AppWindowSwapResultMessage.self)
             storeAppAtlasLayouts(result.atlasLayouts)
             if result.success {
                 sessionStore.updateSessionAtlasRegion(
@@ -233,9 +241,9 @@ extension MirageClientService {
     }
 
     /// Forwards the result of a user action taken from a close-blocked app-window alert.
-    func handleAppWindowCloseAlertActionResult(_ message: ControlMessage) {
+    func handleAppWindowCloseAlertActionResult(_ message: MirageWire.ControlMessage) {
         do {
-            let result = try message.decode(AppWindowCloseAlertActionResultMessage.self)
+            let result = try message.decode(MirageWire.AppWindowCloseAlertActionResultMessage.self)
             onAppWindowCloseAlertActionResult?(result)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app-window close alert action result: ")
@@ -243,9 +251,9 @@ extension MirageClientService {
     }
 
     /// Clears active app-stream state when the streamed host app terminates.
-    func handleAppTerminated(_ message: ControlMessage) {
+    func handleAppTerminated(_ message: MirageWire.ControlMessage) {
         do {
-            let terminated = try message.decode(AppTerminatedMessage.self)
+            let terminated = try message.decode(MirageWire.AppTerminatedMessage.self)
             MirageLogger.client("App terminated: \(terminated.bundleIdentifier)")
             if streamingAppBundleID == terminated.bundleIdentifier {
                 streamingAppBundleID = nil
@@ -260,9 +268,9 @@ extension MirageClientService {
     }
 
     /// Applies host runtime stream policies to the session store and active controllers.
-    func handleStreamPolicyUpdate(_ message: ControlMessage) {
+    func handleStreamPolicyUpdate(_ message: MirageWire.ControlMessage) {
         do {
-            let update = try message.decode(StreamPolicyUpdateMessage.self)
+            let update = try message.decode(MirageWire.StreamPolicyUpdateMessage.self)
             sessionStore.applyHostStreamPolicies(update.policies)
             Task { [weak self] in
                 guard let self else { return }

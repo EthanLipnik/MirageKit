@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -52,7 +60,7 @@ extension InputCapturingView {
             lockedPointerDraggedSinceDown = false
             lockedPointerLastHoverLocation = nil
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: currentClickCount,
@@ -61,7 +69,7 @@ extension InputCapturingView {
             onInputEvent?(.mouseDown(mouseEvent))
         case .ended, .cancelled:
             noteLockedCursorLocalInput()
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: currentClickCount,
@@ -131,7 +139,7 @@ extension InputCapturingView {
             virtualDragActive = true
             resetPrimaryClickTracking()
             let location = trackpadCursorActionPosition()
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: 1,
@@ -144,7 +152,7 @@ extension InputCapturingView {
              .failed:
             guard virtualPointerButtonDown else { return }
             let location = trackpadCursorActionPosition()
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: 1,
@@ -177,7 +185,7 @@ extension InputCapturingView {
         currentClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             clickCount: clickCount,
@@ -205,7 +213,7 @@ extension InputCapturingView {
         currentRightClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: clickCount,
@@ -224,24 +232,24 @@ extension InputCapturingView {
     @objc
     func handleDirectPinch(_ gesture: UIPinchGestureRecognizer) {
         requestResponderRecovery(.interaction)
-        let phase = MirageScrollPhase(gestureState: gesture.state)
+        let phase = MirageInput.MirageScrollPhase(gestureState: gesture.state)
         syncModifiersForInput()
 
         switch gesture.state {
         case .began:
             lastDirectPinchScale = 1.0
-            let event = MirageMagnifyEvent(magnification: 0, phase: phase)
+            let event = MirageInput.MirageMagnifyEvent(magnification: 0, phase: phase)
             onInputEvent?(.magnify(event))
 
         case .changed:
             let magnification = gesture.scale - lastDirectPinchScale
             lastDirectPinchScale = gesture.scale
-            let event = MirageMagnifyEvent(magnification: magnification, phase: phase)
+            let event = MirageInput.MirageMagnifyEvent(magnification: magnification, phase: phase)
             onInputEvent?(.magnify(event))
 
         case .cancelled,
              .ended:
-            let event = MirageMagnifyEvent(magnification: 0, phase: phase)
+            let event = MirageInput.MirageMagnifyEvent(magnification: 0, phase: phase)
             onInputEvent?(.magnify(event))
             lastDirectPinchScale = 1.0
 
@@ -253,25 +261,25 @@ extension InputCapturingView {
     @objc
     func handleDirectRotation(_ gesture: UIRotationGestureRecognizer) {
         requestResponderRecovery(.interaction)
-        let phase = MirageScrollPhase(gestureState: gesture.state)
+        let phase = MirageInput.MirageScrollPhase(gestureState: gesture.state)
         syncModifiersForInput()
 
         switch gesture.state {
         case .began:
             lastDirectRotationAngle = 0
-            let event = MirageRotateEvent(rotation: 0, phase: phase)
+            let event = MirageInput.MirageRotateEvent(rotation: 0, phase: phase)
             onInputEvent?(.rotate(event))
 
         case .changed:
             // Convert radians to degrees for the delta
             let rotationDelta = (gesture.rotation - lastDirectRotationAngle) * (180.0 / .pi)
             lastDirectRotationAngle = gesture.rotation
-            let event = MirageRotateEvent(rotation: rotationDelta, phase: phase)
+            let event = MirageInput.MirageRotateEvent(rotation: rotationDelta, phase: phase)
             onInputEvent?(.rotate(event))
 
         case .cancelled,
              .ended:
-            let event = MirageRotateEvent(rotation: 0, phase: phase)
+            let event = MirageInput.MirageRotateEvent(rotation: 0, phase: phase)
             onInputEvent?(.rotate(event))
             lastDirectRotationAngle = 0
 

@@ -14,6 +14,9 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 private extension StreamController {
@@ -219,7 +222,7 @@ struct StreamControllerRecoveryTests {
     @Test("Fresh non-keyframe traffic does not suppress recovery while awaiting keyframe")
     func freshNonKeyframeTrafficDoesNotSuppressAwaitingKeyframeRecovery() async {
         let clock = StreamControllerManualTimeProvider(start: 1000)
-        let cases: [(MirageNetworkPathKind, MirageMediaPathProfile)] = [
+        let cases: [(MirageCore.MirageNetworkPathKind, MirageMedia.MirageMediaPathProfile)] = [
             (.awdl, .awdlRadio),
             (.wifi, .localWiFi),
             (.vpn, .vpnOrOverlay)
@@ -474,7 +477,7 @@ struct StreamControllerRecoveryTests {
     @Test("Awaiting keyframe with no progress retries on bounded local and overlay grace")
     func awaitingKeyframeWithoutProgressUsesBoundedRetryGrace() async {
         let clock = StreamControllerManualTimeProvider(start: 1200)
-        let cases: [(MirageNetworkPathKind, MirageMediaPathProfile, CFAbsoluteTime)] = [
+        let cases: [(MirageCore.MirageNetworkPathKind, MirageMedia.MirageMediaPathProfile, CFAbsoluteTime)] = [
             (.wifi, .localWiFi, StreamController.localAwaitingKeyframeNoProgressRetryGrace),
             (.vpn, .vpnOrOverlay, StreamController.remoteAwaitingKeyframeNoProgressRetryGrace)
         ]
@@ -1127,11 +1130,11 @@ func primeStreamControllerKeyframeAnchor(
 
 func makeStreamControllerVideoHeader(
     streamID: StreamID,
-    flags: FrameFlags,
+    flags: MirageWire.FrameFlags,
     frameNumber: UInt32,
     payload: Data
-) -> FrameHeader {
-    FrameHeader(
+) -> MirageWire.FrameHeader {
+    MirageWire.FrameHeader(
         flags: flags,
         streamID: streamID,
         sequenceNumber: frameNumber,

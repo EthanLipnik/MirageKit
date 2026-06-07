@@ -7,9 +7,17 @@
 //  StreamController callback wiring.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 @MainActor
 extension MirageClientService {
@@ -174,7 +182,7 @@ extension MirageClientService {
         let session = sessionStore.sessionByStreamID(streamID)
         let recoveryStatus = session?.clientRecoveryStatus ?? .idle
         let recoveryCause = session?.clientRecoveryCause ?? .none
-        let recoveryState = MirageMediaFeedbackRecoveryState(recoveryStatus)
+        let recoveryState = MirageWire.MirageMediaFeedbackRecoveryState(recoveryStatus)
         let audioDroppedFrameCount = audioFeedbackDroppedFrameCountByStreamID[streamID] ?? 0
         let audioGateActive = audioVideoGateActiveStreamIDs.contains(streamID)
         let mediaPathProfile = effectiveMediaPathProfileForCurrentPath ?? .unknown
@@ -211,7 +219,7 @@ extension MirageClientService {
             sentAtUptime: now,
             targetFPS: targetFPS,
             recoveryState: recoveryState,
-            recoveryCause: MirageMediaFeedbackRecoveryCause(recoveryCause),
+            recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause(recoveryCause),
             ackRanges: ackRanges,
             pFrameTimingSamples: pFrameTimingSamples,
             transportLostFrameCount: transportLoss.lostFrameCount,
@@ -234,9 +242,9 @@ extension MirageClientService {
 
     private func resolvedReceiverMediaFeedbackInterval(
         targetFPS: Int,
-        recoveryState: MirageMediaFeedbackRecoveryState,
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState,
         metrics: StreamController.ClientFrameMetrics,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         hasAudioPressure: Bool = false
     ) -> CFAbsoluteTime {
         let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
@@ -281,10 +289,10 @@ extension MirageClientService {
         sequence: UInt64,
         sentAtUptime: Double,
         targetFPS: Int,
-        recoveryState: MirageMediaFeedbackRecoveryState,
-        recoveryCause: MirageMediaFeedbackRecoveryCause = .none,
-        ackRanges: [MediaFeedbackFrameRange] = [],
-        pFrameTimingSamples: [ReceiverPFrameTimingSample] = [],
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState,
+        recoveryCause: MirageWire.MirageMediaFeedbackRecoveryCause = .none,
+        ackRanges: [MirageWire.MediaFeedbackFrameRange] = [],
+        pFrameTimingSamples: [MirageWire.ReceiverPFrameTimingSample] = [],
         transportLostFrameCount: UInt64 = 0,
         transportDiscardedPacketCount: UInt64 = 0,
         latestAcceptedFrameNumber: UInt32? = nil,
@@ -296,11 +304,11 @@ extension MirageClientService {
         presentationQueueDepth: Int? = nil,
         audioDroppedFrameCount: UInt64? = nil,
         audioGateActive: Bool? = nil,
-        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
         metrics: StreamController.ClientFrameMetrics
-    ) -> ReceiverMediaFeedbackMessage {
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
         let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
-        return ReceiverMediaFeedbackMessage(
+        return MirageWire.ReceiverMediaFeedbackMessage(
             streamID: streamID,
             sequence: sequence,
             sentAtUptime: sentAtUptime,
@@ -421,7 +429,7 @@ extension MirageClientService {
         receivedFrameIntervalMs: Double,
         ingressJitterMs: Double,
         frameBudgetMs: Double,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> Double {
         if mediaPathProfile.usesAwdlRadioPolicy {
             return max(0, ingressJitterMs)
@@ -436,10 +444,10 @@ extension MirageClientService {
     }
 
     nonisolated static func receiverReliabilityCauses(
-        recoveryState: MirageMediaFeedbackRecoveryState,
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState,
         metrics: StreamController.ClientFrameMetrics
-    ) -> [ReceiverMediaFeedbackReliabilityCause] {
-        var causes: [ReceiverMediaFeedbackReliabilityCause] = []
+    ) -> [MirageWire.ReceiverMediaFeedbackReliabilityCause] {
+        var causes: [MirageWire.ReceiverMediaFeedbackReliabilityCause] = []
         if metrics.reassemblerIncompleteFrameNoProgressTimeouts > 0 {
             causes.append(.noProgressTimeout)
         }
@@ -465,7 +473,7 @@ extension MirageClientService {
             break
         }
 
-        var seen = Set<ReceiverMediaFeedbackReliabilityCause>()
+        var seen = Set<MirageWire.ReceiverMediaFeedbackReliabilityCause>()
         return causes.filter { seen.insert($0).inserted }
     }
 
@@ -530,7 +538,7 @@ struct ReceiverTransportLossFeedback: Equatable {
     let discardedPacketCount: UInt64
 }
 
-private extension MirageMediaFeedbackRecoveryState {
+private extension MirageWire.MirageMediaFeedbackRecoveryState {
     init(_ status: MirageStreamClientRecoveryStatus) {
         self = switch status {
         case .idle:
@@ -549,7 +557,7 @@ private extension MirageMediaFeedbackRecoveryState {
     }
 }
 
-private extension MirageMediaFeedbackRecoveryCause {
+private extension MirageWire.MirageMediaFeedbackRecoveryCause {
     init(_ cause: MirageStreamClientRecoveryCause) {
         self = switch cause {
         case .none:

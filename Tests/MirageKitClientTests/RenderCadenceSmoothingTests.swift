@@ -12,7 +12,10 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import MirageKit
+import MirageKitClientPresentation
 import Testing
+import MirageCore
+import MirageMedia
 
 #if os(macOS)
 @Suite("Render Cadence Smoothing")
@@ -52,7 +55,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 120,
                 displayFPS: 120,
                 latencyMode: .smoothest
@@ -86,7 +89,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .wifi)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .smoothest
@@ -115,7 +118,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .smoothest
@@ -150,7 +153,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .smoothest
@@ -180,7 +183,7 @@ struct RenderCadenceSmoothingTests {
     func smoothestUsesPathSpecificInitialPlayoutTargets() {
         let streamID: StreamID = 412
         for (pathKind, expectedDelayMs) in [
-            (MirageNetworkPathKind.wired, 50.0),
+            (MirageCore.MirageNetworkPathKind.wired, 50.0),
             (.wifi, 100.0),
             (.awdl, MirageAwdlMediaController.basePlayoutDelayMs),
             (.vpn, 250.0),
@@ -189,7 +192,7 @@ struct RenderCadenceSmoothingTests {
             MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: pathKind)
             MirageRenderStreamStore.shared.setCadenceTarget(
                 for: streamID,
-                target: MirageStreamCadenceTarget(
+                target: MirageMedia.MirageStreamCadenceTarget(
                     sourceFPS: 60,
                     displayFPS: 60,
                     latencyMode: .smoothest
@@ -215,7 +218,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .smoothest
@@ -243,7 +246,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .wifi)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .balanced
@@ -275,7 +278,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .lowestLatency
@@ -308,7 +311,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .lowestLatency
@@ -332,7 +335,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .other)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .lowestLatency
@@ -356,7 +359,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .proximityWiredLike)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 120,
                 displayFPS: 120,
                 latencyMode: .lowestLatency
@@ -379,7 +382,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .lowestLatency
@@ -418,7 +421,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .lowestLatency
@@ -579,7 +582,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .lowestLatency
@@ -720,7 +723,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 60,
                 displayFPS: 60,
                 latencyMode: .balanced
@@ -872,7 +875,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(
+            target: MirageMedia.MirageStreamCadenceTarget(
                 sourceFPS: 120,
                 displayFPS: 120,
                 latencyMode: .smoothest
@@ -902,7 +905,7 @@ struct RenderCadenceSmoothingTests {
     func presentationTimingSeparatesImmediateAndScheduledModes() {
         let referenceTime: CFTimeInterval = 100
         let timescale: CMTimeScale = 1_000_000_000
-        let cadenceTarget = MirageStreamCadenceTarget(
+        let cadenceTarget = MirageMedia.MirageStreamCadenceTarget(
             sourceFPS: 60,
             displayFPS: 60,
             latencyMode: .smoothest
@@ -950,7 +953,7 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
-        let target = MirageStreamCadenceTarget(
+        let target = MirageMedia.MirageStreamCadenceTarget(
             sourceFPS: 60,
             displayFPS: 60,
             latencyMode: .smoothest,
@@ -1043,7 +1046,7 @@ struct RenderCadenceSmoothingTests {
 
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
-            target: MirageStreamCadenceTarget(sourceFPS: 60)
+            target: MirageMedia.MirageStreamCadenceTarget(sourceFPS: 60)
         )
         MirageRenderStreamStore.shared.markSubmitted(
             sequence: 1,

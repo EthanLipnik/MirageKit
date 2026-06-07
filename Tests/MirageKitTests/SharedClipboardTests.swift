@@ -8,6 +8,7 @@
 @testable import MirageKit
 import Foundation
 import Testing
+import MirageWire
 
 @Suite("Shared Clipboard")
 struct SharedClipboardTests {
@@ -21,7 +22,7 @@ struct SharedClipboardTests {
         #expect(localToken.logicalVersion == 1)
         #expect(
             state.shouldApplyRemoteUpdate(
-                orderingToken: MirageSharedClipboardOrderingToken(
+                orderingToken: MirageWire.MirageSharedClipboardOrderingToken(
                     logicalVersion: 2,
                     changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
                 )
@@ -29,7 +30,7 @@ struct SharedClipboardTests {
         )
         #expect(
             !state.shouldApplyRemoteUpdate(
-                orderingToken: MirageSharedClipboardOrderingToken(
+                orderingToken: MirageWire.MirageSharedClipboardOrderingToken(
                     logicalVersion: localToken.logicalVersion,
                     changeID: localToken.changeID
                 )
@@ -43,7 +44,7 @@ struct SharedClipboardTests {
         state.activate(changeCount: 5)
         let observedAtMs: Int64 = 10_000
 
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
         )
@@ -73,7 +74,7 @@ struct SharedClipboardTests {
         state.activate(changeCount: 5)
         let observedAtMs: Int64 = 20_000
 
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
         )
@@ -95,7 +96,7 @@ struct SharedClipboardTests {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 5)
         let observedAtMs: Int64 = 30_000
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 3,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
         )
@@ -120,7 +121,7 @@ struct SharedClipboardTests {
     func observedHostTokenCanStillBeFinalized() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 5)
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 4,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!
         )
@@ -142,7 +143,7 @@ struct SharedClipboardTests {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 50_000
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
         )
@@ -177,7 +178,7 @@ struct SharedClipboardTests {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 60_000
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000009")!
         )
@@ -235,11 +236,11 @@ struct SharedClipboardTests {
     func staleHostObservationsDoNotOverrideNewerOrdering() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 0)
-        let newerToken = MirageSharedClipboardOrderingToken(
+        let newerToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 5,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!
         )
-        let olderToken = MirageSharedClipboardOrderingToken(
+        let olderToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 4,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
         )
@@ -276,7 +277,7 @@ struct SharedClipboardTests {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 1)
 
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 8,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
         )
@@ -292,7 +293,7 @@ struct SharedClipboardTests {
         let observedAtMs: Int64 = 80_000
         let appliedAtMs: Int64 = 84_000
 
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 8,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000018")!
         )
@@ -331,7 +332,7 @@ struct SharedClipboardTests {
         state.activate(changeCount: 10)
         let observedAtMs: Int64 = 90_000
 
-        let remoteToken = MirageSharedClipboardOrderingToken(
+        let remoteToken = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 8,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000019")!
         )
@@ -428,11 +429,11 @@ struct SharedClipboardTests {
 
     @Test("Shared clipboard tie-breaks concurrent logical versions deterministically")
     func sharedClipboardTieBreaksConcurrentLogicalVersionsDeterministically() {
-        let tokenA = MirageSharedClipboardOrderingToken(
+        let tokenA = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 7,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!
         )
-        let tokenB = MirageSharedClipboardOrderingToken(
+        let tokenB = MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: 7,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-0000000000BB")!
         )
@@ -468,7 +469,7 @@ private extension MirageSharedClipboardLocalSend {
 private func textItem(_ text: String) -> MirageSharedClipboardItem {
     let payload = Data(text.utf8)
     return MirageSharedClipboardItem(
-        representation: SharedClipboardRepresentation(
+        representation: MirageWire.SharedClipboardRepresentation(
             kind: .text,
             contentType: "public.utf8-plain-text",
             filename: nil,
@@ -488,7 +489,7 @@ private extension Optional where Wrapped == MirageSharedClipboardLocalSend {
             Issue.record("Expected local clipboard change to produce an outbound send.")
             return MirageSharedClipboardLocalSend(
                 item: MirageSharedClipboardItem.unsupported(),
-                orderingToken: MirageSharedClipboardOrderingToken(
+                orderingToken: MirageWire.MirageSharedClipboardOrderingToken(
                     logicalVersion: 0,
                     changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
                 )

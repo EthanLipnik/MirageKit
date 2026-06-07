@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -30,7 +38,7 @@ extension InputCapturingView {
         if gesture.numberOfTouches > 1 {
             if longPressButtonDown {
                 let releaseLocation = pointerReleaseLocation()
-                let mouseEvent = MirageMouseEvent(
+                let mouseEvent = MirageInput.MirageMouseEvent(
                     button: .left,
                     location: releaseLocation,
                     clickCount: currentClickCount,
@@ -57,7 +65,7 @@ extension InputCapturingView {
             isDragging = false
             lastPanLocation = location
 
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: currentClickCount,
@@ -74,7 +82,7 @@ extension InputCapturingView {
                 revealCursorAfterPointerMovement()
                 if !isDragging { resetPrimaryClickTracking() }
                 isDragging = true
-                let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
+                let mouseEvent = MirageInput.MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
                 onInputEvent?(.mouseDragged(mouseEvent))
                 lastPanLocation = location
             }
@@ -85,7 +93,7 @@ extension InputCapturingView {
                 longPressCancelledForMultiTouch = false
                 return
             }
-            let mouseEvent = MirageMouseEvent(
+            let mouseEvent = MirageInput.MirageMouseEvent(
                 button: .left,
                 location: location,
                 clickCount: currentClickCount,
@@ -103,7 +111,7 @@ extension InputCapturingView {
              .failed:
             // Send mouseUp on cancel to avoid stuck mouse state
             if longPressButtonDown {
-                let mouseEvent = MirageMouseEvent(
+                let mouseEvent = MirageInput.MirageMouseEvent(
                     button: .left,
                     location: location,
                     clickCount: currentClickCount,
@@ -131,7 +139,7 @@ extension InputCapturingView {
         currentRightClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: clickCount,
@@ -162,9 +170,9 @@ extension InputCapturingView {
         let velocity = gesture.velocity(in: self)
         let shouldDecelerate = shouldDecelerateTouchScroll(for: velocity, state: gesture.state)
 
-        let phase: MirageScrollPhase = {
+        let phase: MirageInput.MirageScrollPhase = {
             if shouldDecelerate, gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed { return .none }
-            return MirageScrollPhase(gestureState: gesture.state)
+            return MirageInput.MirageScrollPhase(gestureState: gesture.state)
         }()
 
         if let scrollEvent = makeScrollEvent(
@@ -325,7 +333,7 @@ extension InputCapturingView {
                         modifiers: eventModifiers
                     )
                 } else {
-                    let mouseEvent = MirageMouseEvent(
+                    let mouseEvent = MirageInput.MirageMouseEvent(
                         button: .left,
                         location: normalized,
                         modifiers: eventModifiers,

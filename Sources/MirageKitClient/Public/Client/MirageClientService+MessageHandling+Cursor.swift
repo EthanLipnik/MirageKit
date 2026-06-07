@@ -7,18 +7,26 @@
 //  Cursor control message handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 extension MirageClientService {
     /// Applies a host cursor-shape update and notifies stream views when presentation changes.
-    func handleCursorUpdate(_ message: ControlMessage) {
+    func handleCursorUpdate(_ message: MirageWire.ControlMessage) {
         let decodeStart = CFAbsoluteTimeGetCurrent()
-        let update: CursorUpdateMessage
+        let update: MirageWire.CursorUpdateMessage
         do {
-            update = try message.decode(CursorUpdateMessage.self)
+            update = try message.decode(MirageWire.CursorUpdateMessage.self)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode cursor update: ")
             return
@@ -44,11 +52,11 @@ extension MirageClientService {
     }
 
     /// Applies a host cursor-position update to the per-stream normalized cursor store.
-    func handleCursorPositionUpdate(_ message: ControlMessage) {
+    func handleCursorPositionUpdate(_ message: MirageWire.ControlMessage) {
         let decodeStart = CFAbsoluteTimeGetCurrent()
-        let update: CursorPositionUpdateMessage
+        let update: MirageWire.CursorPositionUpdateMessage
         do {
-            update = try message.decode(CursorPositionUpdateMessage.self)
+            update = try message.decode(MirageWire.CursorPositionUpdateMessage.self)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode cursor position update: "
