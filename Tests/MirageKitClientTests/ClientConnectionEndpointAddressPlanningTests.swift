@@ -547,7 +547,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.controlProtocolVersion),
+                protocolVersion: Int(MirageKit.discoveryProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -601,7 +601,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.controlProtocolVersion),
+                protocolVersion: Int(MirageKit.discoveryProtocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
