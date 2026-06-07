@@ -15,7 +15,7 @@ import Testing
 struct CaptureBenchmarkTests {
     @Test("Report reuse requires matching machine, software environment, configuration, and a completed run")
     func reportReuseRequiresMatchingEnvironment() {
-        #expect(MirageHostCaptureBenchmarkReport.currentVersion == 2)
+        #expect(MirageHostCaptureBenchmarkReport.currentVersion == 3)
 
         let configuration = MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
         let machineID = UUID()
@@ -161,6 +161,77 @@ struct CaptureBenchmarkTests {
         )
 
         #expect(validated == nil)
+    }
+
+    @Test("Validated benchmark capability uses display capture and encode throughput")
+    func validatedCapabilityUsesDisplayCaptureAndEncodeThroughput() {
+        let sourcePhase = benchmarkPhaseResult(kind: .source, fps: 60)
+        let displayPhase = benchmarkPhaseResult(kind: .display, fps: 119)
+
+        let capability = captureBenchmarkValidatedCapabilityFPS(
+            displayPhase: displayPhase,
+            encodeFPS: 118,
+            targetFrameRate: 120
+        )
+
+        #expect(capability == 118)
+        #expect(sourcePhase.deliveryFPS == 60)
+    }
+
+    @Test("Benchmark stage can sustain target when source window phase is slower")
+    func stageCanSustainTargetWhenSourceWindowPhaseIsSlower() {
+        let result = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark2K,
+            status: .completed,
+            sourceGenerationFPS: 60,
+            sourcePhase: benchmarkPhaseResult(kind: .source, fps: 60),
+            displayPhase: benchmarkPhaseResult(kind: .display, fps: 119),
+            encodeFPS: 118,
+            validatedCapabilityFPS: 118
+        )
+
+        #expect(result.meets120FPS)
+    }
+
+    @Test("Benchmark stage still fails target when display capture is slower")
+    func stageFailsTargetWhenDisplayCaptureIsSlower() {
+        let result = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark2K,
+            status: .completed,
+            sourceGenerationFPS: 120,
+            sourcePhase: benchmarkPhaseResult(kind: .source, fps: 120),
+            displayPhase: benchmarkPhaseResult(kind: .display, fps: 60),
+            encodeFPS: 120,
+            validatedCapabilityFPS: captureBenchmarkValidatedCapabilityFPS(
+                displayPhase: benchmarkPhaseResult(kind: .display, fps: 60),
+                encodeFPS: 120,
+                targetFrameRate: 120
+            )
+        )
+
+        #expect(!result.meets120FPS)
+    }
+
+    private func benchmarkPhaseResult(
+        kind: MirageHostCaptureBenchmarkPhaseKind,
+        fps: Double
+    ) -> MirageHostCaptureBenchmarkPhaseResult {
+        let count = UInt64(fps.rounded())
+        return MirageHostCaptureBenchmarkPhaseResult(
+            kind: kind,
+            rawIngressFPS: fps,
+            validSampleFPS: fps,
+            renderableIngressFPS: fps,
+            cadenceAdmittedFPS: fps,
+            deliveryFPS: fps,
+            startupReadiness: .usableFrameSeen,
+            rawCallbackCount: count,
+            validSampleCount: count,
+            renderableSampleCount: count,
+            completeSampleCount: count,
+            cadenceAdmittedCount: count,
+            deliveryCount: count
+        )
     }
 }
 #endif

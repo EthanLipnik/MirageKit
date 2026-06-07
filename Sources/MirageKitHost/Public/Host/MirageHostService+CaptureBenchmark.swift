@@ -282,8 +282,6 @@ extension MirageHostService {
             let sourceGenerationFPS = sourceMeasurement.sourceGenerationFPS
             let bottleneck = captureBenchmarkBottleneck(
                 stage: stage,
-                sourceGenerationFPS: sourceGenerationFPS,
-                sourcePhase: sourcePhase,
                 displayPhase: displayPhase,
                 encodeFPS: encodeFPS
             )
@@ -303,8 +301,6 @@ extension MirageHostService {
                 targetFrameRate: stage.targetFrameRate
             )
             let validatedCapabilityFPS = captureBenchmarkValidatedCapabilityFPS(
-                sourceGenerationFPS: sourceGenerationFPS,
-                sourcePhase: sourcePhase,
                 displayPhase: displayPhase,
                 encodeFPS: encodeFPS,
                 targetFrameRate: stage.targetFrameRate

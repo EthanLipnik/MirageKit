@@ -219,7 +219,7 @@ public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable
     public let bottleneck: MirageHostCaptureBenchmarkBottleneck?
     /// Validated display-capture floor, clamped to the target frame rate.
     public let displayCaptureCapabilityFPS: Double?
-    /// Overall validated capture floor across source generation, capture, delivery, and encoding.
+    /// Overall validated streaming floor across display capture, delivery, and encoding.
     public let validatedCapabilityFPS: Double?
     /// Average encoder callback duration in milliseconds.
     public let averageEncodeTimeMs: Double?

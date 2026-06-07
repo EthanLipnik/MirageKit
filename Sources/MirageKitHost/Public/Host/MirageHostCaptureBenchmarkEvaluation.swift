@@ -98,18 +98,13 @@ func captureBenchmarkDisplayCapabilityFPS(
     return min(measuredFloor, Double(targetFrameRate))
 }
 
-/// Returns the lowest measured throughput across source, capture, delivery, and encode phases.
+/// Returns the lowest measured throughput across display capture, delivery, and encode phases.
 func captureBenchmarkValidatedCapabilityFPS(
-    sourceGenerationFPS: Double?,
-    sourcePhase: MirageHostCaptureBenchmarkPhaseResult?,
     displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
     encodeFPS: Double?,
     targetFrameRate: Int
 ) -> Double? {
     let measurements = [
-        sourceGenerationFPS,
-        sourcePhase?.ingressCapabilityFPS,
-        sourcePhase?.deliveryCapabilityFPS,
         displayPhase?.ingressCapabilityFPS,
         displayPhase?.deliveryCapabilityFPS,
         encodeFPS,
@@ -121,22 +116,11 @@ func captureBenchmarkValidatedCapabilityFPS(
 /// Classifies the first benchmark phase below the sustained target threshold.
 func captureBenchmarkBottleneck(
     stage: MirageHostCaptureBenchmarkStage,
-    sourceGenerationFPS: Double?,
-    sourcePhase: MirageHostCaptureBenchmarkPhaseResult?,
     displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
     encodeFPS: Double?
 ) -> MirageHostCaptureBenchmarkBottleneck? {
     let targetThreshold = captureBenchmarkSustainThreshold(targetFrameRate: stage.targetFrameRate)
 
-    if let sourceGenerationFPS, sourceGenerationFPS < targetThreshold {
-        return .sourceGeneration
-    }
-    if let sourceIngressFPS = sourcePhase?.ingressCapabilityFPS, sourceIngressFPS < targetThreshold {
-        return .windowIngress
-    }
-    if let sourceDeliveryFPS = sourcePhase?.deliveryCapabilityFPS, sourceDeliveryFPS < targetThreshold {
-        return .windowDelivery
-    }
     if let displayIngressFPS = displayPhase?.ingressCapabilityFPS, displayIngressFPS < targetThreshold {
         return .displayIngress
     }
@@ -147,9 +131,7 @@ func captureBenchmarkBottleneck(
         return .encode
     }
 
-    let hasMeasurement = sourceGenerationFPS != nil ||
-        sourcePhase != nil ||
-        displayPhase != nil ||
+    let hasMeasurement = displayPhase != nil ||
         encodeFPS != nil
     return hasMeasurement ? .balanced : nil
 }

@@ -265,7 +265,7 @@ extension MirageStreamContentView {
             return false
         }
         #endif
-        !isDesktopStream ||
+        return !isDesktopStream ||
             desktopCursorPresentation.rendersSyntheticClientCursor ||
             (desktopCursorLockEnabled && !desktopCursorPresentation.capturesHostCursor)
     }

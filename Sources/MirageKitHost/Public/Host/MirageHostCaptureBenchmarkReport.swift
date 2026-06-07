@@ -39,7 +39,7 @@ public struct MirageHostCaptureBenchmarkModeResult: Codable, Hashable, Sendable 
 @_spi(HostApp)
 public struct MirageHostCaptureBenchmarkReport: Codable, Hashable, Sendable {
     /// Current persisted report schema version.
-    public static let currentVersion = 2
+    public static let currentVersion = 3
 
     /// Persisted report schema version.
     public let version: Int
