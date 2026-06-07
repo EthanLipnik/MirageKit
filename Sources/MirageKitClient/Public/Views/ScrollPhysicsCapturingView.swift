@@ -71,7 +71,7 @@ final class ScrollPhysicsCapturingView: UIView {
                 recenterIfNeeded(for: scrollView, force: true)
             } else {
                 cancelDirectTouchScrolling()
-                scrollView.resetInputSource()
+                resetInputSource()
             }
         }
     }
@@ -95,7 +95,7 @@ final class ScrollPhysicsCapturingView: UIView {
 
         guard isScrollTracking || scrollView.panGestureRecognizer.state.isActive else {
             recenterIfNeeded(for: scrollView)
-            scrollView.resetInputSource()
+            resetInputSource()
             return
         }
 
@@ -104,7 +104,7 @@ final class ScrollPhysicsCapturingView: UIView {
         setTracking(false)
         setLastContentOffset(currentOffset)
         recenterIfNeeded(for: scrollView)
-        scrollView.resetInputSource()
+        resetInputSource()
     }
 
     /// Callback when accepted direct-scroll touch input is detected.
@@ -112,6 +112,9 @@ final class ScrollPhysicsCapturingView: UIView {
 
     /// Callback when a direct non-stylus touch begins scrolling, in this view's local coordinates.
     var onDirectTouchScrollBegan: ((CGPoint) -> Void)?
+
+    /// Callback when a direct touch prepared a scroll anchor but ended before scrolling began.
+    var onDirectTouchScrollPreparationCancelled: (() -> Void)?
 
     /// Installs Pencil touch callbacks on the private scroll view.
     ///
@@ -136,6 +139,15 @@ final class ScrollPhysicsCapturingView: UIView {
 
     /// Flag to suppress scroll events during recenter operations.
     private var isRecenteringScroll = false
+
+    /// Whether a direct-touch begin was emitted before UIKit reported dragging.
+    private var directTouchBeginEmittedBeforeDragging = false
+
+    /// Whether the direct-touch scroll anchor was prepared before UIKit reported dragging.
+    private var directTouchAnchorPreparedBeforeDragging = false
+
+    /// Direct-touch contacts already processed by the pre-drag anchor path.
+    private var preparedDirectTouchContactIdentifiers: Set<ObjectIdentifier> = []
 
     /// Gesture recognizers for trackpad pinch/rotation
     private var rotationGesture: UIRotationGestureRecognizer!
@@ -170,6 +182,19 @@ final class ScrollPhysicsCapturingView: UIView {
         scrollView.panGestureRecognizer.maximumNumberOfTouches = 1
         scrollView.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
+        }
+        scrollView.onDirectTouchBegan = { [weak self] touch, hadActiveDirectTouchContact in
+            guard let self else { return }
+            self.handleDirectTouchContactBegan(
+                touch,
+                hadActiveDirectTouchContact: hadActiveDirectTouchContact
+            )
+        }
+        scrollView.onDirectTouchContactsEnded = { [weak self] touches, hasRemainingDirectTouchContact in
+            self?.handleDirectTouchContactsEnded(
+                touches,
+                hasRemainingDirectTouchContact: hasRemainingDirectTouchContact
+            )
         }
 
         setupScrollContent(scrollContent, in: scrollView)
@@ -292,8 +317,11 @@ final class ScrollPhysicsCapturingView: UIView {
         setTracking(true)
         setLastContentOffset(scrollView.contentOffset)
         let source = beginScrollingInputSource()
+        if consumeEarlyDirectTouchBeginIfNeeded(for: source) { return }
         if case .directTouch = source {
-            onDirectTouchScrollBegan?(scrollStartLocation(for: scrollView))
+            if !consumePreparedDirectTouchAnchorIfNeeded(for: source) {
+                onDirectTouchScrollBegan?(scrollStartLocation(for: scrollView))
+            }
         }
         onScroll?(0, 0, .began, .none, source)
     }
@@ -334,10 +362,123 @@ final class ScrollPhysicsCapturingView: UIView {
     }
 
     private func handleScrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        if directTouchBeginEmittedBeforeDragging {
+            setLastContentOffset(scrollView.contentOffset)
+            return
+        }
+
         let source = inputSource
         onScroll?(0, 0, .none, .ended, source)
         recenterIfNeeded(for: scrollView)
         resetInputSource()
+    }
+
+    // MARK: - Direct Touch Contact Handling
+
+    nonisolated static func shouldPrepareDirectTouchScrollBegin(
+        directTouchScrollEnabled: Bool,
+        hadActiveDirectTouchContact: Bool,
+        newDirectTouchContactCount: Int = 1
+    ) -> Bool {
+        directTouchScrollEnabled && !hadActiveDirectTouchContact && newDirectTouchContactCount == 1
+    }
+
+    nonisolated static func shouldEmitEarlyDirectTouchBegin(
+        activeInputSource: InputSource,
+        hadActiveDirectTouchContact: Bool,
+        isDecelerating: Bool
+    ) -> Bool {
+        activeInputSource == .directTouch && !hadActiveDirectTouchContact && isDecelerating
+    }
+
+    func prepareDirectTouchScrollBegin(at location: CGPoint) {
+        directTouchAnchorPreparedBeforeDragging = true
+        onDirectTouchScrollBegan?(location)
+    }
+
+    func emitEarlyDirectTouchBegin(at location: CGPoint) {
+        if !directTouchAnchorPreparedBeforeDragging {
+            prepareDirectTouchScrollBegin(at: location)
+        }
+        directTouchBeginEmittedBeforeDragging = true
+        onScroll?(0, 0, .began, .none, .directTouch)
+    }
+
+    func consumeEarlyDirectTouchBeginIfNeeded(for source: InputSource) -> Bool {
+        guard directTouchBeginEmittedBeforeDragging else { return false }
+        directTouchBeginEmittedBeforeDragging = false
+        directTouchAnchorPreparedBeforeDragging = false
+        return source == .directTouch
+    }
+
+    func consumePreparedDirectTouchAnchorIfNeeded(for source: InputSource) -> Bool {
+        guard case .directTouch = source else { return false }
+        guard directTouchAnchorPreparedBeforeDragging else { return false }
+        directTouchAnchorPreparedBeforeDragging = false
+        return true
+    }
+
+    func finishPreparedDirectTouchBeginWithoutDraggingIfNeeded() -> Bool {
+        guard directTouchAnchorPreparedBeforeDragging, !isTracking else { return false }
+        let didEmitScrollBegin = directTouchBeginEmittedBeforeDragging
+        directTouchAnchorPreparedBeforeDragging = false
+        directTouchBeginEmittedBeforeDragging = false
+
+        if didEmitScrollBegin {
+            onScroll?(0, 0, .ended, .none, .directTouch)
+            recenterIfNeeded(for: scrollView)
+        } else {
+            onDirectTouchScrollPreparationCancelled?()
+        }
+        resetInputSource()
+        return true
+    }
+
+    func finishEarlyDirectTouchBeginWithoutDraggingIfNeeded() -> Bool {
+        finishPreparedDirectTouchBeginWithoutDraggingIfNeeded()
+    }
+
+    func handleDirectTouchContactBegan(
+        _ touch: UITouch,
+        hadActiveDirectTouchContact: Bool
+    ) {
+        let identifier = ObjectIdentifier(touch)
+        guard !preparedDirectTouchContactIdentifiers.contains(identifier) else { return }
+        preparedDirectTouchContactIdentifiers.insert(identifier)
+
+        guard Self.shouldPrepareDirectTouchScrollBegin(
+            directTouchScrollEnabled: directTouchScrollEnabled,
+            hadActiveDirectTouchContact: hadActiveDirectTouchContact
+        ) else {
+            return
+        }
+
+        let location = touch.location(in: self)
+        setLastContentOffset(scrollView.contentOffset)
+        prepareDirectTouchScrollBegin(at: location)
+
+        guard Self.shouldEmitEarlyDirectTouchBegin(
+            activeInputSource: inputSource,
+            hadActiveDirectTouchContact: hadActiveDirectTouchContact,
+            isDecelerating: scrollView.isDecelerating
+        ) else {
+            return
+        }
+
+        emitEarlyDirectTouchBegin(at: location)
+        if scrollView.isDecelerating {
+            scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+            setLastContentOffset(scrollView.contentOffset)
+        }
+    }
+
+    func handleDirectTouchContactsEnded(
+        _ touches: Set<UITouch>,
+        hasRemainingDirectTouchContact: Bool
+    ) {
+        preparedDirectTouchContactIdentifiers.subtract(touches.map(ObjectIdentifier.init))
+        guard !hasRemainingDirectTouchContact else { return }
+        _ = finishPreparedDirectTouchBeginWithoutDraggingIfNeeded()
     }
 
     // MARK: - Trackpad Gesture Handlers
@@ -390,6 +531,9 @@ final class ScrollPhysicsCapturingView: UIView {
     }
 
     private func resetInputSource() {
+        directTouchBeginEmittedBeforeDragging = false
+        directTouchAnchorPreparedBeforeDragging = false
+        preparedDirectTouchContactIdentifiers.removeAll()
         scrollView.resetInputSource()
     }
 

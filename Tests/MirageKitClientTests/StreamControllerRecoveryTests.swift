@@ -894,11 +894,50 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Decode queue dependency break clears local backlog without keyframe")
-    func decodeQueueDependencyBreakClearsLocalBacklogWithoutKeyframe() async throws {
+    @Test("Most Responsive decode queue dependency break waits for recovery keyframe")
+    func mostResponsiveDecodeQueueDependencyBreakWaitsForRecoveryKeyframe() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let releaseCounter = StreamControllerLockedCounter()
         let controller = StreamController(streamID: 3, maxPayloadSize: 1200)
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+
+        let droppedFrame = StreamController.FrameData(
+            data: Data([0x01]),
+            presentationTime: .zero,
+            isKeyframe: false,
+            frameNumber: nil,
+            contentRect: .zero,
+            releaseBuffer: {
+                releaseCounter.increment()
+            }
+        )
+
+        await controller.handleDecodeQueueDependencyBreak(
+            droppedFrame: droppedFrame,
+            queueDepth: StreamController.maxQueuedFrames
+        )
+
+        #expect(await controller.decodeQueueRequiresKeyframe)
+        #expect(await controller.reassembler.isAwaitingKeyframe)
+        #expect(await controller.clientRecoveryStatus == .keyframeRecovery)
+        #expect(await controller.clientRecoveryCause == .frameLoss)
+        #expect(releaseCounter.value == 1)
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Balanced decode queue dependency break preserves existing continuity policy")
+    func balancedDecodeQueueDependencyBreakPreservesExistingContinuityPolicy() async throws {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let releaseCounter = StreamControllerLockedCounter()
+        let controller = StreamController(streamID: 30, maxPayloadSize: 1200)
+        await controller.updateCadenceTarget(sourceFPS: 60, latencyMode: .balanced)
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()

@@ -38,6 +38,7 @@ extension StreamController {
 
     enum RecoveryReason: Equatable {
         case decodeErrorThreshold
+        case decodeQueueDependencyBreak
         case frameLoss
         case freezeTimeout
         case manualRecovery
@@ -48,6 +49,8 @@ extension StreamController {
             switch self {
             case .decodeErrorThreshold:
                 "decode-error-threshold"
+            case .decodeQueueDependencyBreak:
+                "decode-queue-dependency-break"
             case .frameLoss:
                 "frame-loss"
             case .freezeTimeout:
@@ -65,6 +68,8 @@ extension StreamController {
             switch self {
             case .decodeErrorThreshold:
                 .decodeError
+            case .decodeQueueDependencyBreak:
+                .frameLoss
             case .frameLoss:
                 .frameLoss
             case .freezeTimeout:
@@ -81,6 +86,7 @@ extension StreamController {
         var allowsExplicitKeyframeRequest: Bool {
             switch self {
             case .decodeErrorThreshold,
+                 .decodeQueueDependencyBreak,
                  .freezeTimeout,
                  .manualRecovery,
                  .startupKeyframeTimeout:
@@ -96,6 +102,7 @@ extension StreamController {
             case .startupKeyframeTimeout:
                 true
             case .decodeErrorThreshold,
+                 .decodeQueueDependencyBreak,
                  .frameLoss,
                  .freezeTimeout,
                  .manualRecovery,

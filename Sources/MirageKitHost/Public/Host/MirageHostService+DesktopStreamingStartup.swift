@@ -152,6 +152,7 @@ extension MirageHostService {
         desktopUsesHostResolution = usesHostResolution
         desktopCaptureSource = .virtualDisplay
         self.desktopSessionID = desktopSessionID
+        desktopPresentationGeneration = 0
         resetDesktopResizeTransactionState()
         await HostDesktopStreamTerminationTracker.shared.markDesktopDisplaySetupStarted(
             streamID: streamID,

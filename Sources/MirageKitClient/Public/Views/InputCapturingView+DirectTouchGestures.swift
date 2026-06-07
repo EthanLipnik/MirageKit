@@ -10,6 +10,37 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
+    func handleDirectTouchContactsBegan(
+        _ touches: Set<UITouch>,
+        hadActiveDirectTouchContact: Bool
+    ) {
+        guard let scrollPhysicsView else { return }
+        guard scrollPhysicsView.directTouchScrollEnabled else { return }
+        guard touches.count == 1 else { return }
+        guard let touch = touches.first else { return }
+
+        hideCursorForDirectTouchIfNeeded()
+        onDirectTouchActivity?()
+        scrollPhysicsView.handleDirectTouchContactBegan(
+            touch,
+            hadActiveDirectTouchContact: hadActiveDirectTouchContact
+        )
+    }
+
+    func handleDirectTouchContactsEnded(
+        _ touches: Set<UITouch>,
+        hasRemainingDirectTouchContact: Bool
+    ) {
+        scrollPhysicsView?.handleDirectTouchContactsEnded(
+            touches,
+            hasRemainingDirectTouchContact: hasRemainingDirectTouchContact
+        )
+    }
+
+    func cancelPreparedDirectTouchScrollAnchor() {
+        directTouchScrollAnchorLocation = nil
+    }
+
     func handleDirectTouchScrollBegan(at rawLocation: CGPoint) {
         requestResponderRecovery(.interaction)
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }

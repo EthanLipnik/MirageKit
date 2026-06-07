@@ -10,11 +10,31 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
+    var cursorHiddenByLocalInput: Bool {
+        cursorHiddenForTyping || cursorHiddenForDirectTouch
+    }
+
     func hideCursorForTypingUntilPointerMovement() {
         guard !cursorHiddenForTyping else { return }
         cursorHiddenForTyping = true
         invalidatePointerInteraction(reason: "hideForTyping")
         updateLockedCursorViewVisibility()
+    }
+
+    func hideCursorForDirectTouchIfNeeded() {
+        guard directTouchInputMode == .normal else { return }
+        guard !cursorHiddenForDirectTouch else { return }
+        cursorHiddenForDirectTouch = true
+        invalidatePointerInteraction(reason: "hideForDirectTouch")
+        updateLockedCursorViewVisibility()
+    }
+
+    func clearDirectTouchCursorSuppression(reason: String) {
+        guard cursorHiddenForDirectTouch else { return }
+        cursorHiddenForDirectTouch = false
+        invalidatePointerInteraction(reason: reason)
+        updateLockedCursorViewVisibility()
+        updateLockedCursorViewPosition()
     }
 
     func revealCursorAfterPointerMovement() {
@@ -23,6 +43,16 @@ extension InputCapturingView {
         refreshCursorUpdates(force: true)
         invalidatePointerInteraction(reason: "revealAfterPointerMovement")
         updateLockedCursorViewVisibility()
+    }
+
+    func revealCursorAfterCursorDrivenMovement() {
+        guard cursorHiddenForTyping || cursorHiddenForDirectTouch else { return }
+        cursorHiddenForTyping = false
+        cursorHiddenForDirectTouch = false
+        refreshCursorUpdates(force: true)
+        invalidatePointerInteraction(reason: "revealAfterCursorDrivenMovement")
+        updateLockedCursorViewVisibility()
+        updateLockedCursorViewPosition()
     }
 
     func setupPointerInteraction() {
@@ -99,7 +129,7 @@ extension InputCapturingView {
 extension InputCapturingView: UIPointerInteractionDelegate {
     public func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
         // Return appropriate pointer style based on host cursor state
-        if hideSystemCursor || cursorLockEnabled || cursorHiddenForTyping {
+        if hideSystemCursor || cursorLockEnabled || cursorHiddenByLocalInput {
             return .hidden()
         }
         let shouldStyleVisibleSystemPointer = !syntheticCursorEnabled && !hideSystemCursor

@@ -525,11 +525,24 @@ extension MirageStreamContentView {
         return 1.25
     }
 
-    /// Combined presentation blur after live frame-progress suppression.
+    /// Combined presentation blur after recovery-only live frame-progress suppression.
     var presentationBlurRadius: CGFloat {
-        let radius = rawPresentationBlurRadius
-        guard radius > 0 else { return 0 }
-        return suppressesPresentationBlurForRecentProgress ? 0 : radius
+        Self.resolvedPresentationBlurRadius(
+            resizeRadius: resizeBlurRadius,
+            recoveryRadius: recoveryBlurRadius,
+            suppressesRecoveryBlurForRecentProgress: suppressesPresentationBlurForRecentProgress
+        )
+    }
+
+    static func resolvedPresentationBlurRadius(
+        resizeRadius: CGFloat,
+        recoveryRadius: CGFloat,
+        suppressesRecoveryBlurForRecentProgress: Bool
+    ) -> CGFloat {
+        if resizeRadius > 0 { return resizeRadius }
+
+        guard recoveryRadius > 0 else { return 0 }
+        return suppressesRecoveryBlurForRecentProgress ? 0 : recoveryRadius
     }
 
     /// Short blur transition used only when the recovery mask enters or exits.

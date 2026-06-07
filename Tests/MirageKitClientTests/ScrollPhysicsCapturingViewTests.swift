@@ -199,6 +199,85 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(view.lockedCursorVisible)
     }
 
+    @Test("Direct touch activity hides local cursor presentation in direct mode")
+    func directTouchActivityHidesLocalCursorPresentationInDirectMode() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+
+        view.hideCursorForDirectTouchIfNeeded()
+
+        #expect(view.cursorHiddenForDirectTouch)
+        #expect(view.cursorHiddenByLocalInput)
+    }
+
+    @Test("Direct touch activity does not hide the simulated trackpad cursor")
+    func directTouchActivityDoesNotHideSimulatedTrackpadCursor() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .dragCursor
+
+        view.hideCursorForDirectTouchIfNeeded()
+
+        #expect(view.cursorHiddenForDirectTouch == false)
+        #expect(!view.virtualCursorView.isHidden)
+    }
+
+    @Test("Simulated trackpad mode clears direct touch cursor suppression")
+    func simulatedTrackpadModeClearsDirectTouchCursorSuppression() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.hideCursorForDirectTouchIfNeeded()
+
+        view.directTouchInputMode = .dragCursor
+
+        #expect(view.cursorHiddenForDirectTouch == false)
+        #expect(!view.virtualCursorView.isHidden)
+
+        view.directTouchInputMode = .normal
+
+        #expect(view.cursorHiddenForDirectTouch == false)
+    }
+
+    @Test("Cursor driven movement clears direct touch cursor suppression")
+    func cursorDrivenMovementClearsDirectTouchCursorSuppression() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.hideCursorForDirectTouchIfNeeded()
+
+        view.revealCursorAfterCursorDrivenMovement()
+
+        #expect(view.cursorHiddenForDirectTouch == false)
+        #expect(view.cursorHiddenByLocalInput == false)
+    }
+
+    @Test("Direct touch scroll begin keeps direct touch cursor suppression")
+    func directTouchScrollBeginKeepsDirectTouchCursorSuppression() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.hideCursorForDirectTouchIfNeeded()
+
+        view.handleDirectTouchScrollBegan(at: CGPoint(x: 80, y: 60))
+
+        #expect(view.cursorHiddenForDirectTouch)
+    }
+
+    @Test("Direct touch cursor suppression hides unlocked synthetic cursor")
+    func directTouchCursorSuppressionHidesUnlockedSyntheticCursor() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.hideSystemCursor = true
+        view.syntheticCursorEnabled = true
+        view.lastCursorPosition = CGPoint(x: 0.25, y: 0.75)
+        view.hideCursorForDirectTouchIfNeeded()
+
+        view.updateLockedCursorViewVisibility()
+
+        let lockedCursorView = try #require(view.subviews.last as? UIImageView)
+        #expect(lockedCursorView.isHidden)
+
+        view.revealCursorAfterCursorDrivenMovement()
+
+        #expect(!lockedCursorView.isHidden)
+    }
+
     @Test("Indirect secondary click reuses the tracked pointer location")
     func indirectSecondaryClickReusesTrackedPointerLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -393,6 +472,177 @@ struct ScrollPhysicsCapturingViewTests {
             return
         }
         #expect(mouseEvent.location == expectedLocation)
+    }
+
+    @Test("Fresh direct contact does not early reanchor without direct deceleration")
+    func freshDirectContactDoesNotEarlyReanchorWithoutDirectDeceleration() {
+        #expect(ScrollPhysicsCapturingView.shouldPrepareDirectTouchScrollBegin(
+            directTouchScrollEnabled: true,
+            hadActiveDirectTouchContact: false
+        ))
+        #expect(!ScrollPhysicsCapturingView.shouldEmitEarlyDirectTouchBegin(
+            activeInputSource: .directTouch,
+            hadActiveDirectTouchContact: false,
+            isDecelerating: false
+        ))
+        #expect(!ScrollPhysicsCapturingView.shouldEmitEarlyDirectTouchBegin(
+            activeInputSource: .indirectPointer,
+            hadActiveDirectTouchContact: false,
+            isDecelerating: true
+        ))
+    }
+
+    @Test("New direct contact during direct deceleration early reanchors")
+    func newDirectContactDuringDirectDecelerationEarlyReanchors() {
+        #expect(ScrollPhysicsCapturingView.shouldEmitEarlyDirectTouchBegin(
+            activeInputSource: .directTouch,
+            hadActiveDirectTouchContact: false,
+            isDecelerating: true
+        ))
+    }
+
+    @Test("Additional direct contact does not early reanchor")
+    func additionalDirectContactDoesNotEarlyReanchor() {
+        #expect(!ScrollPhysicsCapturingView.shouldPrepareDirectTouchScrollBegin(
+            directTouchScrollEnabled: true,
+            hadActiveDirectTouchContact: true
+        ))
+        #expect(!ScrollPhysicsCapturingView.shouldPrepareDirectTouchScrollBegin(
+            directTouchScrollEnabled: true,
+            hadActiveDirectTouchContact: false,
+            newDirectTouchContactCount: 2
+        ))
+        #expect(!ScrollPhysicsCapturingView.shouldEmitEarlyDirectTouchBegin(
+            activeInputSource: .directTouch,
+            hadActiveDirectTouchContact: true,
+            isDecelerating: true
+        ))
+    }
+
+    @Test("Direct contact start prepares scroll anchor before UIKit dragging")
+    func directContactStartPreparesScrollAnchorBeforeUIKitDragging() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        let scrollPhysicsView = try #require(view.scrollPhysicsView)
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        scrollPhysicsView.prepareDirectTouchScrollBegin(at: CGPoint(x: 240, y: 120))
+
+        let expectedLocation = CGPoint(x: 0.75, y: 0.5)
+        #expect(view.lastCursorPosition == expectedLocation)
+        #expect(view.scrollEventLocation(source: .directTouch) == expectedLocation)
+        #expect(events.count == 1)
+
+        guard case let .mouseMoved(mouseEvent) = events.first else {
+            Issue.record("Expected direct contact start to emit mouseMoved")
+            return
+        }
+        #expect(mouseEvent.location == expectedLocation)
+    }
+
+    @Test("Prepared direct contact clears anchor if it ends before dragging")
+    func preparedDirectContactClearsAnchorIfItEndsBeforeDragging() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        let scrollPhysicsView = try #require(view.scrollPhysicsView)
+
+        scrollPhysicsView.prepareDirectTouchScrollBegin(at: CGPoint(x: 240, y: 120))
+        #expect(view.directTouchScrollAnchorLocation == CGPoint(x: 0.75, y: 0.5))
+
+        #expect(scrollPhysicsView.finishPreparedDirectTouchBeginWithoutDraggingIfNeeded())
+
+        #expect(view.directTouchScrollAnchorLocation == nil)
+        #expect(view.lastCursorPosition == CGPoint(x: 0.75, y: 0.5))
+    }
+
+    @Test("Early direct begin suppresses duplicate UIKit drag begin")
+    func earlyDirectBeginSuppressesDuplicateUIKitDragBegin() {
+        let scrollView = ScrollPhysicsCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        var scrolls: [(phase: MirageScrollPhase, momentumPhase: MirageScrollPhase, source: ScrollPhysicsCapturingView.InputSource)] = []
+        scrollView.onScroll = { _, _, phase, momentumPhase, source in
+            scrolls.append((phase, momentumPhase, source))
+        }
+
+        scrollView.emitEarlyDirectTouchBegin(at: CGPoint(x: 120, y: 80))
+
+        #expect(scrolls.count == 1)
+        #expect(scrolls.first?.phase == .began)
+        #expect(scrolls.first?.momentumPhase == .none)
+        #expect(scrolls.first?.source == .directTouch)
+        #expect(scrollView.consumeEarlyDirectTouchBeginIfNeeded(for: .directTouch))
+        #expect(!scrollView.consumeEarlyDirectTouchBeginIfNeeded(for: .directTouch))
+    }
+
+    @Test("Prepared direct anchor suppresses duplicate UIKit cursor move")
+    func preparedDirectAnchorSuppressesDuplicateUIKitCursorMove() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        let scrollPhysicsView = try #require(view.scrollPhysicsView)
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        scrollPhysicsView.prepareDirectTouchScrollBegin(at: CGPoint(x: 240, y: 120))
+
+        #expect(scrollPhysicsView.consumePreparedDirectTouchAnchorIfNeeded(for: .directTouch))
+        #expect(!scrollPhysicsView.consumePreparedDirectTouchAnchorIfNeeded(for: .directTouch))
+        #expect(events.count == 1)
+    }
+
+    @Test("Early direct begin ends if contact finishes before dragging")
+    func earlyDirectBeginEndsIfContactFinishesBeforeDragging() {
+        let scrollView = ScrollPhysicsCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        var phases: [MirageScrollPhase] = []
+        scrollView.onScroll = { _, _, phase, _, _ in
+            phases.append(phase)
+        }
+
+        scrollView.emitEarlyDirectTouchBegin(at: CGPoint(x: 120, y: 80))
+        #expect(scrollView.finishEarlyDirectTouchBeginWithoutDraggingIfNeeded())
+
+        #expect(phases == [.began, .ended])
+    }
+
+    @Test("Early direct begin ends interrupted momentum then starts at new anchor")
+    func earlyDirectBeginEndsInterruptedMomentumThenStartsAtNewAnchor() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.directTouchScrollAnchorLocation = CGPoint(x: 0.25, y: 0.25)
+        view.directTouchScrollMomentumActive = true
+        let scrollPhysicsView = try #require(view.scrollPhysicsView)
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        scrollPhysicsView.emitEarlyDirectTouchBegin(at: CGPoint(x: 240, y: 120))
+
+        let expectedLocation = CGPoint(x: 0.75, y: 0.5)
+        #expect(events.count == 3)
+        #expect(view.directTouchScrollAnchorLocation == expectedLocation)
+        #expect(view.scrollEventLocation(source: .directTouch) == expectedLocation)
+
+        guard case let .scrollWheel(endEvent) = events.first else {
+            Issue.record("Expected interrupted momentum end before cursor move")
+            return
+        }
+        #expect(endEvent.location == CGPoint(x: 0.25, y: 0.25))
+        #expect(endEvent.momentumPhase == .ended)
+
+        guard case let .mouseMoved(mouseEvent) = events.dropFirst().first else {
+            Issue.record("Expected cursor move before direct scroll begin")
+            return
+        }
+        #expect(mouseEvent.location == expectedLocation)
+
+        guard case let .scrollWheel(beginEvent) = events.last else {
+            Issue.record("Expected direct scroll begin after cursor move")
+            return
+        }
+        #expect(beginEvent.location == expectedLocation)
+        #expect(beginEvent.phase == .began)
+        #expect(beginEvent.momentumPhase == .none)
     }
 
     @Test("Direct-touch scroll lifecycle tracks active momentum")

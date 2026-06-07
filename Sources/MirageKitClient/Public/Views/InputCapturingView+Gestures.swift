@@ -18,6 +18,35 @@ extension InputCapturingView {
     }
 
     func setupGestureRecognizers() {
+        directTouchContactGesture = DirectTouchContactGestureRecognizer()
+        directTouchContactGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        directTouchContactGesture.cancelsTouchesInView = false
+        directTouchContactGesture.delaysTouchesBegan = false
+        directTouchContactGesture.delaysTouchesEnded = false
+        directTouchContactGesture.isAcceptedDirectTouch = { [weak self] touch in
+            guard touch.type == .direct else { return false }
+            return !(self?.isStylusTouch(touch) ?? false)
+        }
+        directTouchContactGesture.onTouchesBegan = { [weak self] touches, hadActiveDirectTouchContact in
+            self?.handleDirectTouchContactsBegan(
+                touches,
+                hadActiveDirectTouchContact: hadActiveDirectTouchContact
+            )
+        }
+        directTouchContactGesture.onTouchesEnded = { [weak self] touches, hasRemainingDirectTouchContact in
+            self?.handleDirectTouchContactsEnded(
+                touches,
+                hasRemainingDirectTouchContact: hasRemainingDirectTouchContact
+            )
+        }
+        directTouchContactGesture.onTouchesCancelled = { [weak self] touches, hasRemainingDirectTouchContact in
+            self?.handleDirectTouchContactsEnded(
+                touches,
+                hasRemainingDirectTouchContact: hasRemainingDirectTouchContact
+            )
+        }
+        addGestureRecognizer(directTouchContactGesture)
+
         // Immediate press/drag for indirect pointer input.
         longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPressGesture.minimumPressDuration = 0
@@ -260,7 +289,10 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
 
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         let isStylus = isStylusTouch(touch)
-        if touch.type == .direct, !isStylus { onDirectTouchActivity?() }
+        if touch.type == .direct, !isStylus {
+            hideCursorForDirectTouchIfNeeded()
+            onDirectTouchActivity?()
+        }
         guard isStylus else { return true }
 
         // Route Pencil contact through the dedicated touch handlers only.

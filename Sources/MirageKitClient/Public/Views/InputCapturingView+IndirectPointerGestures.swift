@@ -298,7 +298,9 @@ extension InputCapturingView {
         switch gesture.state {
         case .began,
              .changed:
-            if pointerMoved, hoverStylus == nil { revealCursorAfterPointerMovement() }
+            if hoverStylus == nil, pointerMoved || lastCursorPosition == nil {
+                revealCursorAfterCursorDrivenMovement()
+            }
             if usesVirtualTrackpad {
                 updateVirtualCursorPosition(normalized, updateVisibility: usesVisibleVirtualCursor)
             }

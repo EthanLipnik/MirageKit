@@ -128,6 +128,12 @@ final class InputSourceScrollView: CallbackScrollView {
     /// Called when accepted direct-scroll touch input should wake the touch input path.
     var onDirectTouchActivity: (() -> Void)?
 
+    /// Called when an accepted direct touch begins inside the scroll view.
+    var onDirectTouchBegan: ((UITouch, Bool) -> Void)?
+
+    /// Called when accepted direct-touch contacts finish or cancel.
+    var onDirectTouchContactsEnded: ((Set<UITouch>, Bool) -> Void)?
+
     /// Called when stylus-like touches begin inside the scroll view.
     var onPencilTouchesBegan: ((Set<UITouch>) -> Void)?
 
@@ -157,11 +163,15 @@ final class InputSourceScrollView: CallbackScrollView {
             onPencilTouchesBegan?(Set(pencilTouches))
         }
 
+        let hadActiveDirectTouchContact = hasDirectTouchContact
         let directContactTouches = touches.filter { isDirectTouchContact($0) }
         directTouchContactIdentifiers.formUnion(directContactTouches.map(ObjectIdentifier.init))
         if acceptsDirectTouchScroll, !directContactTouches.isEmpty {
             pendingInputSource = .directTouch
             onDirectTouchActivity?()
+            if directContactTouches.count == 1, let firstTouch = directContactTouches.first {
+                onDirectTouchBegan?(firstTouch, hadActiveDirectTouchContact)
+            }
         } else if touches.contains(where: isIndirectPointerTouch) {
             pendingInputSource = .indirectPointer
         }
@@ -193,8 +203,12 @@ final class InputSourceScrollView: CallbackScrollView {
 
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
+            let directContactTouches = Set(nonPencilTouches.filter { isDirectTouchContact($0) })
             super.touchesEnded(Set(nonPencilTouches), with: event)
             removeDirectTouchContacts(from: nonPencilTouches)
+            if !directContactTouches.isEmpty {
+                onDirectTouchContactsEnded?(directContactTouches, hasDirectTouchContact)
+            }
             pendingInputSource = nil
         }
     }
@@ -207,8 +221,12 @@ final class InputSourceScrollView: CallbackScrollView {
 
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
+            let directContactTouches = Set(nonPencilTouches.filter { isDirectTouchContact($0) })
             super.touchesCancelled(Set(nonPencilTouches), with: event)
             removeDirectTouchContacts(from: nonPencilTouches)
+            if !directContactTouches.isEmpty {
+                onDirectTouchContactsEnded?(directContactTouches, hasDirectTouchContact)
+            }
             pendingInputSource = nil
         }
     }

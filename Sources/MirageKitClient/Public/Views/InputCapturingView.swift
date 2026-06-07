@@ -319,6 +319,7 @@ public class InputCapturingView: UIView {
     var currentCursorType: MirageCursorType = .arrow
     var cursorIsVisible: Bool = true
     var cursorHiddenForTyping: Bool = false
+    var cursorHiddenForDirectTouch: Bool = false
     var pointerInteraction: UIPointerInteraction?
     var cursorSequence: UInt64 = 0
     var lastCursorRefreshTime: CFTimeInterval = 0
@@ -511,6 +512,7 @@ public class InputCapturingView: UIView {
     var directDoubleTapDragGesture: UIPanGestureRecognizer!
     var directTwoFingerTapGesture: UITapGestureRecognizer!
     var directTwoFingerDragGesture: UIPanGestureRecognizer!
+    var directTouchContactGesture: DirectTouchContactGestureRecognizer!
     var navigationSwipeGestures: [UISwipeGestureRecognizer] = []
 
     /// Whether two-finger swipe gestures trigger navigation actions.

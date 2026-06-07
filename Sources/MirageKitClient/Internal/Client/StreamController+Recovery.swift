@@ -57,7 +57,7 @@ extension StreamController {
         )
     }
 
-    /// Handles compressed-frame queue overflow while letting the decoder determine whether recovery needs a keyframe.
+    /// Handles compressed-frame queue overflow while preserving the dependency chain policy for the active latency mode.
     func handleDecodeQueueDependencyBreak(droppedFrame: FrameData, queueDepth: Int) async {
         droppedFrame.releaseBuffer()
         let clearedQueuedFrames = clearQueuedDecodeFramesOnly()
@@ -65,6 +65,22 @@ extension StreamController {
         recordQueueDrop(count: droppedCount)
         maybeLogDecodeBackpressure(queueDepth: queueDepth)
         logQueueDropIfNeeded()
+
+        if streamCadenceTarget.latencyMode == .lowestLatency,
+           presentationTier == .activeLive {
+            decodeQueueRequiresKeyframe = true
+            reassembler.beginKeyframeWait()
+            await enterKeyframeRecoveryIfNeeded(
+                reason: "decode-queue-dependency-break",
+                cause: .frameLoss
+            )
+            MirageLogger.client(
+                "Decode backpressure broke compressed-frame dependency chain for Most Responsive stream \(streamID); " +
+                    "droppedCurrent=1, clearedQueuedFrames=\(clearedQueuedFrames), waiting for recovery keyframe"
+            )
+            await requestKeyframeRecoveryIfPossible(reason: .decodeQueueDependencyBreak)
+            return
+        }
 
         MirageLogger.client(
             "Decode backpressure broke compressed-frame dependency chain for stream \(streamID); " +

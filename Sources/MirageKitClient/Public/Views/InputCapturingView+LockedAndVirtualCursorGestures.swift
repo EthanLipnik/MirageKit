@@ -285,6 +285,7 @@ extension InputCapturingView {
         guard contentRect.width > 0, contentRect.height > 0 else { return }
         guard translation != .zero else { return }
 
+        revealCursorAfterCursorDrivenMovement()
         var updated = virtualCursorPosition
         updated.x += translation.x / contentRect.width
         updated.y += translation.y / contentRect.height

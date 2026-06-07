@@ -13,6 +13,8 @@ extension MirageClientService {
     /// Applies a host-confirmed desktop resize transition to local stream state and decoder setup.
     func handleDesktopResizeCommit(_ started: DesktopStreamStartedMessage) async -> Bool {
         let streamID = started.streamID
+        var matchesActiveTransition = false
+        var matchesGenerationContract = false
         guard desktopSessionID == started.desktopSessionID else {
             MirageLogger.client(
                 "Ignoring stale desktop resize commit for stream \(streamID): session=\(started.desktopSessionID.uuidString)"
@@ -20,14 +22,24 @@ extension MirageClientService {
             return false
         }
         if let acceptedContractID = started.desktopGeometryContractID {
-            let activeTransitionRejectionReason: String? = if let activeTransition = desktopResizeCoordinator.activeTransition,
-                                                              activeTransition.streamID == streamID {
-                activeTransition.target.acceptedGeometryRejectionReason(
-                    acceptedContractID: acceptedContractID,
-                    acceptedSceneIdentity: started.desktopGeometrySceneIdentity
-                )
+            let activeTransitionRejectionReason: String? = if let activeTransition = desktopResizeCoordinator.activeTransition {
+                if activeTransition.streamID == streamID {
+                    if desktopResizeCoordinator.acceptTransition(
+                        streamID: streamID,
+                        transitionID: started.transitionID
+                    ) {
+                        activeTransition.target.acceptedGeometryRejectionReason(
+                            acceptedContractID: acceptedContractID,
+                            acceptedSceneIdentity: started.desktopGeometrySceneIdentity
+                        )
+                    } else {
+                        "transition=\(started.transitionID?.uuidString ?? "nil") expected=\(activeTransition.transitionID.uuidString)"
+                    }
+                } else {
+                    "activeTransitionStream=\(activeTransition.streamID)"
+                }
             } else {
-                "activeTransition=\(desktopResizeCoordinator.activeTransition?.transitionID.uuidString ?? "nil")"
+                "activeTransition=nil"
             }
             let generationContractRejectionReason: String? = if started.desktopPresentationGeneration != nil,
                                                                 let lastSentTarget = desktopResizeCoordinator.lastSentTarget {
@@ -38,9 +50,10 @@ extension MirageClientService {
             } else {
                 "generationContract=unavailable"
             }
-            let hasMatchingActiveTransition = activeTransitionRejectionReason == nil
-            let hasMatchingGenerationContract = generationContractRejectionReason == nil
-            guard hasMatchingActiveTransition || hasMatchingGenerationContract else {
+            matchesActiveTransition = activeTransitionRejectionReason == nil
+            matchesGenerationContract = desktopResizeCoordinator.activeTransition == nil &&
+                generationContractRejectionReason == nil
+            guard matchesActiveTransition || matchesGenerationContract else {
                 MirageLogger.client(
                     "Ignoring stale desktop resize commit for stream \(streamID): " +
                         "geometryContract=\(acceptedContractID.uuidString) " +
@@ -51,13 +64,14 @@ extension MirageClientService {
             }
         } else if let activeTransition = desktopResizeCoordinator.activeTransition,
                   activeTransition.streamID == streamID {
-            let matchesActiveTransition = desktopResizeCoordinator.acceptTransition(
+            let transitionMatches = desktopResizeCoordinator.acceptTransition(
                 streamID: streamID,
                 transitionID: started.transitionID
             )
             let isHostAuthoritativeRollback = started.captureSource == .mainDisplayFallback &&
                 started.allowsClientResize == false &&
                 started.transitionOutcome == .rolledBack
+            matchesActiveTransition = transitionMatches
             guard matchesActiveTransition || isHostAuthoritativeRollback else {
                 MirageLogger.client(
                     "Ignoring stale desktop resize commit for stream \(streamID): " +
@@ -69,17 +83,17 @@ extension MirageClientService {
         }
         if let generation = started.desktopPresentationGeneration {
             let previousGeneration = desktopPresentationGenerationBySessionID[started.desktopSessionID] ?? 0
-            guard generation > previousGeneration else {
+            guard generation > previousGeneration || matchesActiveTransition else {
                 MirageLogger.client(
                     "Ignoring stale desktop resize commit for stream \(streamID): generation=\(generation) previous=\(previousGeneration)"
                 )
                 return false
             }
         } else {
-            guard desktopResizeCoordinator.acceptTransition(
-                streamID: streamID,
-                transitionID: started.transitionID
-            ) else {
+            guard matchesActiveTransition || desktopResizeCoordinator.acceptTransition(
+                    streamID: streamID,
+                    transitionID: started.transitionID
+                ) else {
                 MirageLogger.client(
                     "Ignoring stale desktop resize commit for stream \(streamID): transition=\(started.transitionID?.uuidString ?? "nil")"
                 )
@@ -115,7 +129,10 @@ extension MirageClientService {
         desktopStreamAllowsClientResize = started.allowsClientResize
         updateObservedFrameRate(started.frameRate, for: streamID)
         if let generation = started.desktopPresentationGeneration {
-            desktopPresentationGenerationBySessionID[started.desktopSessionID] = generation
+            let previousGeneration = desktopPresentationGenerationBySessionID[started.desktopSessionID] ?? 0
+            if generation > previousGeneration || matchesGenerationContract {
+                desktopPresentationGenerationBySessionID[started.desktopSessionID] = generation
+            }
         }
         activeStreamCodecs[streamID] = started.codec
         if let dimensionToken = started.dimensionToken {

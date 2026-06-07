@@ -433,6 +433,7 @@ extension MirageHostService {
         )
         beginDesktopSharedDisplayTransition()
         defer { endDesktopSharedDisplayTransition() }
+        desktopPresentationGeneration = 0
         resetDesktopResizeTransactionState()
         desktopDisplayTopologyRefreshTask?.cancel()
         desktopDisplayTopologyRefreshTask = nil

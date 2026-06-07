@@ -95,12 +95,16 @@ extension InputCapturingView {
             cancelled: { [weak self] touches in self?.handlePencilTouchesCancelled(touches) }
         )
         scrollPhysicsView.onDirectTouchActivity = { [weak self] in
+            self?.hideCursorForDirectTouchIfNeeded()
             self?.onDirectTouchActivity?()
         }
         scrollPhysicsView.onDirectTouchScrollBegan = { [weak self, weak scrollPhysicsView] location in
             guard let self else { return }
             let localLocation = scrollPhysicsView?.convert(location, to: self) ?? location
             handleDirectTouchScrollBegan(at: localLocation)
+        }
+        scrollPhysicsView.onDirectTouchScrollPreparationCancelled = { [weak self] in
+            self?.cancelPreparedDirectTouchScrollAnchor()
         }
 
         // Enable user interaction

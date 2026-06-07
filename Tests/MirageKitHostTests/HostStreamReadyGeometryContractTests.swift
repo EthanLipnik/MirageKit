@@ -239,6 +239,17 @@ struct HostStreamReadyGeometryContractTests {
     }
 
     @MainActor
+    @Test("Desktop resize transaction reset preserves presentation generation")
+    func desktopResizeTransactionResetPreservesPresentationGeneration() {
+        let host = MirageHostService(hostName: "Geometry Contract Host")
+        host.desktopPresentationGeneration = 7
+
+        host.resetDesktopResizeTransactionState()
+
+        #expect(host.desktopPresentationGeneration == 7)
+    }
+
+    @MainActor
     @Test("Desktop resolution change rejects missing contract when active contract exists")
     func desktopResolutionChangeRejectsMissingContractWhenActiveContractExists() throws {
         let host = MirageHostService(hostName: "Geometry Contract Host")

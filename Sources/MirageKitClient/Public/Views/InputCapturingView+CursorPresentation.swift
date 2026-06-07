@@ -53,6 +53,7 @@ extension InputCapturingView {
         ]
 
         if usesLockedTrackpadCursor {
+            clearDirectTouchCursorSuppression(reason: "lockedTrackpadModeEnabled")
             longPressGesture.allowedTouchTypes = indirectTouchTypes
             scrollGesture.isEnabled = true
             directRotationGesture.isEnabled = true
@@ -90,6 +91,7 @@ extension InputCapturingView {
         } else {
             switch directTouchInputMode {
             case .dragCursor:
+                clearDirectTouchCursorSuppression(reason: "dragCursorModeEnabled")
                 longPressGesture.allowedTouchTypes = indirectTouchTypes
                 scrollGesture.isEnabled = true
                 directRotationGesture.isEnabled = true

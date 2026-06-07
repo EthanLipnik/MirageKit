@@ -115,6 +115,39 @@ struct StreamContentRecoveryPresentationTests {
         #expect(view.presentationBlurRadius == 0)
     }
 
+    @Test("Desktop resize blur is not suppressed by fresh frame progress")
+    @MainActor
+    func desktopResizeBlurIsNotSuppressedByFreshFrameProgress() {
+        #expect(
+            MirageStreamContentView.resolvedPresentationBlurRadius(
+                resizeRadius: 20,
+                recoveryRadius: 0,
+                suppressesRecoveryBlurForRecentProgress: true
+            ) == 20
+        )
+        #expect(
+            MirageStreamContentView.resolvedPresentationBlurRadius(
+                resizeRadius: 24,
+                recoveryRadius: 16,
+                suppressesRecoveryBlurForRecentProgress: true
+            ) == 24
+        )
+        #expect(
+            MirageStreamContentView.resolvedPresentationBlurRadius(
+                resizeRadius: 0,
+                recoveryRadius: 16,
+                suppressesRecoveryBlurForRecentProgress: true
+            ) == 0
+        )
+        #expect(
+            MirageStreamContentView.resolvedPresentationBlurRadius(
+                resizeRadius: 0,
+                recoveryRadius: 16,
+                suppressesRecoveryBlurForRecentProgress: false
+            ) == 16
+        )
+    }
+
     #if os(iOS) || os(visionOS)
     @MainActor
     @Test("Direct touch suppresses simulated desktop cursor overlay")

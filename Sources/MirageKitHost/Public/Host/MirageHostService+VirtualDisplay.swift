@@ -17,7 +17,6 @@ extension MirageHostService {
         activeDesktopResizeRequest = nil
         queuedDesktopResizeRequest = nil
         desktopResizeTransactionState = .idle
-        desktopPresentationGeneration = 0
         desktopCurrentGeometryContractID = nil
         desktopCurrentGeometrySceneIdentity = nil
         desktopCurrentGeometryPresentationResolution = nil

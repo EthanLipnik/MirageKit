@@ -31,6 +31,7 @@ extension InputCapturingView {
               hideSystemCursor,
               !cursorLockEnabled,
               !usesVisibleVirtualCursor,
+              !cursorHiddenByLocalInput,
               cursorIsVisible else {
             return nil
         }
@@ -39,7 +40,7 @@ extension InputCapturingView {
     }
 
     func updateLockedCursorViewVisibility() {
-        let shouldShow = !cursorHiddenForTyping &&
+        let shouldShow = !cursorHiddenByLocalInput &&
             ((cursorLockEnabled && syntheticCursorEnabled && lockedCursorVisible) ||
                 unlockedSyntheticCursorPosition != nil)
         lockedCursorView.isHidden = !shouldShow
@@ -97,6 +98,7 @@ extension InputCapturingView {
         let normalizationSize = contentRect.width > 0 && contentRect.height > 0
             ? contentRect.size
             : bounds.size
+        revealCursorAfterCursorDrivenMovement()
         lockedCursorPosition = LockedCursorPositionResolver.applyRelativeDelta(
             currentPosition: lockedCursorPosition,
             deltaX: translation.x,
