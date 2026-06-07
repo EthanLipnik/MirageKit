@@ -24,7 +24,7 @@ struct MirageHostCaptureBenchmarkDiagnosticsTests {
         #expect(configuration.modeSelections == [.lowPowerOff, .lowPowerOn])
         #expect(
             configuration.cacheKey ==
-                "v2-modes-lowPowerOff-lowPowerOn-stages-1080p-1920x1080-warmup-1250-measure-2500"
+                "v3-modes-lowPowerOff-lowPowerOn-stages-1080p-1920x1080-warmup-1250-measure-2500"
         )
     }
 

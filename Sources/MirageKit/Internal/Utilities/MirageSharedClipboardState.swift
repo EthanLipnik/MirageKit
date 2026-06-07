@@ -25,22 +25,6 @@ package enum MirageSharedClipboard {
     package static let automaticStreamChunkPacingDelay: Duration = .milliseconds(12)
     /// Time window for attributing platform pasteboard change-count advances to a remote clipboard update.
     package static let hostOriginAttributionWindowMilliseconds: Int64 = 8000
-    /// Time window for suppressing local echo after applying a remote clipboard update.
-    package static let recentRemoteClipboardChangeWindowMilliseconds: Int64 = 3000
-
-    /// Metadata fingerprint used to detect repeated local clipboard declarations.
-    package struct ContentFingerprint: Equatable {
-        /// Clipboard representation family, such as text, image, file, or unsupported.
-        package let kind: MirageWire.SharedClipboardRepresentationKind
-        /// MIME or platform content type associated with the representation.
-        package let contentType: String?
-        /// Original filename for file-backed clipboard payloads.
-        package let filename: String?
-        /// Declared payload size in bytes.
-        package let byteCount: Int
-        /// Stable hash of the payload bytes, when the payload is available locally.
-        package let payloadHash: UInt64?
-    }
 
     package static func maximumPayloadBytes(for representation: MirageWire.SharedClipboardRepresentation) -> Int {
         representation.kind == .text ? maximumTextPayloadBytes : maximumBinaryPayloadBytes
@@ -66,25 +50,6 @@ package enum MirageSharedClipboard {
             offset = end
         }
         return chunks
-    }
-
-    package static func contentFingerprint(for item: MirageSharedClipboardItem) -> ContentFingerprint {
-        ContentFingerprint(
-            kind: item.representation.kind,
-            contentType: item.representation.contentType,
-            filename: item.representation.filename,
-            byteCount: item.representation.byteCount,
-            payloadHash: item.payload.map(stablePayloadHash(_:))
-        )
-    }
-
-    private static func stablePayloadHash(_ payload: Data) -> UInt64 {
-        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
-        for byte in payload {
-            hash ^= UInt64(byte)
-            hash &*= 0x100_0000_01B3
-        }
-        return hash
     }
 
     package static func currentTimestampMs() -> Int64 {
@@ -157,7 +122,6 @@ package struct MirageSharedClipboardState {
     package private(set) var latestOrderingToken: MirageWire.MirageSharedClipboardOrderingToken?
     package private(set) var maxKnownLogicalVersion: UInt64 = 0
     package private(set) var suppressLocalSendUntilChangeCount: Int?
-    package private(set) var latestAutomaticLocalFingerprint: MirageSharedClipboard.ContentFingerprint?
     package private(set) var latestRemoteClipboardObservationToken: MirageWire.MirageSharedClipboardOrderingToken?
     package private(set) var latestRemoteClipboardObservedAtMs: Int64?
     package private(set) var remoteOriginAttributionBaselineChangeCount: Int?
@@ -172,7 +136,6 @@ package struct MirageSharedClipboardState {
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
         suppressLocalSendUntilChangeCount = nil
-        latestAutomaticLocalFingerprint = nil
         latestRemoteClipboardObservationToken = nil
         latestRemoteClipboardObservedAtMs = nil
         remoteOriginAttributionBaselineChangeCount = nil
@@ -186,7 +149,6 @@ package struct MirageSharedClipboardState {
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
         suppressLocalSendUntilChangeCount = nil
-        latestAutomaticLocalFingerprint = nil
         latestRemoteClipboardObservationToken = nil
         latestRemoteClipboardObservedAtMs = nil
         remoteOriginAttributionBaselineChangeCount = nil
@@ -210,7 +172,6 @@ package struct MirageSharedClipboardState {
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
         suppressLocalSendUntilChangeCount = changeCount
-        latestAutomaticLocalFingerprint = nil
         if let observedAtMs {
             recordRemoteOriginAttributionWindow(
                 changeCount: changeCount,
@@ -235,7 +196,6 @@ package struct MirageSharedClipboardState {
         lastObservedChangeCount = changeCount
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
         suppressLocalSendUntilChangeCount = changeCount
-        latestAutomaticLocalFingerprint = nil
         recordRemoteOriginAttributionWindow(
             changeCount: changeCount,
             orderingToken: orderingToken,
@@ -253,7 +213,6 @@ package struct MirageSharedClipboardState {
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
         suppressLocalSendUntilChangeCount = changeCount
-        latestAutomaticLocalFingerprint = nil
         recordRemoteOriginAttributionWindow(
             changeCount: changeCount,
             orderingToken: orderingToken,
@@ -280,10 +239,7 @@ package struct MirageSharedClipboardState {
         return true
     }
 
-    package func shouldSuppressLocalSend(
-        changeCount: Int,
-        nowMs: Int64 = MirageSharedClipboard.currentTimestampMs()
-    ) -> Bool {
+    package func shouldSuppressLocalSend(changeCount: Int) -> Bool {
         if let suppressLocalSendUntilChangeCount,
            changeCount <= suppressLocalSendUntilChangeCount {
             return true
@@ -292,10 +248,7 @@ package struct MirageSharedClipboardState {
            changeCount <= remoteOriginAttributedChangeCountUpperBound {
             return true
         }
-        guard let latestRemoteClipboardObservedAtMs else { return false }
-        let elapsedMs = nowMs - latestRemoteClipboardObservedAtMs
-        return elapsedMs >= 0 &&
-            elapsedMs <= MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+        return false
     }
 
     package mutating func recordSuppressedLocalSend(changeCount: Int) {
@@ -305,11 +258,10 @@ package struct MirageSharedClipboardState {
 
     package mutating func prepareLocalSend(
         currentItem: MirageSharedClipboardItem,
-        changeCount: Int,
-        nowMs: Int64 = MirageSharedClipboard.currentTimestampMs()
+        changeCount: Int
     ) -> MirageSharedClipboardLocalSend? {
         guard isActive else { return nil }
-        if shouldSuppressLocalSend(changeCount: changeCount, nowMs: nowMs) {
+        if shouldSuppressLocalSend(changeCount: changeCount) {
             recordSuppressedLocalSend(changeCount: changeCount)
             return nil
         }
@@ -318,7 +270,6 @@ package struct MirageSharedClipboardState {
         let orderingToken = mintLocalOrderingToken()
         latestOrderingToken = orderingToken
         suppressLocalSendUntilChangeCount = nil
-        latestAutomaticLocalFingerprint = nil
         latestRemoteClipboardObservedAtMs = nil
         remoteOriginAttributionBaselineChangeCount = nil
         remoteOriginAttributionDeadlineMs = nil
@@ -331,8 +282,7 @@ package struct MirageSharedClipboardState {
 
     package mutating func prepareLocalDeclaration(
         item: MirageSharedClipboardItem,
-        changeCount: Int,
-        nowMs: Int64 = MirageSharedClipboard.currentTimestampMs()
+        changeCount: Int
     ) -> MirageSharedClipboardLocalSend? {
         guard isActive else { return nil }
         if lastObservedChangeCount == changeCount {
@@ -340,13 +290,11 @@ package struct MirageSharedClipboardState {
             return nil
         }
 
-        let fingerprint = MirageSharedClipboard.contentFingerprint(for: item)
         guard item.payload != nil else {
             lastObservedChangeCount = changeCount
             let orderingToken = mintLocalOrderingToken()
             latestOrderingToken = orderingToken
             suppressLocalSendUntilChangeCount = nil
-            latestAutomaticLocalFingerprint = nil
             latestRemoteClipboardObservedAtMs = nil
             remoteOriginAttributionBaselineChangeCount = nil
             remoteOriginAttributionDeadlineMs = nil
@@ -357,19 +305,12 @@ package struct MirageSharedClipboardState {
             )
         }
 
-        if latestAutomaticLocalFingerprint == fingerprint {
-            lastObservedChangeCount = changeCount
-            return nil
-        }
-
         guard let localSend = prepareLocalSend(
             currentItem: item,
-            changeCount: changeCount,
-            nowMs: nowMs
+            changeCount: changeCount
         ) else {
             return nil
         }
-        latestAutomaticLocalFingerprint = fingerprint
         return localSend
     }
 
