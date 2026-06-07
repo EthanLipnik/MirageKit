@@ -1,6 +1,6 @@
 //
 //  MirageEndpointClassifier.swift
-//  MirageKit
+//  MirageConnectivity
 //
 //  Created by Ethan Lipnik on 6/3/26.
 //

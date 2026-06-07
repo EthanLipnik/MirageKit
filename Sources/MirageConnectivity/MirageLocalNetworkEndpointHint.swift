@@ -1,6 +1,6 @@
 //
 //  MirageLocalNetworkEndpointHint.swift
-//  MirageKit
+//  MirageConnectivity
 //
 //  Created by Ethan Lipnik on 6/6/26.
 //
