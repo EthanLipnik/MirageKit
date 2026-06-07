@@ -5,7 +5,7 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
-import MirageConnectivity
+@_exported import MirageConnectivity
 import MirageCore
 import MirageDiagnostics
 import MirageIdentity
