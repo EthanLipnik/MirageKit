@@ -202,12 +202,12 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
         occupiedRects: [MiragePixelRect]
     ) -> [MirageMosaicTileDescriptor] {
         let bounds = MiragePixelRect(size: request.logicalSize)
-        return Self.subtract(occupiedRects, from: bounds)
+        return Self.coalesced(Self.subtract(occupiedRects, from: bounds))
             .sorted(by: Self.residualOrder)
             .flatMap { splitFallbackTile($0) }
             .map { fragment in
                 let tileID = MirageMosaicTileID(rawValue: [
-                    "fallback",
+                    "background",
                     "\(fragment.x)",
                     "\(fragment.y)",
                     "\(fragment.width)",
@@ -217,7 +217,7 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
                     id: tileID,
                     sourceRect: fragment,
                     presentationRect: fragment,
-                    semanticClass: .gridFallback,
+                    semanticClass: .background,
                     priority: .gridFallback,
                     codecStrategy: .singleUnit,
                     commitPolicy: .independent
@@ -268,17 +268,55 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
         if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
         let lhsArea = lhs.rect.width * lhs.rect.height
         let rhsArea = rhs.rect.width * rhs.rect.height
-        if lhsArea != rhsArea { return lhsArea < rhsArea }
+        if lhsArea != rhsArea { return lhsArea > rhsArea }
+        let lhsRank = semanticRank(lhs.semanticClass)
+        let rhsRank = semanticRank(rhs.semanticClass)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
         return lhs.id < rhs.id
     }
 
     private static func isSemanticTileClass(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
         switch semanticClass {
-        case .scrollView,
-             .textViewport:
+        case .menuBar,
+             .dock,
+             .scrollView,
+             .textViewport,
+             .toolbar,
+             .sidebar,
+             .popover,
+             .sheet,
+             .menu,
+             .canvas,
+             .video,
+             .chromeAtlas:
             true
         default:
             false
+        }
+    }
+
+    private static func semanticRank(_ semanticClass: MirageMosaicSemanticClass) -> Int {
+        switch semanticClass {
+        case .textViewport:
+            0
+        case .scrollView,
+             .sidebar:
+            1
+        case .toolbar:
+            2
+        case .menuBar,
+             .dock,
+             .chromeAtlas:
+            3
+        case .popover,
+             .sheet,
+             .menu:
+            4
+        case .canvas,
+             .video:
+            5
+        default:
+            6
         }
     }
 
@@ -345,6 +383,44 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
         cutters.reduce([rect]) { fragments, cutter in
             fragments.flatMap { subtract(cutter, from: $0) }
         }
+    }
+
+    private static func coalesced(_ rects: [MiragePixelRect]) -> [MiragePixelRect] {
+        var merged = rects.filter { !$0.size.isEmpty }
+        var didMerge = true
+        while didMerge {
+            didMerge = false
+            outer: for lhsIndex in merged.indices {
+                for rhsIndex in merged.indices where rhsIndex > lhsIndex {
+                    guard let union = mergedUnion(merged[lhsIndex], merged[rhsIndex]) else { continue }
+                    merged[lhsIndex] = union
+                    merged.remove(at: rhsIndex)
+                    didMerge = true
+                    break outer
+                }
+            }
+        }
+        return merged
+    }
+
+    private static func mergedUnion(_ lhs: MiragePixelRect, _ rhs: MiragePixelRect) -> MiragePixelRect? {
+        if lhs.y == rhs.y, lhs.height == rhs.height {
+            if lhs.x + lhs.width == rhs.x {
+                return MiragePixelRect(x: lhs.x, y: lhs.y, width: lhs.width + rhs.width, height: lhs.height)
+            }
+            if rhs.x + rhs.width == lhs.x {
+                return MiragePixelRect(x: rhs.x, y: lhs.y, width: rhs.width + lhs.width, height: lhs.height)
+            }
+        }
+        if lhs.x == rhs.x, lhs.width == rhs.width {
+            if lhs.y + lhs.height == rhs.y {
+                return MiragePixelRect(x: lhs.x, y: lhs.y, width: lhs.width, height: lhs.height + rhs.height)
+            }
+            if rhs.y + rhs.height == lhs.y {
+                return MiragePixelRect(x: lhs.x, y: rhs.y, width: lhs.width, height: rhs.height + lhs.height)
+            }
+        }
+        return nil
     }
 
     private static func subtract(_ cutter: MiragePixelRect, from rect: MiragePixelRect) -> [MiragePixelRect] {

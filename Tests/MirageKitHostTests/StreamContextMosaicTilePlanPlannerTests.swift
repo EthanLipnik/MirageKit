@@ -62,7 +62,7 @@ struct StreamContextMosaicTilePlanPlannerTests {
             $0.id == scrollID || $0.parentTileID == scrollID
         }
         #expect(scrollTiles.count == 1)
-        #expect(semanticPlan.tiles.contains { $0.semanticClass == .gridFallback })
+        #expect(semanticPlan.tiles.contains { $0.semanticClass == .background })
         #expect(scrollTiles.allSatisfy { $0.semanticClass == .scrollView })
         #expect(scrollTiles.allSatisfy { $0.commitPolicy == .atomic })
         #expect(semanticPlan.codecUnits.count == semanticPlan.tiles.count)
@@ -113,8 +113,89 @@ struct StreamContextMosaicTilePlanPlannerTests {
         #expect(scrollTile.sourceRect == MiragePixelRect(x: 200, y: 160, width: 600, height: 1400))
         #expect(textTile.sourceRect == MiragePixelRect(x: 900, y: 260, width: 1300, height: 900))
         #expect(!plan.tiles.contains { $0.semanticClass == .focusedWindow })
-        #expect(plan.tiles.contains { $0.semanticClass == .gridFallback })
+        #expect(plan.tiles.contains { $0.semanticClass == .background })
         #expect(plan.codecUnits.count == plan.tiles.count)
+        #expect(totalArea(plan.tiles.map(\.sourceRect)) == 3000 * 1800)
+        #expect(rectsDoNotOverlap(plan.tiles.map(\.sourceRect)))
+    }
+
+    @Test("Planner keeps coarse Xcode panes and bounded desktop background")
+    func plannerKeepsCoarseXcodePanesAndBoundedDesktopBackground() throws {
+        let planner = StreamContextMosaicTilePlanPlanner()
+        let nestedStripID = MirageMosaicTileID(rawValue: "editor-nested-strip")
+        let plan = planner.plan(for: StreamContextMosaicTilePlanRequest(
+            logicalSize: MiragePixelSize(width: 3000, height: 1800),
+            codec: .hevc,
+            semanticCandidates: [
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "menu-bar"),
+                    rect: MiragePixelRect(x: 0, y: 0, width: 3000, height: 44),
+                    semanticClass: .menuBar,
+                    priority: .transientChrome,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "dock"),
+                    rect: MiragePixelRect(x: 0, y: 1680, width: 3000, height: 120),
+                    semanticClass: .dock,
+                    priority: .transientChrome,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "toolbar"),
+                    rect: MiragePixelRect(x: 450, y: 120, width: 2100, height: 90),
+                    semanticClass: .toolbar,
+                    priority: .transientChrome,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "sidebar"),
+                    rect: MiragePixelRect(x: 450, y: 210, width: 360, height: 1230),
+                    semanticClass: .sidebar,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "editor"),
+                    rect: MiragePixelRect(x: 810, y: 210, width: 1740, height: 900),
+                    semanticClass: .textViewport,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "console"),
+                    rect: MiragePixelRect(x: 810, y: 1110, width: 1740, height: 330),
+                    semanticClass: .scrollView,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: nestedStripID,
+                    rect: MiragePixelRect(x: 860, y: 320, width: 240, height: 40),
+                    semanticClass: .scrollView,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+            ]
+        ))
+
+        #expect(plan.kind == .semantic)
+        #expect(plan.tiles.contains { $0.semanticClass == .menuBar })
+        #expect(plan.tiles.contains { $0.semanticClass == .dock })
+        #expect(plan.tiles.contains { $0.semanticClass == .toolbar })
+        #expect(plan.tiles.contains { $0.semanticClass == .sidebar })
+        #expect(plan.tiles.contains { $0.id == MirageMosaicTileID(rawValue: "editor") })
+        #expect(plan.tiles.contains { $0.id == MirageMosaicTileID(rawValue: "console") })
+        #expect(!plan.tiles.contains { $0.id == nestedStripID })
+
+        let semanticTileCount = plan.tiles.filter { $0.semanticClass != .background }.count
+        let backgroundTileCount = plan.tiles.filter { $0.semanticClass == .background }.count
+        #expect(semanticTileCount == 6)
+        #expect(backgroundTileCount <= 8)
         #expect(totalArea(plan.tiles.map(\.sourceRect)) == 3000 * 1800)
         #expect(rectsDoNotOverlap(plan.tiles.map(\.sourceRect)))
     }
@@ -146,8 +227,8 @@ struct StreamContextMosaicTilePlanPlannerTests {
         ))
 
         #expect(plan.kind == .semantic)
-        #expect(plan.tiles.filter { $0.semanticClass != .gridFallback }.count == 12)
-        #expect(plan.tiles.contains { $0.semanticClass == .gridFallback })
+        #expect(plan.tiles.filter { $0.semanticClass != .background }.count == 12)
+        #expect(plan.tiles.contains { $0.semanticClass == .background })
         #expect(totalArea(plan.tiles.map(\.sourceRect)) == 3000 * 1800)
         #expect(rectsDoNotOverlap(plan.tiles.map(\.sourceRect)))
     }

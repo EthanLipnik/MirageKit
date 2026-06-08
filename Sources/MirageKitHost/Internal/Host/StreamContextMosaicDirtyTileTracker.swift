@@ -185,10 +185,10 @@ struct StreamContextMosaicDirtyTileTracker: Sendable {
             return currentPlan
         }
         if isTransientSystemState,
-           semanticCandidates.isEmpty,
            let currentPlan,
            currentPlan.logicalSize == logicalSize,
            currentPlan.codecUnits.allSatisfy({ $0.codec == codec }) {
+            pendingSemanticPlanChange = nil
             return currentPlan
         }
         if shouldDeferSemanticPlanChange(
@@ -281,7 +281,7 @@ struct StreamContextMosaicDirtyTileTracker: Sendable {
         .prefix(max(0, planner.maxSemanticTiles))
         .map { candidate in
             SemanticCandidateSignature(
-                semanticClass: candidate.semanticClass,
+                semanticClass: Self.signatureSemanticClass(candidate.semanticClass),
                 priority: candidate.priority,
                 rect: QuantizedRect(candidate.rect),
                 codecStrategy: candidate.codecStrategy,
@@ -300,17 +300,66 @@ struct StreamContextMosaicDirtyTileTracker: Sendable {
         if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
         let lhsArea = lhs.rect.width * lhs.rect.height
         let rhsArea = rhs.rect.width * rhs.rect.height
-        if lhsArea != rhsArea { return lhsArea < rhsArea }
+        if lhsArea != rhsArea { return lhsArea > rhsArea }
+        let lhsRank = semanticRank(lhs.semanticClass)
+        let rhsRank = semanticRank(rhs.semanticClass)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
         return lhs.id < rhs.id
     }
 
     private static func isSemanticTileClass(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
         switch semanticClass {
-        case .scrollView,
-             .textViewport:
+        case .menuBar,
+             .dock,
+             .scrollView,
+             .textViewport,
+             .toolbar,
+             .sidebar,
+             .popover,
+             .sheet,
+             .menu,
+             .canvas,
+             .video,
+             .chromeAtlas:
             true
         default:
             false
+        }
+    }
+
+    private static func signatureSemanticClass(
+        _ semanticClass: MirageMosaicSemanticClass
+    ) -> MirageMosaicSemanticClass {
+        switch semanticClass {
+        case .textViewport:
+            .scrollView
+        default:
+            semanticClass
+        }
+    }
+
+    private static func semanticRank(_ semanticClass: MirageMosaicSemanticClass) -> Int {
+        switch semanticClass {
+        case .textViewport:
+            0
+        case .scrollView,
+             .sidebar:
+            1
+        case .toolbar:
+            2
+        case .menuBar,
+             .dock,
+             .chromeAtlas:
+            3
+        case .popover,
+             .sheet,
+             .menu:
+            4
+        case .canvas,
+             .video:
+            5
+        default:
+            6
         }
     }
 }
