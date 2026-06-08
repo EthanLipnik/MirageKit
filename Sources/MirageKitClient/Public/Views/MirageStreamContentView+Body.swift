@@ -150,11 +150,10 @@ private extension MirageStreamContentView {
             streamPlatformSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay {
-                    if isDesktopStream && showMosaicTileDebugOverlay {
-                        MirageMosaicTileDebugOverlay(
-                            tilePlan: clientService.mosaicTilePlansByStreamID[presentationStreamID]
-                                ?? clientService.mosaicTilePlansByStreamID[session.streamID]
-                        )
+                    if isDesktopStream && showMosaicTileDebugOverlay,
+                       let mosaicTilePlan = clientService.mosaicTilePlansByStreamID[presentationStreamID]
+                        ?? clientService.mosaicTilePlansByStreamID[session.streamID] {
+                        MirageMosaicTileDebugOverlay(tilePlan: mosaicTilePlan)
                     }
                 }
         }

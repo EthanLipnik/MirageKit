@@ -15,7 +15,7 @@ struct MirageRuntimeCapabilitiesTests {
     @Test("Runtime capabilities round trip with stable value encoding")
     func runtimeCapabilitiesRoundTripWithStableValueEncoding() throws {
         let capabilities = MirageRuntimeCapabilities(
-            protocolVersions: [.rearchitectureCutoverControl, .currentControl],
+            protocolVersions: [MirageProtocolVersion(260604), MirageProtocolVersion(260605)],
             controlFeatures: [.sharedClipboard, .sessionBootstrap],
             mediaPacketFamilies: [MirageMediaPacketFamily("topology-aware-units"), .fixedHeaderFullFrame],
             mediaTopologies: [.atlas, .singleUnit],
@@ -32,23 +32,6 @@ struct MirageRuntimeCapabilitiesTests {
         #expect(encodedText.contains(#""protocolVersions":[260604,260605]"#))
         #expect(encodedText.contains(#""mediaPacketFamilies":["fixed-header-full-frame","topology-aware-units"]"#))
         #expect(encodedText.contains(#""mediaTopologies":["atlas","singleUnit"]"#))
-    }
-
-    @Test("Cutover protocol capabilities do not replace current control support before activation")
-    func cutoverProtocolCapabilitiesDoNotReplaceCurrentControlSupportBeforeActivation() {
-        let local = MirageRuntimeCapabilities.currentFullFrameBaseline
-        let cutoverOnlyRemote = MirageRuntimeCapabilities(
-            protocolVersions: [.rearchitectureCutoverControl],
-            controlFeatures: [.sessionBootstrap, .streamLifecycle],
-            mediaPacketFamilies: [.fixedHeaderFullFrame],
-            mediaTopologies: [.singleUnit],
-            codecs: [.hevc],
-            inputFeatures: [],
-            diagnosticsFeatures: []
-        )
-
-        #expect(local.negotiated(with: cutoverOnlyRemote).protocolVersions.isEmpty)
-        #expect(local.selectedMediaPacketFamilyForSend(matching: cutoverOnlyRemote) == nil)
     }
 
     @Test("Capability negotiation keeps only mutually supported features")
@@ -112,10 +95,10 @@ struct MirageRuntimeCapabilitiesTests {
         #expect(local.selectedMediaPacketFamilyForSend(matching: missingStreamLifecycle) == nil)
     }
 
-    @Test("Current Mosaic cutover selects media-unit packet family")
-    func currentMosaicCutoverSelectsMediaUnitPacketFamily() {
-        let local = MirageRuntimeCapabilities.currentMosaicCutover
-        let remote = MirageRuntimeCapabilities.currentMosaicCutover
+    @Test("Mosaic-only snapshot selects media-unit packet family")
+    func mosaicOnlySnapshotSelectsMediaUnitPacketFamily() {
+        let local = MirageRuntimeCapabilities.currentMosaicOnly
+        let remote = MirageRuntimeCapabilities.currentMosaicOnly
 
         #expect(local.mediaPacketFamilies == [.mosaicMediaUnit])
         #expect(local.mediaTopologies == [.mosaic])
@@ -123,6 +106,41 @@ struct MirageRuntimeCapabilitiesTests {
             matching: remote,
             requiredTopology: .mosaic
         ) == .mosaicMediaUnit)
+    }
+
+    @Test("Combined host snapshot advertises both families and topologies")
+    func combinedHostSnapshotAdvertisesBothFamiliesAndTopologies() {
+        let host = MirageRuntimeCapabilities.currentCombined
+        #expect(host.mediaPacketFamilies == [.fixedHeaderFullFrame, .mosaicMediaUnit])
+        #expect(host.mediaTopologies == [.singleUnit, .mosaic])
+    }
+
+    @Test("Client snapshot omits Mosaic when not opted in")
+    func clientSnapshotOmitsMosaicWhenNotOptedIn() {
+        let client = MirageRuntimeCapabilities.client(mosaicEnabled: false, codecs: [.hevc])
+        #expect(client.mediaPacketFamilies == [.fixedHeaderFullFrame])
+        #expect(client.mediaTopologies == [.singleUnit])
+    }
+
+    @Test("Client snapshot includes Mosaic when opted in")
+    func clientSnapshotIncludesMosaicWhenOptedIn() {
+        let client = MirageRuntimeCapabilities.client(mosaicEnabled: true, codecs: [.hevc])
+        #expect(client.mediaPacketFamilies == [.fixedHeaderFullFrame, .mosaicMediaUnit])
+        #expect(client.mediaTopologies == [.singleUnit, .mosaic])
+    }
+
+    @Test("Combined host selects full-frame for a Classic client")
+    func combinedHostSelectsFullFrameForClassicClient() {
+        let host = MirageRuntimeCapabilities.currentCombined
+        let client = MirageRuntimeCapabilities.client(mosaicEnabled: false, codecs: [.hevc])
+        #expect(host.selectedMediaPacketFamilyForSend(matching: client) == .fixedHeaderFullFrame)
+    }
+
+    @Test("Combined host selects Mosaic for an opted-in client")
+    func combinedHostSelectsMosaicForOptedInClient() {
+        let host = MirageRuntimeCapabilities.currentCombined
+        let client = MirageRuntimeCapabilities.client(mosaicEnabled: true, codecs: [.hevc])
+        #expect(host.selectedMediaPacketFamilyForSend(matching: client) == .mosaicMediaUnit)
     }
 
     @Test("Bootstrap capabilities preserve legacy payload compatibility")

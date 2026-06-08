@@ -743,6 +743,11 @@ public final class MirageClientService {
         MirageLogger.client("Loaded shared device ID: \(persistedDeviceID)")
         audioPacketIngressQueue = ClientAudioPacketIngressQueue(pipeline: audioDecodePipeline)
         configureAudioPacketIngressQueue()
+        fastPathState.setMosaicRecoveryHandler { [weak self] streamID, trigger in
+            Task { @MainActor [weak self] in
+                await self?.handleMosaicRecoveryRequest(streamID: streamID, trigger: trigger)
+            }
+        }
         identityManager = MirageKit.identityManager
         configureSessionStoreCallbacks()
         registerControlMessageHandlers()

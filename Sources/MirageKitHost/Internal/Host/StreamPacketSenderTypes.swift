@@ -286,6 +286,10 @@ extension StreamPacketSender {
         let usesAwdlRealtimeQueuePolicy: Bool
         let mosaicMediaUnitMetadata: MosaicMediaUnitMetadata?
 
+        var isMosaicMediaUnit: Bool {
+            mosaicMediaUnitMetadata != nil
+        }
+
         init(
             encodedData: Data,
             frameByteCount: Int,
@@ -462,6 +466,7 @@ extension StreamPacketSender {
         let encodedAt: CFAbsoluteTime
         let startedAt: CFAbsoluteTime
         let completedAt: CFAbsoluteTime
+        let mosaicMediaUnitMetadata: MosaicMediaUnitMetadata?
 
         var sendCompletionMs: Double {
             max(0, (completedAt - encodedAt) * 1000)

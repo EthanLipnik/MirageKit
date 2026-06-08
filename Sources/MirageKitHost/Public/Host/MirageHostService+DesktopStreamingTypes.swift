@@ -258,6 +258,7 @@ extension MirageHostService {
         let captureDisplayP3CoverageStatus: MirageMedia.MirageDisplayP3CoverageStatus?
         let virtualDisplaySnapshot: MirageHostVirtualDisplaySnapshot?
         let usesDisplayRefreshCadence: Bool?
+        let useMosaic: Bool
     }
 }
 

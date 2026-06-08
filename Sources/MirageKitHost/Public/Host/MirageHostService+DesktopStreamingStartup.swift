@@ -116,6 +116,7 @@ extension MirageHostService {
             runtimeQualityAdjustmentEnabled: request.allowRuntimeQualityAdjustment ?? true,
             encoderCatchUpQualityAdjustmentEnabled: request.allowEncoderCatchUpQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: request.lowLatencyHighResolutionCompressionBoost,
+            useMosaic: request.useMosaic,
             disableResolutionCap: request.disableResolutionCap,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: request.capturePressureProfile,

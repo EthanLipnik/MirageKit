@@ -36,7 +36,7 @@ struct MiragePeerAdvertisementMetadataTests {
 
         #expect(decoded.protocolVersion == Int(MirageWireProtocol.currentDiscoveryVersion))
         #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.discoveryProtocolVersion(from: decoded) == 260604)
-        #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.controlProtocolVersion(from: decoded) == 260604)
+        #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.controlProtocolVersion(from: decoded) == 260605)
         #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.mediaPacketProtocolVersion(from: decoded) == 260604)
         #expect(decoded.deviceID == deviceID)
         #expect(decoded.identityKeyID == "test-key-id")
@@ -52,7 +52,7 @@ struct MiragePeerAdvertisementMetadataTests {
         #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.supportsProRes4444(in: decoded))
         #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
         #expect(decoded.mirageDiscoveryProtocolVersion == 260604)
-        #expect(decoded.mirageControlProtocolVersion == 260604)
+        #expect(decoded.mirageControlProtocolVersion == 260605)
         #expect(decoded.mirageMediaPacketProtocolVersion == 260604)
         #expect(decoded.mirageMaxStreams == 4)
         #expect(decoded.mirageAcceptingConnections)
@@ -219,7 +219,7 @@ struct MiragePeerAdvertisementMetadataTests {
 
         #expect(advertisement.protocolVersion == Int(MirageWireProtocol.currentDiscoveryVersion))
         #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.discoveryProtocolVersion(from: advertisement) == 260604)
-        #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.controlProtocolVersion(from: advertisement) == 260604)
+        #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.controlProtocolVersion(from: advertisement) == 260605)
         #expect(MirageConnectivity.MiragePeerAdvertisementMetadata.mediaPacketProtocolVersion(from: advertisement) == 260604)
         #expect(advertisement.deviceID == deviceID)
         #expect(advertisement.identityKeyID == "client-key")

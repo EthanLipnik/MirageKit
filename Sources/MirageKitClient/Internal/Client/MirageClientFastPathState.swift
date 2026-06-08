@@ -18,6 +18,11 @@ import CoreGraphics
 import Foundation
 
 final class MirageClientFastPathState: @unchecked Sendable {
+    typealias MosaicRecoveryHandler = @Sendable (
+        StreamID,
+        StreamControllerMosaicClientPipeline.RecoveryTrigger
+    ) -> Void
+
     struct VideoPacketContext {
         let consumedStartupPending: Bool
         let reassembler: FrameReassembler?
@@ -33,6 +38,20 @@ final class MirageClientFastPathState: @unchecked Sendable {
         let mediaPacketKey: MirageMediaPacketKey?
     }
 
+    private struct BufferedMosaicUnitKey: Hashable {
+        let tilePlanEpoch: UInt32
+        let mediaEpoch: UInt32
+        let mediaUnitIndex: UInt16
+        let unitFrameNumber: UInt32
+
+        init(_ unit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit) {
+            tilePlanEpoch = unit.tilePlanEpoch
+            mediaEpoch = unit.mediaEpoch
+            mediaUnitIndex = unit.mediaUnitIndex
+            unitFrameNumber = unit.unitFrameNumber
+        }
+    }
+
     private struct State {
         var mediaSecurityPacketKey: MirageMediaPacketKey?
         var activeAudioStreamID: StreamID?
@@ -46,13 +65,16 @@ final class MirageClientFastPathState: @unchecked Sendable {
         var mosaicPipelinesByStream: [StreamID: StreamControllerMosaicClientPipeline] = [:]
         var mosaicTilePlansByStream: [StreamID: MirageMosaicTilePlan] = [:]
         var mosaicContentRectsByStream: [StreamID: CGRect] = [:]
-        var bufferedMosaicUnitsByStream: [StreamID: [StreamControllerMosaicMediaUnitReassembler.CompletedUnit]] = [:]
+        var bufferedMosaicUnitsByStream: [StreamID: [BufferedMosaicUnitKey: StreamControllerMosaicMediaUnitReassembler.CompletedUnit]] = [:]
         var bufferedEarlyVideoPacketByStream: [StreamID: Data] = [:]
         var observedMediaStreamLabels: Set<String> = []
         var firstVideoPacketRejectionReasonByStream: [StreamID: IncomingVideoPacketRejectionReason] = [:]
         var lastInboundControlActivityTime: CFAbsoluteTime = 0
         var lastInboundMediaActivityTime: CFAbsoluteTime = 0
+        var mosaicRecoveryHandler: MosaicRecoveryHandler?
     }
+
+    private static let maxBufferedMosaicUnitsPerStream = 64
 
     private let lock = NSLock()
     private var state = State()
@@ -88,7 +110,10 @@ final class MirageClientFastPathState: @unchecked Sendable {
             if let existingPipeline = state.mosaicPipelinesByStream[streamID] {
                 mosaicPipeline = existingPipeline
             } else {
-                mosaicPipeline = StreamControllerMosaicClientPipeline(streamID: streamID)
+                mosaicPipeline = StreamControllerMosaicClientPipeline(
+                    streamID: streamID,
+                    onRecoveryNeeded: state.mosaicRecoveryHandler
+                )
                 state.mosaicPipelinesByStream[streamID] = mosaicPipeline
             }
             return VideoPacketContext(
@@ -132,22 +157,43 @@ final class MirageClientFastPathState: @unchecked Sendable {
         withLock { $0.mosaicContentRectsByStream[streamID] = contentRect }
     }
 
+    func setMosaicRecoveryHandler(_ handler: MosaicRecoveryHandler?) {
+        withLock { state in
+            state.mosaicRecoveryHandler = handler
+            state.mosaicPipelinesByStream.removeAll(keepingCapacity: false)
+        }
+    }
+
     func bufferMosaicUnit(
         _ unit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit,
         for streamID: StreamID
     ) -> Bool {
         withLock { state in
             guard state.activeStreamIDs.contains(streamID) else { return false }
-            var units = state.bufferedMosaicUnitsByStream[streamID] ?? []
-            guard units.count < 8 else { return false }
-            units.append(unit)
+            var units = state.bufferedMosaicUnitsByStream[streamID] ?? [:]
+            let key = BufferedMosaicUnitKey(unit)
+            if units[key] == nil {
+                guard units.count < Self.maxBufferedMosaicUnitsPerStream else { return false }
+            }
+            units[key] = unit
             state.bufferedMosaicUnitsByStream[streamID] = units
             return true
         }
     }
 
     func takeBufferedMosaicUnits(for streamID: StreamID) -> [StreamControllerMosaicMediaUnitReassembler.CompletedUnit] {
-        withLock { $0.bufferedMosaicUnitsByStream.removeValue(forKey: streamID) ?? [] }
+        withLock { state in
+            let bufferedUnits = state.bufferedMosaicUnitsByStream.removeValue(forKey: streamID) ?? [:]
+            let units = Array(bufferedUnits.values)
+            return units.sorted { lhs, rhs in
+                if lhs.tilePlanEpoch != rhs.tilePlanEpoch { return lhs.tilePlanEpoch < rhs.tilePlanEpoch }
+                if lhs.mediaEpoch != rhs.mediaEpoch { return lhs.mediaEpoch < rhs.mediaEpoch }
+                if lhs.unitFrameNumber != rhs.unitFrameNumber {
+                    return lhs.unitFrameNumber < rhs.unitFrameNumber
+                }
+                return lhs.mediaUnitIndex < rhs.mediaUnitIndex
+            }
+        }
     }
 
     func bufferedMosaicUnitCount(for streamID: StreamID) -> Int {

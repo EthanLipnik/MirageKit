@@ -77,7 +77,8 @@ extension StreamPacketSender {
             dimensionToken: item.dimensionToken,
             encodedAt: item.encodedAt,
             startedAt: startedAt,
-            completedAt: completedAt
+            completedAt: completedAt,
+            mosaicMediaUnitMetadata: item.mosaicMediaUnitMetadata
         ))
     }
 

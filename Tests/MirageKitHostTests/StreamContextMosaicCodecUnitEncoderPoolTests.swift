@@ -134,6 +134,147 @@ struct StreamContextMosaicCodecUnitEncoderPoolTests {
         #expect(secondSnapshot.keys.first?.planEpoch == 2)
     }
 
+    @Test("Pool retains clean active tile encoders across dirty subsets")
+    func poolRetainsCleanActiveTileEncodersAcrossDirtySubsets() async throws {
+        let plan = MirageMosaicTilePlan.fixedGrid(
+            epoch: 5,
+            logicalSize: MiragePixelSize(width: 900, height: 300),
+            columns: 3,
+            rows: 1,
+            codec: .hevc
+        )
+        let planner = StreamContextMosaicMediaUnitPlanner()
+        let firstSummary = MirageMosaicEpochSummary(
+            tilePlanID: plan.id,
+            tilePlanEpoch: plan.epoch,
+            frameNumber: 10,
+            dirtyTileIDs: [MirageMosaicTileID(rawValue: "grid-0")],
+            reusedTileVersions: [
+                MirageMosaicTileID(rawValue: "grid-1"): 4,
+                MirageMosaicTileID(rawValue: "grid-2"): 7,
+            ],
+            updatedTileVersions: [MirageMosaicTileID(rawValue: "grid-0"): 8]
+        )
+        let secondSummary = MirageMosaicEpochSummary(
+            tilePlanID: plan.id,
+            tilePlanEpoch: plan.epoch,
+            frameNumber: 11,
+            dirtyTileIDs: [MirageMosaicTileID(rawValue: "grid-2")],
+            reusedTileVersions: [
+                MirageMosaicTileID(rawValue: "grid-0"): 8,
+                MirageMosaicTileID(rawValue: "grid-1"): 4,
+            ],
+            updatedTileVersions: [MirageMosaicTileID(rawValue: "grid-2"): 9]
+        )
+        let secondDirtyUnits = planner.plannedUnits(plan: plan, summary: secondSummary)
+        let activeUnits = planner.plannedUnits(
+            plan: plan,
+            summary: firstSummary,
+            includeCleanUnits: true
+        )
+        let factory = RecordingVideoEncoderFactory()
+        let pool = StreamContextMosaicCodecUnitEncoderPool()
+
+        let firstPrepared = try await pool.synchronize(
+            units: activeUnits,
+            activeUnits: activeUnits,
+            configuration: MirageEncoderConfiguration(targetFrameRate: 60),
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .unknown,
+            inFlightLimit: 1,
+            maximizePowerEfficiencyEnabled: false,
+            factory: factory,
+            createSessions: false
+        )
+        let secondPrepared = try await pool.synchronize(
+            units: secondDirtyUnits,
+            activeUnits: activeUnits,
+            configuration: MirageEncoderConfiguration(targetFrameRate: 60),
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .unknown,
+            inFlightLimit: 1,
+            maximizePowerEfficiencyEnabled: false,
+            factory: factory,
+            createSessions: false
+        )
+
+        #expect(firstPrepared.count == 3)
+        #expect(secondPrepared.count == 1)
+        #expect(factory.requests.count == 3)
+        #expect(await pool.snapshot.keys.count == 3)
+    }
+
+    @Test("Pool does not create clean active tile encoders before first encode")
+    func poolDoesNotCreateCleanActiveTileEncodersBeforeFirstEncode() async throws {
+        let plan = MirageMosaicTilePlan.fixedGrid(
+            epoch: 6,
+            logicalSize: MiragePixelSize(width: 900, height: 300),
+            columns: 3,
+            rows: 1,
+            codec: .hevc
+        )
+        let planner = StreamContextMosaicMediaUnitPlanner()
+        let firstSummary = MirageMosaicEpochSummary(
+            tilePlanID: plan.id,
+            tilePlanEpoch: plan.epoch,
+            frameNumber: 20,
+            dirtyTileIDs: [MirageMosaicTileID(rawValue: "grid-0")],
+            reusedTileVersions: [
+                MirageMosaicTileID(rawValue: "grid-1"): 1,
+                MirageMosaicTileID(rawValue: "grid-2"): 1,
+            ],
+            updatedTileVersions: [MirageMosaicTileID(rawValue: "grid-0"): 2]
+        )
+        let secondSummary = MirageMosaicEpochSummary(
+            tilePlanID: plan.id,
+            tilePlanEpoch: plan.epoch,
+            frameNumber: 21,
+            dirtyTileIDs: [MirageMosaicTileID(rawValue: "grid-2")],
+            reusedTileVersions: [
+                MirageMosaicTileID(rawValue: "grid-0"): 2,
+                MirageMosaicTileID(rawValue: "grid-1"): 1,
+            ],
+            updatedTileVersions: [MirageMosaicTileID(rawValue: "grid-2"): 3]
+        )
+        let firstDirtyUnits = planner.plannedUnits(plan: plan, summary: firstSummary)
+        let secondDirtyUnits = planner.plannedUnits(plan: plan, summary: secondSummary)
+        let activeUnits = planner.plannedUnits(
+            plan: plan,
+            summary: firstSummary,
+            includeCleanUnits: true
+        )
+        let factory = RecordingVideoEncoderFactory()
+        let pool = StreamContextMosaicCodecUnitEncoderPool()
+
+        let firstPrepared = try await pool.synchronize(
+            units: firstDirtyUnits,
+            activeUnits: activeUnits,
+            configuration: MirageEncoderConfiguration(targetFrameRate: 60),
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .unknown,
+            inFlightLimit: 1,
+            maximizePowerEfficiencyEnabled: false,
+            factory: factory,
+            createSessions: false
+        )
+        let secondPrepared = try await pool.synchronize(
+            units: secondDirtyUnits,
+            activeUnits: activeUnits,
+            configuration: MirageEncoderConfiguration(targetFrameRate: 60),
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .unknown,
+            inFlightLimit: 1,
+            maximizePowerEfficiencyEnabled: false,
+            factory: factory,
+            createSessions: false
+        )
+
+        #expect(firstPrepared.count == 1)
+        #expect(secondPrepared.count == 1)
+        #expect(factory.requests.count == 2)
+        #expect(await pool.snapshot.keys.count == 2)
+    }
+
     private func summary(
         plan: MirageMosaicTilePlan,
         tileID: MirageMosaicTileID,

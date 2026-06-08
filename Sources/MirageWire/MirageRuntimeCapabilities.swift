@@ -266,8 +266,8 @@ public struct MirageRuntimeCapabilities: Equatable, Codable, Sendable {
         fullFrameBaseline(codecs: Set(MirageMedia.MirageVideoCodec.allCases))
     }
 
-    /// Builds the Mosaic hard-cutover capability snapshot.
-    public static func mosaicCutover(codecs: Set<MirageMedia.MirageVideoCodec>) -> MirageRuntimeCapabilities {
+    /// Mosaic-only capability snapshot. Retained for tests; not a runtime default.
+    public static func mosaicOnly(codecs: Set<MirageMedia.MirageVideoCodec>) -> MirageRuntimeCapabilities {
         MirageRuntimeCapabilities(
             protocolVersions: [.currentControl],
             controlFeatures: [
@@ -289,9 +289,36 @@ public struct MirageRuntimeCapabilities: Equatable, Codable, Sendable {
         )
     }
 
-    /// Mosaic hard-cutover capabilities used by the current host/client runtime.
-    public static var currentMosaicCutover: MirageRuntimeCapabilities {
-        mosaicCutover(codecs: Set(MirageMedia.MirageVideoCodec.allCases))
+    /// Mosaic-only capabilities. Retained for tests; not a runtime default.
+    public static var currentMosaicOnly: MirageRuntimeCapabilities {
+        mosaicOnly(codecs: Set(MirageMedia.MirageVideoCodec.allCases))
+    }
+
+    /// Host snapshot advertising both the full-frame baseline and the optional Mosaic path.
+    public static func combined(codecs: Set<MirageMedia.MirageVideoCodec>) -> MirageRuntimeCapabilities {
+        let baseline = fullFrameBaseline(codecs: codecs)
+        return MirageRuntimeCapabilities(
+            protocolVersions: baseline.protocolVersions,
+            controlFeatures: baseline.controlFeatures,
+            mediaPacketFamilies: baseline.mediaPacketFamilies.union([.mosaicMediaUnit]),
+            mediaTopologies: baseline.mediaTopologies.union([.mosaic]),
+            codecs: codecs,
+            inputFeatures: baseline.inputFeatures,
+            diagnosticsFeatures: baseline.diagnosticsFeatures
+        )
+    }
+
+    /// Combined host capabilities advertising both full-frame and Mosaic.
+    public static var currentCombined: MirageRuntimeCapabilities {
+        combined(codecs: Set(MirageMedia.MirageVideoCodec.allCases))
+    }
+
+    /// Client snapshot: always full-frame, plus Mosaic only when the user opts in.
+    public static func client(
+        mosaicEnabled: Bool,
+        codecs: Set<MirageMedia.MirageVideoCodec>
+    ) -> MirageRuntimeCapabilities {
+        mosaicEnabled ? combined(codecs: codecs) : fullFrameBaseline(codecs: codecs)
     }
 
     /// Returns the intersection of locally and remotely advertised capabilities.

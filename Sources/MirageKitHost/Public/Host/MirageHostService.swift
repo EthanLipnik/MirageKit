@@ -312,6 +312,8 @@ public final class MirageHostService {
     var mediaSecurityByClientID: [UUID: MirageMediaSecurityContext] = [:]
     /// Per-client media payload encryption policy.
     var mediaEncryptionEnabledByClientID: [UUID: Bool] = [:]
+    /// Negotiated media packet family per accepted client, used to gate Mosaic streaming.
+    var negotiatedMediaPacketFamilyByClientID: [UUID: MirageMediaPacketFamily] = [:]
     /// Active audio media streams by client ID.
     var audioMediaStreamsByClientID: [UUID: any MirageQueuedUnreliableMediaStream] = [:]
     /// Active host audio pipelines by client ID.

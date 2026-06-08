@@ -29,6 +29,20 @@ struct CapturedFrameInfo: Sendable {
     let dirtyPercentage: Float
     /// True when SCK reports the frame as idle (no changes).
     let isIdleFrame: Bool
+    /// True for host-created frames used to drive recovery or still-quality probes.
+    let isSynthetic: Bool
+
+    init(
+        contentRect: CGRect,
+        dirtyPercentage: Float,
+        isIdleFrame: Bool,
+        isSynthetic: Bool = false
+    ) {
+        self.contentRect = contentRect
+        self.dirtyPercentage = dirtyPercentage
+        self.isIdleFrame = isIdleFrame
+        self.isSynthetic = isSynthetic
+    }
 }
 
 /// Captured frame with timing metadata and optional sample-buffer ownership.

@@ -61,11 +61,15 @@ public extension MirageClientService {
         requestTakeoverIfBusy: Bool = false,
         protocolVersionOverride: Int? = nil
     ) -> MirageWire.MirageSessionBootstrapRequest {
-        MirageWire.MirageSessionBootstrapRequest(
+        let mosaicEnabled = UserDefaults.standard.bool(forKey: MirageMosaicStreamingPreference.defaultsKey)
+        return MirageWire.MirageSessionBootstrapRequest(
             protocolVersion: protocolVersionOverride ?? Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
             requestTakeoverIfBusy: requestTakeoverIfBusy,
-            clientCapabilities: .currentMosaicCutover
+            clientCapabilities: .client(
+                mosaicEnabled: mosaicEnabled,
+                codecs: Set(MirageMedia.MirageVideoCodec.allCases)
+            )
         )
     }
 

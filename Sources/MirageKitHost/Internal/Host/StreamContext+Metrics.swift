@@ -34,6 +34,42 @@ extension StreamContext {
         pipelineStatsLogScheduled = false
     }
 
+    func dispatchMosaicTilePlanIfNeeded() {
+        guard useMosaic,
+              let metricsUpdateHandler,
+              let tilePlan = latestMosaicTilePlan,
+              lastDispatchedMosaicTilePlanEpoch != tilePlan.epoch else {
+            return
+        }
+
+        lastDispatchedMosaicTilePlanEpoch = tilePlan.epoch
+        let currentBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate
+        let message = MirageWire.StreamMetricsMessage(
+            streamID: streamID,
+            encodedFPS: 0,
+            idleEncodedFPS: 0,
+            droppedFrames: droppedFrameCount,
+            activeQuality: activeQuality,
+            targetFrameRate: currentFrameRate,
+            enteredBitrate: enteredTargetBitrate,
+            currentBitrate: currentBitrate,
+            effectiveStreamScale: Double(streamScale),
+            requestedTargetBitrate: requestedTargetBitrate,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            startupBitrate: startupBitrate,
+            realtimeBitrateCeiling: realtimeRuntimeBitrateCeilingBps,
+            mediaMaxPacketSize: mediaMaxPacketSize,
+            mediaSendProfile: mediaSendProfileRawValue,
+            mosaicTilePlan: tilePlan,
+            mosaicEpochSummary: latestMosaicDirtyTileSummary
+        )
+        MirageLogger.stream(
+            "Dispatched Mosaic tile plan for stream \(streamID) epoch=\(tilePlan.epoch) " +
+                "tiles=\(tilePlan.tiles.count) units=\(tilePlan.codecUnits.count)"
+        )
+        metricsUpdateHandler(message)
+    }
+
     func logStreamStatsIfNeeded() async {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - lastStreamStatsLogTime

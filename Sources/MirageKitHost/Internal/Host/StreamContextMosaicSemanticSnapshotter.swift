@@ -8,6 +8,8 @@
 import CoreGraphics
 import Foundation
 import MirageCore
+import MirageDiagnostics
+import MirageKit
 import MirageMedia
 
 #if os(macOS)
@@ -22,6 +24,31 @@ struct StreamContextMosaicSemanticElementObservation: Sendable, Equatable {
     let id: String
     let role: String
     let frame: CGRect
+    let subrole: String?
+    let title: String?
+    let roleDescription: String?
+    let depth: Int
+    let isFocused: Bool
+
+    init(
+        id: String,
+        role: String,
+        frame: CGRect,
+        subrole: String? = nil,
+        title: String? = nil,
+        roleDescription: String? = nil,
+        depth: Int = 0,
+        isFocused: Bool = false
+    ) {
+        self.id = id
+        self.role = role
+        self.frame = frame
+        self.subrole = subrole
+        self.title = title
+        self.roleDescription = roleDescription
+        self.depth = depth
+        self.isFocused = isFocused
+    }
 }
 
 struct StreamContextMosaicSemanticWindowObservation: Sendable, Equatable {
@@ -90,36 +117,34 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
             .sorted { lhs, rhs in lhs.orderIndex < rhs.orderIndex }
 
         for window in visibleWindows {
-            guard let windowRect = pixelRect(window.frame, logicalSize: logicalSize, captureBounds: captureBounds) else {
+            guard pixelRect(window.frame, logicalSize: logicalSize, captureBounds: captureBounds) != nil else {
                 continue
             }
-            let windowClass = semanticClass(for: window)
-            let windowPriority = priority(for: window, semanticClass: windowClass)
-            candidates.append(StreamContextMosaicSemanticCandidate(
-                id: MirageMosaicTileID(rawValue: "window-\(window.windowID)"),
-                rect: windowRect,
-                semanticClass: windowClass,
-                priority: windowPriority,
-                codecStrategy: windowClass == .focusedWindow ? .verticalColumns : .singleUnit,
-                commitPolicy: windowClass == .focusedWindow ? .atomic : .independent,
-                isReliable: true
-            ))
+            let windowTileID = MirageMosaicTileID(rawValue: "window-\(window.windowID)")
 
             for child in window.children {
-                guard let childClass = semanticClass(forAXRole: child.role),
-                      let childRect = pixelRect(
+                guard let childRect = pixelRect(
                         child.frame,
                         logicalSize: logicalSize,
                         captureBounds: captureBounds
+                      ),
+                      let childClass = semanticClass(
+                        for: child
                       ) else {
                     continue
                 }
                 candidates.append(StreamContextMosaicSemanticCandidate(
-                    id: MirageMosaicTileID(rawValue: "window-\(window.windowID)-\(child.id)"),
+                    id: tileID(
+                        for: child,
+                        semanticClass: childClass,
+                        rect: childRect,
+                        windowID: window.windowID
+                    ),
                     rect: childRect,
                     semanticClass: childClass,
                     priority: priority(for: childClass, parentWindow: window),
-                    codecStrategy: codecStrategy(for: childClass),
+                    parentID: windowTileID,
+                    codecStrategy: codecStrategy(),
                     commitPolicy: commitPolicy(for: childClass),
                     isReliable: true
                 ))
@@ -127,7 +152,7 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
         }
 
         return StreamContextMosaicSemanticSnapshot(
-            candidates: candidates,
+            candidates: normalizedCandidates(candidates),
             isTransientSystemState: visibleWindows.contains { isTransientSystemWindow($0) }
         )
     }
@@ -159,55 +184,39 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
         return rect.size.isEmpty ? nil : rect
     }
 
-    private func semanticClass(for window: StreamContextMosaicSemanticWindowObservation) -> MirageMosaicSemanticClass {
-        if window.ownerName == "Dock" { return .dock }
-        if window.ownerName == "SystemUIServer" { return .menuBar }
-        if window.isModal { return .sheet }
-        if window.isFocused || window.isMain { return .focusedWindow }
-        return .background
-    }
-
-    private func priority(
-        for window: StreamContextMosaicSemanticWindowObservation,
-        semanticClass: MirageMosaicSemanticClass
-    ) -> MirageMosaicTilePriority {
-        switch semanticClass {
-        case .dock,
-             .menuBar,
-             .sheet,
-             .popover,
-             .menu:
-            .transientChrome
-        case .focusedWindow:
-            .focusedContent
-        default:
-            window.isFocused || window.isMain ? .focusedContent : .semanticContent
-        }
-    }
-
     func semanticClass(forAXRole role: String) -> MirageMosaicSemanticClass? {
         switch role {
         case "AXScrollArea":
             .scrollView
         case "AXTextArea",
-             "AXTextField",
-             "AXStaticText":
+             "AXTextField":
             .textViewport
-        case "AXToolbar":
-            .toolbar
         case "AXTable",
-             "AXOutline":
+             "AXOutline",
+             "AXList",
+             "AXBrowser":
             .scrollView
-        case "AXPopover":
-            .popover
-        case "AXSheet",
-             "AXDialog":
-            .sheet
-        case "AXMenu",
-             "AXMenuItem":
-            .menu
         default:
             nil
+        }
+    }
+
+    private func semanticClass(
+        for child: StreamContextMosaicSemanticElementObservation
+    ) -> MirageMosaicSemanticClass? {
+        switch child.role {
+        case "AXScrollArea":
+            return .scrollView
+        case "AXTable",
+             "AXOutline",
+             "AXList",
+             "AXBrowser":
+            return .scrollView
+        case "AXTextArea",
+             "AXTextField":
+            return .textViewport
+        default:
+            return semanticClass(forAXRole: child.role)
         }
     }
 
@@ -219,23 +228,32 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
         case .scrollView,
              .textViewport:
             parentWindow.isFocused || parentWindow.isMain ? .focusedContent : .semanticContent
-        case .toolbar,
-             .popover,
-             .sheet,
-             .menu:
-            .transientChrome
         default:
             .semanticContent
         }
     }
 
-    private func codecStrategy(for semanticClass: MirageMosaicSemanticClass) -> MirageMosaicCodecStrategy {
-        switch semanticClass {
-        case .scrollView:
-            .verticalColumns
-        default:
-            .singleUnit
+    private func codecStrategy() -> MirageMosaicCodecStrategy {
+        .singleUnit
+    }
+
+    private func tileID(
+        for child: StreamContextMosaicSemanticElementObservation,
+        semanticClass: MirageMosaicSemanticClass,
+        rect: MiragePixelRect,
+        windowID: WindowID
+    ) -> MirageMosaicTileID {
+        if !Self.isGeneratedObservationID(child.id) {
+            return MirageMosaicTileID(rawValue: "window-\(windowID)-\(child.id)")
         }
+
+        let rectKey = Self.quantizedRectKey(rect)
+        return MirageMosaicTileID(rawValue: [
+            "window-\(windowID)",
+            semanticClass.rawValue,
+            child.role,
+            rectKey
+        ].joined(separator: "-"))
     }
 
     private func commitPolicy(for semanticClass: MirageMosaicSemanticClass) -> MirageMosaicCommitPolicy {
@@ -251,6 +269,156 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
     private func isTransientSystemWindow(_ window: StreamContextMosaicSemanticWindowObservation) -> Bool {
         guard window.ownerName == "Dock" else { return false }
         return window.layer > 10 && window.frame.width > 200 && window.frame.height > 200
+    }
+
+    private func normalizedCandidates(
+        _ candidates: [StreamContextMosaicSemanticCandidate]
+    ) -> [StreamContextMosaicSemanticCandidate] {
+        let usefulCandidates = candidates.filter(isUsefulCandidate)
+        let sortedCandidates = usefulCandidates.sorted(by: Self.normalizationOrder)
+        var normalized: [StreamContextMosaicSemanticCandidate] = []
+        normalized.reserveCapacity(min(sortedCandidates.count, 16))
+
+        for candidate in sortedCandidates {
+            if isBroadContainer(candidate, coveredBy: sortedCandidates) {
+                continue
+            }
+            if normalized.contains(where: { Self.isDuplicate(candidate, of: $0) }) {
+                continue
+            }
+            normalized.append(candidate)
+            if normalized.count == 16 { break }
+        }
+        return normalized
+    }
+
+    private func isUsefulCandidate(_ candidate: StreamContextMosaicSemanticCandidate) -> Bool {
+        guard candidate.rect.width >= 48,
+              candidate.rect.height >= 32 else {
+            return false
+        }
+        switch candidate.semanticClass {
+        case .scrollView,
+             .textViewport:
+            return candidate.rect.width * candidate.rect.height >= 4_096
+        default:
+            return false
+        }
+    }
+
+    private func isBroadContainer(
+        _ candidate: StreamContextMosaicSemanticCandidate,
+        coveredBy candidates: [StreamContextMosaicSemanticCandidate]
+    ) -> Bool {
+        guard candidate.semanticClass == .scrollView else { return false }
+        return candidates.contains { other in
+            other.id != candidate.id &&
+                isPaneClass(other.semanticClass) &&
+                Self.contains(candidate.rect, other.rect) &&
+                Self.overlapRatio(candidate.rect, other.rect) > 0.40
+        }
+    }
+
+    private func isPaneClass(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
+        switch semanticClass {
+        case .scrollView,
+             .textViewport:
+            true
+        default:
+            false
+        }
+    }
+
+    private static func normalizationOrder(
+        lhs: StreamContextMosaicSemanticCandidate,
+        rhs: StreamContextMosaicSemanticCandidate
+    ) -> Bool {
+        if lhs.parentID == rhs.id { return true }
+        if rhs.parentID == lhs.id { return false }
+        if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+        let lhsRank = semanticRank(lhs.semanticClass)
+        let rhsRank = semanticRank(rhs.semanticClass)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        let lhsArea = lhs.rect.width * lhs.rect.height
+        let rhsArea = rhs.rect.width * rhs.rect.height
+        if lhsArea != rhsArea { return lhsArea > rhsArea }
+        return lhs.id < rhs.id
+    }
+
+    private static func semanticRank(_ semanticClass: MirageMosaicSemanticClass) -> Int {
+        switch semanticClass {
+        case .textViewport:
+            0
+        case .scrollView:
+            1
+        default:
+            5
+        }
+    }
+
+    private static func isDuplicate(
+        _ candidate: StreamContextMosaicSemanticCandidate,
+        of existing: StreamContextMosaicSemanticCandidate
+    ) -> Bool {
+        guard candidate.semanticClass == existing.semanticClass ||
+              isPaneLike(candidate.semanticClass) && isPaneLike(existing.semanticClass) else {
+            return false
+        }
+        return overlapRatio(candidate.rect, existing.rect) > 0.86
+    }
+
+    private static func isPaneLike(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
+        switch semanticClass {
+        case .scrollView,
+             .textViewport:
+            true
+        default:
+            false
+        }
+    }
+
+    private static func isGeneratedObservationID(_ id: String) -> Bool {
+        guard let firstDash = id.firstIndex(of: "-") else { return false }
+        return id[..<firstDash].allSatisfy(\.isNumber)
+    }
+
+    private static func quantizedRectKey(_ rect: MiragePixelRect, bucketSize: Int = 16) -> String {
+        [
+            quantized(rect.x, bucketSize: bucketSize),
+            quantized(rect.y, bucketSize: bucketSize),
+            quantized(rect.width, bucketSize: bucketSize),
+            quantized(rect.height, bucketSize: bucketSize),
+        ]
+        .map(String.init)
+        .joined(separator: "x")
+    }
+
+    private static func quantized(_ value: Int, bucketSize: Int) -> Int {
+        guard bucketSize > 1 else { return value }
+        return ((value + bucketSize / 2) / bucketSize) * bucketSize
+    }
+
+    private static func contains(_ outer: MiragePixelRect, _ inner: MiragePixelRect) -> Bool {
+        inner.x >= outer.x &&
+            inner.y >= outer.y &&
+            inner.x + inner.width <= outer.x + outer.width &&
+            inner.y + inner.height <= outer.y + outer.height
+    }
+
+    private static func overlapRatio(_ lhs: MiragePixelRect, _ rhs: MiragePixelRect) -> Double {
+        guard let intersection = intersection(lhs, rhs) else { return 0 }
+        let intersectionArea = intersection.width * intersection.height
+        let smallerArea = max(1, min(lhs.width * lhs.height, rhs.width * rhs.height))
+        return Double(intersectionArea) / Double(smallerArea)
+    }
+
+    private static func intersection(_ lhs: MiragePixelRect, _ rhs: MiragePixelRect) -> MiragePixelRect? {
+        let minX = max(lhs.x, rhs.x)
+        let minY = max(lhs.y, rhs.y)
+        let maxX = min(lhs.x + lhs.width, rhs.x + rhs.width)
+        let maxY = min(lhs.y + lhs.height, rhs.y + rhs.height)
+        guard maxX > minX, maxY > minY else { return nil }
+        return MiragePixelRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 }
 
@@ -326,13 +494,17 @@ struct MacOSMosaicSemanticObservationProvider: StreamContextMosaicSemanticObserv
 
     private static func semanticChildren(in root: AXUIElement) -> [StreamContextMosaicSemanticElementObservation] {
         var observations: [StreamContextMosaicSemanticElementObservation] = []
-        var queue = HostAccessibilityWindowLookup.elementArrayAttributeValue(
+        var queue = (HostAccessibilityWindowLookup.elementArrayAttributeValue(
             root,
             attribute: kAXChildrenAttribute as CFString
-        ) ?? []
+        ) ?? []).map { (element: $0, depth: 1) }
         var visitedCount = 0
-        while let element = queue.first, visitedCount < 96 {
+        var visitedElements = Set<UInt>()
+        while let item = queue.first, visitedCount < 384 {
             queue.removeFirst()
+            let element = item.element
+            let identity = UInt(bitPattern: Unmanaged.passUnretained(element).toOpaque())
+            guard visitedElements.insert(identity).inserted else { continue }
             visitedCount += 1
             let role = HostAccessibilityWindowLookup.stringAttribute(kAXRoleAttribute as CFString, from: element) ?? ""
             if let frame = HostAccessibilityWindowLookup.frame(of: element),
@@ -340,18 +512,37 @@ struct MacOSMosaicSemanticObservationProvider: StreamContextMosaicSemanticObserv
                 observations.append(StreamContextMosaicSemanticElementObservation(
                     id: "\(observations.count)-\(role)",
                     role: role,
-                    frame: frame
+                    frame: frame,
+                    subrole: HostAccessibilityWindowLookup.stringAttribute(kAXSubroleAttribute as CFString, from: element),
+                    title: HostAccessibilityWindowLookup.stringAttribute(kAXTitleAttribute as CFString, from: element),
+                    roleDescription: HostAccessibilityWindowLookup.stringAttribute(
+                        kAXRoleDescriptionAttribute as CFString,
+                        from: element
+                    ),
+                    depth: item.depth,
+                    isFocused: HostAccessibilityWindowLookup.boolAttribute(kAXFocusedAttribute as CFString, from: element) ?? false
                 ))
             }
-            if observations.count < 32,
-               let children = HostAccessibilityWindowLookup.elementArrayAttributeValue(
-                element,
-                attribute: kAXChildrenAttribute as CFString
-               ) {
-                queue.append(contentsOf: children.prefix(16))
+            if observations.count < 96 {
+                for descendant in semanticDescendants(of: element) {
+                    queue.append(contentsOf: descendant.prefix(32).map { (element: $0, depth: item.depth + 1) })
+                }
             }
         }
         return observations
+    }
+
+    private static func semanticDescendants(of element: AXUIElement) -> [[AXUIElement]] {
+        [
+            kAXChildrenAttribute as CFString,
+            kAXContentsAttribute as CFString,
+            "AXRows" as CFString,
+            "AXVisibleRows" as CFString,
+            "AXColumns" as CFString,
+            "AXTabs" as CFString,
+        ].compactMap { attribute in
+            HostAccessibilityWindowLookup.elementArrayAttributeValue(element, attribute: attribute)
+        }
     }
 
     private static func windowID(from info: [String: Any]) -> WindowID? {
@@ -396,6 +587,7 @@ final class StreamContextMosaicSemanticSnapshotCache: @unchecked Sendable {
         var key: CacheKey?
         var snapshot = StreamContextMosaicSemanticSnapshot(candidates: [], isTransientSystemState: false)
         var lastRefreshTime: CFAbsoluteTime = 0
+        var lastDiagnosticLogTime: CFAbsoluteTime = 0
         var refreshInFlight = false
     }
 
@@ -420,12 +612,14 @@ final class StreamContextMosaicSemanticSnapshotCache: @unchecked Sendable {
     ) -> StreamContextMosaicSemanticSnapshot {
         let key = CacheKey(logicalSize: logicalSize, captureBounds: captureBounds.standardized)
         let cached: StreamContextMosaicSemanticSnapshot
+        let shouldRefreshSynchronously: Bool
         let shouldRefresh: Bool
         lock.lock()
         cached = state.key == key ? state.snapshot : StreamContextMosaicSemanticSnapshot(
             candidates: [],
             isTransientSystemState: false
         )
+        shouldRefreshSynchronously = state.key != key
         shouldRefresh = !state.refreshInFlight &&
             (state.key != key || now - state.lastRefreshTime >= refreshInterval)
         if shouldRefresh {
@@ -433,6 +627,9 @@ final class StreamContextMosaicSemanticSnapshotCache: @unchecked Sendable {
         }
         lock.unlock()
 
+        if shouldRefreshSynchronously {
+            return refresh(key: key)
+        }
         if shouldRefresh {
             Task.detached(priority: .utility) { [weak self] in
                 self?.refresh(key: key)
@@ -447,19 +644,44 @@ final class StreamContextMosaicSemanticSnapshotCache: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func refresh(key: CacheKey) {
+    @discardableResult
+    private func refresh(key: CacheKey) -> StreamContextMosaicSemanticSnapshot {
         let observations = provider.observations()
         let snapshot = builder.snapshot(
             logicalSize: key.logicalSize,
             captureBounds: key.captureBounds,
             windows: observations
         )
+        let refreshedAt = CFAbsoluteTimeGetCurrent()
+        let shouldLogDiagnostics: Bool
         lock.lock()
         state.key = key
         state.snapshot = snapshot
-        state.lastRefreshTime = CFAbsoluteTimeGetCurrent()
+        state.lastRefreshTime = refreshedAt
         state.refreshInFlight = false
+        if MirageLogger.isEnabled(.metrics),
+           refreshedAt - state.lastDiagnosticLogTime >= 1.0 {
+            state.lastDiagnosticLogTime = refreshedAt
+            shouldLogDiagnostics = true
+        } else {
+            shouldLogDiagnostics = false
+        }
         lock.unlock()
+
+        if shouldLogDiagnostics {
+            let bounds = key.captureBounds
+            let candidateSummary = snapshot.candidates.prefix(3).map { candidate in
+                "\(candidate.id.rawValue):\(candidate.semanticClass.rawValue)@\(candidate.rect.x),\(candidate.rect.y),\(candidate.rect.width),\(candidate.rect.height)"
+            }.joined(separator: ";")
+            MirageLogger.metrics(
+                "Mosaic semantic snapshot: observations=\(observations.count) " +
+                    "candidates=\(snapshot.candidates.count) transient=\(snapshot.isTransientSystemState) " +
+                    "bounds=(\(Int(bounds.minX)),\(Int(bounds.minY)),\(Int(bounds.width)),\(Int(bounds.height))) " +
+                    "logical=\(key.logicalSize.width)x\(key.logicalSize.height) " +
+                    "accessibilityTrusted=\(AXIsProcessTrusted()) sample=[\(candidateSummary)]"
+            )
+        }
+        return snapshot
     }
 }
 

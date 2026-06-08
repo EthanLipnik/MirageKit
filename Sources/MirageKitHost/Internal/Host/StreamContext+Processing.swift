@@ -51,7 +51,9 @@ extension StreamContext {
         lastCapturedFrame = frame
         if frame.info.isIdleFrame { idleSkippedCount += 1 }
         if !frame.info.isIdleFrame { lastNonIdleCapturedFrameTime = now }
-        updateMosaicDirtyTileState(frame: frame, now: now)
+        if useMosaic {
+            updateMosaicDirtyTileState(frame: frame, now: now)
+        }
         updateIdleQualityProbeAdmissionHint(now: now)
         if startupBaseTime > 0, !startupFirstCaptureLogged {
             startupFirstCaptureLogged = true
@@ -392,8 +394,7 @@ extension StreamContext {
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
             await applyTrafficLightCloneStampIfNeeded(frame: frame)
 
-            if streamKind == .desktop,
-               !latestMosaicMediaUnitWorkItems.isEmpty {
+            if streamKind == .desktop, useMosaic {
                 do {
                     encodeAttemptIntervalCount += 1
                     let encodeStartTime = CFAbsoluteTimeGetCurrent()
@@ -418,6 +419,8 @@ extension StreamContext {
                         await logStreamStatsIfNeeded()
                         continue
                     }
+                    await logStreamStatsIfNeeded()
+                    continue
                 } catch {
                     encodeErrorIntervalCount += 1
                     droppedFrameCount += 1
@@ -510,10 +513,12 @@ extension StreamContext {
         isIdleFrame: Bool,
         encodeStartTime: CFAbsoluteTime
     ) async throws -> Bool {
-        let units = latestMosaicMediaUnitWorkItems
+        let units = mosaicMediaUnitsForEncoding(forceKeyframe: forceKeyframe)
         guard !units.isEmpty else { return false }
+        let activeUnits = mosaicActiveMediaUnits()
         let preparedUnits = try await mosaicCodecUnitEncoderPool.synchronize(
             units: units,
+            activeUnits: activeUnits,
             configuration: encoderConfig,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
@@ -523,11 +528,6 @@ extension StreamContext {
         )
         guard !preparedUnits.isEmpty else { return false }
 
-        await startMosaicUnitEncoders(
-            preparedUnits,
-            baseFrameFlagsSnapshot: baseFrameFlags
-        )
-
         if forceKeyframe, pendingKeyframeRequiresFlush {
             pendingKeyframeRequiresFlush = false
             if pendingKeyframeRequiresReset {
@@ -536,6 +536,7 @@ extension StreamContext {
             } else {
                 await packetSender?.bumpGeneration(reason: "mosaic keyframe request")
             }
+            mosaicEncodedDependencyTracker.reset()
             for preparedUnit in preparedUnits {
                 await preparedUnit.encoder.flush()
             }
@@ -543,19 +544,40 @@ extension StreamContext {
 
         var acceptedCount = 0
         for preparedUnit in preparedUnits {
+            guard let encodedChainUnit = mosaicEncodedDependencyTracker.workItemForEncoding(
+                preparedUnit.workItem,
+                forceKeyframe: forceKeyframe
+            ) else {
+                continue
+            }
+            let workItem = encodedChainUnit.workItem
+
             guard let croppedFrame = mosaicMediaUnitCropper.croppedFrame(
                 from: frame,
-                unit: preparedUnit.workItem
+                unit: workItem
             ) else {
+                mosaicEncodedDependencyTracker.noteEncodingAbandoned(workItem)
                 encodeRejectedIntervalCount += 1
                 droppedFrameCount += 1
                 continue
             }
 
-            let shouldForceUnitKeyframe = forceKeyframe || preparedUnit.workItem.dependencyVersion == nil
+            let shouldForceUnitKeyframe = encodedChainUnit.shouldForceKeyframe
+            let unitQuality = mosaicTileQualityGovernor.quality(
+                for: workItem,
+                activeQuality: activeQuality,
+                configuredCeiling: configuredQualityCeiling,
+                compressionCeiling: compressionQualityCeiling
+            )
+            await startMosaicUnitEncoder(
+                preparedUnit.encoder,
+                workItem: workItem,
+                baseFrameFlagsSnapshot: baseFrameFlags
+            )
+            await preparedUnit.encoder.updateQuality(unitQuality)
             if shouldForceUnitKeyframe {
                 await preparedUnit.encoder.prepareForKeyframe(
-                    quality: pendingEmergencyKeyframeQuality ?? keyframeQuality
+                    quality: min(pendingEmergencyKeyframeQuality ?? keyframeQuality, unitQuality)
                 )
             }
 
@@ -564,10 +586,25 @@ extension StreamContext {
             encoderInFlightCountSnapshot = inFlightCount
             if shouldForceUnitKeyframe { isKeyframeEncoding = true }
 
-            let result = try await preparedUnit.encoder.encodeFrame(
-                croppedFrame,
-                forceKeyframe: shouldForceUnitKeyframe
-            )
+            let result: EncodeAdmission
+            do {
+                result = try await preparedUnit.encoder.encodeFrame(
+                    croppedFrame,
+                    forceKeyframe: shouldForceUnitKeyframe
+                )
+            } catch {
+                mosaicEncodedDependencyTracker.noteEncodingAbandoned(workItem)
+                inFlightCount -= 1
+                encoderInFlightCountSnapshot = inFlightCount
+                if inFlightCount == 0 {
+                    lastEncodeActivityTime = 0
+                    if shouldForceUnitKeyframe { isKeyframeEncoding = false }
+                }
+                encodeErrorIntervalCount += 1
+                droppedFrameCount += 1
+                MirageLogger.error(.stream, error: error, message: "Mosaic encode error: ")
+                continue
+            }
             switch result {
             case .accepted:
                 acceptedCount += 1
@@ -575,6 +612,7 @@ extension StreamContext {
                 encodedFrameCount += 1
                 if isIdleFrame { idleEncodedCount += 1 }
             case let .skipped(reason):
+                mosaicEncodedDependencyTracker.noteEncodingAbandoned(workItem)
                 inFlightCount -= 1
                 encoderInFlightCountSnapshot = inFlightCount
                 if inFlightCount == 0 {
@@ -589,6 +627,31 @@ extension StreamContext {
         return acceptedCount > 0
     }
 
+    private func mosaicMediaUnitsForEncoding(
+        forceKeyframe: Bool
+    ) -> [StreamContextMosaicMediaUnitWorkItem] {
+        guard forceKeyframe,
+              let tilePlan = latestMosaicTilePlan else {
+            return latestMosaicMediaUnitWorkItems
+        }
+        return mosaicActiveMediaUnits(plan: tilePlan)
+    }
+
+    private func mosaicActiveMediaUnits(
+        plan: MirageMosaicTilePlan? = nil
+    ) -> [StreamContextMosaicMediaUnitWorkItem] {
+        let tilePlan = plan ?? latestMosaicTilePlan
+        guard let tilePlan else {
+            return latestMosaicMediaUnitWorkItems
+        }
+        return mosaicMediaUnitPlanner.plannedUnits(
+            plan: tilePlan,
+            summary: latestMosaicDirtyTileSummary,
+            includeCleanUnits: true,
+            qualityRefreshTileIDs: latestMosaicQualityRefreshTileIDs
+        )
+    }
+
     func finishEncoding() async {
         guard inFlightCount > 0 else { return }
         inFlightCount -= 1
@@ -598,10 +661,15 @@ extension StreamContext {
 
         if inFlightCount == 0, isKeyframeEncoding {
             isKeyframeEncoding = false
-            await encoder?.restoreBaseQualityIfNeeded()
+            if useMosaic {
+                await mosaicCodecUnitEncoderPool.restoreBaseQualityForAll()
+            } else {
+                await encoder?.restoreBaseQualityIfNeeded()
+            }
         }
 
-        if frameInbox.hasPending, inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
+        let canScheduleMore = useMosaic ? inFlightCount == 0 : inFlightCount < maxInFlightFrames
+        if frameInbox.hasPending, canScheduleMore { scheduleProcessingIfNeeded() }
     }
 
     func recordEncoderSkip(_ reason: EncodeSkipReason) {
@@ -664,15 +732,28 @@ extension StreamContext {
             frameNumber: frameNumber,
             semanticCandidates: semanticSnapshot.candidates,
             isTransientSystemState: semanticSnapshot.isTransientSystemState
-        )) else {
+        ), signaturesFor: { plan in
+            StreamContextMosaicTileSignatureSampler.signatures(
+                in: frame.pixelBuffer,
+                for: plan
+            )
+        }, forcedRefreshTileIDsFor: { plan in
+            self.mosaicQualityRefreshTileIDs(for: plan, frame: frame, now: now)
+        }) else {
             return
         }
+        let qualityRefreshTileIDs = Set(result.classification.decisions.compactMap { decision in
+            decision.reasons.contains(.forcedRefresh) ? decision.tileID : nil
+        })
         latestMosaicTilePlan = result.plan
         latestMosaicDirtyTileSummary = result.classification.summary
+        latestMosaicQualityRefreshTileIDs = qualityRefreshTileIDs
         latestMosaicMediaUnitWorkItems = mosaicMediaUnitPlanner.plannedUnits(
             plan: result.plan,
-            summary: result.classification.summary
+            summary: result.classification.summary,
+            qualityRefreshTileIDs: qualityRefreshTileIDs
         )
+        dispatchMosaicTilePlanIfNeeded()
         logMosaicDirtyTileStateIfNeeded(result, frame: frame, now: now)
     }
 
@@ -692,9 +773,25 @@ extension StreamContext {
         logicalSize: MiragePixelSize
     ) -> CGRect {
         if let virtualDisplayContext {
+            let scale = max(1.0, virtualDisplayContext.scaleFactor)
+            let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+                for: virtualDisplayContext.resolution,
+                scaleFactor: scale
+            )
+            let displayBounds = virtualDisplayBackend.displayBounds(
+                virtualDisplayContext.displayID,
+                knownResolution: logicalResolution
+            ).standardized
+            let displayVisibleBounds = virtualDisplayBackend.displayVisibleBounds(
+                virtualDisplayContext.displayID,
+                knownBounds: displayBounds
+            ).standardized
             let visibleBounds = virtualDisplayVisibleBounds.standardized
+            if !displayVisibleBounds.isEmpty {
+                let clippedVisibleBounds = displayVisibleBounds.intersection(displayBounds).standardized
+                if !clippedVisibleBounds.isEmpty { return clippedVisibleBounds }
+            }
             if !visibleBounds.isEmpty { return visibleBounds }
-            let displayBounds = CGDisplayBounds(virtualDisplayContext.displayID).standardized
             if !displayBounds.isEmpty { return displayBounds }
         }
         let contentRect = frame.info.contentRect.standardized
@@ -731,6 +828,32 @@ extension StreamContext {
                 "captureDirty=\(dirtyText)% idle=\(frame.info.isIdleFrame) " +
                 "sample=[\(dirtyTileIDs)]"
         )
+    }
+
+    private func mosaicQualityRefreshTileIDs(
+        for plan: MirageMosaicTilePlan,
+        frame: CapturedFrame,
+        now: CFAbsoluteTime
+    ) -> Set<MirageMosaicTileID> {
+        guard runtimeQualityAdjustmentEnabled,
+              activeQuality + 0.005 < configuredQualityCeiling,
+              !plan.tiles.isEmpty else {
+            return []
+        }
+        guard frame.info.isSynthetic || shouldAdmitIdleQualityProbeFrame else { return [] }
+        let policy = activeFrameFreshnessPolicy
+        guard !inputIsActive(now: now, policy: policy),
+              sourceIsStill(now: now, policy: policy),
+              (packetSender?.queuedByteCount ?? 0) <= queuePressureBytes else {
+            return []
+        }
+        let tiles = plan.tiles.sorted { lhs, rhs in
+            if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+            return lhs.id < rhs.id
+        }
+        let index = mosaicQualityRefreshTileCursor % tiles.count
+        mosaicQualityRefreshTileCursor = (index + 1) % tiles.count
+        return [tiles[index].id]
     }
 }
 #endif

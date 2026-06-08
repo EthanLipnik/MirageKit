@@ -271,7 +271,9 @@ extension StreamPacketSender {
                 latestKeyframeGeneration = item.generation
             }
             discardQueuedNonKeyframesLocked(countAsHoldDrops: true)
-            discardSupersededQueuedKeyframesLocked(newestFrameNumber: item.frameNumber, generation: item.generation)
+            if !item.isMosaicMediaUnit {
+                discardSupersededQueuedKeyframesLocked(newestFrameNumber: item.frameNumber, generation: item.generation)
+            }
         } else if dropNonKeyframesUntilKeyframe, !dependencyRecoveryRequiresKeyframe,
                   latestKeyframeGeneration == item.generation,
                   !hasQueuedKeyframeLocked(frameNumber: latestKeyframeFrameNumber, generation: latestKeyframeGeneration) {
@@ -340,7 +342,7 @@ extension StreamPacketSender {
             return
         }
         recordReservedPFrameLatenessIfNeeded(item, now: sendStartTime)
-        if item.isKeyframe, newestKeyframeGeneration == currentGeneration,
+        if item.isKeyframe, !item.isMosaicMediaUnit, newestKeyframeGeneration == currentGeneration,
            newestKeyframe > 0, item.frameNumber < newestKeyframe {
             stalePacketDropCount &+= 1
             reduceQueuedBytes(accountedBytes)

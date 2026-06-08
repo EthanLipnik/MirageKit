@@ -7,6 +7,7 @@
 //  Sample-buffer view refresh rate sampler for dynamic display refresh overrides.
 //
 
+import Foundation
 import MirageConnectivity
 import MirageCore
 import MirageDiagnostics

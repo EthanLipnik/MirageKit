@@ -191,6 +191,10 @@ extension StreamContext {
         let isKeyframe = completion.isKeyframe
         let didSend = completion.didSend
 
+        if let metadata = completion.mosaicMediaUnitMetadata {
+            mosaicEncodedDependencyTracker.noteTransportCompleted(metadata, didSend: didSend)
+        }
+
         if didSend {
             recordFrameTransportCompletion(completion)
             await applyFrameTransportBudgetFeedback(completion, now: now)

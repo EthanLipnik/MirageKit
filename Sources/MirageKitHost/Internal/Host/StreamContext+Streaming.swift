@@ -244,8 +244,7 @@ extension StreamContext {
         let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
         let dimToken = dimensionToken
         let currentEpoch = epoch
-        let mosaicMediaUnitMetadata = mosaicMediaUnit?.senderMetadata(unitFrameNumber: reservation.frameNumber) ??
-            mosaicMediaUnitMetadata(frameNumber: reservation.frameNumber)
+        let mosaicMediaUnitMetadata = mosaicMediaUnit?.senderMetadata(unitFrameNumber: reservation.frameNumber)
 
         let generation = packetSender.currentGeneration
         if isKeyframe {
@@ -288,55 +287,35 @@ extension StreamContext {
         packetSender.enqueue(workItem)
     }
 
-    func startMosaicUnitEncoders(
-        _ preparedUnits: [StreamContextMosaicCodecUnitEncoderPool.PreparedUnit],
+    func startMosaicUnitEncoder(
+        _ encoder: VideoEncoder,
+        workItem unit: StreamContextMosaicMediaUnitWorkItem,
         baseFrameFlagsSnapshot: MirageWire.FrameFlags
     ) async {
         let callbackSequencer = mosaicEncodingCallbackSequencer
-        for preparedUnit in preparedUnits {
-            await preparedUnit.encoder.startEncoding(
-                onEncodedFrame: { [weak self, unit = preparedUnit.workItem] encodedData, isKeyframe, presentationTime, finishFrame in
-                    Task(priority: .userInitiated) {
-                        guard let self else {
-                            finishFrame()
-                            return
-                        }
-                        await self.handleEncodedFrameForStreaming(
-                            encodedData: encodedData,
-                            isKeyframe: isKeyframe,
-                            presentationTime: presentationTime,
-                            pinnedContentRect: unit.sourceCGRect,
-                            logPrefix: "Mosaic unit",
-                            callbackSequencer: callbackSequencer,
-                            baseFrameFlagsSnapshot: baseFrameFlagsSnapshot,
-                            mosaicMediaUnit: unit
-                        )
+        await encoder.startEncoding(
+            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime, finishFrame in
+                Task(priority: .userInitiated) {
+                    guard let self else {
                         finishFrame()
+                        return
                     }
-                },
-                onFrameComplete: { [weak self] in
-                    Task(priority: .userInitiated) { await self?.finishEncoding() }
+                    await self.handleEncodedFrameForStreaming(
+                        encodedData: encodedData,
+                        isKeyframe: isKeyframe,
+                        presentationTime: presentationTime,
+                        pinnedContentRect: unit.sourceCGRect,
+                        logPrefix: "Mosaic unit",
+                        callbackSequencer: callbackSequencer,
+                        baseFrameFlagsSnapshot: baseFrameFlagsSnapshot,
+                        mosaicMediaUnit: unit
+                    )
+                    finishFrame()
                 }
-            )
-        }
-    }
-
-    private func mosaicMediaUnitMetadata(frameNumber: UInt32) -> StreamPacketSender.MosaicMediaUnitMetadata? {
-        guard streamKind == .desktop,
-              let plan = latestMosaicTilePlan else {
-            return nil
-        }
-        let summary = latestMosaicDirtyTileSummary
-        var versionValues: [UInt32] = []
-        if let summary {
-            versionValues.append(contentsOf: summary.updatedTileVersions.values)
-            versionValues.append(contentsOf: summary.reusedTileVersions.values)
-        }
-        let tileVersion = versionValues.max() ?? frameNumber
-        return StreamPacketSender.MosaicMediaUnitMetadata(
-            tilePlanEpoch: plan.epoch,
-            mediaEpoch: summary?.frameNumber ?? frameNumber,
-            tileVersion: tileVersion
+            },
+            onFrameComplete: { [weak self] in
+                Task(priority: .userInitiated) { await self?.finishEncoding() }
+            }
         )
     }
 

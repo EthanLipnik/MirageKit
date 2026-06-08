@@ -311,7 +311,7 @@ struct MiragePublicImportBoundaryTests {
         #expect(qualitySummary.streamingSafeBitrateBps == 72_000_000)
         #expect(logCategory.rawValue == "bootstrap_handoff")
         #expect(decisionTrace.decisions.first?.value == "fullFrameHEVC")
-        #expect(MirageWireProtocol.currentControlVersion == MirageWireProtocol.preRearchitectureCompatibilityVersion)
+        #expect(MirageWireProtocol.currentControlVersion == MirageWireProtocol.rearchitectureCutoverVersion)
     }
 
     @MainActor
