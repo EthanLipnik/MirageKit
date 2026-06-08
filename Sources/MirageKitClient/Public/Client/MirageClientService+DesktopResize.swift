@@ -53,6 +53,24 @@ extension MirageClientService {
             !sessionStore.postResizeAwaitingFirstFrameStreamIDs.isEmpty
     }
 
+    /// Human-readable desktop resize state included in support diagnostics.
+    public var desktopResizeDiagnosticsSummary: String {
+        let activeTransition = desktopResizeCoordinator.activeTransition.map { transition in
+            "active(stream=\(transition.streamID), transition=\(transition.transitionID.uuidString), " +
+                "contract=\(transition.target.contractID.uuidString))"
+        } ?? "active=none"
+        let lastSentTransition = desktopResizeCoordinator.lastSentTransition.map { transition in
+            "lastSent(stream=\(transition.streamID), transition=\(transition.transitionID.uuidString), " +
+                "contract=\(transition.target.contractID.uuidString))"
+        } ?? "lastSent=none"
+        let waitingStreams = sessionStore.postResizeAwaitingFirstFrameStreamIDs
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
+        let waitingText = waitingStreams.isEmpty ? "none" : waitingStreams
+        return "\(activeTransition) \(lastSentTransition) postResizeAwaitingFirstFrame=\(waitingText)"
+    }
+
     func queueDesktopResize(
         streamID: StreamID,
         target: DesktopResizeCoordinator.RequestGeometry?,
@@ -68,14 +86,8 @@ extension MirageClientService {
         }
 
         if useHostResolution || target == nil {
-            coordinator.cancelPendingTasks()
-            coordinator.latestRequestedTarget = nil
-            coordinator.latestRequestedDispatchPolicy = nil
-            coordinator.queuedTarget = nil
-            coordinator.queuedDispatchPolicy = nil
-            coordinator.lastSentTarget = nil
-            coordinator.activeTransition = nil
-            coordinator.clearLocalPresentationState()
+            coordinator.clearAllState()
+            sessionStore.clearPostResizeTransition(for: streamID)
             return
         }
 
@@ -340,7 +352,7 @@ extension MirageClientService {
         }
     }
 
-    private func finishPostResizeTransitionWait(
+    func finishPostResizeTransitionWait(
         streamID: StreamID,
         reason: String,
         dispatchQueuedResize: Bool = true
@@ -392,6 +404,33 @@ extension MirageClientService {
         }
         postResizeTransitionTimeoutTasks[streamID]?.cancel()
         postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
+    }
+
+    func clearTransientDesktopResizeState(
+        streamID: StreamID,
+        preserveLifecycleState: Bool = false
+    ) {
+        desktopResizeCoordinator.clearTransientPresentationState(
+            preserveLifecycleState: preserveLifecycleState
+        )
+        if !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
+            postResizeTransitionTimeoutTasks[streamID]?.cancel()
+            postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
+        }
+    }
+
+    func handlePostResizePresentationTelemetry(streamID: StreamID) {
+        guard sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
+        finishPostResizeTransitionWait(streamID: streamID, reason: "presentation-telemetry")
+    }
+
+    func handlePostResizeSubmittedFrameTelemetryIfNeeded(streamID: StreamID) {
+        guard sessionStore.isAwaitingPostResizeFirstFrame(for: streamID),
+              let dimensionToken = desktopDimensionTokenByStream[streamID],
+              MirageRenderStreamStore.shared.hasSubmittedFrame(for: streamID, dimensionToken: dimensionToken) else {
+            return
+        }
+        finishPostResizeTransitionWait(streamID: streamID, reason: "dimension-token-presentation")
     }
 
     func cancelQueuedDesktopResizeForLocalPresentation(streamID: StreamID) {

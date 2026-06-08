@@ -186,13 +186,43 @@ extension MirageClientService {
         do {
             let removed = try message.decode(WindowRemovedFromStreamMessage.self)
             MirageLogger.client("Window removed from stream: \(removed.windowID), reason=\(removed.reason.rawValue)")
+            let removalPlan = removed.streamID.map(makeWindowRemovalLocalTeardownPlan)
             onWindowRemovedFromStream?(removed)
             if let streamID = removed.streamID {
-                await forceStopWindowStreamLocally(streamID: streamID)
+                await forceStopWindowStreamLocally(
+                    streamID: streamID,
+                    stopMediaStreamID: removalPlan?.mediaStreamIDToStop
+                )
             }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode window removed: ")
         }
+    }
+
+    struct WindowRemovalLocalTeardownPlan {
+        let logicalStreamID: StreamID
+        let mediaStreamID: StreamID
+        let mediaStreamIDToStop: StreamID?
+    }
+
+    func makeWindowRemovalLocalTeardownPlan(streamID: StreamID) -> WindowRemovalLocalTeardownPlan {
+        guard let session = sessionStore.sessionByStreamID(streamID) else {
+            return WindowRemovalLocalTeardownPlan(
+                logicalStreamID: streamID,
+                mediaStreamID: streamID,
+                mediaStreamIDToStop: nil
+            )
+        }
+
+        let mediaStreamID = session.mediaStreamID
+        return WindowRemovalLocalTeardownPlan(
+            logicalStreamID: streamID,
+            mediaStreamID: mediaStreamID,
+            mediaStreamIDToStop: appAtlasMediaStreamIDToStopAfterStopping(
+                logicalStreamID: streamID,
+                mediaStreamID: mediaStreamID
+            )
+        )
     }
 
     /// Reports a host-side failure to start or maintain a specific window stream.

@@ -15,6 +15,7 @@ extension MirageClientService {
         let streamID = started.streamID
         var matchesActiveTransition = false
         var matchesGenerationContract = false
+        var matchesPreservedTransition = false
         guard desktopSessionID == started.desktopSessionID else {
             MirageLogger.client(
                 "Ignoring stale desktop resize commit for stream \(streamID): session=\(started.desktopSessionID.uuidString)"
@@ -22,6 +23,7 @@ extension MirageClientService {
             return false
         }
         if let acceptedContractID = started.desktopGeometryContractID {
+            let activeTransition = desktopResizeCoordinator.activeTransition
             let activeTransitionRejectionReason: String? = if let activeTransition = desktopResizeCoordinator.activeTransition {
                 if activeTransition.streamID == streamID {
                     if desktopResizeCoordinator.acceptTransition(
@@ -50,15 +52,36 @@ extension MirageClientService {
             } else {
                 "generationContract=unavailable"
             }
+            let preservedTransitionRejectionReason: String? = if activeTransition == nil,
+                                                                 let lastSentTransition = desktopResizeCoordinator.lastSentTransition {
+                if lastSentTransition.streamID == streamID {
+                    if started.transitionID == lastSentTransition.transitionID {
+                        lastSentTransition.target.acceptedGeometryRejectionReason(
+                            acceptedContractID: acceptedContractID,
+                            acceptedSceneIdentity: started.desktopGeometrySceneIdentity
+                        )
+                    } else {
+                        "transition=\(started.transitionID?.uuidString ?? "nil") expected=\(lastSentTransition.transitionID.uuidString)"
+                    }
+                } else {
+                    "lastSentTransitionStream=\(lastSentTransition.streamID)"
+                }
+            } else if activeTransition == nil {
+                "lastSentTransition=unavailable"
+            } else {
+                "activeTransition=present"
+            }
             matchesActiveTransition = activeTransitionRejectionReason == nil
-            matchesGenerationContract = desktopResizeCoordinator.activeTransition == nil &&
+            matchesGenerationContract = activeTransition == nil &&
                 generationContractRejectionReason == nil
-            guard matchesActiveTransition || matchesGenerationContract else {
+            matchesPreservedTransition = preservedTransitionRejectionReason == nil
+            guard matchesActiveTransition || matchesGenerationContract || matchesPreservedTransition else {
                 MirageLogger.client(
                     "Ignoring stale desktop resize commit for stream \(streamID): " +
                         "geometryContract=\(acceptedContractID.uuidString) " +
                         "active=\(activeTransitionRejectionReason ?? "ok") " +
-                        "generation=\(generationContractRejectionReason ?? "ok")"
+                        "generation=\(generationContractRejectionReason ?? "ok") " +
+                        "preserved=\(preservedTransitionRejectionReason ?? "ok")"
                 )
                 return false
             }
@@ -83,14 +106,14 @@ extension MirageClientService {
         }
         if let generation = started.desktopPresentationGeneration {
             let previousGeneration = desktopPresentationGenerationBySessionID[started.desktopSessionID] ?? 0
-            guard generation > previousGeneration || matchesActiveTransition else {
+            guard generation > previousGeneration || matchesActiveTransition || matchesPreservedTransition else {
                 MirageLogger.client(
                     "Ignoring stale desktop resize commit for stream \(streamID): generation=\(generation) previous=\(previousGeneration)"
                 )
                 return false
             }
         } else {
-            guard matchesActiveTransition || desktopResizeCoordinator.acceptTransition(
+            guard matchesActiveTransition || matchesPreservedTransition || desktopResizeCoordinator.acceptTransition(
                     streamID: streamID,
                     transitionID: started.transitionID
                 ) else {

@@ -411,10 +411,7 @@ private extension MirageStreamContentView {
         localKeyboardOcclusionActive = false
         resizeLifecycleState = .active
         if isResizing { isResizing = false }
-        clientService.clearDesktopResizeState(
-            streamID: session.streamID,
-            preserveLastSentTarget: clientService.desktopStreamRequestStartTime > 0
-        )
+        clientService.clearTransientDesktopResizeState(streamID: session.streamID)
         #if os(iOS) || os(visionOS)
         MirageClientService.clearCachedDisplayMetrics()
         MirageStreamViewRepresentable.releaseCachedControllerIfPossible(

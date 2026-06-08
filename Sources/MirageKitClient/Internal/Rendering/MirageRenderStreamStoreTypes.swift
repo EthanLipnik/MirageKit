@@ -191,6 +191,7 @@ final class MirageRenderStreamState {
     var lastSubmittedTime: CFAbsoluteTime = 0
     var lastSelectedFrameNumber: UInt32?
     var lastSubmittedFrameNumber: UInt32?
+    var lastSubmittedDimensionToken: UInt16?
     var lastEnqueuedHostEpoch: UInt16?
     var lastEnqueuedDimensionToken: UInt16?
     var lastSubmittedRemotePresentationTime: CMTime = .invalid
@@ -263,6 +264,7 @@ final class MirageRenderStreamState {
         lastSubmittedTime = 0
         lastSelectedFrameNumber = nil
         lastSubmittedFrameNumber = nil
+        lastSubmittedDimensionToken = nil
         lastEnqueuedHostEpoch = nil
         lastEnqueuedDimensionToken = nil
         lastSubmittedRemotePresentationTime = .invalid

@@ -106,6 +106,9 @@ extension MirageClientService {
                 )
                 sendReceiverMediaFeedback(streamID: streamID, controller: controller, metrics: metrics)
                 logAwdlRadioTelemetryIfNeeded(streamID: streamID, metrics: metrics)
+                if sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
+                    handlePostResizeSubmittedFrameTelemetryIfNeeded(streamID: streamID)
+                }
             },
             videoIngressMetricsProvider: { [videoIngressTelemetryStore] streamID in
                 videoIngressTelemetryStore.snapshot(for: streamID)

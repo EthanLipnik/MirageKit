@@ -365,17 +365,17 @@ extension MirageClientService {
                 "event=stream_boundary phase=end side=client media=video stream=\(streamID)"
             )
         }
-        if shouldForceLocalTeardownAfterVideoReceiveEnded(streamID: streamID) {
+        if shouldForceLocalTeardownForUnreferencedVideoStream(streamID: streamID) {
             MirageLogger.client(
                 "Video stream receive loop ended for unreferenced stream \(streamID); forcing local teardown"
             )
-            await forceStopWindowStreamLocally(streamID: streamID)
+            await forceStopAppAtlasMediaStreamLocally(mediaStreamID: streamID)
             return
         }
         MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
     }
 
-    private func shouldForceLocalTeardownAfterVideoReceiveEnded(streamID: StreamID) -> Bool {
+    func shouldForceLocalTeardownForUnreferencedVideoStream(streamID: StreamID) -> Bool {
         let hasReferencedSession = desktopStreamID == streamID ||
             activeStreams.contains { $0.id == streamID || $0.mediaStreamID == streamID } ||
             sessionStore.activeSessions.contains { $0.streamID == streamID || $0.mediaStreamID == streamID }
@@ -448,6 +448,20 @@ extension MirageClientService {
             return
         }
         guard let controller = controllersByStream[ack.streamID] else { return }
+        if ack.state == .noStream,
+           shouldForceLocalTeardownForUnreferencedVideoStream(streamID: ack.streamID) {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard shouldForceLocalTeardownForUnreferencedVideoStream(streamID: ack.streamID) else {
+                    return
+                }
+                MirageLogger.client(
+                    "Keyframe recovery ack reported no host stream for unreferenced media \(ack.streamID); forcing local teardown"
+                )
+                await forceStopAppAtlasMediaStreamLocally(mediaStreamID: ack.streamID)
+            }
+            return
+        }
         Task {
             await controller.handleKeyframeRecoveryAck(ack)
         }

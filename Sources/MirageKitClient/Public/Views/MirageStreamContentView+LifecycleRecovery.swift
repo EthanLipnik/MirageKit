@@ -84,11 +84,14 @@ extension MirageStreamContentView {
         latestDrawableViewSize = .zero
         MirageClientService.clearCachedDisplayMetrics()
         if isResizing { isResizing = false }
-        clientService.clearDesktopResizeState(
-            streamID: session.streamID,
-            preserveLifecycleState: isDesktopStream,
-            preserveLastSentTarget: isDesktopStream
-        )
+        if isDesktopStream {
+            clientService.clearTransientDesktopResizeState(
+                streamID: session.streamID,
+                preserveLifecycleState: true
+            )
+        } else {
+            clientService.clearDesktopResizeState(streamID: session.streamID)
+        }
     }
 
     /// Debounces resize dispatch after returning to foreground.

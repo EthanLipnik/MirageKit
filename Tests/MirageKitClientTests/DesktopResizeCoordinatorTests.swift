@@ -8,6 +8,8 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import CoreGraphics
+import CoreMedia
+import CoreVideo
 import Foundation
 import Testing
 
@@ -253,6 +255,7 @@ struct DesktopResizeCoordinatorTests {
         #expect(coordinator.queuedTarget == nil)
         #expect(coordinator.latestRequestedTarget == nil)
         #expect(coordinator.lastSentTarget == nil)
+        #expect(coordinator.lastSentTransition == nil)
         #expect(!coordinator.isResizing)
         #expect(!coordinator.maskActive)
     }
@@ -272,6 +275,38 @@ struct DesktopResizeCoordinatorTests {
         #expect(coordinator.resizeLifecycleState == .suspended)
         #expect(coordinator.activeTransition == nil)
         #expect(coordinator.queuedTarget == nil)
+        #expect(!coordinator.isResizing)
+        #expect(!coordinator.maskActive)
+    }
+
+    @Test("Transient cleanup preserves in-flight transition correlation")
+    func transientCleanupPreservesInFlightTransitionCorrelation() {
+        let coordinator = DesktopResizeCoordinator()
+        let transitionID = UUID()
+        let activeTarget = target()
+        let queuedTarget = target(logicalWidth: 1512, logicalHeight: 982)
+        coordinator.beginTransition(
+            streamID: 29,
+            transitionID: transitionID,
+            target: activeTarget
+        )
+        coordinator.queueLatestTarget(queuedTarget)
+        coordinator.resizeLifecycleState = .suspended
+
+        coordinator.clearTransientPresentationState(preserveLifecycleState: true)
+
+        #expect(coordinator.resizeLifecycleState == .suspended)
+        #expect(
+            coordinator.activeTransition == DesktopResizeCoordinator.ActiveTransition(
+                streamID: 29,
+                transitionID: transitionID,
+                target: activeTarget
+            )
+        )
+        #expect(coordinator.lastSentTarget == activeTarget)
+        #expect(coordinator.lastSentTransition?.transitionID == transitionID)
+        #expect(coordinator.queuedTarget == nil)
+        #expect(coordinator.latestRequestedTarget == nil)
         #expect(!coordinator.isResizing)
         #expect(!coordinator.maskActive)
     }
@@ -314,6 +349,100 @@ struct DesktopResizeCoordinatorTests {
         #expect(coordinator.latestRequestedTarget == queuedTarget)
         #expect(!coordinator.isResizing)
         #expect(!coordinator.maskActive)
+    }
+
+    @Test("Presentation telemetry clears post-resize wait")
+    func presentationTelemetryClearsPostResizeWait() {
+        let service = MirageClientService()
+        let streamID: StreamID = 33
+        service.sessionStore.beginPostResizeTransition(for: streamID)
+        service.desktopResizeCoordinator.isResizing = true
+        service.desktopResizeCoordinator.maskActive = true
+
+        service.handlePostResizePresentationTelemetry(streamID: streamID)
+
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+    }
+
+    @Test("Post-resize submitted telemetry requires accepted dimension token")
+    func postResizeSubmittedTelemetryRequiresAcceptedDimensionToken() {
+        let service = MirageClientService()
+        let streamID: StreamID = 34
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        service.sessionStore.beginPostResizeTransition(for: streamID)
+        service.desktopDimensionTokenByStream[streamID] = 8
+        service.desktopResizeCoordinator.isResizing = true
+        service.desktopResizeCoordinator.maskActive = true
+
+        let staleResult = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            generation: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+            hostEpoch: nil,
+            dimensionToken: 7,
+            frameNumber: 1,
+            queueEpoch: nil,
+            timeline: nil,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(cursor: staleResult.cursor, for: streamID)
+
+        service.handlePostResizeSubmittedFrameTelemetryIfNeeded(streamID: streamID)
+
+        #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+        #expect(service.desktopResizeCoordinator.isResizing)
+        #expect(service.desktopResizeCoordinator.maskActive)
+
+        let acceptedResult = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: .zero,
+            generation: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+            hostEpoch: nil,
+            dimensionToken: 8,
+            frameNumber: 2,
+            queueEpoch: nil,
+            timeline: nil,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(cursor: acceptedResult.cursor, for: streamID)
+
+        service.handlePostResizeSubmittedFrameTelemetryIfNeeded(streamID: streamID)
+
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+    }
+
+    @Test("Host-resolution resize cleanup clears preserved transition")
+    func hostResolutionResizeCleanupClearsPreservedTransition() {
+        let service = MirageClientService()
+        let streamID: StreamID = 35
+        let transitionID = UUID()
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: transitionID,
+            target: target(logicalWidth: 1512, logicalHeight: 982)
+        )
+        service.sessionStore.beginPostResizeTransition(for: streamID)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: nil,
+            hasPresentedFrame: true,
+            useHostResolution: true
+        )
+
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.lastSentTransition == nil)
+        #expect(service.desktopResizeCoordinator.lastSentTarget == nil)
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
     }
 
     @Test("Startup desktop resize requests coalesce until first presented frame")
@@ -598,6 +727,24 @@ struct DesktopResizeCoordinatorTests {
             supportsIPv4: true,
             supportsIPv6: true
         )
+    }
+
+    private func makePixelBuffer() -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            8,
+            8,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &buffer
+        )
+        #expect(status == kCVReturnSuccess)
+        guard let buffer else {
+            Issue.record("Failed to allocate CVPixelBuffer")
+            fatalError("Unable to allocate CVPixelBuffer for test")
+        }
+        return buffer
     }
 
 }

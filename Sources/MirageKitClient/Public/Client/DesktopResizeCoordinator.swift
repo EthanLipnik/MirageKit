@@ -168,13 +168,16 @@ final class DesktopResizeCoordinator {
     var queuedTarget: RequestGeometry?
     var queuedDispatchPolicy: DispatchPolicy?
     var lastSentTarget: RequestGeometry?
+    var lastSentTransition: ActiveTransition?
     var activeTransition: ActiveTransition?
     @ObservationIgnored var displayResolutionTask: Task<Void, Never>?
     @ObservationIgnored var resizeHoldoffTask: Task<Void, Never>?
     @ObservationIgnored var presentationMaskTimeoutTask: Task<Void, Never>?
 
     func beginTransition(streamID: StreamID, transitionID: UUID, target: RequestGeometry) {
-        activeTransition = ActiveTransition(streamID: streamID, transitionID: transitionID, target: target)
+        let transition = ActiveTransition(streamID: streamID, transitionID: transitionID, target: target)
+        activeTransition = transition
+        lastSentTransition = transition
         lastSentTarget = target
         queuedTarget = nil
         queuedDispatchPolicy = nil
@@ -217,6 +220,7 @@ final class DesktopResizeCoordinator {
 
     func finishTransition() {
         activeTransition = nil
+        lastSentTransition = nil
         if queuedTarget == nil {
             isResizing = false
             maskActive = false
@@ -309,6 +313,20 @@ final class DesktopResizeCoordinator {
         queuedTarget = nil
         queuedDispatchPolicy = nil
         lastSentTarget = preserveLastSentTarget ? lastSentTargetSnapshot : nil
+        lastSentTransition = nil
         activeTransition = nil
+    }
+
+    func clearTransientPresentationState(preserveLifecycleState: Bool = false) {
+        let lifecycleState = resizeLifecycleState
+        cancelPendingTasks()
+        resizeLifecycleState = preserveLifecycleState ? lifecycleState : .active
+        clearLocalPresentationState()
+        latestContainerDisplaySize = .zero
+        latestDrawableViewSize = .zero
+        latestRequestedTarget = nil
+        latestRequestedDispatchPolicy = nil
+        queuedTarget = nil
+        queuedDispatchPolicy = nil
     }
 }

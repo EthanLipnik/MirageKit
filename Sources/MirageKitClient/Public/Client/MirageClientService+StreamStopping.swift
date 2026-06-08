@@ -22,6 +22,10 @@ public extension MirageClientService {
     )
     async {
         let streamID = session.id
+        let stopMediaStreamID = appAtlasMediaStreamIDToStopAfterStopping(
+            logicalStreamID: streamID,
+            mediaStreamID: session.mediaStreamID
+        )
 
         let request = StopStreamMessage(
             streamID: streamID,
@@ -30,7 +34,10 @@ public extension MirageClientService {
         )
         queueControlMessageBestEffort(.stopStream, content: request)
 
-        await forceStopWindowStreamLocally(streamID: streamID)
+        await forceStopWindowStreamLocally(
+            streamID: streamID,
+            stopMediaStreamID: stopMediaStreamID
+        )
     }
 }
 
@@ -212,7 +219,10 @@ public extension MirageClientService {
         }
     }
 
-    func forceStopWindowStreamLocally(streamID: StreamID) async {
+    func forceStopWindowStreamLocally(
+        streamID: StreamID,
+        stopMediaStreamID: StreamID? = nil
+    ) async {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
         sessionStore.removeSessions(renderingMediaStreamID: streamID)
@@ -239,10 +249,80 @@ public extension MirageClientService {
         fastPathState.clearStartupPacketPending(streamID)
         cancelStartupRegistrationRetry(streamID: streamID)
         cancelForegroundRecoveryMonitor(for: streamID)
+        lastKeyframeRequestTime.removeValue(forKey: streamID)
         if let controller = controllersByStream.removeValue(forKey: streamID) {
             await controller.stop()
         }
 
+        if let stopMediaStreamID, stopMediaStreamID != streamID {
+            await forceStopAppAtlasMediaStreamLocally(mediaStreamID: stopMediaStreamID)
+        }
+
+        await updateReassemblerSnapshot()
+        await refreshSharedClipboardBridgeState()
+    }
+
+    func appAtlasMediaStreamIDToStopAfterStopping(
+        logicalStreamID: StreamID,
+        mediaStreamID: StreamID
+    ) -> StreamID? {
+        guard mediaStreamID != logicalStreamID else { return nil }
+        guard !hasLiveLogicalSession(renderingMediaStreamID: mediaStreamID, excluding: logicalStreamID) else {
+            return nil
+        }
+        return mediaStreamID
+    }
+
+    func hasLiveLogicalSession(
+        renderingMediaStreamID mediaStreamID: StreamID,
+        excluding logicalStreamID: StreamID? = nil
+    ) -> Bool {
+        activeStreams.contains {
+            $0.mediaStreamID == mediaStreamID && $0.id != logicalStreamID
+        } || sessionStore.activeSessions.contains {
+            $0.mediaStreamID == mediaStreamID && $0.streamID != logicalStreamID
+        }
+    }
+
+    func forceStopAppAtlasMediaStreamLocally(mediaStreamID: StreamID) async {
+        guard !hasLiveLogicalSession(renderingMediaStreamID: mediaStreamID) else {
+            MirageLogger.client(
+                "Skipping app-atlas media teardown for stream \(mediaStreamID); logical sessions still render it"
+            )
+            return
+        }
+
+        MirageRenderStreamStore.shared.clear(for: mediaStreamID)
+        sessionStore.removeSessions(renderingMediaStreamID: mediaStreamID)
+        pendingApplicationActivationRecoveryStreamIDs.remove(mediaStreamID)
+        renderLatencyModeByStream.removeValue(forKey: mediaStreamID)
+
+        metricsStore.clear(streamID: mediaStreamID)
+        cursorStore.clear(streamID: mediaStreamID)
+        cursorPositionStore.clear(streamID: mediaStreamID)
+
+        fastPathState.removeActiveStreamID(mediaStreamID)
+        stopVideoStreamReceive(for: mediaStreamID)
+        registeredStreamIDs.remove(mediaStreamID)
+        clearStreamRefreshRateOverride(streamID: mediaStreamID)
+        clearDecoderColorDepthState(for: mediaStreamID)
+        mediaMaxPacketSizeByStream.removeValue(forKey: mediaStreamID)
+        activeStreamCodecs.removeValue(forKey: mediaStreamID)
+        clearStartupAttempt(for: mediaStreamID)
+        appDimensionTokenByStream.removeValue(forKey: mediaStreamID)
+        appStreamStartAcknowledgementByStreamID.removeValue(forKey: mediaStreamID)
+        appWindowResizeResultByStreamID.removeValue(forKey: mediaStreamID)
+        streamStartupBaseTimes.removeValue(forKey: mediaStreamID)
+        streamStartupFirstRegistrationSent.remove(mediaStreamID)
+        streamStartupFirstPacketReceived.remove(mediaStreamID)
+        fastPathState.clearStartupPacketPending(mediaStreamID)
+        cancelStartupRegistrationRetry(streamID: mediaStreamID)
+        cancelForegroundRecoveryMonitor(for: mediaStreamID)
+        lastKeyframeRequestTime.removeValue(forKey: mediaStreamID)
+        appAtlasLayoutsByMediaStreamID.removeValue(forKey: mediaStreamID)
+        if let controller = controllersByStream.removeValue(forKey: mediaStreamID) {
+            await controller.stop()
+        }
         await updateReassemblerSnapshot()
         await refreshSharedClipboardBridgeState()
     }

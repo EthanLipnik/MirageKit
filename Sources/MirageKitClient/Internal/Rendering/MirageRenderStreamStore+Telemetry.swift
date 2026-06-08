@@ -84,6 +84,10 @@ extension MirageRenderStreamStore {
         state.lastSubmittedGeneration = state.generation
         state.lastSubmittedTime = now
         state.lastSubmittedRemotePresentationTime = remotePresentationTime
+        if let submittedFrame = state.pendingFrames.first(where: { $0.sequence == sequence }) {
+            state.lastSubmittedFrameNumber = submittedFrame.frameNumber
+            state.lastSubmittedDimensionToken = submittedFrame.dimensionToken
+        }
         appendSampleLocked(
             now,
             samples: &state.uniqueSubmittedSamples,
@@ -145,12 +149,13 @@ extension MirageRenderStreamStore {
         state.lastSubmittedTime = now
         state.lastSubmittedRemotePresentationTime = remotePresentationTime
         state.lastSubmittedMappedPresentationTime = mappedPresentationTime
-        if let index = state.pendingFrames.firstIndex(where: { $0.cursor == cursor }),
-           let timeline = state.pendingFrames[index].timeline {
+        let submittedFrame = state.pendingFrames.first { $0.cursor == cursor }
+        if let timeline = submittedFrame?.timeline {
             state.lastAcceptedFrameTimeline = timeline.markingDisplayAccepted(at: now)
         }
-        if let index = state.pendingFrames.firstIndex(where: { $0.cursor == cursor }) {
-            state.lastSubmittedFrameNumber = state.pendingFrames[index].frameNumber
+        if let submittedFrame {
+            state.lastSubmittedFrameNumber = submittedFrame.frameNumber
+            state.lastSubmittedDimensionToken = submittedFrame.dimensionToken
         }
         appendSampleLocked(
             now,
@@ -191,6 +196,15 @@ extension MirageRenderStreamStore {
         )
         state.lock.unlock()
         return snapshot
+    }
+
+    func hasSubmittedFrame(for streamID: StreamID, dimensionToken: UInt16) -> Bool {
+        guard let state = streamStateIfPresent(for: streamID) else { return false }
+
+        state.lock.lock()
+        let hasSubmittedMatchingFrame = state.lastSubmittedDimensionToken == dimensionToken
+        state.lock.unlock()
+        return hasSubmittedMatchingFrame
     }
 
     func renderedFrameTelemetry(for streamID: StreamID) -> MirageRenderedFrameTelemetry {

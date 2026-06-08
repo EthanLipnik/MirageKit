@@ -459,6 +459,119 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
+    @Test("Preserved transition resize commit is accepted after active transition is cleared")
+    func preservedTransitionResizeCommitAcceptedAfterActiveTransitionCleared() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 51
+        let transitionID = UUID()
+        let contractID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        let target = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            logicalResolution: CGSize(width: 750, height: 402),
+            displayScaleFactor: 3.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2224,
+            encoderMaxHeight: 1200
+        )
+        service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
+        service.desktopStreamResolution = CGSize(width: 1184, height: 2416)
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: transitionID,
+            target: target
+        )
+        service.desktopResizeCoordinator.activeTransition = nil
+        service.desktopResizeCoordinator.clearLocalPresentationState()
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: service.desktopSessionID!,
+            width: 2224,
+            height: 1200,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 9,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: transitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopGeometryContractID: contractID,
+            desktopGeometrySceneIdentity: "scene-a"
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 2224, height: 1200))
+        #expect(service.desktopDimensionTokenByStream[streamID] == 9)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.lastSentTransition == nil)
+        #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        await controller.stop()
+    }
+
+    @MainActor
+    @Test("Preserved transition resize commit rejects stale geometry contract")
+    func preservedTransitionResizeCommitRejectsStaleGeometryContract() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 52
+        let transitionID = UUID()
+        let contractID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        let target = DesktopResizeCoordinator.RequestGeometry(
+            contractID: contractID,
+            sceneIdentity: "scene-a",
+            logicalResolution: CGSize(width: 750, height: 402),
+            displayScaleFactor: 3.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2224,
+            encoderMaxHeight: 1200
+        )
+        service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
+        service.desktopStreamResolution = CGSize(width: 1184, height: 2416)
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: transitionID,
+            target: target
+        )
+        service.desktopResizeCoordinator.activeTransition = nil
+        service.desktopResizeCoordinator.clearLocalPresentationState()
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: service.desktopSessionID!,
+            width: 2224,
+            height: 1200,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 9,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: transitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopGeometryContractID: UUID(),
+            desktopGeometrySceneIdentity: "scene-a"
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 1184, height: 2416))
+        #expect(service.desktopDimensionTokenByStream[streamID] == nil)
+        #expect(service.desktopResizeCoordinator.lastSentTransition?.transitionID == transitionID)
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        await controller.stop()
+    }
+
+    @MainActor
     @Test("Stale transition UUID with older generation is ignored")
     func staleTransitionUUIDWithOlderGenerationIsIgnored() async throws {
         let service = MirageClientService()
