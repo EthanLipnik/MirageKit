@@ -104,6 +104,7 @@ extension MirageHostService {
         peerIdentityByClientID.removeValue(forKey: client.id)
         mediaSecurityByClientID.removeValue(forKey: client.id)
         mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
+        negotiatedMediaPacketFamilyByClientID.removeValue(forKey: client.id)
         sharedClipboardStatusByClientID.removeValue(forKey: client.id)
         activeHostSupportLogClientIDs.remove(client.id)
         clearClientActivityRecord(clientID: client.id)

@@ -145,7 +145,7 @@ struct MirageKitTests {
         #expect(deserialized.type == .sessionBootstrapRequest)
 
         let decodedBootstrap = try deserialized.decode(MirageWire.MirageSessionBootstrapRequest.self)
-        #expect(MirageKit.controlProtocolVersion == 260604)
+        #expect(MirageKit.controlProtocolVersion == 260605)
         #expect(MirageKit.controlProtocolVersion == MirageKit.controlProtocolVersion)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.controlProtocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)

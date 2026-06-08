@@ -288,7 +288,7 @@ struct MiragePublicImportBoundaryTests {
         #expect(menuBar.menus.first?.items.first?.keyboardShortcut?.modifiers == [.command])
         #expect(logCategory.rawValue == "bootstrap_handoff")
         #expect(decisionTrace.decisions.first?.value == "fullFrameHEVC")
-        #expect(MirageWireProtocol.currentControlVersion == MirageWireProtocol.preRearchitectureCompatibilityVersion)
+        #expect(MirageWireProtocol.currentControlVersion == MirageWireProtocol.rearchitectureCutoverVersion)
     }
 
     @MainActor

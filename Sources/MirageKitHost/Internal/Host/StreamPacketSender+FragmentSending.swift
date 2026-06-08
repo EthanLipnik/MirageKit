@@ -173,7 +173,7 @@ extension StreamPacketSender {
     }
 
     private nonisolated func usesMosaicMediaUnitHeader(for item: WorkItem) -> Bool {
-        item.additionalFlags.contains(.desktopStream)
+        item.mosaicMediaUnitMetadata != nil
     }
 
     private nonisolated func maximumPayloadSize(usesMosaicMediaUnitHeader: Bool) -> Int {

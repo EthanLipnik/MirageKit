@@ -21,12 +21,16 @@ import CoreVideo
 import Foundation
 
 final class StreamControllerMosaicRetainedFramePresenter: @unchecked Sendable {
+    private static let maximumFirstCommitWaitSeconds: CFAbsoluteTime = 0.20
+
     private let streamID: StreamID
     private let context = CIContext(options: nil)
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private let lock = NSLock()
     private var activePlanEpoch: UInt32?
     private var activeLogicalSize = MiragePixelSize(width: 0, height: 0)
+    private var activePlanFirstDecodeTime: CFAbsoluteTime = 0
+    private var completedPlanEpoch: UInt32?
     private var retainedImages: [UInt16: CIImage] = [:]
 
     init(streamID: StreamID) {
@@ -37,6 +41,8 @@ final class StreamControllerMosaicRetainedFramePresenter: @unchecked Sendable {
         lock.lock()
         activePlanEpoch = nil
         activeLogicalSize = MiragePixelSize(width: 0, height: 0)
+        activePlanFirstDecodeTime = 0
+        completedPlanEpoch = nil
         retainedImages.removeAll(keepingCapacity: false)
         lock.unlock()
     }
@@ -58,6 +64,8 @@ final class StreamControllerMosaicRetainedFramePresenter: @unchecked Sendable {
         if activePlanEpoch != plan.epoch || activeLogicalSize != plan.logicalSize {
             activePlanEpoch = plan.epoch
             activeLogicalSize = plan.logicalSize
+            activePlanFirstDecodeTime = CFAbsoluteTimeGetCurrent()
+            completedPlanEpoch = nil
             retainedImages.removeAll(keepingCapacity: false)
         }
         retainedImages[mediaUnitIndex] = Self.image(
@@ -65,7 +73,12 @@ final class StreamControllerMosaicRetainedFramePresenter: @unchecked Sendable {
             presentationRect: presentationRect,
             canvasHeight: plan.logicalSize.height
         )
-        output = renderRetainedFrameLocked(plan: plan)
+        if shouldRenderRetainedFrameLocked(plan: plan) {
+            output = renderRetainedFrameLocked(plan: plan)
+            completedPlanEpoch = plan.epoch
+        } else {
+            output = nil
+        }
         lock.unlock()
 
         guard let output else { return }
@@ -82,6 +95,17 @@ final class StreamControllerMosaicRetainedFramePresenter: @unchecked Sendable {
             presentationTime: presentationTime,
             for: streamID
         )
+    }
+
+    private func shouldRenderRetainedFrameLocked(plan: MirageMosaicTilePlan) -> Bool {
+        if completedPlanEpoch == plan.epoch {
+            return true
+        }
+        let firstCommitTargetCount = min(plan.codecUnits.count, 16)
+        guard retainedImages.count < firstCommitTargetCount else {
+            return true
+        }
+        return CFAbsoluteTimeGetCurrent() - activePlanFirstDecodeTime >= Self.maximumFirstCommitWaitSeconds
     }
 
     private func renderRetainedFrameLocked(plan: MirageMosaicTilePlan) -> CVPixelBuffer? {
@@ -141,7 +165,112 @@ final class StreamControllerMosaicRetainedFramePresenter: @unchecked Sendable {
     }
 }
 
+final class StreamControllerMosaicDependencyState: @unchecked Sendable {
+    enum ValidationResult: Equatable, Sendable {
+        case accepted
+        case stale(retainedVersion: UInt32, tileVersion: UInt32)
+        case missingDependency
+        case dependencyMismatch(retainedVersion: UInt32, expectedVersion: UInt32)
+    }
+
+    private struct PendingDecodeKey: Hashable {
+        let mediaUnitIndex: UInt16
+        let mediaEpoch: CMTimeValue
+    }
+
+    private let lock = NSLock()
+    private var activePlanEpoch: UInt32?
+    private var retainedTileVersionsByMediaUnitIndex: [UInt16: UInt32] = [:]
+    private var pendingTileVersionsByDecodeKey: [PendingDecodeKey: UInt32] = [:]
+
+    func validate(_ unit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit) -> ValidationResult {
+        lock.lock()
+        defer { lock.unlock() }
+
+        resetForPlanEpochIfNeeded(unit.tilePlanEpoch)
+        guard !unit.isKeyframe else { return .accepted }
+        guard let retainedVersion = retainedTileVersionsByMediaUnitIndex[unit.mediaUnitIndex] else {
+            return .missingDependency
+        }
+        if unit.tileVersion <= retainedVersion {
+            return .stale(retainedVersion: retainedVersion, tileVersion: unit.tileVersion)
+        }
+        guard retainedVersion == unit.dependencyVersion else {
+            return .dependencyMismatch(
+                retainedVersion: retainedVersion,
+                expectedVersion: unit.dependencyVersion
+            )
+        }
+        return .accepted
+    }
+
+    func noteSubmitted(
+        _ unit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit,
+        presentationTime: CMTime
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        resetForPlanEpochIfNeeded(unit.tilePlanEpoch)
+        pendingTileVersionsByDecodeKey[PendingDecodeKey(
+            mediaUnitIndex: unit.mediaUnitIndex,
+            mediaEpoch: presentationTime.value
+        )] = unit.tileVersion
+    }
+
+    func noteDecoded(mediaUnitIndex: UInt16, presentationTime: CMTime) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let key = PendingDecodeKey(
+            mediaUnitIndex: mediaUnitIndex,
+            mediaEpoch: presentationTime.value
+        )
+        guard let tileVersion = pendingTileVersionsByDecodeKey.removeValue(forKey: key) else {
+            return
+        }
+        retainedTileVersionsByMediaUnitIndex[mediaUnitIndex] = tileVersion
+    }
+
+    func reset() {
+        lock.lock()
+        activePlanEpoch = nil
+        retainedTileVersionsByMediaUnitIndex.removeAll(keepingCapacity: false)
+        pendingTileVersionsByDecodeKey.removeAll(keepingCapacity: false)
+        lock.unlock()
+    }
+
+    func reset(mediaUnitIndex: UInt16) {
+        lock.lock()
+        retainedTileVersionsByMediaUnitIndex.removeValue(forKey: mediaUnitIndex)
+        pendingTileVersionsByDecodeKey = pendingTileVersionsByDecodeKey.filter { element in
+            element.key.mediaUnitIndex != mediaUnitIndex
+        }
+        lock.unlock()
+    }
+
+    private func resetForPlanEpochIfNeeded(_ planEpoch: UInt32) {
+        guard activePlanEpoch != planEpoch else { return }
+        activePlanEpoch = planEpoch
+        retainedTileVersionsByMediaUnitIndex.removeAll(keepingCapacity: false)
+        pendingTileVersionsByDecodeKey.removeAll(keepingCapacity: false)
+    }
+}
+
 actor StreamControllerMosaicClientPipeline {
+    enum RecoveryTrigger: String, Sendable {
+        case dependencyMissing = "dependency-missing"
+        case dependencyMismatch = "dependency-mismatch"
+        case decodeErrorThreshold = "decode-error-threshold"
+        case decodeSubmissionFailure = "decode-submission-failure"
+    }
+
+    enum ProcessResult: Equatable, Sendable {
+        case submitted
+        case dropped
+        case needsRecovery(RecoveryTrigger)
+    }
+
     private struct DecoderSignature: Hashable {
         let planEpoch: UInt32
         let mediaUnitIndex: UInt16
@@ -157,27 +286,60 @@ actor StreamControllerMosaicClientPipeline {
 
     private let streamID: StreamID
     private let presenter: StreamControllerMosaicRetainedFramePresenter
+    private let dependencyState = StreamControllerMosaicDependencyState()
+    private let onRecoveryNeeded: (@Sendable (StreamID, RecoveryTrigger) -> Void)?
     private var decodersByMediaUnitIndex: [UInt16: DecoderEntry] = [:]
 
-    init(streamID: StreamID) {
+    init(
+        streamID: StreamID,
+        onRecoveryNeeded: (@Sendable (StreamID, RecoveryTrigger) -> Void)? = nil
+    ) {
         self.streamID = streamID
+        self.onRecoveryNeeded = onRecoveryNeeded
         presenter = StreamControllerMosaicRetainedFramePresenter(streamID: streamID)
     }
 
     func process(
         _ unit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit,
         plan: MirageMosaicTilePlan
-    ) async -> Bool {
+    ) async -> ProcessResult {
         guard unit.streamID == streamID,
               unit.tilePlanEpoch == plan.epoch,
               Int(unit.mediaUnitIndex) < plan.codecUnits.count else {
-            return false
+            return .dropped
         }
 
         let codecUnit = plan.codecUnits[Int(unit.mediaUnitIndex)]
         guard !codecUnit.encodedSize.isEmpty,
               !codecUnit.presentationRect.size.isEmpty else {
-            return false
+            return .dropped
+        }
+
+        switch dependencyState.validate(unit) {
+        case .accepted:
+            break
+        case let .stale(retainedVersion, tileVersion):
+            MirageLogger.client(
+                "Mosaic stale unit dropped for stream \(streamID) unit=\(unit.mediaUnitIndex) " +
+                    "epoch=\(unit.mediaEpoch) retained=\(retainedVersion) tileVersion=\(tileVersion)"
+            )
+            return .dropped
+        case .missingDependency:
+            MirageLogger.client(
+                "Mosaic dependency missing for stream \(streamID) unit=\(unit.mediaUnitIndex) " +
+                    "epoch=\(unit.mediaEpoch) tileVersion=\(unit.tileVersion) dependency=\(unit.dependencyVersion)"
+            )
+            onRecoveryNeeded?(streamID, .dependencyMissing)
+            return .needsRecovery(.dependencyMissing)
+        case let .dependencyMismatch(retainedVersion, expectedVersion):
+            MirageLogger.client(
+                "Mosaic dependency mismatch for stream \(streamID) unit=\(unit.mediaUnitIndex) " +
+                    "epoch=\(unit.mediaEpoch) tileVersion=\(unit.tileVersion) " +
+                    "retained=\(retainedVersion) expected=\(expectedVersion)"
+            )
+            dependencyState.reset(mediaUnitIndex: unit.mediaUnitIndex)
+            onRecoveryNeeded?(streamID, .dependencyMismatch)
+            return .needsRecovery(.dependencyMismatch)
         }
 
         let decoder = await decoder(
@@ -185,25 +347,30 @@ actor StreamControllerMosaicClientPipeline {
             codecUnit: codecUnit,
             plan: plan
         )
+        let presentationTime = CMTime(value: Int64(unit.mediaEpoch), timescale: 60)
         do {
             try await decoder.decodeFrame(
                 unit.payload,
-                presentationTime: CMTime(value: Int64(unit.mediaEpoch), timescale: 60),
+                presentationTime: presentationTime,
                 isKeyframe: unit.isKeyframe,
                 frameNumber: unit.unitFrameNumber,
                 contentRect: Self.cgRect(from: codecUnit.presentationRect)
             )
         } catch {
             MirageLogger.error(.decoder, error: error, message: "Mosaic unit decode error: ")
-            return false
+            dependencyState.reset(mediaUnitIndex: unit.mediaUnitIndex)
+            onRecoveryNeeded?(streamID, .decodeSubmissionFailure)
+            return .needsRecovery(.decodeSubmissionFailure)
         }
-        return true
+        dependencyState.noteSubmitted(unit, presentationTime: presentationTime)
+        return .submitted
     }
 
     func reset() async {
         let decoders = decodersByMediaUnitIndex.values.map(\.decoder)
         decodersByMediaUnitIndex.removeAll(keepingCapacity: false)
         presenter.reset()
+        dependencyState.reset()
         for decoder in decoders {
             await decoder.stopDecoding()
         }
@@ -238,7 +405,15 @@ actor StreamControllerMosaicClientPipeline {
                 height: codecUnit.encodedSize.height
             )
         )
-        await decoder.startDecoding { [presenter] pixelBuffer, presentationTime, _ in
+        await decoder.setErrorThresholdHandler { [dependencyState, onRecoveryNeeded, streamID, mediaUnitIndex] in
+            dependencyState.reset(mediaUnitIndex: mediaUnitIndex)
+            onRecoveryNeeded?(streamID, .decodeErrorThreshold)
+        }
+        await decoder.startDecoding { [dependencyState, presenter] pixelBuffer, presentationTime, _ in
+            dependencyState.noteDecoded(
+                mediaUnitIndex: mediaUnitIndex,
+                presentationTime: presentationTime
+            )
             presenter.enqueueDecodedUnit(
                 pixelBuffer: pixelBuffer,
                 presentationTime: presentationTime,

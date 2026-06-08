@@ -15,6 +15,7 @@ struct StreamContextMosaicSemanticCandidate: Sendable, Equatable {
     let rect: MiragePixelRect
     let semanticClass: MirageMosaicSemanticClass
     let priority: MirageMosaicTilePriority
+    let parentID: MirageMosaicTileID?
     let codecStrategy: MirageMosaicCodecStrategy
     let commitPolicy: MirageMosaicCommitPolicy
     let isReliable: Bool
@@ -24,6 +25,7 @@ struct StreamContextMosaicSemanticCandidate: Sendable, Equatable {
         rect: MiragePixelRect,
         semanticClass: MirageMosaicSemanticClass,
         priority: MirageMosaicTilePriority,
+        parentID: MirageMosaicTileID? = nil,
         codecStrategy: MirageMosaicCodecStrategy = .singleUnit,
         commitPolicy: MirageMosaicCommitPolicy = .independent,
         isReliable: Bool
@@ -32,6 +34,7 @@ struct StreamContextMosaicSemanticCandidate: Sendable, Equatable {
         self.rect = rect
         self.semanticClass = semanticClass
         self.priority = priority
+        self.parentID = parentID
         self.codecStrategy = codecStrategy
         self.commitPolicy = commitPolicy
         self.isReliable = isReliable
@@ -61,53 +64,71 @@ struct StreamContextMosaicTilePlanRequest: Sendable, Equatable {
 }
 
 struct StreamContextMosaicTilePlanPlanner: Sendable {
-    let fallbackColumns: Int
-    let fallbackRows: Int
+    let maxSemanticTiles: Int
+    let minFallbackTileSize: MiragePixelSize
+    let maxFallbackTileSize: MiragePixelSize
 
-    init(fallbackColumns: Int = 3, fallbackRows: Int = 3) {
-        self.fallbackColumns = max(1, fallbackColumns)
-        self.fallbackRows = max(1, fallbackRows)
+    init(
+        maxSemanticTiles: Int = 12,
+        minFallbackTileSize: MiragePixelSize = MiragePixelSize(width: 320, height: 180),
+        maxFallbackTileSize: MiragePixelSize = MiragePixelSize(width: 1536, height: 1024)
+    ) {
+        self.maxSemanticTiles = max(0, maxSemanticTiles)
+        self.minFallbackTileSize = minFallbackTileSize
+        self.maxFallbackTileSize = maxFallbackTileSize
     }
 
     func plan(for request: StreamContextMosaicTilePlanRequest) -> MirageMosaicTilePlan {
         if request.isTransientSystemState,
+           request.semanticCandidates.isEmpty,
            let previousPlan = request.previousPlan,
            previousPlan.logicalSize == request.logicalSize {
             return previousPlan
         }
 
         let reliableCandidates = request.semanticCandidates
-            .filter { $0.isReliable && !$0.rect.size.isEmpty }
-            .sorted { lhs, rhs in
-                if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
-                return lhs.id < rhs.id
-            }
-        guard !reliableCandidates.isEmpty else {
+            .filter { $0.isReliable && !$0.rect.size.isEmpty && Self.isSemanticTileClass($0.semanticClass) }
+            .sorted(by: Self.planningOrder)
+        guard !reliableCandidates.isEmpty,
+              maxSemanticTiles > 0 else {
             return fixedGridPlan(for: request)
         }
 
         var occupiedRects: [MiragePixelRect] = []
         var tiles: [MirageMosaicTileDescriptor] = []
+        let semanticTileBudget = max(0, maxSemanticTiles)
         for candidate in reliableCandidates {
+            guard tiles.count < semanticTileBudget else { break }
             let clipped = Self.clamped(candidate.rect, to: request.logicalSize)
             let fragments = Self.subtract(occupiedRects, from: clipped)
-                .filter { !Self.isTiny($0) }
+                .filter { !Self.isTiny($0, minimumWidth: 48, minimumHeight: 32) }
             for (fragmentIndex, fragment) in fragments.enumerated() {
-                let tileID = fragments.count == 1
-                    ? candidate.id
-                    : MirageMosaicTileID(rawValue: "\(candidate.id.rawValue)-part-\(fragmentIndex)")
-                tiles.append(MirageMosaicTileDescriptor(
-                    id: tileID,
-                    sourceRect: fragment,
-                    presentationRect: fragment,
-                    semanticClass: candidate.semanticClass,
-                    priority: candidate.priority,
-                    codecStrategy: candidate.codecStrategy,
-                    transportGroupID: MirageMosaicTransportGroupID(rawValue: candidate.id.rawValue),
-                    presentationGroupID: MirageMosaicPresentationGroupID(rawValue: candidate.id.rawValue),
-                    commitPolicy: candidate.commitPolicy
-                ))
-                occupiedRects.append(fragment)
+                guard tiles.count < semanticTileBudget else { break }
+                let expandedFragments = Self.expandedFragments(fragment, strategy: candidate.codecStrategy)
+                for (subtileIndex, expandedFragment) in expandedFragments.enumerated() {
+                    guard tiles.count < semanticTileBudget else { break }
+                    let tileID = Self.tileID(
+                        for: candidate,
+                        fragmentCount: fragments.count,
+                        fragmentIndex: fragmentIndex,
+                        subtileCount: expandedFragments.count,
+                        subtileIndex: subtileIndex
+                    )
+                    tiles.append(MirageMosaicTileDescriptor(
+                        id: tileID,
+                        sourceRect: expandedFragment,
+                        presentationRect: expandedFragment,
+                        semanticClass: candidate.semanticClass,
+                        priority: candidate.priority,
+                        parentTileID: candidate.parentID ?? (expandedFragments.count > 1 ? candidate.id : nil),
+                        subtileIndex: expandedFragments.count > 1 ? subtileIndex : nil,
+                        codecStrategy: candidate.codecStrategy,
+                        transportGroupID: MirageMosaicTransportGroupID(rawValue: candidate.id.rawValue),
+                        presentationGroupID: MirageMosaicPresentationGroupID(rawValue: candidate.id.rawValue),
+                        commitPolicy: candidate.commitPolicy
+                    ))
+                    occupiedRects.append(expandedFragment)
+                }
             }
         }
 
@@ -138,11 +159,41 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
     }
 
     private func fixedGridPlan(for request: StreamContextMosaicTilePlanRequest) -> MirageMosaicTilePlan {
-        MirageMosaicTilePlan.fixedGrid(
+        let bounds = MiragePixelRect(size: request.logicalSize)
+        let tiles = splitFallbackTile(bounds).map { rect in
+            let tileID = MirageMosaicTileID(rawValue: [
+                "grid",
+                "\(rect.x)",
+                "\(rect.y)",
+                "\(rect.width)",
+                "\(rect.height)",
+            ].joined(separator: "-"))
+            return MirageMosaicTileDescriptor(
+                id: tileID,
+                sourceRect: rect,
+                presentationRect: rect,
+                semanticClass: .gridFallback,
+                priority: .gridFallback
+            )
+        }
+        let units = tiles.map { tile in
+            MirageMosaicCodecUnitDescriptor(
+                id: MirageMosaicCodecUnitID(rawValue: tile.id.rawValue),
+                tileID: tile.id,
+                sourceRect: tile.sourceRect,
+                presentationRect: tile.presentationRect,
+                encodedSize: tile.sourceRect.size,
+                codec: request.codec,
+                transportGroupID: tile.transportGroupID,
+                presentationGroupID: tile.presentationGroupID,
+                commitPolicy: tile.commitPolicy
+            )
+        }
+        return MirageMosaicTilePlan(
+            kind: .fixedGrid,
             logicalSize: request.logicalSize,
-            columns: fallbackColumns,
-            rows: fallbackRows,
-            codec: request.codec
+            tiles: tiles,
+            codecUnits: units
         )
     }
 
@@ -150,16 +201,19 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
         for request: StreamContextMosaicTilePlanRequest,
         occupiedRects: [MiragePixelRect]
     ) -> [MirageMosaicTileDescriptor] {
-        let gridPlan = fixedGridPlan(for: request)
-        var tiles: [MirageMosaicTileDescriptor] = []
-        for gridTile in gridPlan.tiles {
-            let fragments = Self.subtract(occupiedRects, from: gridTile.sourceRect)
-                .filter { !Self.isTiny($0) }
-            for (fragmentIndex, fragment) in fragments.enumerated() {
-                let tileID = fragments.count == 1
-                    ? MirageMosaicTileID(rawValue: "fallback-\(gridTile.id.rawValue)")
-                    : MirageMosaicTileID(rawValue: "fallback-\(gridTile.id.rawValue)-part-\(fragmentIndex)")
-                tiles.append(MirageMosaicTileDescriptor(
+        let bounds = MiragePixelRect(size: request.logicalSize)
+        return Self.subtract(occupiedRects, from: bounds)
+            .sorted(by: Self.residualOrder)
+            .flatMap { splitFallbackTile($0) }
+            .map { fragment in
+                let tileID = MirageMosaicTileID(rawValue: [
+                    "fallback",
+                    "\(fragment.x)",
+                    "\(fragment.y)",
+                    "\(fragment.width)",
+                    "\(fragment.height)",
+                ].joined(separator: "-"))
+                return MirageMosaicTileDescriptor(
                     id: tileID,
                     sourceRect: fragment,
                     presentationRect: fragment,
@@ -167,10 +221,124 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
                     priority: .gridFallback,
                     codecStrategy: .singleUnit,
                     commitPolicy: .independent
-                ))
+                )
+            }
+    }
+
+    private func splitFallbackTile(_ rect: MiragePixelRect) -> [MiragePixelRect] {
+        guard !rect.size.isEmpty else { return [] }
+        let columnCount = Self.splitCount(
+            length: rect.width,
+            maximum: maxFallbackTileSize.width,
+            minimum: minFallbackTileSize.width
+        )
+        let rowCount = Self.splitCount(
+            length: rect.height,
+            maximum: maxFallbackTileSize.height,
+            minimum: minFallbackTileSize.height
+        )
+        guard columnCount > 1 || rowCount > 1 else { return [rect] }
+        return (0 ..< rowCount).flatMap { row in
+            (0 ..< columnCount).map { column in
+                let x0 = rect.x + column * rect.width / columnCount
+                let x1 = rect.x + (column + 1) * rect.width / columnCount
+                let y0 = rect.y + row * rect.height / rowCount
+                let y1 = rect.y + (row + 1) * rect.height / rowCount
+                return MiragePixelRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
             }
         }
-        return tiles
+    }
+
+    private static func splitCount(length: Int, maximum: Int, minimum: Int) -> Int {
+        let maximum = max(1, maximum)
+        let minimum = max(1, minimum)
+        var count = max(1, Int(ceil(Double(length) / Double(maximum))))
+        while count > 1, length / count < minimum {
+            count -= 1
+        }
+        return count
+    }
+
+    private static func planningOrder(
+        lhs: StreamContextMosaicSemanticCandidate,
+        rhs: StreamContextMosaicSemanticCandidate
+    ) -> Bool {
+        if lhs.parentID == rhs.id { return true }
+        if rhs.parentID == lhs.id { return false }
+        if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+        let lhsArea = lhs.rect.width * lhs.rect.height
+        let rhsArea = rhs.rect.width * rhs.rect.height
+        if lhsArea != rhsArea { return lhsArea < rhsArea }
+        return lhs.id < rhs.id
+    }
+
+    private static func isSemanticTileClass(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
+        switch semanticClass {
+        case .scrollView,
+             .textViewport:
+            true
+        default:
+            false
+        }
+    }
+
+    private static func expandedFragments(
+        _ rect: MiragePixelRect,
+        strategy: MirageMosaicCodecStrategy
+    ) -> [MiragePixelRect] {
+        switch strategy {
+        case .gridChildren:
+            return gridChildren(in: rect)
+        case .singleUnit,
+             .verticalColumns,
+             .horizontalBands,
+             .retainedTransformStrips,
+             .coalescedSupertile,
+             .chromeAtlas:
+            return [rect]
+        }
+    }
+
+    private static func residualOrder(_ lhs: MiragePixelRect, _ rhs: MiragePixelRect) -> Bool {
+        let lhsArea = lhs.width * lhs.height
+        let rhsArea = rhs.width * rhs.height
+        if lhsArea != rhsArea { return lhsArea > rhsArea }
+        if lhs.y != rhs.y { return lhs.y < rhs.y }
+        return lhs.x < rhs.x
+    }
+
+    private static func gridChildren(in rect: MiragePixelRect) -> [MiragePixelRect] {
+        guard rect.width >= 1200, rect.height >= 900 else { return [rect] }
+        let columns = 2
+        let rows = 2
+        return (0 ..< rows).flatMap { row in
+            (0 ..< columns).map { column in
+                let x0 = rect.x + column * rect.width / columns
+                let x1 = rect.x + (column + 1) * rect.width / columns
+                let y0 = rect.y + row * rect.height / rows
+                let y1 = rect.y + (row + 1) * rect.height / rows
+                return MiragePixelRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+            }
+        }
+        .filter { !isTiny($0) }
+    }
+
+    private static func tileID(
+        for candidate: StreamContextMosaicSemanticCandidate,
+        fragmentCount: Int,
+        fragmentIndex: Int,
+        subtileCount: Int,
+        subtileIndex: Int
+    ) -> MirageMosaicTileID {
+        guard fragmentCount > 1 || subtileCount > 1 else { return candidate.id }
+        var components = [candidate.id.rawValue]
+        if fragmentCount > 1 {
+            components.append("part-\(fragmentIndex)")
+        }
+        if subtileCount > 1 {
+            components.append("sub-\(subtileIndex)")
+        }
+        return MirageMosaicTileID(rawValue: components.joined(separator: "-"))
     }
 
     private static func subtract(_ cutters: [MiragePixelRect], from rect: MiragePixelRect) -> [MiragePixelRect] {
@@ -236,8 +404,12 @@ struct StreamContextMosaicTilePlanPlanner: Sendable {
         return intersection(rect, bounds) ?? MiragePixelRect(size: MiragePixelSize(width: 0, height: 0))
     }
 
-    private static func isTiny(_ rect: MiragePixelRect) -> Bool {
-        rect.width < 16 || rect.height < 16
+    private static func isTiny(
+        _ rect: MiragePixelRect,
+        minimumWidth: Int = 16,
+        minimumHeight: Int = 16
+    ) -> Bool {
+        rect.width < minimumWidth || rect.height < minimumHeight
     }
 }
 

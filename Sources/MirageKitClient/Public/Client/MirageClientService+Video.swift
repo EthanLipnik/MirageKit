@@ -337,11 +337,11 @@ extension MirageClientService {
         if let mosaicTilePlan = packetContext.mosaicTilePlan,
            mosaicTilePlan.epoch == completedUnit.tilePlanEpoch {
             Task {
-                let didSubmit = await packetContext.mosaicPipeline.process(
+                let result = await packetContext.mosaicPipeline.process(
                     completedUnit,
                     plan: mosaicTilePlan
                 )
-                guard didSubmit else { return }
+                guard result == .submitted else { return }
                 await MainActor.run {
                     self.sessionStore.markFirstFrameDecoded(for: streamID)
                 }
@@ -350,7 +350,10 @@ extension MirageClientService {
         }
 
         guard allowBuffering,
-              packetContext.mosaicTilePlan == nil,
+              Self.shouldBufferMosaicUnit(
+                completedUnit,
+                currentPlan: packetContext.mosaicTilePlan
+              ),
               fastPathState.bufferMosaicUnit(completedUnit, for: streamID) else {
             return
         }
@@ -358,6 +361,38 @@ extension MirageClientService {
             "Media stream \(streamID) buffered Mosaic media unit pending tile plan " +
                 "epoch=\(completedUnit.tilePlanEpoch) unit=\(completedUnit.mediaUnitIndex)"
         )
+    }
+
+    private nonisolated static func shouldBufferMosaicUnit(
+        _ completedUnit: StreamControllerMosaicMediaUnitReassembler.CompletedUnit,
+        currentPlan: MirageMedia.MirageMosaicTilePlan?
+    ) -> Bool {
+        guard let currentPlan else { return true }
+        return completedUnit.tilePlanEpoch > currentPlan.epoch
+    }
+
+    func handleMosaicRecoveryRequest(
+        streamID: StreamID,
+        trigger: StreamControllerMosaicClientPipeline.RecoveryTrigger
+    ) async {
+        guard let controller = controllersByStream[streamID] else { return }
+        let reason = Self.streamRecoveryReason(forMosaicTrigger: trigger)
+        MirageLogger.client(
+            "Mosaic recovery requested for stream \(streamID) trigger=\(trigger.rawValue)"
+        )
+        await controller.requestKeyframeRecoveryIfPossible(reason: reason)
+    }
+
+    nonisolated static func streamRecoveryReason(
+        forMosaicTrigger trigger: StreamControllerMosaicClientPipeline.RecoveryTrigger
+    ) -> StreamController.RecoveryReason {
+        switch trigger {
+        case .decodeErrorThreshold,
+             .dependencyMissing,
+             .dependencyMismatch,
+             .decodeSubmissionFailure:
+            .decodeErrorThreshold
+        }
     }
 
     private nonisolated func logFirstVideoPacketRejectionIfNeeded(

@@ -857,7 +857,8 @@ func makeStreamPacketWorkItem(
     fecBlockSize: Int = 0,
     pacingOverride: StreamPacketSender.PacingOverride? = nil,
     usesAwdlRealtimeQueuePolicy: Bool = false,
-    deliveryMode: HostFrameDeliveryMode = .realtime
+    deliveryMode: HostFrameDeliveryMode = .realtime,
+    mosaicMediaUnitMetadata: StreamPacketSender.MosaicMediaUnitMetadata? = nil
 ) -> StreamPacketSender.WorkItem {
     StreamPacketSender.WorkItem(
         encodedData: payload,
@@ -880,7 +881,8 @@ func makeStreamPacketWorkItem(
         hardSendDeadline: hardSendDeadline,
         pacingOverride: pacingOverride,
         usesAwdlRealtimeQueuePolicy: usesAwdlRealtimeQueuePolicy,
-        deliveryMode: deliveryMode
+        deliveryMode: deliveryMode,
+        mosaicMediaUnitMetadata: mosaicMediaUnitMetadata
     )
 }
 

@@ -1355,7 +1355,8 @@ struct HostKeyframeRecoveryTests {
             dimensionToken: 0,
             encodedAt: now - 0.006,
             startedAt: now - 0.004,
-            completedAt: now
+            completedAt: now,
+            mosaicMediaUnitMetadata: nil
         )
     }
 }

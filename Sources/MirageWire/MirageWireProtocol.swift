@@ -17,7 +17,7 @@ public enum MirageWireProtocol {
     public static let currentDiscoveryVersion: UInt32 = preRearchitectureCompatibilityVersion
 
     /// Current Mirage control protocol version required by both hosts and clients, encoded as YYMMDD.
-    public static let currentControlVersion: UInt32 = preRearchitectureCompatibilityVersion
+    public static let currentControlVersion: UInt32 = rearchitectureCutoverVersion
 
     /// Current Mirage media packet version used by fixed-layout video and audio packet headers.
     public static let currentMediaPacketVersion: UInt32 = preRearchitectureCompatibilityVersion

@@ -84,9 +84,13 @@ extension MirageHostService {
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?,
         autoTrustGranted: Bool
-    ) async throws -> (response: MirageWire.MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
+    ) async throws -> (
+        response: MirageWire.MirageSessionBootstrapResponse,
+        mediaSecurity: MirageMediaSecurityContext?,
+        selectedMediaPacketFamily: MirageMediaPacketFamily?
+    ) {
         let hostName = serviceName
-        let hostCapabilities = MirageRuntimeCapabilities.currentMosaicCutover
+        let hostCapabilities = MirageRuntimeCapabilities.currentCombined
 
         guard request.protocolVersion == Int(MirageKit.controlProtocolVersion) else {
             return (
@@ -100,14 +104,14 @@ extension MirageHostService {
                     protocolMismatchHostVersion: Int(MirageKit.controlProtocolVersion),
                     protocolMismatchClientVersion: request.protocolVersion
                 ),
+                nil,
                 nil
             )
         }
 
-        guard hostCapabilities.selectedMediaPacketFamilyForSend(
-            matching: request.clientCapabilities,
-            requiredTopology: .mosaic
-        ) != nil else {
+        guard let selectedMediaPacketFamily = hostCapabilities.selectedMediaPacketFamilyForSend(
+            matching: request.clientCapabilities
+        ) else {
             return (
                 MirageWire.MirageSessionBootstrapResponse(
                     accepted: false,
@@ -120,6 +124,7 @@ extension MirageHostService {
                     protocolMismatchHostVersion: Int(MirageKit.controlProtocolVersion),
                     protocolMismatchClientVersion: request.protocolVersion
                 ),
+                nil,
                 nil
             )
         }
@@ -165,7 +170,7 @@ extension MirageHostService {
             adaptiveFeedbackClassesSupported: acceptedAdaptiveFeedbackClasses(for: request),
             adaptiveLegacyFallbackMode: MirageAdaptiveGovernorProtocol.legacyFallbackMode
         )
-        return (response, mediaSecurity)
+        return (response, mediaSecurity, selectedMediaPacketFamily)
     }
 
     private func acceptedAdaptiveFeedbackClasses(for request: MirageSessionBootstrapRequest) -> [String] {

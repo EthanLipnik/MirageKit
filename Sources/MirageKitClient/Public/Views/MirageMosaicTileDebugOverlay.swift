@@ -81,9 +81,11 @@ public struct MirageMosaicTileDebugOverlayModel: Equatable, Sendable {
 
 public struct MirageMosaicTileDebugOverlay: View {
     private let tilePlan: MirageMosaicTilePlan?
+    private let showsLabels: Bool
 
-    public init(tilePlan: MirageMosaicTilePlan? = nil) {
+    public init(tilePlan: MirageMosaicTilePlan? = nil, showsLabels: Bool = false) {
         self.tilePlan = tilePlan
+        self.showsLabels = showsLabels
     }
 
     public var body: some View {
@@ -94,8 +96,20 @@ public struct MirageMosaicTileDebugOverlay: View {
             )
 
             ZStack(alignment: .topLeading) {
-                Path(model.contentRect)
-                    .stroke(.white.opacity(0.65), lineWidth: 1)
+                Canvas { context, _ in
+                    context.stroke(
+                        Path(model.contentRect),
+                        with: .color(.white.opacity(0.65)),
+                        lineWidth: 1
+                    )
+                    for tile in model.tiles {
+                        let color = Self.color(for: tile.semanticClass)
+                        let path = Path(tile.rect)
+                        context.fill(path, with: .color(color.opacity(0.12)))
+                        context.stroke(path, with: .color(color), lineWidth: 1.5)
+                    }
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
                 Text(model.epochLabel)
                     .font(.caption2.monospaced())
                     .padding(.horizontal, 5)
@@ -104,21 +118,21 @@ public struct MirageMosaicTileDebugOverlay: View {
                     .foregroundStyle(.white)
                     .position(x: model.contentRect.minX + 42, y: model.contentRect.minY + 13)
 
-                ForEach(model.tiles) { tile in
-                    Path(tile.rect)
-                        .stroke(color(for: tile.semanticClass), lineWidth: 1.5)
-                    Text(tile.label)
-                        .font(.caption2.monospaced())
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 3))
-                        .foregroundStyle(.white)
-                        .position(
-                            x: min(tile.rect.maxX - 42, tile.rect.minX + 54),
-                            y: tile.rect.minY + 12
-                        )
+                if showsLabels {
+                    ForEach(model.tiles) { tile in
+                        Text(tile.label)
+                            .font(.caption2.monospaced())
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(.white)
+                            .position(
+                                x: min(tile.rect.maxX - 42, tile.rect.minX + 54),
+                                y: tile.rect.minY + 12
+                            )
+                    }
                 }
             }
             .allowsHitTesting(false)
@@ -126,7 +140,7 @@ public struct MirageMosaicTileDebugOverlay: View {
         .allowsHitTesting(false)
     }
 
-    private func color(for semanticClass: MirageMosaicSemanticClass) -> Color {
+    private static func color(for semanticClass: MirageMosaicSemanticClass) -> Color {
         switch semanticClass {
         case .scrollView,
              .textViewport:

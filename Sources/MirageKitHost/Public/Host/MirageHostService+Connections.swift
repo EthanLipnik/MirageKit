@@ -292,6 +292,9 @@ extension MirageHostService {
             peerIdentityByClientID[client.id] = peerIdentity
             mediaSecurityByClientID[client.id] = responseResult.mediaSecurity
             mediaEncryptionEnabledByClientID[client.id] = responseResult.response.mediaEncryptionEnabled
+            if let selectedMediaPacketFamily = responseResult.selectedMediaPacketFamily {
+                negotiatedMediaPacketFamilyByClientID[client.id] = selectedMediaPacketFamily
+            }
             singleClientSessionID = sessionID
             streamRegistry.registerInputSession(sessionID, clientID: client.id)
 

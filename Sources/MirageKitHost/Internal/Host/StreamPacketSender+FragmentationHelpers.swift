@@ -78,7 +78,8 @@ extension StreamPacketSender {
             encodedAt: item.encodedAt,
             startedAt: startedAt,
             completedAt: completedAt,
-            deliveryMode: item.deliveryMode
+            deliveryMode: item.deliveryMode,
+            mosaicMediaUnitMetadata: item.mosaicMediaUnitMetadata
         ))
     }
 

@@ -126,6 +126,78 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         await sender.stop()
     }
 
+    @Test("Mosaic media-unit keyframes preserve sibling queued keyframes")
+    func mosaicMediaUnitKeyframesPreserveSiblingQueuedKeyframes() async throws {
+        let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let blockedFirstPacket = Locked(false)
+        let firstPacketGate = StreamPacketSenderSendGate()
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { packet, _, onComplete in
+                guard let frameNumber = Self.submittedFrameNumber(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(StreamPacketSenderSubmittedPacket(frameNumber: frameNumber))
+                }
+                let shouldBlock = blockedFirstPacket.withLock { didBlock in
+                    guard !didBlock, frameNumber == 300 else { return false }
+                    didBlock = true
+                    return true
+                }
+                if shouldBlock { firstPacketGate.wait() }
+                onComplete(nil)
+            }
+        )
+        defer { firstPacketGate.open() }
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 16),
+                streamID: 48,
+                frameNumber: 300,
+                sequenceNumberStart: 3000,
+                generation: generation
+            )
+        )
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 1)
+
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 48,
+                frameNumber: 310,
+                sequenceNumberStart: 3100,
+                generation: generation,
+                isKeyframe: true,
+                mosaicMediaUnitMetadata: Self.mosaicMediaUnitMetadata(mediaUnitIndex: 0, tileVersion: 1)
+            )
+        )
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 48,
+                frameNumber: 311,
+                sequenceNumberStart: 3110,
+                generation: generation,
+                isKeyframe: true,
+                mosaicMediaUnitMetadata: Self.mosaicMediaUnitMetadata(mediaUnitIndex: 1, tileVersion: 1)
+            )
+        )
+        firstPacketGate.open()
+
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 3)
+        let frameNumbers = submittedPackets.read { $0.map(\.frameNumber) }
+        #expect(frameNumbers == [300, 310, 311])
+        #expect(await (sender.telemetrySnapshot).stalePacketDrops == 0)
+
+        await sender.stop()
+    }
+
     @Test("Stale-generation keyframes do not supersede current recovery keyframes")
     func staleGenerationKeyframesDoNotSupersedeCurrentRecoveryKeyframes() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
@@ -201,6 +273,31 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         #expect(frameNumbers == [400, 401])
 
         await sender.stop()
+    }
+
+    private static func submittedFrameNumber(from packet: Data) -> UInt32? {
+        if let header = MirageWire.FrameHeader.deserialize(from: packet) {
+            return header.frameNumber
+        }
+        if let header = MirageWire.MirageMosaicPacketHeader.deserialize(from: packet) {
+            return header.unitFrameNumber
+        }
+        return nil
+    }
+
+    private static func mosaicMediaUnitMetadata(
+        mediaUnitIndex: UInt16,
+        tileVersion: UInt32
+    ) -> StreamPacketSender.MosaicMediaUnitMetadata {
+        StreamPacketSender.MosaicMediaUnitMetadata(
+            tilePlanEpoch: 1,
+            mediaEpoch: 1,
+            mediaUnitIndex: mediaUnitIndex,
+            tileIndex: mediaUnitIndex,
+            transportGroupIndex: mediaUnitIndex,
+            presentationGroupIndex: mediaUnitIndex,
+            tileVersion: tileVersion
+        )
     }
 }
 

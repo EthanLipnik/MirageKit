@@ -2020,7 +2020,8 @@ private extension StreamContext {
             dimensionToken: 0,
             encodedAt: now - 0.010,
             startedAt: now - 0.008,
-            completedAt: now
+            completedAt: now,
+            mosaicMediaUnitMetadata: nil
         ))
     }
 }

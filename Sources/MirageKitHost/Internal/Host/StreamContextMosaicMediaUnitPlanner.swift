@@ -15,6 +15,7 @@ struct StreamContextMosaicMediaUnitWorkItem: Sendable, Equatable {
     let plan: MirageMosaicTilePlan
     let tile: MirageMosaicTileDescriptor
     let codecUnit: MirageMosaicCodecUnitDescriptor
+    let mediaEpoch: UInt32
     let mediaUnitIndex: UInt16
     let tileIndex: UInt16
     let transportGroupIndex: UInt16
@@ -22,6 +23,7 @@ struct StreamContextMosaicMediaUnitWorkItem: Sendable, Equatable {
     let tileVersion: UInt32
     let dependencyVersion: UInt32?
     let isDirty: Bool
+    let isQualityRefresh: Bool
 
     var sourceCGRect: CGRect {
         CGRect(
@@ -35,7 +37,7 @@ struct StreamContextMosaicMediaUnitWorkItem: Sendable, Equatable {
     func senderMetadata(unitFrameNumber: UInt32) -> StreamPacketSender.MosaicMediaUnitMetadata {
         StreamPacketSender.MosaicMediaUnitMetadata(
             tilePlanEpoch: plan.epoch,
-            mediaEpoch: unitFrameNumber,
+            mediaEpoch: mediaEpoch,
             mediaUnitIndex: mediaUnitIndex,
             tileIndex: tileIndex,
             transportGroupIndex: transportGroupIndex,
@@ -44,13 +46,92 @@ struct StreamContextMosaicMediaUnitWorkItem: Sendable, Equatable {
             dependencyVersion: dependencyVersion
         )
     }
+
+    func replacingDependencyVersion(
+        _ dependencyVersion: UInt32?
+    ) -> StreamContextMosaicMediaUnitWorkItem {
+        StreamContextMosaicMediaUnitWorkItem(
+            plan: plan,
+            tile: tile,
+            codecUnit: codecUnit,
+            mediaEpoch: mediaEpoch,
+            mediaUnitIndex: mediaUnitIndex,
+            tileIndex: tileIndex,
+            transportGroupIndex: transportGroupIndex,
+            presentationGroupIndex: presentationGroupIndex,
+            tileVersion: tileVersion,
+            dependencyVersion: dependencyVersion,
+            isDirty: isDirty,
+            isQualityRefresh: isQualityRefresh
+        )
+    }
+}
+
+struct StreamContextMosaicEncodedDependencyTracker: Sendable {
+    private var activePlanEpoch: UInt32?
+    private var sentTileVersionsByMediaUnitIndex: [UInt16: UInt32] = [:]
+    private var inFlightTileVersionsByMediaUnitIndex: [UInt16: UInt32] = [:]
+
+    mutating func reset() {
+        activePlanEpoch = nil
+        sentTileVersionsByMediaUnitIndex.removeAll(keepingCapacity: false)
+        inFlightTileVersionsByMediaUnitIndex.removeAll(keepingCapacity: false)
+    }
+
+    mutating func workItemForEncoding(
+        _ workItem: StreamContextMosaicMediaUnitWorkItem,
+        forceKeyframe: Bool
+    ) -> (workItem: StreamContextMosaicMediaUnitWorkItem, shouldForceKeyframe: Bool)? {
+        resetForPlanEpochIfNeeded(workItem.plan.epoch)
+
+        if forceKeyframe {
+            inFlightTileVersionsByMediaUnitIndex[workItem.mediaUnitIndex] = nil
+        } else if inFlightTileVersionsByMediaUnitIndex[workItem.mediaUnitIndex] != nil {
+            return nil
+        }
+
+        let dependencyVersion = forceKeyframe ? nil : sentTileVersionsByMediaUnitIndex[workItem.mediaUnitIndex]
+        let shouldForceKeyframe = forceKeyframe || dependencyVersion == nil
+        inFlightTileVersionsByMediaUnitIndex[workItem.mediaUnitIndex] = workItem.tileVersion
+        return (
+            workItem.replacingDependencyVersion(shouldForceKeyframe ? nil : dependencyVersion),
+            shouldForceKeyframe
+        )
+    }
+
+    mutating func noteTransportCompleted(_ metadata: StreamPacketSender.MosaicMediaUnitMetadata, didSend: Bool) {
+        resetForPlanEpochIfNeeded(metadata.tilePlanEpoch)
+        if inFlightTileVersionsByMediaUnitIndex[metadata.mediaUnitIndex] == metadata.tileVersion {
+            inFlightTileVersionsByMediaUnitIndex[metadata.mediaUnitIndex] = nil
+        }
+        if didSend {
+            sentTileVersionsByMediaUnitIndex[metadata.mediaUnitIndex] = metadata.tileVersion
+        } else {
+            sentTileVersionsByMediaUnitIndex[metadata.mediaUnitIndex] = nil
+        }
+    }
+
+    mutating func noteEncodingAbandoned(_ workItem: StreamContextMosaicMediaUnitWorkItem) {
+        resetForPlanEpochIfNeeded(workItem.plan.epoch)
+        if inFlightTileVersionsByMediaUnitIndex[workItem.mediaUnitIndex] == workItem.tileVersion {
+            inFlightTileVersionsByMediaUnitIndex[workItem.mediaUnitIndex] = nil
+        }
+    }
+
+    private mutating func resetForPlanEpochIfNeeded(_ planEpoch: UInt32) {
+        guard activePlanEpoch != planEpoch else { return }
+        activePlanEpoch = planEpoch
+        sentTileVersionsByMediaUnitIndex.removeAll(keepingCapacity: false)
+        inFlightTileVersionsByMediaUnitIndex.removeAll(keepingCapacity: false)
+    }
 }
 
 struct StreamContextMosaicMediaUnitPlanner: Sendable {
     func plannedUnits(
         plan: MirageMosaicTilePlan,
         summary: MirageMosaicEpochSummary?,
-        includeCleanUnits: Bool = false
+        includeCleanUnits: Bool = false,
+        qualityRefreshTileIDs: Set<MirageMosaicTileID> = []
     ) -> [StreamContextMosaicMediaUnitWorkItem] {
         guard !plan.tiles.isEmpty,
               !plan.codecUnits.isEmpty else {
@@ -78,6 +159,7 @@ struct StreamContextMosaicMediaUnitPlanner: Sendable {
             let unitTileIDs = unit.coalescedTileIDs.isEmpty ? [unit.tileID] : unit.coalescedTileIDs
             let isDirty = unitTileIDs.contains { dirtyTileIDs.contains($0) }
             guard isDirty || includeCleanUnits else { return nil }
+            let isQualityRefresh = unitTileIDs.contains { qualityRefreshTileIDs.contains($0) }
 
             let tileVersion = Self.tileVersion(
                 tileIDs: unitTileIDs,
@@ -92,13 +174,15 @@ struct StreamContextMosaicMediaUnitPlanner: Sendable {
                 plan: plan,
                 tile: tile,
                 codecUnit: unit,
+                mediaEpoch: summary?.frameNumber ?? tileVersion,
                 mediaUnitIndex: mediaUnitIndex,
                 tileIndex: tileIndex,
                 transportGroupIndex: transportGroupIndex,
                 presentationGroupIndex: presentationGroupIndex,
                 tileVersion: tileVersion,
                 dependencyVersion: dependencyVersion,
-                isDirty: isDirty
+                isDirty: isDirty,
+                isQualityRefresh: isQualityRefresh
             )
         }
 

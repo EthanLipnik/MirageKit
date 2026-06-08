@@ -293,6 +293,10 @@ extension StreamPacketSender {
         let deliveryMode: HostFrameDeliveryMode
         let mosaicMediaUnitMetadata: MosaicMediaUnitMetadata?
 
+        var isMosaicMediaUnit: Bool {
+            mosaicMediaUnitMetadata != nil
+        }
+
         init(
             encodedData: Data,
             frameByteCount: Int,
@@ -497,6 +501,7 @@ extension StreamPacketSender {
         let startedAt: CFAbsoluteTime
         let completedAt: CFAbsoluteTime
         let deliveryMode: HostFrameDeliveryMode
+        let mosaicMediaUnitMetadata: MosaicMediaUnitMetadata?
 
         init(
             streamID: StreamID,
@@ -511,7 +516,8 @@ extension StreamPacketSender {
             encodedAt: CFAbsoluteTime,
             startedAt: CFAbsoluteTime,
             completedAt: CFAbsoluteTime,
-            deliveryMode: HostFrameDeliveryMode = .realtime
+            deliveryMode: HostFrameDeliveryMode = .realtime,
+            mosaicMediaUnitMetadata: MosaicMediaUnitMetadata? = nil
         ) {
             self.streamID = streamID
             self.frameNumber = frameNumber
@@ -526,6 +532,7 @@ extension StreamPacketSender {
             self.startedAt = startedAt
             self.completedAt = completedAt
             self.deliveryMode = deliveryMode
+            self.mosaicMediaUnitMetadata = mosaicMediaUnitMetadata
         }
 
         var sendCompletionMs: Double {

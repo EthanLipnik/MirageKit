@@ -242,7 +242,8 @@ extension MirageHostService {
                     virtualDisplaySnapshot: captureContext.virtualDisplaySnapshot ??
                         restartSnapshot.virtualDisplaySnapshot,
                     usesDisplayRefreshCadence: captureContext.usesDisplayRefreshCadence ??
-                        restartSnapshot.usesDisplayRefreshCadence
+                        restartSnapshot.usesDisplayRefreshCadence,
+                    useMosaic: negotiatedMediaPacketFamilyByClientID[clientContext.client.id] == .mosaicMediaUnit
                 )
             )
             await replacementContext.seedReplacementPipelineTokens(

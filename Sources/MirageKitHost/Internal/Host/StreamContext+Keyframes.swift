@@ -888,7 +888,8 @@ extension StreamContext {
             info: CapturedFrameInfo(
                 contentRect: lastCapturedFrame.info.contentRect,
                 dirtyPercentage: 0,
-                isIdleFrame: false
+                isIdleFrame: false,
+                isSynthetic: true
             ),
             backingSampleBuffer: lastCapturedFrame.backingSampleBuffer
         )

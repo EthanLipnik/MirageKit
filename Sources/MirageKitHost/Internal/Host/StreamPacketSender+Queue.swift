@@ -139,6 +139,7 @@ extension StreamPacketSender {
         for queuedItem in queuedWorkItems {
             let queuedFrame = queuedItem.item
             let isSupersededKeyframe = queuedFrame.isKeyframe &&
+                !queuedFrame.isMosaicMediaUnit &&
                 queuedFrame.generation == generation &&
                 queuedFrame.frameNumber < newestFrameNumber
             if isSupersededKeyframe {

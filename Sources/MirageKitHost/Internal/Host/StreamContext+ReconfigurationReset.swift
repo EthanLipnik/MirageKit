@@ -153,10 +153,15 @@ extension StreamContext {
         mosaicDirtyTileTracker.reset()
         mosaicMediaUnitCropper.reset()
         mosaicSemanticSnapshotCache.reset()
+        mosaicEncodedDependencyTracker.reset()
+        mosaicTileQualityGovernor.reset()
         Task { await mosaicCodecUnitEncoderPool.stopAll() }
         latestMosaicDirtyTileSummary = nil
         latestMosaicTilePlan = nil
         latestMosaicMediaUnitWorkItems.removeAll(keepingCapacity: false)
+        latestMosaicQualityRefreshTileIDs.removeAll(keepingCapacity: false)
+        lastDispatchedMosaicTilePlanEpoch = nil
+        mosaicQualityRefreshTileCursor = 0
         freshnessBurstActive = false
         startupFrameCachingEnabled = false
     }

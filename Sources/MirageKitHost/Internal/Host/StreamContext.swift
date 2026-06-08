@@ -125,10 +125,15 @@ actor StreamContext {
     let mosaicCodecUnitEncoderPool = StreamContextMosaicCodecUnitEncoderPool()
     let mosaicEncodingCallbackSequencer = StreamEncodingCallbackSequencer()
     let mosaicSemanticSnapshotCache = StreamContextMosaicSemanticSnapshotCache()
+    var mosaicEncodedDependencyTracker = StreamContextMosaicEncodedDependencyTracker()
+    var mosaicTileQualityGovernor = StreamContextMosaicTileQualityGovernor()
     var latestMosaicDirtyTileSummary: MirageMosaicEpochSummary?
     var latestMosaicTilePlan: MirageMosaicTilePlan?
     var latestMosaicMediaUnitWorkItems: [StreamContextMosaicMediaUnitWorkItem] = []
+    var latestMosaicQualityRefreshTileIDs: Set<MirageMosaicTileID> = []
+    var lastDispatchedMosaicTilePlanEpoch: UInt32?
     var lastMosaicDirtyTileLogTime: CFAbsoluteTime = 0
+    var mosaicQualityRefreshTileCursor: Int = 0
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (MirageWire.StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
@@ -446,6 +451,8 @@ actor StreamContext {
     var requestedStreamScale: CGFloat
     /// When false, runtime quality adjustments remain fixed at derived baseline quality.
     var runtimeQualityAdjustmentEnabled: Bool
+    /// Whether this stream uses the Mosaic tiled media path. Desktop-only; defaults off (Classic full-frame).
+    let useMosaic: Bool
     /// Whether the client supplied an adaptive ceiling before host startup budgeting normalized it.
     let clientRequestedBitrateAdaptationCeiling: Bool
     /// When true, encoder overload may temporarily lower quality below the manual readability floor.
@@ -498,6 +505,7 @@ actor StreamContext {
         additionalFrameFlags: MirageWire.FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
         encoderCatchUpQualityAdjustmentEnabled: Bool = true,
+        useMosaic: Bool = false,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
@@ -580,6 +588,7 @@ actor StreamContext {
         self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         clientRequestedBitrateAdaptationCeiling = bitrateAdaptationCeiling != nil
         self.encoderCatchUpQualityAdjustmentEnabled = encoderCatchUpQualityAdjustmentEnabled
+        self.useMosaic = useMosaic
         self.disableResolutionCap = disableResolutionCap
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight

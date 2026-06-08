@@ -276,7 +276,8 @@ async throws {
             desktopStartTime: desktopStartTime,
             captureDisplayP3CoverageStatus: captureDisplayP3CoverageStatus,
             virtualDisplaySnapshot: virtualDisplaySnapshot,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            useMosaic: negotiatedMediaPacketFamilyByClientID[clientContext.client.id] == .mosaicMediaUnit
         )
     )
     MirageLogger.host(

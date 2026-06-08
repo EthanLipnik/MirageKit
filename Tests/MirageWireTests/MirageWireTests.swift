@@ -21,9 +21,9 @@ struct MirageWireTests {
                 MirageWireProtocol.preRearchitectureCompatibilityVersion
         )
         #expect(MirageWireProtocol.currentDiscoveryVersion == 260604)
-        #expect(MirageWireProtocol.currentControlVersion == 260604)
+        #expect(MirageWireProtocol.currentControlVersion == 260605)
         #expect(MirageWireProtocol.currentMediaPacketVersion == 260604)
-        #expect(MirageWireProtocol.currentControlVersion == MirageWireProtocol.preRearchitectureCompatibilityVersion)
+        #expect(MirageWireProtocol.currentControlVersion == MirageWireProtocol.rearchitectureCutoverVersion)
         #expect(
             MirageWireProtocol.currentMediaPacketVersion ==
                 MirageWireProtocol.preRearchitectureCompatibilityVersion

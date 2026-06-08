@@ -141,8 +141,8 @@ struct ClientSoftwareUpdateHandlingTests {
 
         #expect(request.protocolVersion == 7)
         #expect(defaultRequest.protocolVersion == Int(MirageKit.controlProtocolVersion))
-        #expect(defaultRequest.clientCapabilities?.mediaPacketFamilies == [.mosaicMediaUnit])
-        #expect(defaultRequest.clientCapabilities?.mediaTopologies == [.mosaic])
+        #expect(defaultRequest.clientCapabilities?.mediaPacketFamilies == [.fixedHeaderFullFrame])
+        #expect(defaultRequest.clientCapabilities?.mediaTopologies == [.singleUnit])
     }
 
     @MainActor
