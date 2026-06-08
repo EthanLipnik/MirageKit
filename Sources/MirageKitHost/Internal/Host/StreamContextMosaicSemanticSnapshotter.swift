@@ -115,13 +115,44 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
         let visibleWindows = windows
             .filter { $0.isOnScreen && $0.alpha > 0.05 && !$0.frame.isEmpty }
             .sorted { lhs, rhs in lhs.orderIndex < rhs.orderIndex }
+        let hasFocusedContentWindow = visibleWindows.contains {
+            ($0.isFocused || $0.isMain) && isContentWindow($0)
+        }
+        var isTransientSystemState = false
 
         for window in visibleWindows {
-            guard pixelRect(window.frame, logicalSize: logicalSize, captureBounds: captureBounds) != nil else {
+            guard let windowRect = pixelRect(
+                window.frame,
+                logicalSize: logicalSize,
+                captureBounds: captureBounds
+            ) else {
                 continue
             }
             let windowTileID = MirageMosaicTileID(rawValue: "window-\(window.windowID)")
+            if isTransientSystemWindow(window, windowRect: windowRect, logicalSize: logicalSize) {
+                isTransientSystemState = true
+            }
 
+            if let chromeClass = semanticClass(
+                forSystemWindow: window,
+                windowRect: windowRect,
+                logicalSize: logicalSize
+            ) {
+                candidates.append(StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "\(chromeClass.rawValue)-window-\(window.windowID)"),
+                    rect: windowRect,
+                    semanticClass: chromeClass,
+                    priority: priority(for: chromeClass, parentWindow: window),
+                    codecStrategy: codecStrategy(),
+                    commitPolicy: commitPolicy(for: chromeClass),
+                    isReliable: true
+                ))
+            }
+
+            guard isContentWindow(window),
+                  !hasFocusedContentWindow || window.isFocused || window.isMain else {
+                continue
+            }
             for child in window.children {
                 guard let childRect = pixelRect(
                         child.frame,
@@ -129,7 +160,9 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
                         captureBounds: captureBounds
                       ),
                       let childClass = semanticClass(
-                        for: child
+                        for: child,
+                        childRect: childRect,
+                        parentWindowRect: windowRect
                       ) else {
                     continue
                 }
@@ -153,7 +186,7 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
 
         return StreamContextMosaicSemanticSnapshot(
             candidates: normalizedCandidates(candidates),
-            isTransientSystemState: visibleWindows.contains { isTransientSystemWindow($0) }
+            isTransientSystemState: isTransientSystemState
         )
     }
 
@@ -188,35 +221,127 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
         switch role {
         case "AXScrollArea":
             .scrollView
-        case "AXTextArea",
-             "AXTextField":
+        case "AXTextArea":
             .textViewport
         case "AXTable",
              "AXOutline",
              "AXList",
              "AXBrowser":
             .scrollView
+        case "AXToolbar":
+            .toolbar
+        case "AXMenuBar":
+            .menuBar
+        case "AXMenu":
+            .menu
         default:
             nil
         }
     }
 
     private func semanticClass(
-        for child: StreamContextMosaicSemanticElementObservation
+        for child: StreamContextMosaicSemanticElementObservation,
+        childRect: MiragePixelRect,
+        parentWindowRect: MiragePixelRect
     ) -> MirageMosaicSemanticClass? {
         switch child.role {
         case "AXScrollArea":
+            if isSidebar(childRect, in: parentWindowRect) {
+                return .sidebar
+            }
             return .scrollView
         case "AXTable",
              "AXOutline",
              "AXList",
              "AXBrowser":
+            if isSidebar(childRect, in: parentWindowRect) {
+                return .sidebar
+            }
             return .scrollView
-        case "AXTextArea",
-             "AXTextField":
+        case "AXTextArea":
             return .textViewport
+        case "AXTextField":
+            return nil
+        case "AXToolbar":
+            return .toolbar
+        case "AXMenuBar":
+            return .menuBar
+        case "AXMenu":
+            return .menu
         default:
             return semanticClass(forAXRole: child.role)
+        }
+    }
+
+    private func semanticClass(
+        forSystemWindow window: StreamContextMosaicSemanticWindowObservation,
+        windowRect: MiragePixelRect,
+        logicalSize: MiragePixelSize
+    ) -> MirageMosaicSemanticClass? {
+        guard !isTransientSystemWindow(window, windowRect: windowRect, logicalSize: logicalSize) else { return nil }
+        if window.ownerName == "Dock", isDock(windowRect, in: logicalSize) {
+            return .dock
+        }
+        if isMenuBar(window, windowRect: windowRect, logicalSize: logicalSize) {
+            return .menuBar
+        }
+        return nil
+    }
+
+    private func isSidebar(_ rect: MiragePixelRect, in parent: MiragePixelRect) -> Bool {
+        guard parent.width > 0, parent.height > 0 else { return false }
+        let maxSidebarWidth = max(160, parent.width * 38 / 100)
+        let minSidebarHeight = max(120, parent.height / 3)
+        let edgeTolerance = max(24, parent.width / 25)
+        let touchesLeadingEdge = rect.x <= parent.x + edgeTolerance
+        let touchesTrailingEdge = rect.x + rect.width >= parent.x + parent.width - edgeTolerance
+        return rect.width <= maxSidebarWidth &&
+            rect.height >= minSidebarHeight &&
+            (touchesLeadingEdge || touchesTrailingEdge)
+    }
+
+    private func isDock(_ rect: MiragePixelRect, in logicalSize: MiragePixelSize) -> Bool {
+        guard !logicalSize.isEmpty else { return false }
+        let maxThickness = max(80, min(logicalSize.width, logicalSize.height) / 4)
+        let edgeTolerance = 12
+        let touchesHorizontalEdge = rect.y <= edgeTolerance ||
+            rect.y + rect.height >= logicalSize.height - edgeTolerance
+        let touchesVerticalEdge = rect.x <= edgeTolerance ||
+            rect.x + rect.width >= logicalSize.width - edgeTolerance
+        let isStrip = rect.height <= maxThickness || rect.width <= maxThickness
+        return isStrip &&
+            (touchesHorizontalEdge || touchesVerticalEdge) &&
+            rect.width >= 48 &&
+            rect.height >= 48
+    }
+
+    private func isMenuBar(
+        _ window: StreamContextMosaicSemanticWindowObservation,
+        windowRect: MiragePixelRect,
+        logicalSize: MiragePixelSize
+    ) -> Bool {
+        guard window.ownerName == "SystemUIServer" || window.ownerName == "Window Server" else {
+            return false
+        }
+        let maxHeight = max(24, logicalSize.height / 18)
+        return windowRect.y <= 8 &&
+            windowRect.width >= logicalSize.width * 2 / 3 &&
+            windowRect.height >= 12 &&
+            windowRect.height <= maxHeight
+    }
+
+    private func isContentWindow(_ window: StreamContextMosaicSemanticWindowObservation) -> Bool {
+        guard window.layer == 0 else { return false }
+        return switch window.ownerName {
+        case "Control Center",
+             "Dock",
+             "loginwindow",
+             "SystemUIServer",
+             "Window Server",
+             "WindowManager":
+            false
+        default:
+            true
         }
     }
 
@@ -226,8 +351,17 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
     ) -> MirageMosaicTilePriority {
         switch semanticClass {
         case .scrollView,
-             .textViewport:
+             .textViewport,
+             .sidebar:
             parentWindow.isFocused || parentWindow.isMain ? .focusedContent : .semanticContent
+        case .menuBar,
+             .dock,
+             .toolbar,
+             .chromeAtlas,
+             .popover,
+             .sheet,
+             .menu:
+            .transientChrome
         default:
             .semanticContent
         }
@@ -259,16 +393,24 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
     private func commitPolicy(for semanticClass: MirageMosaicSemanticClass) -> MirageMosaicCommitPolicy {
         switch semanticClass {
         case .scrollView,
-             .textViewport:
+             .textViewport,
+             .sidebar:
             .atomic
         default:
             .independent
         }
     }
 
-    private func isTransientSystemWindow(_ window: StreamContextMosaicSemanticWindowObservation) -> Bool {
+    private func isTransientSystemWindow(
+        _ window: StreamContextMosaicSemanticWindowObservation,
+        windowRect: MiragePixelRect,
+        logicalSize: MiragePixelSize
+    ) -> Bool {
         guard window.ownerName == "Dock" else { return false }
-        return window.layer > 10 && window.frame.width > 200 && window.frame.height > 200
+        let windowArea = windowRect.width * windowRect.height
+        let displayArea = max(1, logicalSize.width * logicalSize.height)
+        return window.layer > 10 &&
+            Double(windowArea) / Double(displayArea) > 0.75
     }
 
     private func normalizedCandidates(
@@ -293,14 +435,34 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
     }
 
     private func isUsefulCandidate(_ candidate: StreamContextMosaicSemanticCandidate) -> Bool {
-        guard candidate.rect.width >= 48,
-              candidate.rect.height >= 32 else {
-            return false
-        }
         switch candidate.semanticClass {
-        case .scrollView,
-             .textViewport:
-            return candidate.rect.width * candidate.rect.height >= 4_096
+        case .scrollView:
+            return candidate.rect.width >= 160 &&
+                candidate.rect.height >= 120 &&
+                candidate.rect.width * candidate.rect.height >= 30_000
+        case .textViewport:
+            return candidate.rect.width >= 320 &&
+                candidate.rect.height >= 160 &&
+                candidate.rect.width * candidate.rect.height >= 80_000
+        case .sidebar:
+            return candidate.rect.width >= 80 &&
+                candidate.rect.height >= 120 &&
+                candidate.rect.width * candidate.rect.height >= 12_000
+        case .toolbar:
+            return candidate.rect.width >= 128 &&
+                candidate.rect.height >= 24
+        case .menuBar:
+            return candidate.rect.width >= 256 &&
+                candidate.rect.height >= 12 &&
+                candidate.rect.height <= 96
+        case .dock:
+            return candidate.rect.width >= 48 &&
+                candidate.rect.height >= 48
+        case .popover,
+             .sheet,
+             .menu:
+            return candidate.rect.width >= 96 &&
+                candidate.rect.height >= 48
         default:
             return false
         }
@@ -315,14 +477,15 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
             other.id != candidate.id &&
                 isPaneClass(other.semanticClass) &&
                 Self.contains(candidate.rect, other.rect) &&
-                Self.overlapRatio(candidate.rect, other.rect) > 0.40
+                Self.coverageRatio(candidate.rect, coveredBy: other.rect) > 0.65
         }
     }
 
     private func isPaneClass(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
         switch semanticClass {
         case .scrollView,
-             .textViewport:
+             .textViewport,
+             .sidebar:
             true
         default:
             false
@@ -351,8 +514,20 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
             0
         case .scrollView:
             1
-        default:
+        case .sidebar:
+            2
+        case .toolbar:
+            3
+        case .menuBar,
+             .dock,
+             .chromeAtlas:
+            4
+        case .popover,
+             .sheet,
+             .menu:
             5
+        default:
+            6
         }
     }
 
@@ -370,7 +545,8 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
     private static func isPaneLike(_ semanticClass: MirageMosaicSemanticClass) -> Bool {
         switch semanticClass {
         case .scrollView,
-             .textViewport:
+             .textViewport,
+             .sidebar:
             true
         default:
             false
@@ -410,6 +586,13 @@ struct StreamContextMosaicSemanticSnapshotBuilder: Sendable {
         let intersectionArea = intersection.width * intersection.height
         let smallerArea = max(1, min(lhs.width * lhs.height, rhs.width * rhs.height))
         return Double(intersectionArea) / Double(smallerArea)
+    }
+
+    private static func coverageRatio(_ rect: MiragePixelRect, coveredBy other: MiragePixelRect) -> Double {
+        guard let intersection = intersection(rect, other) else { return 0 }
+        let intersectionArea = intersection.width * intersection.height
+        let rectArea = max(1, rect.width * rect.height)
+        return Double(intersectionArea) / Double(rectArea)
     }
 
     private static func intersection(_ lhs: MiragePixelRect, _ rhs: MiragePixelRect) -> MiragePixelRect? {

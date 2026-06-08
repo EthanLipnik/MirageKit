@@ -240,6 +240,111 @@ struct StreamContextMosaicDirtyTileTrackerTests {
         #expect(churned.dirtyTileCount == 0)
     }
 
+    @Test("Tracker ignores scroll and text viewport role churn for the same pane")
+    func trackerIgnoresScrollAndTextViewportRoleChurnForSamePane() throws {
+        var tracker = StreamContextMosaicDirtyTileTracker()
+        let firstResult = tracker.record(StreamContextMosaicDirtyTileFrame(
+            logicalSize: MiragePixelSize(width: 3000, height: 1800),
+            codec: .hevc,
+            isIdleFrame: true,
+            frameNumber: 1,
+            semanticCandidates: [
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "editor-text"),
+                    rect: MiragePixelRect(x: 300, y: 200, width: 1800, height: 1200),
+                    semanticClass: .textViewport,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+            ]
+        ))
+        let first = try #require(firstResult)
+
+        let roleChangedResult = tracker.record(StreamContextMosaicDirtyTileFrame(
+            logicalSize: MiragePixelSize(width: 3000, height: 1800),
+            codec: .hevc,
+            isIdleFrame: true,
+            frameNumber: 2,
+            semanticCandidates: [
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "editor-scroll"),
+                    rect: MiragePixelRect(x: 300, y: 200, width: 1800, height: 1200),
+                    semanticClass: .scrollView,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+            ]
+        ))
+        let roleChanged = try #require(roleChangedResult)
+
+        #expect(roleChanged.plan.id == first.plan.id)
+        #expect(roleChanged.plan.epoch == first.plan.epoch)
+        #expect(roleChanged.dirtyTileCount == 0)
+    }
+
+    @Test("Tracker freezes current plan while system state is transient")
+    func trackerFreezesCurrentPlanWhileSystemStateIsTransient() throws {
+        var tracker = StreamContextMosaicDirtyTileTracker(
+            semanticPlanChangeStableFrameInterval: 1,
+            transientSemanticPlanChangeStableFrameInterval: 1
+        )
+        let firstResult = tracker.record(StreamContextMosaicDirtyTileFrame(
+            logicalSize: MiragePixelSize(width: 3000, height: 1800),
+            codec: .hevc,
+            isIdleFrame: true,
+            frameNumber: 1,
+            semanticCandidates: [
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "editor-scroll"),
+                    rect: MiragePixelRect(x: 300, y: 200, width: 1800, height: 1200),
+                    semanticClass: .scrollView,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+            ]
+        ))
+        let first = try #require(firstResult)
+
+        let transientResult = tracker.record(StreamContextMosaicDirtyTileFrame(
+            logicalSize: MiragePixelSize(width: 3000, height: 1800),
+            codec: .hevc,
+            isIdleFrame: true,
+            frameNumber: 20,
+            semanticCandidates: [
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "small-transient-field"),
+                    rect: MiragePixelRect(x: 620, y: 1320, width: 280, height: 44),
+                    semanticClass: .textViewport,
+                    priority: .focusedContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+                StreamContextMosaicSemanticCandidate(
+                    id: MirageMosaicTileID(rawValue: "stage-manager-pane"),
+                    rect: MiragePixelRect(x: 80, y: 300, width: 420, height: 900),
+                    semanticClass: .scrollView,
+                    priority: .semanticContent,
+                    commitPolicy: .atomic,
+                    isReliable: true
+                ),
+            ],
+            isTransientSystemState: true
+        ))
+        let transient = try #require(transientResult)
+
+        #expect(transient.plan.id == first.plan.id)
+        #expect(transient.plan.epoch == first.plan.epoch)
+        #expect(!transient.plan.tiles.contains {
+            $0.id == MirageMosaicTileID(rawValue: "small-transient-field")
+        })
+        #expect(!transient.plan.tiles.contains {
+            $0.id == MirageMosaicTileID(rawValue: "stage-manager-pane")
+        })
+    }
+
     @Test("Tracker defers semantic topology changes until stable")
     func trackerDefersSemanticTopologyChangesUntilStable() throws {
         var tracker = StreamContextMosaicDirtyTileTracker(

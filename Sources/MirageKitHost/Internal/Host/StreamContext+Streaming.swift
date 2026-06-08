@@ -343,7 +343,7 @@ extension StreamContext {
     ) async {
         let callbackSequencer = mosaicEncodingCallbackSequencer
         await encoder.startEncoding(
-            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime, finishFrame in
+            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime, timing, finishFrame in
                 Task(priority: .userInitiated) {
                     guard let self else {
                         finishFrame()
@@ -353,13 +353,7 @@ extension StreamContext {
                         encodedData: encodedData,
                         isKeyframe: isKeyframe,
                         presentationTime: presentationTime,
-                        timing: VideoEncoder.EncodedFrameTiming(
-                            frameNumber: 0,
-                            encodeDurationMs: 0,
-                            captureToCallbackMs: 0,
-                            captureDirtyPercentage: 0,
-                            captureIsIdleFrame: false
-                        ),
+                        timing: timing,
                         pinnedContentRect: unit.sourceCGRect,
                         logPrefix: "Mosaic unit",
                         callbackSequencer: callbackSequencer,
