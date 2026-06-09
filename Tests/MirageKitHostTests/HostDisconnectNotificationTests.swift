@@ -9,8 +9,10 @@
 
 #if os(macOS)
 @testable import MirageKit
+@testable import MirageKitClient
 @testable import MirageKitHost
 import Foundation
+import Network
 import Testing
 
 @Suite("Host Disconnect Notification", .serialized)
@@ -88,6 +90,101 @@ struct HostDisconnectNotificationTests {
         await clientControl.cancel()
         await serverControl.cancel()
         await pair.stop()
+    }
+
+    @MainActor
+    @Test("Trusted busy takeover disconnects old client and connects replacement")
+    func trustedBusyTakeoverDisconnectsOldClientAndConnectsReplacement() async throws {
+        let oldPair = try await makeLoopbackControlPair()
+        try await oldPair.startAuthenticatedSessions()
+
+        let oldServerControlTask = Task {
+            try await MirageControlChannel.accept(from: oldPair.server)
+        }
+        let oldClientControl = try await MirageControlChannel.open(on: oldPair.client)
+        let oldServerControl = try await oldServerControlTask.value
+
+        let hostID = UUID()
+        let host = MirageHostService(hostName: "Busy Takeover Host", deviceID: hostID)
+        let oldClient = MirageConnectedClient(
+            id: oldPair.clientHello.deviceID,
+            name: "Old iPad",
+            deviceType: .iPad,
+            connectedAt: Date(),
+            identityKeyID: "old-client-key"
+        )
+        let oldSessionID = oldPair.server.id
+        let oldClientContext = ClientContext(
+            sessionID: oldSessionID,
+            client: oldClient,
+            controlChannel: oldServerControl,
+            transferEngine: LoomTransferEngine(session: oldPair.server),
+            pathSnapshot: nil
+        )
+        host.connectedClients = [oldClient]
+        host.clientsBySessionID[oldSessionID] = oldClientContext
+        host.clientsByID[oldClient.id] = oldClientContext
+        host.singleClientSessionID = oldSessionID
+
+        let oldDisconnectTask = Task {
+            try await nextControlMessage(
+                from: oldClientControl,
+                matching: { $0.type == .disconnect }
+            )
+        }
+
+        let newPair = try await makeLoopbackControlPair()
+        try await newPair.startAuthenticatedSessions()
+        let clientService = MirageClientService(deviceName: "Replacement iPad")
+        let hostPeer = LoomPeer(
+            id: hostID,
+            name: "Busy Takeover Host",
+            deviceType: .mac,
+            endpoint: .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: 1),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: hostID,
+                deviceType: .mac
+            )
+        )
+
+        let hostTask = Task {
+            await host.handleIncomingSession(newPair.server)
+        }
+
+        do {
+            try await clientService.connect(
+                withEstablishedSession: newPair.client,
+                host: hostPeer,
+                requestTakeoverIfBusy: true
+            )
+            await hostTask.value
+
+            let disconnectMessage = try await oldDisconnectTask.value
+            let disconnect = try disconnectMessage.decode(DisconnectMessage.self)
+            #expect(disconnect.reason == .takenOver)
+            #expect(host.connectedClients.count == 1)
+            #expect(host.connectedClients.first?.id == newPair.clientHello.deviceID)
+            #expect(host.clientsByID[oldClient.id] == nil)
+            #expect(host.clientsByID[newPair.clientHello.deviceID]?.sessionID == newPair.server.id)
+            #expect(host.clientsBySessionID[newPair.server.id]?.client.id == newPair.clientHello.deviceID)
+            #expect(host.singleClientSessionID == newPair.server.id)
+            #expect(clientService.connectionState == .connected(host: "Busy Takeover Host"))
+        } catch {
+            oldDisconnectTask.cancel()
+            hostTask.cancel()
+            await oldClientControl.cancel()
+            await oldServerControl.cancel()
+            await oldPair.stop()
+            await newPair.stop()
+            throw error
+        }
+
+        await clientService.cancelConnectionImmediately()
+        await oldClientControl.cancel()
+        await oldServerControl.cancel()
+        await oldPair.stop()
+        await newPair.stop()
     }
 }
 #endif
