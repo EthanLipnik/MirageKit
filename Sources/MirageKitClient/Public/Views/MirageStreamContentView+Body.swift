@@ -73,6 +73,12 @@ private extension MirageStreamContentView {
             .onChange(of: localKeyboardOcclusionActive) {
                 handleLocalKeyboardOcclusionChanged()
             }
+            .onChange(of: softwareKeyboardVisible) {
+                handleSoftwareKeyboardVisibilityChangedForPresentation()
+            }
+            .onChange(of: keyboardAvoidanceEnabled) {
+                handleKeyboardAvoidanceEnabledChanged()
+            }
             .onChange(of: isCurrentStreamActive) {
                 scheduleFocusedInputCorrectionIfNeeded()
             }
@@ -343,9 +349,32 @@ private extension MirageStreamContentView {
     }
 
     func handleLocalKeyboardOcclusionChanged() {
+        guard keyboardAvoidanceEnabled else { return }
+
         if localKeyboardOcclusionActive {
             cancelPendingWindowDrivenResizeForLocalPresentation()
         } else {
+            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
+        }
+    }
+
+    func handleSoftwareKeyboardVisibilityChangedForPresentation() {
+        guard keyboardAvoidanceEnabled else { return }
+
+        if softwareKeyboardVisible {
+            cancelPendingWindowDrivenResizeForLocalPresentation()
+        } else if !localKeyboardOcclusionActive {
+            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
+        }
+    }
+
+    func handleKeyboardAvoidanceEnabledChanged() {
+        if keyboardAvoidanceEnabled {
+            if softwareKeyboardVisible || localKeyboardOcclusionActive {
+                cancelPendingWindowDrivenResizeForLocalPresentation()
+            }
+        } else {
+            localKeyboardOcclusionActive = false
             scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
         }
     }

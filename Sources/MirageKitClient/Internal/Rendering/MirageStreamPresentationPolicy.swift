@@ -9,6 +9,38 @@ import CoreGraphics
 import MirageKit
 
 enum MirageStreamPresentationPolicy {
+    static func keyboardOcclusionActive(
+        softwareKeyboardVisible: Bool,
+        localKeyboardOcclusionActive: Bool
+    )
+    -> Bool {
+        softwareKeyboardVisible || localKeyboardOcclusionActive
+    }
+
+    static func keyboardAvoidancePresentationActive(
+        keyboardAvoidanceEnabled: Bool,
+        softwareKeyboardVisible: Bool,
+        localKeyboardOcclusionActive: Bool
+    )
+    -> Bool {
+        keyboardAvoidanceEnabled &&
+            keyboardOcclusionActive(
+                softwareKeyboardVisible: softwareKeyboardVisible,
+                localKeyboardOcclusionActive: localKeyboardOcclusionActive
+            )
+    }
+
+    static func suppressesDesktopResizeForLocalPresentation(
+        isDesktopStream: Bool,
+        useHostResolution: Bool,
+        desktopCaptureSource: MirageDesktopCaptureSource,
+        desktopStreamAllowsClientResize: Bool
+    )
+    -> Bool {
+        isDesktopStream &&
+            (useHostResolution || desktopCaptureSource == .mainDisplayFallback || !desktopStreamAllowsClientResize)
+    }
+
     static func suppressesWindowDrivenResizeForLocalPresentation(
         isDesktopStream: Bool,
         useHostResolution: Bool,
@@ -19,11 +51,45 @@ enum MirageStreamPresentationPolicy {
         localKeyboardOcclusionActive: Bool
     )
     -> Bool {
-        let suppressesDesktopResize = isDesktopStream &&
-            (useHostResolution || desktopCaptureSource == .mainDisplayFallback || !desktopStreamAllowsClientResize)
-        let suppressesForKeyboard = keyboardAvoidanceEnabled &&
-            (softwareKeyboardVisible || localKeyboardOcclusionActive)
+        let suppressesDesktopResize = suppressesDesktopResizeForLocalPresentation(
+            isDesktopStream: isDesktopStream,
+            useHostResolution: useHostResolution,
+            desktopCaptureSource: desktopCaptureSource,
+            desktopStreamAllowsClientResize: desktopStreamAllowsClientResize
+        )
+        let suppressesForKeyboard = keyboardAvoidancePresentationActive(
+            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            localKeyboardOcclusionActive: localKeyboardOcclusionActive
+        )
         return suppressesDesktopResize || suppressesForKeyboard
+    }
+
+    static func prefersLocalAspectFitPresentation(
+        localPresentationPauseActive: Bool,
+        isDesktopStream: Bool,
+        useHostResolution: Bool,
+        desktopCaptureSource: MirageDesktopCaptureSource,
+        desktopStreamAllowsClientResize: Bool,
+        keyboardAvoidanceEnabled: Bool,
+        softwareKeyboardVisible: Bool,
+        localKeyboardOcclusionActive: Bool,
+        appStreamPrefersAspectFitPresentation: Bool
+    )
+    -> Bool {
+        localPresentationPauseActive ||
+            suppressesDesktopResizeForLocalPresentation(
+                isDesktopStream: isDesktopStream,
+                useHostResolution: useHostResolution,
+                desktopCaptureSource: desktopCaptureSource,
+                desktopStreamAllowsClientResize: desktopStreamAllowsClientResize
+            ) ||
+            keyboardAvoidancePresentationActive(
+                keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+                softwareKeyboardVisible: softwareKeyboardVisible,
+                localKeyboardOcclusionActive: localKeyboardOcclusionActive
+            ) ||
+            appStreamPrefersAspectFitPresentation
     }
 
     static func localAspectFitReferenceSize(

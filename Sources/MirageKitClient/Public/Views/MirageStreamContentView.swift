@@ -24,7 +24,7 @@ public struct MirageStreamContentView: View {
     /// UserDefaults key for enabling stream navigation gestures.
     public static let navigationGesturesDefaultsKey = "navigationGesturesEnabled"
 
-    /// UserDefaults key for whether local keyboard appearance resizes stream content.
+    /// UserDefaults key for whether local keyboard appearance avoids covering stream content.
     public static let keyboardAvoidanceDefaultsKey = "keyboardAvoidanceEnabled"
 
     /// Maximum wait for host acknowledgement after app-window resize dispatch.
@@ -99,7 +99,7 @@ public struct MirageStreamContentView: View {
     public let useHostResolution: Bool
     /// Whether macOS system shortcuts should be forwarded through Input Monitoring.
     public let macSystemShortcutForwardingEnabled: Bool
-    /// Whether keyboard occlusion should shrink local stream content on touch platforms.
+    /// Whether keyboard occlusion should make local presentation avoid the keyboard on touch platforms.
     public let keyboardAvoidanceEnabled: Bool
     /// Optional cap for drawable pixel dimensions.
     public let maxDrawableSize: CGSize?
@@ -318,13 +318,30 @@ extension MirageStreamContentView {
     /// Whether local presentation state should temporarily prevent window-size driven resize requests.
     var suppressesWindowDrivenResizeForLocalPresentation: Bool {
         localPresentationPauseActive ||
-            (isDesktopStream && (useHostResolution || clientService.desktopCaptureSource == .mainDisplayFallback)) ||
-            (keyboardAvoidanceEnabled && (softwareKeyboardVisible || localKeyboardOcclusionActive))
+            MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
+                isDesktopStream: isDesktopStream,
+                useHostResolution: useHostResolution,
+                desktopCaptureSource: clientService.desktopCaptureSource,
+                desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
+                keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+                softwareKeyboardVisible: softwareKeyboardVisible,
+                localKeyboardOcclusionActive: localKeyboardOcclusionActive
+            )
     }
 
     /// Whether the stream should preserve source aspect instead of resizing the host/window to fill.
     var prefersLocalAspectFitPresentation: Bool {
-        suppressesWindowDrivenResizeForLocalPresentation || appStreamPrefersAspectFitPresentation
+        MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
+            localPresentationPauseActive: localPresentationPauseActive,
+            isDesktopStream: isDesktopStream,
+            useHostResolution: useHostResolution,
+            desktopCaptureSource: clientService.desktopCaptureSource,
+            desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
+            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            localKeyboardOcclusionActive: localKeyboardOcclusionActive,
+            appStreamPrefersAspectFitPresentation: appStreamPrefersAspectFitPresentation
+        )
     }
 
     #if os(macOS)
