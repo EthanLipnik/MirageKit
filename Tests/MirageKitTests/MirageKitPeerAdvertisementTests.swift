@@ -47,6 +47,9 @@ struct MirageKitPeerAdvertisementTests {
         #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
         #expect(MiragePeerAdvertisementMetadata.supportsProRes4444(in: decoded) == false)
         #expect(MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
+        #expect(decoded.mirageOperatingSystemName == "macOS")
+        #expect(decoded.mirageOperatingSystemVersion == Self.currentOperatingSystemVersionString)
+        #expect(decoded.mirageOperatingSystemMajorVersion == ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
         #expect(decoded.mirageAcceptingConnections == true)
     }
 
@@ -342,5 +345,10 @@ struct MirageKitPeerAdvertisementTests {
 
         #expect(decoded.mirageAcceptingConnections == true)
         #expect(decoded.mirageVPNAccessEnabled == true)
+    }
+
+    private static var currentOperatingSystemVersionString: String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
     }
 }

@@ -13,6 +13,7 @@ import CoreVideo
 import Foundation
 import MirageKit
 
+@MainActor
 final class MirageSampleBufferPresenter: @unchecked Sendable {
     private struct PreparedSampleBuffer {
         let sampleBuffer: CMSampleBuffer
@@ -61,7 +62,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         self.displayLayer = displayLayer
     }
 
-    deinit {
+    isolated deinit {
         unregisterFrameListener(for: listenerStreamID)
     }
 

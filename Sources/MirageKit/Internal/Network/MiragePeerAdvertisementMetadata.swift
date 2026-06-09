@@ -67,6 +67,9 @@ package enum MiragePeerAdvertisementMetadata {
     private static let supportedColorDepthsKey = "mirage.color-depths"
     private static let supportsProRes4444Key = "mirage.supports-prores-4444"
     private static let maxFrameRateKey = "mirage.max-frame-rate"
+    private static let operatingSystemNameKey = "mirage.os.name"
+    private static let operatingSystemVersionKey = "mirage.os.version"
+    private static let operatingSystemMajorVersionKey = "mirage.os.major"
     private static let wifiSubnetSignaturesKey = "mirage.net.wifi"
     private static let wiredSubnetSignaturesKey = "mirage.net.wired"
     private static let localEndpointHintsKey = "mirage.net.lan-hints"
@@ -101,6 +104,21 @@ package enum MiragePeerAdvertisementMetadata {
         let normalizedColorDepths = supportedColorDepths.sorted { lhs, rhs in
             lhs.sortRank < rhs.sortRank
         }
+        var metadata = currentOperatingSystemMetadata(name: "macOS")
+        metadata.merge([
+            maxStreamsKey: "4",
+            acceptingConnectionsKey: acceptingConnections ? "1" : "0",
+            availabilityReasonKey: acceptingConnections ?
+                AvailabilityReason.available.rawValue :
+                AvailabilityReason.busy.rawValue,
+            vpnAccessEnabledKey: vpnAccessEnabled ? "1" : "0",
+            supportsHEVCKey: "1",
+            supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
+            supportedColorDepthsKey: normalizedColorDepths.map(\.rawValue).joined(separator: ","),
+            supportsProRes4444Key: supportsProRes4444 ? "1" : "0",
+            maxFrameRateKey: "120",
+        ]) { _, newValue in newValue }
+
         return LoomPeerAdvertisement(
             protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: deviceID,
@@ -110,19 +128,7 @@ package enum MiragePeerAdvertisementMetadata {
             iconName: iconName,
             machineFamily: machineFamily,
             hostName: hostName,
-            metadata: [
-                maxStreamsKey: "4",
-                acceptingConnectionsKey: acceptingConnections ? "1" : "0",
-                availabilityReasonKey: acceptingConnections ?
-                    AvailabilityReason.available.rawValue :
-                    AvailabilityReason.busy.rawValue,
-                vpnAccessEnabledKey: vpnAccessEnabled ? "1" : "0",
-                supportsHEVCKey: "1",
-                supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
-                supportedColorDepthsKey: normalizedColorDepths.map(\.rawValue).joined(separator: ","),
-                supportsProRes4444Key: supportsProRes4444 ? "1" : "0",
-                maxFrameRateKey: "120",
-            ]
+            metadata: metadata
         )
     }
 
@@ -132,12 +138,17 @@ package enum MiragePeerAdvertisementMetadata {
         identityKeyID: String,
         additionalMetadata: [String: String] = [:]
     ) -> LoomPeerAdvertisement {
-        LoomPeerAdvertisement(
+        var metadata = additionalMetadata
+        metadata.merge(currentOperatingSystemMetadata(name: currentClientOperatingSystemName)) { _, newValue in
+            newValue
+        }
+
+        return LoomPeerAdvertisement(
             protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: deviceID,
             identityKeyID: identityKeyID,
             deviceType: deviceType,
-            metadata: additionalMetadata
+            metadata: metadata
         )
     }
 
@@ -214,6 +225,24 @@ package enum MiragePeerAdvertisementMetadata {
 
     package static func maxFrameRate(from advertisement: LoomPeerAdvertisement) -> Int {
         intValue(maxFrameRateKey, from: advertisement, defaultValue: 120)
+    }
+
+    package static func operatingSystemName(in advertisement: LoomPeerAdvertisement) -> String? {
+        trimmedMetadataValue(operatingSystemNameKey, in: advertisement.metadata)
+    }
+
+    package static func operatingSystemVersion(in advertisement: LoomPeerAdvertisement) -> String? {
+        trimmedMetadataValue(operatingSystemVersionKey, in: advertisement.metadata)
+    }
+
+    package static func operatingSystemMajorVersion(in advertisement: LoomPeerAdvertisement) -> Int? {
+        guard let rawValue = trimmedMetadataValue(
+            operatingSystemMajorVersionKey,
+            in: advertisement.metadata
+        ) else {
+            return nil
+        }
+        return Int(rawValue)
     }
 
     package static func updatingAvailability(
@@ -421,6 +450,31 @@ package enum MiragePeerAdvertisementMetadata {
             !(firstOctet == 169 && secondOctet == 254)
     }
 
+    private static var currentClientOperatingSystemName: String {
+        #if os(macOS)
+        "macOS"
+        #elseif os(iOS)
+        "iOS"
+        #elseif os(visionOS)
+        "visionOS"
+        #else
+        "unknown"
+        #endif
+    }
+
+    private static func currentOperatingSystemMetadata(name: String) -> [String: String] {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return [
+            operatingSystemNameKey: name,
+            operatingSystemVersionKey: operatingSystemVersionString(version),
+            operatingSystemMajorVersionKey: String(version.majorVersion),
+        ]
+    }
+
+    private static func operatingSystemVersionString(_ version: OperatingSystemVersion) -> String {
+        "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+    }
+
     private static func intValue(
         _ key: String,
         from advertisement: LoomPeerAdvertisement,
@@ -429,6 +483,17 @@ package enum MiragePeerAdvertisementMetadata {
         guard let rawValue = advertisement.metadata[key],
               let value = Int(rawValue) else {
             return defaultValue
+        }
+        return value
+    }
+
+    private static func trimmedMetadataValue(
+        _ key: String,
+        in metadata: [String: String]
+    ) -> String? {
+        guard let value = metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
         }
         return value
     }

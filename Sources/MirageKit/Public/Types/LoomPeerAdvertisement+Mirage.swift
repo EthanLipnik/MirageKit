@@ -75,6 +75,21 @@ public extension LoomPeerAdvertisement {
         MiragePeerAdvertisementMetadata.maxFrameRate(from: self)
     }
 
+    /// Operating system name advertised by the peer, if available.
+    var mirageOperatingSystemName: String? {
+        MiragePeerAdvertisementMetadata.operatingSystemName(in: self)
+    }
+
+    /// Operating system version advertised by the peer, if available.
+    var mirageOperatingSystemVersion: String? {
+        MiragePeerAdvertisementMetadata.operatingSystemVersion(in: self)
+    }
+
+    /// Operating system major version advertised by the peer, if available.
+    var mirageOperatingSystemMajorVersion: Int? {
+        MiragePeerAdvertisementMetadata.operatingSystemMajorVersion(in: self)
+    }
+
     /// Bounded local-network endpoint hints advertised by the host.
     var mirageLocalNetworkEndpointHints: [MirageLocalNetworkEndpointHint] {
         MiragePeerAdvertisementMetadata.localEndpointHints(from: self)

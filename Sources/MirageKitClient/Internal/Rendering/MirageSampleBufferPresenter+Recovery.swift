@@ -15,9 +15,10 @@ extension MirageSampleBufferPresenter {
         guard let streamID else { return }
         listenerStreamID = streamID
         MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: self) { [weak self] in
-            guard let self else { return }
             if Thread.isMainThread {
-                self.onFrameAvailable?()
+                MainActor.assumeIsolated {
+                    self?.onFrameAvailable?()
+                }
             } else {
                 Task { @MainActor [weak self] in
                     self?.onFrameAvailable?()
@@ -26,9 +27,10 @@ extension MirageSampleBufferPresenter {
         }
         if onPresentationRecoveryRequested != nil {
             MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: self) { [weak self] in
-                guard let self else { return }
                 if Thread.isMainThread {
-                    self.onPresentationRecoveryRequested?()
+                    MainActor.assumeIsolated {
+                        self?.onPresentationRecoveryRequested?()
+                    }
                 } else {
                     Task { @MainActor [weak self] in
                         self?.onPresentationRecoveryRequested?()
