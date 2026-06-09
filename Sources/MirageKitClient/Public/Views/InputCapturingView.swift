@@ -252,7 +252,9 @@ public class InputCapturingView: UIView {
     }
 
     var usesVirtualTrackpad: Bool { directTouchInputMode == .dragCursor }
-    var usesVisibleVirtualCursor: Bool { usesVirtualTrackpad && !cursorLockEnabled }
+    var usesVisibleVirtualCursor: Bool {
+        usesVirtualTrackpad && !cursorLockEnabled && virtualTrackpadCursorActive
+    }
     var usesLockedTrackpadCursor: Bool { usesVirtualTrackpad && cursorLockEnabled }
     var usesNativeScrollEventMetadata: Bool {
         UserDefaults.standard.bool(forKey: MirageNativeScrollEventMetadataPreference.defaultsKey)
@@ -404,6 +406,7 @@ public class InputCapturingView: UIView {
     var virtualCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var virtualCursorVelocity: CGPoint = .zero
     var virtualCursorDecelerationLink: CADisplayLink?
+    var virtualTrackpadCursorActive: Bool = false
     var virtualPointerButtonDown: Bool = false
     var virtualDragActive: Bool = false
     var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)

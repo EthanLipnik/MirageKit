@@ -106,7 +106,7 @@ extension InputCapturingView {
                 virtualCursorRightTapGesture.isEnabled = true
                 virtualCursorLongPressGesture.isEnabled = true
                 lastCursorPosition = virtualCursorPosition
-                setVirtualCursorVisible(true)
+                setVirtualCursorVisible(false)
             case .normal:
                 longPressGesture.allowedTouchTypes = indirectTouchTypes
                 scrollGesture.isEnabled = false
@@ -129,6 +129,7 @@ extension InputCapturingView {
     }
 
     func setVirtualCursorVisible(_ isVisible: Bool) {
+        virtualTrackpadCursorActive = usesVirtualTrackpad && !cursorLockEnabled && isVisible
         guard usesVisibleVirtualCursor else {
             virtualCursorView.isHidden = true
             return

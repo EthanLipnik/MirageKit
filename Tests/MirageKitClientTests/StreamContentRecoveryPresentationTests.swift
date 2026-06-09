@@ -150,14 +150,14 @@ struct StreamContentRecoveryPresentationTests {
 
     #if os(iOS) || os(visionOS)
     @MainActor
-    @Test("Direct touch suppresses simulated desktop cursor overlay")
-    func directTouchSuppressesSimulatedDesktopCursorOverlay() throws {
+    @Test("Direct touch keeps simulated desktop cursor overlay available")
+    func directTouchKeepsSimulatedDesktopCursorOverlayAvailable() throws {
         let view = try makeDesktopContentView(
             cursorPresentation: .simulatedCursor,
             directTouchInputMode: .normal
         )
 
-        #expect(!view.syntheticCursorEnabled)
+        #expect(view.syntheticCursorEnabled)
         #expect(view.desktopLocalCursorHidden)
     }
 
@@ -171,6 +171,30 @@ struct StreamContentRecoveryPresentationTests {
 
         #expect(!view.syntheticCursorEnabled)
         #expect(!view.desktopLocalCursorHidden)
+    }
+
+    @MainActor
+    @Test("Simulated trackpad keeps virtual cursor available for client cursor presentation")
+    func simulatedTrackpadKeepsVirtualCursorAvailableForClientCursorPresentation() throws {
+        let view = try makeDesktopContentView(
+            cursorPresentation: MirageDesktopCursorPresentation(source: .client),
+            directTouchInputMode: .dragCursor
+        )
+
+        #expect(view.syntheticCursorEnabled)
+        #expect(!view.desktopLocalCursorHidden)
+    }
+
+    @MainActor
+    @Test("Simulated trackpad preserves host cursor presentation")
+    func simulatedTrackpadPreservesHostCursorPresentation() throws {
+        let view = try makeDesktopContentView(
+            cursorPresentation: MirageDesktopCursorPresentation(source: .host),
+            directTouchInputMode: .dragCursor
+        )
+
+        #expect(!view.syntheticCursorEnabled)
+        #expect(view.desktopLocalCursorHidden)
     }
 
     @MainActor

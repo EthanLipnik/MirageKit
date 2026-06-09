@@ -259,13 +259,13 @@ extension MirageStreamContentView {
     /// Whether Mirage should draw its own cursor instead of relying solely on the system cursor.
     var syntheticCursorEnabled: Bool {
         #if os(iOS) || os(visionOS)
-        if isDesktopStream,
-           directTouchInputMode == .normal,
-           desktopCursorPresentation.source != .client {
-            return false
-        }
+        let directTouchVirtualCursorEnabled = directTouchInputMode == .dragCursor &&
+            desktopCursorPresentation.source == .client
+        #else
+        let directTouchVirtualCursorEnabled = false
         #endif
         return !isDesktopStream ||
+            directTouchVirtualCursorEnabled ||
             desktopCursorPresentation.rendersSyntheticClientCursor ||
             (desktopCursorLockEnabled && !desktopCursorPresentation.capturesHostCursor)
     }
