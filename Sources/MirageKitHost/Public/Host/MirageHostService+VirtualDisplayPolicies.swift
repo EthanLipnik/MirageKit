@@ -15,6 +15,7 @@ import MirageKit
 /// Decision for whether a desktop resize request can be completed without mutating display state.
 enum DesktopResizeNoOpDecision: Equatable {
     case noOp
+    case nearDuplicateNoOp
     case apply
 }
 
@@ -32,9 +33,11 @@ struct DesktopResizeResolvedGeometry: Equatable {
 
 /// Returns whether a desktop resize request already matches display and encoded geometry.
 func desktopResizeNoOpDecision(
+    currentLogicalResolution: CGSize?,
     currentResolution: CGSize?,
     currentRefreshRate: Int?,
     currentEncodedResolution: CGSize?,
+    requestedLogicalResolution: CGSize,
     requestedResolution: CGSize,
     requestedRefreshRate: Int,
     requestedEncodedResolution: CGSize
@@ -49,7 +52,47 @@ func desktopResizeNoOpDecision(
        currentEncodedResolution == requestedEncodedResolution {
         return .noOp
     }
+    if desktopResizeIsNearDuplicateNoOp(
+        currentLogicalResolution: currentLogicalResolution,
+        currentResolution: currentResolution,
+        currentRefreshRate: currentRefreshRate,
+        currentEncodedResolution: currentEncodedResolution,
+        requestedLogicalResolution: requestedLogicalResolution,
+        requestedResolution: requestedResolution,
+        requestedRefreshRate: requestedRefreshRate,
+        requestedEncodedResolution: requestedEncodedResolution
+    ) {
+        return .nearDuplicateNoOp
+    }
     return .apply
+}
+
+private func desktopResizeIsNearDuplicateNoOp(
+    currentLogicalResolution: CGSize?,
+    currentResolution: CGSize,
+    currentRefreshRate: Int,
+    currentEncodedResolution: CGSize,
+    requestedLogicalResolution: CGSize,
+    requestedResolution: CGSize,
+    requestedRefreshRate: Int,
+    requestedEncodedResolution: CGSize
+) -> Bool {
+    guard let currentLogicalResolution,
+          currentRefreshRate == requestedRefreshRate,
+          requestedLogicalResolution.width > 0,
+          requestedLogicalResolution.height > 0,
+          currentLogicalResolution.width > 0,
+          currentLogicalResolution.height > 0,
+          virtualDisplayResolutionMatches(
+              currentLogicalResolution,
+              requestedLogicalResolution,
+              tolerance: 2
+          ) else {
+        return false
+    }
+
+    return virtualDisplayResolutionMatches(currentResolution, requestedResolution, tolerance: 16) &&
+        virtualDisplayResolutionMatches(currentEncodedResolution, requestedEncodedResolution, tolerance: 16)
 }
 
 /// Mirroring strategy to apply while resizing a desktop virtual display.

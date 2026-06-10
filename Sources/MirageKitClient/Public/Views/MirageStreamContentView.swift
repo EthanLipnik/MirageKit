@@ -322,10 +322,7 @@ extension MirageStreamContentView {
                 isDesktopStream: isDesktopStream,
                 useHostResolution: useHostResolution,
                 desktopCaptureSource: clientService.desktopCaptureSource,
-                desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
-                keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
-                softwareKeyboardVisible: softwareKeyboardVisible,
-                localKeyboardOcclusionActive: localKeyboardOcclusionActive
+                desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize
             )
     }
 

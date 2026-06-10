@@ -125,8 +125,7 @@ extension InputCapturingView {
 
     var responderRecoveryTarget: InputCapturingResponderTarget {
         InputCapturingResponderRecoveryPolicy.target(
-            softwareKeyboardVisible: softwareKeyboardVisible,
-            hardwareKeyboardPresent: hardwareKeyboardPresent
+            softwareKeyboardVisible: softwareKeyboardVisible
         )
     }
 

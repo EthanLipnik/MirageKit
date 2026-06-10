@@ -20,6 +20,9 @@ final class DesktopResizeCoordinator {
     }
 
     struct RequestGeometry: Equatable {
+        private static let duplicateLogicalTolerance: CGFloat = 2
+        private static let duplicatePixelTolerance: CGFloat = 32
+
         let contractID: UUID
         let sceneIdentity: String?
         let refreshTargetHz: Int?
@@ -56,6 +59,32 @@ final class DesktopResizeCoordinator {
             contract.identity == other.contract.identity
         }
 
+        func isRedundantWindowResizeTarget(as other: RequestGeometry) -> Bool {
+            if isEffectivelySameStreamGeometry(as: other) {
+                return true
+            }
+
+            guard disableResolutionCap == other.disableResolutionCap,
+                  Self.sizesEqual(
+                      logicalResolution,
+                      other.logicalResolution,
+                      tolerance: Self.duplicateLogicalTolerance
+                  ) else {
+                return false
+            }
+
+            return Self.sizesEqual(
+                resolvedGeometry.displayPixelSize,
+                other.resolvedGeometry.displayPixelSize,
+                tolerance: Self.duplicatePixelTolerance
+            ) &&
+                Self.sizesEqual(
+                    resolvedGeometry.encodedPixelSize,
+                    other.resolvedGeometry.encodedPixelSize,
+                    tolerance: Self.duplicatePixelTolerance
+                )
+        }
+
         private var resolvedGeometry: MirageStreamGeometry {
             MirageStreamGeometry.resolve(
                 logicalSize: logicalResolution,
@@ -87,6 +116,11 @@ final class DesktopResizeCoordinator {
 
         private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
             abs(lhs - rhs) <= 0.001
+        }
+
+        private static func sizesEqual(_ lhs: CGSize, _ rhs: CGSize, tolerance: CGFloat) -> Bool {
+            abs(lhs.width - rhs.width) <= tolerance &&
+                abs(lhs.height - rhs.height) <= tolerance
         }
 
         private static func pixelSizesEqual(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
@@ -203,6 +237,16 @@ final class DesktopResizeCoordinator {
     }
 
     func clearQueuedResizeRequest() {
+        let hasQueuedState = latestRequestedTarget != nil ||
+            latestRequestedDispatchPolicy != nil ||
+            queuedTarget != nil ||
+            queuedDispatchPolicy != nil
+        guard hasQueuedState else {
+            if activeTransition == nil {
+                clearLocalPresentationState()
+            }
+            return
+        }
         latestRequestedTarget = nil
         latestRequestedDispatchPolicy = nil
         queuedTarget = nil
@@ -274,6 +318,7 @@ final class DesktopResizeCoordinator {
     }
 
     func clearLocalPresentationState() {
+        guard isResizing || maskActive || presentationMaskTimeoutTask != nil else { return }
         isResizing = false
         maskActive = false
         presentationMaskTimeoutTask?.cancel()

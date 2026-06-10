@@ -122,9 +122,11 @@ extension MirageHostService {
                 colorSpace: requestedColorSpace
             )
             let noOpDecision = desktopResizeNoOpDecision(
+                currentLogicalResolution: desktopCurrentGeometryPresentationResolution,
                 currentResolution: preResizeSnapshot?.resolution,
                 currentRefreshRate: preResizeSnapshot.map { Int($0.refreshRate.rounded()) },
                 currentEncodedResolution: currentEncodedResolution,
+                requestedLogicalResolution: geometry.logicalResolution,
                 requestedResolution: geometry.pixelResolution,
                 requestedRefreshRate: geometry.refreshRate,
                 requestedEncodedResolution: geometry.encodedResolution
@@ -135,13 +137,14 @@ extension MirageHostService {
                 pixelResolutionText: "\(Int(geometry.pixelResolution.width))x\(Int(geometry.pixelResolution.height)) px",
                 encodedResolutionText: "\(Int(geometry.encodedResolution.width))x\(Int(geometry.encodedResolution.height)) px"
             )
-            if noOpDecision == .noOp {
+            if noOpDecision != .apply {
                 try await completeNoOpDesktopResize(
                     streamID: streamID,
                     request: request,
                     context: desktopContext,
                     geometry: geometry,
-                    logContext: logContext
+                    logContext: logContext,
+                    updateRequestedGeometry: noOpDecision == .noOp
                 )
                 return
             }

@@ -77,10 +77,8 @@ extension MirageStreamContentView {
         #endif
 
         if isDesktopStream {
-            let targetSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
-                ? latestContainerDisplaySize
-                : viewSize
-            handleContainerSizeChanged(targetSize, lifecycleEvent: .drawableMetricsChanged)
+            guard latestContainerDisplaySize.width <= 0 || latestContainerDisplaySize.height <= 0 else { return }
+            handleContainerSizeChanged(viewSize, lifecycleEvent: .drawableMetricsChanged)
         } else if latestContainerDisplaySize.width <= 0 || latestContainerDisplaySize.height <= 0 {
             handleContainerSizeChanged(viewSize, lifecycleEvent: .drawableMetricsChanged)
         }
@@ -193,7 +191,7 @@ extension MirageStreamContentView {
             let target = clientService.desktopResizeTarget(
                 for: preferredDisplaySize,
                 maxDrawableSize: maxDrawableSize,
-                displayScaleFactor: latestDrawableScaleFactor
+                displayScaleFactor: nil
             )
             let dispatchPolicy = desktopResizeDispatchPolicy(for: target)
             clientService.queueDesktopResize(

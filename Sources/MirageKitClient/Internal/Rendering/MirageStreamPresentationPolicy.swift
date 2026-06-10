@@ -45,24 +45,15 @@ enum MirageStreamPresentationPolicy {
         isDesktopStream: Bool,
         useHostResolution: Bool,
         desktopCaptureSource: MirageDesktopCaptureSource,
-        desktopStreamAllowsClientResize: Bool,
-        keyboardAvoidanceEnabled: Bool,
-        softwareKeyboardVisible: Bool,
-        localKeyboardOcclusionActive: Bool
+        desktopStreamAllowsClientResize: Bool
     )
     -> Bool {
-        let suppressesDesktopResize = suppressesDesktopResizeForLocalPresentation(
+        suppressesDesktopResizeForLocalPresentation(
             isDesktopStream: isDesktopStream,
             useHostResolution: useHostResolution,
             desktopCaptureSource: desktopCaptureSource,
             desktopStreamAllowsClientResize: desktopStreamAllowsClientResize
         )
-        let suppressesForKeyboard = keyboardAvoidancePresentationActive(
-            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
-            softwareKeyboardVisible: softwareKeyboardVisible,
-            localKeyboardOcclusionActive: localKeyboardOcclusionActive
-        )
-        return suppressesDesktopResize || suppressesForKeyboard
     }
 
     static func prefersLocalAspectFitPresentation(

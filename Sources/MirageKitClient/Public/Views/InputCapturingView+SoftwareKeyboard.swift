@@ -54,7 +54,7 @@ extension InputCapturingView {
             accessoryView.heightAnchor.constraint(equalToConstant: 44),
         ])
         #else
-        inputView.softwareInputAccessoryView = accessoryView
+        inputView.inputAccessoryView = accessoryView
         #endif
 
         addSubview(inputView)
@@ -82,6 +82,10 @@ extension InputCapturingView {
         let shouldShow = wantsSoftwareKeyboard && !softwareKeyboardDismissalPending
         if shouldShow {
             guard canPresentSoftwareKeyboardField(inputView) else {
+                logSoftwareKeyboardPresentation(
+                    "presentation deferred",
+                    didBecomeFirstResponder: nil
+                )
                 if !allowDismissalReset {
                     requestResponderRecovery(.focusChanged)
                 }
@@ -89,6 +93,10 @@ extension InputCapturingView {
             }
             if !inputView.isFirstResponder {
                 let didBecomeFirstResponder = inputView.becomeFirstResponder()
+                logSoftwareKeyboardPresentation(
+                    "presentation requested",
+                    didBecomeFirstResponder: didBecomeFirstResponder
+                )
                 if !didBecomeFirstResponder && !allowDismissalReset {
                     requestResponderRecovery(.focusChanged)
                 }
@@ -195,6 +203,15 @@ extension InputCapturingView {
         guard window?.isKeyWindow == true else { return }
         guard window?.windowScene?.activationState == .foregroundActive else { return }
 
+        if softwareKeyboardVisible && !softwareKeyboardDismissalPending {
+            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+            MirageLogger.client(
+                "Software keyboard hide observed while requested: stream=\(streamIDText), scheduling recovery"
+            )
+            requestResponderRecovery(.focusChanged)
+            return
+        }
+
         softwareKeyboardDismissalPending = true
         cancelPendingResponderRecovery()
         notifySoftwareKeyboardVisibilityChanged(false)
@@ -224,7 +241,43 @@ extension InputCapturingView {
     func notifySoftwareKeyboardVisibilityChanged(_ isVisible: Bool) {
         guard isSoftwareKeyboardShown != isVisible else { return }
         isSoftwareKeyboardShown = isVisible
+        let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+        MirageLogger.client(
+            "Software keyboard visibility changed: stream=\(streamIDText), visible=\(isVisible), " +
+                "responderActive=\(isSoftwareKeyboardResponderActive), hardwareKeyboardPresent=\(hardwareKeyboardPresent)"
+        )
         onSoftwareKeyboardVisibilityChanged?(isVisible)
+    }
+
+    func logSoftwareKeyboardPresentation(
+        _ event: String,
+        didBecomeFirstResponder: Bool?
+    ) {
+        let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+        let sceneStateText = switch window?.windowScene?.activationState {
+        case .foregroundActive:
+            "foreground_active"
+        case .foregroundInactive:
+            "foreground_inactive"
+        case .background:
+            "background"
+        case .unattached:
+            "unattached"
+        case nil:
+            "nil"
+        @unknown default:
+            "unknown"
+        }
+        let didBecomeText = didBecomeFirstResponder.map(String.init(describing:)) ?? "nil"
+        MirageLogger.client(
+            "Software keyboard \(event): stream=\(streamIDText), " +
+                "didBecomeFirstResponder=\(didBecomeText), " +
+                "fieldIsFirstResponder=\(softwareKeyboardField?.isFirstResponder == true), " +
+                "keyWindow=\(window?.isKeyWindow == true), " +
+                "sceneState=\(sceneStateText), " +
+                "hardwareKeyboardPresent=\(hardwareKeyboardPresent), " +
+                "dismissalPending=\(softwareKeyboardDismissalPending)"
+        )
     }
 
     func sendSoftwareKeyEvent(

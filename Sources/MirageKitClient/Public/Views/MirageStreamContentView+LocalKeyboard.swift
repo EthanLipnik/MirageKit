@@ -16,28 +16,9 @@ import UIKit
 
 extension MirageStreamContentView {
     #if os(iOS)
-    func handleLocalKeyboardFrameChange(_ notification: Notification) {
-        guard keyboardAvoidanceEnabled else {
-            localKeyboardOcclusionActive = false
-            return
-        }
-
-        guard let keyboardEndFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            return
-        }
-
-        let screenBounds: CGRect = if MirageClientService.lastKnownScreenPointSize.width > 0,
-                                      MirageClientService.lastKnownScreenPointSize.height > 0 {
-            CGRect(origin: .zero, size: MirageClientService.lastKnownScreenPointSize)
-        } else {
-            UIScreen.main.bounds
-        }
-
-        localKeyboardOcclusionActive = hasLocalKeyboardOcclusion(
-            keyboardEndFrame: keyboardEndFrame,
-            screenBounds: screenBounds,
-            minimumOcclusionHeight: 120
-        )
+    func handleLocalKeyboardOcclusionDetectionChanged(_ isOccluded: Bool) {
+        guard localKeyboardOcclusionActive != isOccluded else { return }
+        localKeyboardOcclusionActive = isOccluded
     }
     #endif
 }

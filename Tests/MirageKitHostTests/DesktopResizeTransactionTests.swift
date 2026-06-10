@@ -43,6 +43,60 @@ struct DesktopResizeTransactionTests {
         )
     }
 
+    @Test("Desktop resize no-ops near duplicate backing-scale jitter")
+    func desktopResizeNoOpsNearDuplicateBackingScaleJitter() {
+        let decision = desktopResizeNoOpDecision(
+            currentLogicalResolution: CGSize(width: 1600, height: 1200),
+            currentResolution: CGSize(width: 3168, height: 2384),
+            currentRefreshRate: 60,
+            currentEncodedResolution: CGSize(width: 3168, height: 2384),
+            requestedLogicalResolution: CGSize(width: 1600, height: 1200),
+            requestedResolution: CGSize(width: 3168, height: 2368),
+            requestedRefreshRate: 60,
+            requestedEncodedResolution: CGSize(width: 3168, height: 2368)
+        )
+
+        #expect(decision == .nearDuplicateNoOp)
+    }
+
+    @Test("Desktop resize applies meaningful geometry changes")
+    func desktopResizeAppliesMeaningfulGeometryChanges() {
+        let logicalChange = desktopResizeNoOpDecision(
+            currentLogicalResolution: CGSize(width: 1600, height: 1200),
+            currentResolution: CGSize(width: 3168, height: 2384),
+            currentRefreshRate: 60,
+            currentEncodedResolution: CGSize(width: 3168, height: 2384),
+            requestedLogicalResolution: CGSize(width: 1592, height: 1200),
+            requestedResolution: CGSize(width: 3152, height: 2368),
+            requestedRefreshRate: 60,
+            requestedEncodedResolution: CGSize(width: 3152, height: 2368)
+        )
+        let refreshChange = desktopResizeNoOpDecision(
+            currentLogicalResolution: CGSize(width: 1600, height: 1200),
+            currentResolution: CGSize(width: 3168, height: 2384),
+            currentRefreshRate: 60,
+            currentEncodedResolution: CGSize(width: 3168, height: 2384),
+            requestedLogicalResolution: CGSize(width: 1600, height: 1200),
+            requestedResolution: CGSize(width: 3168, height: 2368),
+            requestedRefreshRate: 120,
+            requestedEncodedResolution: CGSize(width: 3168, height: 2368)
+        )
+        let pixelChange = desktopResizeNoOpDecision(
+            currentLogicalResolution: CGSize(width: 1600, height: 1200),
+            currentResolution: CGSize(width: 3168, height: 2384),
+            currentRefreshRate: 60,
+            currentEncodedResolution: CGSize(width: 3168, height: 2384),
+            requestedLogicalResolution: CGSize(width: 1600, height: 1200),
+            requestedResolution: CGSize(width: 3120, height: 2320),
+            requestedRefreshRate: 60,
+            requestedEncodedResolution: CGSize(width: 3120, height: 2320)
+        )
+
+        #expect(logicalChange == .apply)
+        #expect(refreshChange == .apply)
+        #expect(pixelChange == .apply)
+    }
+
     @Test("Residual mirroring is only cleared for same-generation secondary resizes when recreation occurred")
     func residualMirroringIsOnlyClearedWhenGenerationChanges() {
         #expect(

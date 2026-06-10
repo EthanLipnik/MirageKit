@@ -17,17 +17,21 @@ extension MirageHostService {
         request: DesktopResizeRequestState,
         context: StreamContext,
         geometry: DesktopResizeResolvedGeometry,
-        logContext: DesktopResizeLogContext
+        logContext: DesktopResizeLogContext,
+        updateRequestedGeometry: Bool = true
     )
     async throws {
-        desktopRequestedScaleFactor = geometry.requestedDisplayScaleFactor
-        await context.updateDesktopResizeGeometryRequest(
-            requestedStreamScale: geometry.requestedStreamScale,
-            encoderMaxWidth: geometry.encoderMaxWidth,
-            encoderMaxHeight: geometry.encoderMaxHeight
-        )
+        if updateRequestedGeometry {
+            desktopRequestedScaleFactor = geometry.requestedDisplayScaleFactor
+            await context.updateDesktopResizeGeometryRequest(
+                requestedStreamScale: geometry.requestedStreamScale,
+                encoderMaxWidth: geometry.encoderMaxWidth,
+                encoderMaxHeight: geometry.encoderMaxHeight
+            )
+        }
+        let skipReason = updateRequestedGeometry ? "already" : "near-duplicate"
         MirageLogger.host(
-            "Desktop stream resize skipped (already " +
+            "Desktop stream resize skipped (\(skipReason) " +
                 "\(logContext.logicalResolutionText) " +
                 "\(logContext.pixelResolutionText), " +
                 "encoded \(logContext.encodedResolutionText) @\(geometry.refreshRate)Hz, " +
@@ -38,7 +42,8 @@ extension MirageHostService {
             streamID: streamID,
             request: request,
             context: context,
-            outcome: .noChange
+            outcome: .noChange,
+            useCurrentGeometryForRequestContract: !updateRequestedGeometry
         )
     }
 

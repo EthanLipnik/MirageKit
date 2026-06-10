@@ -92,7 +92,7 @@ extension MirageClientService {
         }
 
         guard let target else { return }
-        guard coordinator.lastSentTarget?.isEffectivelySameStreamGeometry(as: target) != true else {
+        guard coordinator.lastSentTarget?.isRedundantWindowResizeTarget(as: target) != true else {
             coordinator.displayResolutionTask?.cancel()
             coordinator.displayResolutionTask = nil
             coordinator.clearQueuedResizeRequest()
@@ -161,7 +161,7 @@ extension MirageClientService {
 
         if let activeTransition = coordinator.activeTransition {
             if activeTransition.streamID == streamID,
-               activeTransition.target.isEffectivelySameStreamGeometry(as: target) {
+               activeTransition.target.isRedundantWindowResizeTarget(as: target) {
                 return
             }
             coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
@@ -172,7 +172,7 @@ extension MirageClientService {
             return
         }
 
-        if coordinator.queuedTarget?.isEffectivelySameStreamGeometry(as: target) == true,
+        if coordinator.queuedTarget?.isRedundantWindowResizeTarget(as: target) == true,
            coordinator.queuedDispatchPolicy == dispatchPolicy {
             return
         }
@@ -244,7 +244,7 @@ extension MirageClientService {
         }
         guard let target = coordinator.queuedTarget else { return }
         guard target.logicalResolution.width > 0, target.logicalResolution.height > 0 else { return }
-        guard coordinator.lastSentTarget?.isEffectivelySameStreamGeometry(as: target) != true else {
+        guard coordinator.lastSentTarget?.isRedundantWindowResizeTarget(as: target) != true else {
             coordinator.clearQueuedResizeRequest()
             return
         }
@@ -436,6 +436,12 @@ extension MirageClientService {
     func cancelQueuedDesktopResizeForLocalPresentation(streamID: StreamID) {
         guard desktopStreamID == streamID else { return }
         let coordinator = desktopResizeCoordinator
+        let hasQueuedState = coordinator.displayResolutionTask != nil ||
+            coordinator.latestRequestedTarget != nil ||
+            coordinator.latestRequestedDispatchPolicy != nil ||
+            coordinator.queuedTarget != nil ||
+            coordinator.queuedDispatchPolicy != nil
+        guard hasQueuedState || coordinator.activeTransition == nil else { return }
         coordinator.displayResolutionTask?.cancel()
         coordinator.displayResolutionTask = nil
         coordinator.latestRequestedTarget = nil

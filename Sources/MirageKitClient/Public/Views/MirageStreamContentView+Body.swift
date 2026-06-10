@@ -70,15 +70,6 @@ private extension MirageStreamContentView {
             .onChange(of: useHostResolution) {
                 scheduleDesktopResizeForCurrentMetricsChangeIfNeeded()
             }
-            .onChange(of: localKeyboardOcclusionActive) {
-                handleLocalKeyboardOcclusionChanged()
-            }
-            .onChange(of: softwareKeyboardVisible) {
-                handleSoftwareKeyboardVisibilityChangedForPresentation()
-            }
-            .onChange(of: keyboardAvoidanceEnabled) {
-                handleKeyboardAvoidanceEnabledChanged()
-            }
             .onChange(of: isCurrentStreamActive) {
                 scheduleFocusedInputCorrectionIfNeeded()
             }
@@ -97,11 +88,10 @@ private extension MirageStreamContentView {
     var streamContentWithKeyboardObservers: some View {
         #if os(iOS)
         streamContentWithLifecycleObservers
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-                handleLocalKeyboardFrameChange(notification)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                localKeyboardOcclusionActive = false
+            .background {
+                LocalKeyboardOcclusionReader(minimumOcclusionHeight: 120) { isOccluded in
+                    handleLocalKeyboardOcclusionDetectionChanged(isOccluded)
+                }
             }
         #else
         streamContentWithLifecycleObservers
@@ -344,37 +334,6 @@ private extension MirageStreamContentView {
             cancelPendingWindowDrivenResizeForLocalPresentation()
         } else {
             beginInputResumeGateIfNeeded(reason: "local_presentation_resumed", requiresInputEnabled: false)
-            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
-        }
-    }
-
-    func handleLocalKeyboardOcclusionChanged() {
-        guard keyboardAvoidanceEnabled else { return }
-
-        if localKeyboardOcclusionActive {
-            cancelPendingWindowDrivenResizeForLocalPresentation()
-        } else {
-            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
-        }
-    }
-
-    func handleSoftwareKeyboardVisibilityChangedForPresentation() {
-        guard keyboardAvoidanceEnabled else { return }
-
-        if softwareKeyboardVisible {
-            cancelPendingWindowDrivenResizeForLocalPresentation()
-        } else if !localKeyboardOcclusionActive {
-            scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
-        }
-    }
-
-    func handleKeyboardAvoidanceEnabledChanged() {
-        if keyboardAvoidanceEnabled {
-            if softwareKeyboardVisible || localKeyboardOcclusionActive {
-                cancelPendingWindowDrivenResizeForLocalPresentation()
-            }
-        } else {
-            localKeyboardOcclusionActive = false
             scheduleWindowDrivenResizeForCurrentMetricsIfNeeded()
         }
     }

@@ -13,6 +13,43 @@ import Testing
 
 @Suite("Host keyboard injection")
 struct HostKeyboardInjectionTests {
+    @Test("Plain text layout keys preserve the character payload")
+    func plainTextLayoutKeysPreserveTheCharacterPayload() throws {
+        let event = MirageKeyEvent(
+            keyCode: 0x00,
+            characters: "a",
+            charactersIgnoringModifiers: "a"
+        )
+
+        let plan = MirageHostInputController.keyboardInjectionPlan(for: event)
+        #expect(plan.virtualKey == CGKeyCode(0))
+        #expect(plan.unicodeString == "a")
+
+        let controller = MirageHostInputController()
+        let cgEvent = try #require(controller.makeInjectedKeyboardEvent(isKeyDown: true, event))
+        #expect(cgEvent.getIntegerValueField(.keyboardEventKeycode) == 0)
+        #expect(unicodeString(from: cgEvent) == "a")
+    }
+
+    @Test("Shifted text layout keys preserve the shifted character payload")
+    func shiftedTextLayoutKeysPreserveTheShiftedCharacterPayload() throws {
+        let event = MirageKeyEvent(
+            keyCode: 0x12,
+            characters: "!",
+            charactersIgnoringModifiers: "1",
+            modifiers: .shift
+        )
+
+        let plan = MirageHostInputController.keyboardInjectionPlan(for: event)
+        #expect(plan.virtualKey == CGKeyCode(0x12))
+        #expect(plan.unicodeString == "!")
+
+        let controller = MirageHostInputController()
+        let cgEvent = try #require(controller.makeInjectedKeyboardEvent(isKeyDown: true, event))
+        #expect(cgEvent.getIntegerValueField(.keyboardEventKeycode) == 0x12)
+        #expect(unicodeString(from: cgEvent) == "!")
+    }
+
     @Test("Physical A key stays on the virtual-key injection path")
     func physicalAKeyStaysOnVirtualKeyInjectionPath() throws {
         let event = MirageKeyEvent(
@@ -29,6 +66,33 @@ struct HostKeyboardInjectionTests {
         let controller = MirageHostInputController()
         let cgEvent = try #require(controller.makeInjectedKeyboardEvent(isKeyDown: true, event))
         #expect(cgEvent.getIntegerValueField(.keyboardEventKeycode) == 0)
+    }
+
+    @Test("Option modified layout keys stay on the virtual-key injection path")
+    func optionModifiedLayoutKeysStayOnVirtualKeyInjectionPath() {
+        let event = MirageKeyEvent(
+            keyCode: 0x0E,
+            characters: "e",
+            charactersIgnoringModifiers: "e",
+            modifiers: .option
+        )
+
+        let plan = MirageHostInputController.keyboardInjectionPlan(for: event)
+        #expect(plan.virtualKey == CGKeyCode(0x0E))
+        #expect(plan.unicodeString == nil)
+    }
+
+    @Test("Return stays on the virtual-key injection path")
+    func returnStaysOnVirtualKeyInjectionPath() {
+        let event = MirageKeyEvent(
+            keyCode: 0x24,
+            characters: "\n",
+            charactersIgnoringModifiers: "\n"
+        )
+
+        let plan = MirageHostInputController.keyboardInjectionPlan(for: event)
+        #expect(plan.virtualKey == CGKeyCode(0x24))
+        #expect(plan.unicodeString == nil)
     }
 
     @Test("Unicode fallback sentinel injects the provided string")

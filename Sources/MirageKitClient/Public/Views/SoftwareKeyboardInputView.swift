@@ -9,38 +9,17 @@
 import UIKit
 
 /// Hidden text-input responder that exposes the system software keyboard to streamed input.
-final class SoftwareKeyboardInputView: UIView, UIKeyInput {
+final class SoftwareKeyboardInputView: UITextField {
     var onInsertText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
     var onPaste: (() -> Void)?
     var onFirstResponderChanged: ((Bool) -> Void)?
     var onAttachmentChanged: ((Bool) -> Void)?
-    var softwareInputAccessoryView: UIView?
-
-    var autocapitalizationType: UITextAutocapitalizationType = .none
-    var autocorrectionType: UITextAutocorrectionType = .no
-    var spellCheckingType: UITextSpellCheckingType = .no
-    var smartDashesType: UITextSmartDashesType = .no
-    var smartQuotesType: UITextSmartQuotesType = .no
-    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
-    var keyboardType: UIKeyboardType = .asciiCapable
-    var keyboardAppearance: UIKeyboardAppearance = .default
-    var returnKeyType: UIReturnKeyType = .default
-    var enablesReturnKeyAutomatically = false
-    var isSecureTextEntry = false
-    var textContentType: UITextContentType?
-    var passwordRules: UITextInputPasswordRules?
 
     /// Reports that delete/backspace should remain enabled for forwarded input.
-    var hasText: Bool { true }
+    override var hasText: Bool { true }
 
     override var canBecomeFirstResponder: Bool { true }
-
-    #if !os(visionOS)
-    override var inputAccessoryView: UIView? {
-        softwareInputAccessoryView
-    }
-    #endif
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -73,11 +52,11 @@ final class SoftwareKeyboardInputView: UIView, UIKeyInput {
         onAttachmentChanged?(window != nil)
     }
 
-    func insertText(_ text: String) {
+    override func insertText(_ text: String) {
         onInsertText?(text)
     }
 
-    func deleteBackward() {
+    override func deleteBackward() {
         onDeleteBackward?()
     }
 
@@ -94,7 +73,27 @@ final class SoftwareKeyboardInputView: UIView, UIKeyInput {
 
     private func configure() {
         isOpaque = false
+        borderStyle = .none
+        backgroundColor = .clear
+        textColor = .clear
         tintColor = .clear
+        autocapitalizationType = .none
+        autocorrectionType = .no
+        spellCheckingType = .no
+        smartDashesType = .no
+        smartQuotesType = .no
+        smartInsertDeleteType = .no
+        keyboardType = .asciiCapable
+        keyboardAppearance = .default
+        returnKeyType = .default
+        enablesReturnKeyAutomatically = false
+        isSecureTextEntry = false
+        textContentType = nil
+        passwordRules = nil
+        #if !os(visionOS)
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
+        #endif
     }
 }
 #endif

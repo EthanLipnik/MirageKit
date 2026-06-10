@@ -61,7 +61,7 @@ public class InputCapturingView: UIView {
     /// Callback when the platform container/window bounds change.
     public var onContainerSizeChanged: ((CGSize) -> Void)? {
         didSet {
-            if onContainerSizeChanged != nil {
+            if oldValue == nil, onContainerSizeChanged != nil {
                 reportContainerSizeIfChanged(force: true)
             }
         }

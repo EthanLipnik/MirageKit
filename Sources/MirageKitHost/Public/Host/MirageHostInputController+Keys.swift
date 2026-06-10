@@ -28,7 +28,7 @@ extension MirageHostInputController {
         guard event.usesUnicodeScalarFallback else {
             return KeyboardInjectionPlan(
                 virtualKey: CGKeyCode(event.keyCode),
-                unicodeString: nil
+                unicodeString: unicodeStringForLayoutKey(event)
             )
         }
 
@@ -42,6 +42,19 @@ extension MirageHostInputController {
             virtualKey: 0,
             unicodeString: unicodeString
         )
+    }
+
+    private static func unicodeStringForLayoutKey(_ event: MirageKeyEvent) -> String? {
+        guard let characters = event.characters, !characters.isEmpty else { return nil }
+        guard !event.modifiers.contains(.command),
+              !event.modifiers.contains(.control),
+              !event.modifiers.contains(.option) else {
+            return nil
+        }
+        guard characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            return nil
+        }
+        return characters
     }
 
     /// Builds a CoreGraphics keyboard event with Mirage modifiers and repeat state applied.

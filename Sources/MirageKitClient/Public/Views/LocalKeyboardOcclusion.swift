@@ -9,21 +9,19 @@
 
 import CoreGraphics
 
-#if os(iOS)
 func hasLocalKeyboardOcclusion(
-    keyboardEndFrame: CGRect,
-    screenBounds: CGRect,
+    keyboardFrame: CGRect,
+    occlusionBounds: CGRect,
     minimumOcclusionHeight: CGFloat
 ) -> Bool {
-    guard keyboardEndFrame.width > 0,
-          keyboardEndFrame.height > 0,
-          screenBounds.width > 0,
-          screenBounds.height > 0 else {
+    guard keyboardFrame.width > 0,
+          keyboardFrame.height > 0,
+          occlusionBounds.width > 0,
+          occlusionBounds.height > 0 else {
         return false
     }
 
-    let overlap = screenBounds.intersection(keyboardEndFrame)
+    let overlap = occlusionBounds.intersection(keyboardFrame)
     guard !overlap.isNull, !overlap.isEmpty else { return false }
     return overlap.height >= minimumOcclusionHeight
 }
-#endif

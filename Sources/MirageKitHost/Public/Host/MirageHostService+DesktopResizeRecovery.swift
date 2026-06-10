@@ -263,7 +263,8 @@ extension MirageHostService {
         streamID: StreamID,
         request: DesktopResizeRequestState,
         context: StreamContext,
-        outcome: MirageDesktopTransitionOutcome
+        outcome: MirageDesktopTransitionOutcome,
+        useCurrentGeometryForRequestContract: Bool = false
     )
     async {
         guard let clientContext = desktopStreamClientContext else { return }
@@ -304,6 +305,21 @@ extension MirageHostService {
                     refreshTargetHz: updatedTargetFrameRate
                 )
             }
+        } else if useCurrentGeometryForRequestContract {
+            let currentGeometryContract = reusableCurrentDesktopGeometryContract(
+                displayPixelResolution: displayResolution,
+                encodedPixelResolution: encodedResolution,
+                refreshTargetHz: updatedTargetFrameRate
+            )
+            geometryContract = DesktopGeometryAnnouncementContract(
+                contractID: request.desktopGeometryContractID,
+                sceneIdentity: request.desktopGeometrySceneIdentity,
+                presentationResolution: currentGeometryContract.presentationResolution,
+                displayPixelResolution: currentGeometryContract.displayPixelResolution,
+                encodedPixelResolution: currentGeometryContract.encodedPixelResolution,
+                acceptedDisplayScaleFactor: currentGeometryContract.acceptedDisplayScaleFactor,
+                refreshTargetHz: currentGeometryContract.refreshTargetHz ?? updatedTargetFrameRate
+            )
         } else {
             geometryContract = DesktopGeometryAnnouncementContract(
                 contractID: request.desktopGeometryContractID,

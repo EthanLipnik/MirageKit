@@ -92,6 +92,23 @@ struct DesktopResizeCoordinatorTests {
         #expect(!oneXTarget.isEffectivelySameStreamGeometry(as: retinaTarget))
     }
 
+    @Test("Desktop resize target defaults to active stream scale")
+    func desktopResizeTargetDefaultsToActiveStreamScale() throws {
+        let service = MirageClientService()
+        service.desktopStreamDisplayScaleFactor = 1.0
+
+        let target = try #require(
+            service.desktopResizeTarget(
+                for: CGSize(width: 1200, height: 800),
+                maxDrawableSize: nil
+            )
+        )
+
+        #expect(target.displayScaleFactor == 1.0)
+        #expect(target.logicalResolution == CGSize(width: 1200, height: 800))
+        #expect(target.displayPixelSize == CGSize(width: 1200, height: 800))
+    }
+
     @Test("Contract equality ignores raw stream scale when resolved geometry matches")
     func contractEqualityIgnoresRawStreamScaleWhenResolvedGeometryMatches() {
         let startup = DesktopResizeCoordinator.RequestGeometry(
@@ -110,6 +127,35 @@ struct DesktopResizeCoordinatorTests {
         )
 
         #expect(startup.isEffectivelySameStreamGeometry(as: firstDrawable))
+    }
+
+    @Test("Pixel jitter without logical resize is redundant")
+    func pixelJitterWithoutLogicalResizeIsRedundant() {
+        let first = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.988,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        let jitter = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.977,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        let realResize = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1592, height: 1200),
+            displayScaleFactor: 1.977,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+
+        #expect(!first.isEffectivelySameStreamGeometry(as: jitter))
+        #expect(first.isRedundantWindowResizeTarget(as: jitter))
+        #expect(!first.isRedundantWindowResizeTarget(as: realResize))
     }
 
     @Test("Accepted geometry contract accepts host-owned final geometry")

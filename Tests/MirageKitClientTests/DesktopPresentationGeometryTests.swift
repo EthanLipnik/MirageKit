@@ -97,10 +97,7 @@ struct DesktopPresentationGeometryTests {
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true,
-            keyboardAvoidanceEnabled: true,
-            softwareKeyboardVisible: false,
-            localKeyboardOcclusionActive: false
+            desktopStreamAllowsClientResize: true
         )
         let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
             localPresentationPauseActive: false,
@@ -118,16 +115,13 @@ struct DesktopPresentationGeometryTests {
         #expect(!prefersAspectFit)
     }
 
-    @Test("Keyboard avoidance suppresses resize and uses local aspect fit")
-    func keyboardAvoidanceSuppressesResizeAndUsesLocalAspectFit() {
+    @Test("Keyboard avoidance allows window resize and uses local aspect fit")
+    func keyboardAvoidanceAllowsWindowResizeAndUsesLocalAspectFit() {
         let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true,
-            keyboardAvoidanceEnabled: true,
-            softwareKeyboardVisible: true,
-            localKeyboardOcclusionActive: false
+            desktopStreamAllowsClientResize: true
         )
         let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
             localPresentationPauseActive: false,
@@ -141,7 +135,7 @@ struct DesktopPresentationGeometryTests {
             appStreamPrefersAspectFitPresentation: false
         )
 
-        #expect(suppressesResize)
+        #expect(!suppressesResize)
         #expect(prefersAspectFit)
     }
 
@@ -151,10 +145,7 @@ struct DesktopPresentationGeometryTests {
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true,
-            keyboardAvoidanceEnabled: false,
-            softwareKeyboardVisible: true,
-            localKeyboardOcclusionActive: false
+            desktopStreamAllowsClientResize: true
         )
         let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
             localPresentationPauseActive: false,
@@ -172,25 +163,19 @@ struct DesktopPresentationGeometryTests {
         #expect(!prefersAspectFit)
     }
 
-    @Test("Keyboard frame occlusion follows keyboard avoidance setting")
+    @Test("Keyboard frame occlusion only affects local presentation")
     func keyboardFrameOcclusionFollowsKeyboardAvoidanceSetting() {
         let avoidsSuppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true,
-            keyboardAvoidanceEnabled: true,
-            softwareKeyboardVisible: false,
-            localKeyboardOcclusionActive: true
+            desktopStreamAllowsClientResize: true
         )
         let overlaySuppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true,
-            keyboardAvoidanceEnabled: false,
-            softwareKeyboardVisible: false,
-            localKeyboardOcclusionActive: true
+            desktopStreamAllowsClientResize: true
         )
         let avoidsWithAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
             localPresentationPauseActive: false,
@@ -215,7 +200,7 @@ struct DesktopPresentationGeometryTests {
             appStreamPrefersAspectFitPresentation: false
         )
 
-        #expect(avoidsSuppressesResize)
+        #expect(!avoidsSuppressesResize)
         #expect(!overlaySuppressesResize)
         #expect(avoidsWithAspectFit)
         #expect(!overlaysWithoutAspectFit)

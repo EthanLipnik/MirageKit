@@ -16,8 +16,8 @@ import UIKit
 struct InputCapturingResponderRecoveryTests {
     typealias ScheduledOperation = @MainActor () -> Void
 
-    @Test("Hardware keyboard presence keeps software keyboard state while targeting capture view")
-    func hardwareKeyboardPresenceKeepsSoftwareStateWhileTargetingCaptureView() {
+    @Test("Explicit software keyboard request targets input field with hardware keyboard")
+    func explicitSoftwareKeyboardTargetsInputFieldWithHardwareKeyboard() {
         let view = InputCapturingView(frame: .zero)
         var hardwarePresenceEvents: [Bool] = []
         view.softwareKeyboardVisible = true
@@ -27,7 +27,7 @@ struct InputCapturingResponderRecoveryTests {
 
         #expect(view.hardwareKeyboardPresent)
         #expect(view.softwareKeyboardVisible)
-        #expect(view.responderRecoveryTarget == .captureView)
+        #expect(view.responderRecoveryTarget == .softwareKeyboardField)
         #expect(hardwarePresenceEvents == [true])
     }
 
