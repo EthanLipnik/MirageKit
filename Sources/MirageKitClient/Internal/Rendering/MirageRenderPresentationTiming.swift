@@ -52,6 +52,12 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
         CMTime(value: 1, timescale: CMTimeScale(targetFPS))
     }
 
+    var minimumMonotonicPresentationStep: CMTime {
+        displaysImmediately
+            ? CMTime(value: 1, timescale: 1_000_000_000)
+            : frameDuration
+    }
+
     func presentationTime(
         referenceTime: CFTimeInterval,
         timescale: CMTimeScale

@@ -108,7 +108,7 @@ extension StreamContext {
         }
         noteReceiverAcceptedKeyframeIfNeeded(feedback, now: now)
         noteReceiverPresentationRecoveryEvidenceIfNeeded(feedback, now: now)
-        scheduleStillQualityProbeIfNeeded(now: now, reason: "receiver-feedback")
+        await scheduleStillQualityProbeIfNeeded(now: now, reason: "receiver-feedback")
         await scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(feedback, now: now)
     }
 
@@ -199,8 +199,7 @@ extension StreamContext {
             )
             return
         }
-        let supersedesInFlightGeometry = mediaPathProfile.usesAwdlRadioPolicy &&
-            feedback.recoveryState == .postResizeAwaitingFirstFrame
+        let supersedesInFlightGeometry = feedback.recoveryState == .postResizeAwaitingFirstFrame
         if supersedesInFlightGeometry, hasProtectedGeometryRecoveryKeyframe {
             MirageLogger.stream(
                 "Receiver feedback keyframe recovery deferred for stream \(streamID) " +

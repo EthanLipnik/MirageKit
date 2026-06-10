@@ -35,6 +35,7 @@ extension StreamContext {
         30_000_000,
         36_000_000,
     ]
+    private static let qualityRefreshEpsilon: Float = 0.0001
 
     private struct DerivedQualityTargets {
         let frameQuality: Float
@@ -346,14 +347,16 @@ extension StreamContext {
         let shouldRefreshConfiguredQualityCeiling = targets.frameQuality > configuredQualityCeiling ||
             reason == HostAdaptivePFrameController.Reason.healthy.rawValue ||
             reason == HostAdaptivePFrameController.Reason.startup.rawValue
-        guard encoderConfig.frameQuality != targets.frameQuality ||
-            encoderConfig.keyframeQuality != targets.keyframeQuality ||
-            (shouldRefreshConfiguredQualityCeiling && configuredQualityCeiling != targets.frameQuality) ||
-            steadyQualityCeiling != targets.frameQuality else {
-            return
-        }
-
+        let previousFrameQuality = encoderConfig.frameQuality
+        let previousKeyframeQuality = encoderConfig.keyframeQuality
+        let previousConfiguredQualityCeiling = configuredQualityCeiling
         let previousSteadyQualityCeiling = steadyQualityCeiling
+        let previousQualityCeiling = qualityCeiling
+        let previousQualityFloor = qualityFloor
+        let previousKeyframeQualityFloor = keyframeQualityFloor
+        if Self.runtimeQualityRefreshShouldRaiseActiveQuality(reason: reason) {
+            realtimeRuntimeQualityCeiling = nil
+        }
         encoderConfig.frameQuality = targets.frameQuality
         encoderConfig.keyframeQuality = targets.keyframeQuality
         if shouldRefreshConfiguredQualityCeiling {
@@ -368,11 +371,26 @@ extension StreamContext {
 
         let previousActiveQuality = activeQuality
         let boundedTargetQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
+        let shouldRaiseActiveQuality = Self.runtimeQualityRefreshShouldRaiseActiveQuality(reason: reason)
         if activeQuality > boundedTargetQuality ||
+            (shouldRaiseActiveQuality && activeQuality < boundedTargetQuality) ||
             ((mediaPathProfile.usesAwdlRadioPolicy || usesOptimizedVPNStreamingProfile) &&
                 activeQuality < qualityFloor) {
             activeQuality = boundedTargetQuality
+        }
+        if Self.qualityValuesDiffer(previousActiveQuality, activeQuality) {
             await encoder?.updateQuality(activeQuality)
+        }
+
+        guard Self.qualityValuesDiffer(previousFrameQuality, encoderConfig.frameQuality) ||
+            Self.qualityValuesDiffer(previousKeyframeQuality, encoderConfig.keyframeQuality) ||
+            Self.qualityValuesDiffer(previousConfiguredQualityCeiling, configuredQualityCeiling) ||
+            Self.qualityValuesDiffer(previousSteadyQualityCeiling, steadyQualityCeiling) ||
+            Self.qualityValuesDiffer(previousQualityCeiling, qualityCeiling) ||
+            Self.qualityValuesDiffer(previousQualityFloor, qualityFloor) ||
+            Self.qualityValuesDiffer(previousKeyframeQualityFloor, keyframeQualityFloor) ||
+            Self.qualityValuesDiffer(previousActiveQuality, activeQuality) else {
+            return
         }
 
         let targetMbps = Double(targetBitrateBps) / 1_000_000.0
@@ -402,11 +420,14 @@ extension StreamContext {
 
         let targets = derivedQualityTargets(targetBitrateBps: targetBitrate, outputSize: outputSize)
 
-        guard encoderConfig.frameQuality != targets.frameQuality ||
-            encoderConfig.keyframeQuality != targets.keyframeQuality else {
-            return
-        }
-
+        let previousFrameQuality = encoderConfig.frameQuality
+        let previousKeyframeQuality = encoderConfig.keyframeQuality
+        let previousConfiguredQualityCeiling = configuredQualityCeiling
+        let previousSteadyQualityCeiling = steadyQualityCeiling
+        let previousQualityCeiling = qualityCeiling
+        let previousQualityFloor = qualityFloor
+        let previousKeyframeQualityFloor = keyframeQualityFloor
+        let previousActiveQuality = activeQuality
         encoderConfig.frameQuality = targets.frameQuality
         encoderConfig.keyframeQuality = targets.keyframeQuality
         configuredQualityCeiling = targets.frameQuality
@@ -416,7 +437,20 @@ extension StreamContext {
         activeQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: min(targets.keyframeQuality, qualityCeiling))
 
-        await encoder?.updateQuality(activeQuality)
+        if Self.qualityValuesDiffer(previousActiveQuality, activeQuality) {
+            await encoder?.updateQuality(activeQuality)
+        }
+
+        guard Self.qualityValuesDiffer(previousFrameQuality, encoderConfig.frameQuality) ||
+            Self.qualityValuesDiffer(previousKeyframeQuality, encoderConfig.keyframeQuality) ||
+            Self.qualityValuesDiffer(previousConfiguredQualityCeiling, configuredQualityCeiling) ||
+            Self.qualityValuesDiffer(previousSteadyQualityCeiling, steadyQualityCeiling) ||
+            Self.qualityValuesDiffer(previousQualityCeiling, qualityCeiling) ||
+            Self.qualityValuesDiffer(previousQualityFloor, qualityFloor) ||
+            Self.qualityValuesDiffer(previousKeyframeQualityFloor, keyframeQualityFloor) ||
+            Self.qualityValuesDiffer(previousActiveQuality, activeQuality) else {
+            return
+        }
 
         if let logLabel {
             let mbps = Double(targetBitrate) / 1_000_000.0
@@ -447,6 +481,15 @@ extension StreamContext {
     private func mirageFormattedMegabitRate(_ bitrate: Int) -> String {
         let mbps = Double(bitrate) / 1_000_000.0
         return "\(mbps.formatted(.number.precision(.fractionLength(1))))Mbps"
+    }
+
+    private static func runtimeQualityRefreshShouldRaiseActiveQuality(reason: String) -> Bool {
+        reason == HostAdaptivePFrameController.Reason.healthy.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.startup.rawValue
+    }
+
+    private static func qualityValuesDiffer(_ lhs: Float, _ rhs: Float) -> Bool {
+        abs(lhs - rhs) > qualityRefreshEpsilon
     }
 }
 #endif

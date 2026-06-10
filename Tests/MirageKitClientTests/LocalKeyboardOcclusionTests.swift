@@ -23,6 +23,11 @@ struct LocalKeyboardOcclusionTests {
         )
 
         #expect(hasOcclusion)
+        #expect(localKeyboardOcclusionHeight(
+            keyboardFrame: keyboardFrame,
+            occlusionBounds: streamWindowFrame,
+            minimumOcclusionHeight: 120
+        ) == 140)
     }
 
     @Test("Keyboard elsewhere on screen does not occlude stream window")
@@ -37,6 +42,11 @@ struct LocalKeyboardOcclusionTests {
         )
 
         #expect(!hasOcclusion)
+        #expect(localKeyboardOcclusionHeight(
+            keyboardFrame: keyboardFrame,
+            occlusionBounds: streamWindowFrame,
+            minimumOcclusionHeight: 120
+        ) == 0)
     }
 
     @Test("Small keyboard overlap is ignored")
@@ -51,5 +61,10 @@ struct LocalKeyboardOcclusionTests {
         )
 
         #expect(!hasOcclusion)
+        #expect(localKeyboardOcclusionHeight(
+            keyboardFrame: keyboardFrame,
+            occlusionBounds: streamWindowFrame,
+            minimumOcclusionHeight: 120
+        ) == 0)
     }
 }

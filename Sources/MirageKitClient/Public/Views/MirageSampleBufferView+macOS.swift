@@ -53,7 +53,7 @@ public class MirageSampleBufferView: NSView {
         }
     }
 
-    var prefersLocalAspectFitPresentation: Bool = false {
+    var prefersLocalAspectFitPresentation: Bool = true {
         didSet {
             guard prefersLocalAspectFitPresentation != oldValue else { return }
             applyRenderConfiguration()

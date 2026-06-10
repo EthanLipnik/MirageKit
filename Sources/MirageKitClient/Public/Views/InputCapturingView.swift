@@ -75,7 +75,7 @@ public class InputCapturingView: UIView {
     }
 
     /// Whether the stream should present locally using aspect fit.
-    public var prefersLocalAspectFitPresentation: Bool = false {
+    public var prefersLocalAspectFitPresentation: Bool = true {
         didSet {
             sampleBufferView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         }

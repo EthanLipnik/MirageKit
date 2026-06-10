@@ -14,14 +14,30 @@ func hasLocalKeyboardOcclusion(
     occlusionBounds: CGRect,
     minimumOcclusionHeight: CGFloat
 ) -> Bool {
+    localKeyboardOcclusionHeight(
+        keyboardFrame: keyboardFrame,
+        occlusionBounds: occlusionBounds,
+        minimumOcclusionHeight: minimumOcclusionHeight
+    ) > 0
+}
+
+func localKeyboardOcclusionHeight(
+    keyboardFrame: CGRect,
+    occlusionBounds: CGRect,
+    minimumOcclusionHeight: CGFloat
+) -> CGFloat {
     guard keyboardFrame.width > 0,
           keyboardFrame.height > 0,
           occlusionBounds.width > 0,
           occlusionBounds.height > 0 else {
-        return false
+        return 0
     }
 
     let overlap = occlusionBounds.intersection(keyboardFrame)
-    guard !overlap.isNull, !overlap.isEmpty else { return false }
-    return overlap.height >= minimumOcclusionHeight
+    guard !overlap.isNull,
+          !overlap.isEmpty,
+          overlap.height >= minimumOcclusionHeight else {
+        return 0
+    }
+    return overlap.height
 }

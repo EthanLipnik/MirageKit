@@ -38,7 +38,7 @@ enum MirageCodecBenchmark {
 
         let group = DispatchGroup()
         await encoder.startEncoding(
-            onEncodedFrame: { _, _, _, finishFrame in finishFrame() },
+            onEncodedFrame: { _, _, _, _, finishFrame in finishFrame() },
             onFrameComplete: { group.leave() }
         )
 

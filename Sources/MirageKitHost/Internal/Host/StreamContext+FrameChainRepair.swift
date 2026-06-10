@@ -206,6 +206,7 @@ extension StreamContext {
 
         guard didSend else {
             logFailedPFrameTransport(completion)
+            await applyFrameTransportBudgetFeedback(completion, now: now)
             await handlePacketSenderDependencyFrameDrop(
                 streamID: completion.streamID,
                 frameNumber: frameNumber,
@@ -442,14 +443,24 @@ extension StreamContext {
     ) {
         guard isRunning, shouldEncodeFrames else { return }
         frameChainRepairKeyframeRetryTask?.cancel()
+        let delaySeconds = frameChainRepairKeyframeProgressCheckDelay(reason: reason)
         frameChainRepairKeyframeRetryTask = Task(priority: .userInitiated) { [weak self] in
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .seconds(delaySeconds))
             guard !Task.isCancelled else { return }
             await self?.retryFrameChainRepairKeyframe(
                 reason: reason,
                 bypassesRecoveryCooldown: bypassesRecoveryCooldown
             )
         }
+    }
+
+    private func frameChainRepairKeyframeProgressCheckDelay(reason: String) -> CFAbsoluteTime {
+        if hasProtectedGeometryRecoveryKeyframe ||
+            pendingKeyframeReason.map(isGeometryRecoveryKeyframeReason) == true ||
+            isGeometryRecoveryKeyframeReason(reason) {
+            return max(0.35, activeKeyframeRequestCooldown)
+        }
+        return 0.05
     }
 
     private func frameChainRepairKeyframeRetryDelay(

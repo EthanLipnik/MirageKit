@@ -235,7 +235,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.pendingFrames.removeAll(keepingCapacity: false)
         state.presentationController.resetPresentationEpoch(
             policy: presentationLatencyPolicyLocked(state: state),
-            now: CFAbsoluteTimeGetCurrent()
+            now: CFAbsoluteTimeGetCurrent(),
+            resetAdaptedDelay: true
         )
         state.lock.unlock()
         return count
@@ -260,7 +261,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         }
         state.presentationController.resetPresentationEpoch(
             policy: presentationLatencyPolicyLocked(state: state, now: now),
-            now: now
+            now: now,
+            resetAdaptedDelay: dropPendingFrames
         )
         if dropPendingFrames, droppedFrameCount > 0 {
             state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(droppedFrameCount)
@@ -555,7 +557,8 @@ extension MirageRenderStreamStore {
             state.pendingFrames.removeAll(keepingCapacity: false)
             state.presentationController.resetPresentationEpoch(
                 policy: presentationLatencyPolicyLocked(state: state, now: now),
-                now: now
+                now: now,
+                resetAdaptedDelay: true
             )
             if droppedFrameCount > 0 {
                 state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(droppedFrameCount)

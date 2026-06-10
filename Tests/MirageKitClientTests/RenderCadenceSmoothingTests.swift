@@ -799,6 +799,162 @@ struct RenderCadenceSmoothingTests {
         #expect(hardFrames.count == 1)
     }
 
+    @Test("Smoothest presentation recovery resets adapted playout delay")
+    func smoothestPresentationRecoveryResetsAdaptedPlayoutDelay() throws {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .smoothest,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .wifi
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames: [MirageRenderFrame] = []
+
+        _ = buffer.enqueue(
+            makeRenderFrames(count: 1, decodeTime: now)[0],
+            into: &frames,
+            policy: policy,
+            now: now
+        )
+        let firstSelection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now + 0.120
+        )
+        _ = try #require(firstSelection.frame)
+
+        for index in 1 ... 10 {
+            buffer.recordDisplayTickWithoutFrame(
+                policy: policy,
+                now: now + 0.120 + Double(index) * 0.060
+            )
+        }
+        frames.removeAll()
+        _ = buffer.enqueue(
+            makeRenderFrames(count: 1, decodeTime: now + 0.800)[0],
+            into: &frames,
+            policy: policy,
+            now: now + 0.800
+        )
+        let increasedDelay = try #require(frames.first?.targetPlayoutDelayMs)
+        #expect(increasedDelay > policy.baseTargetPlayoutDelayMs)
+
+        buffer.resetPresentationEpoch(
+            policy: policy,
+            now: now + 0.820,
+            resetAdaptedDelay: true
+        )
+        frames.removeAll()
+        _ = buffer.enqueue(
+            makeRenderFrames(count: 1, decodeTime: now + 0.840)[0],
+            into: &frames,
+            policy: policy,
+            now: now + 0.840
+        )
+        let recoveredDelay = try #require(frames.first?.targetPlayoutDelayMs)
+        #expect(abs(recoveredDelay - policy.baseTargetPlayoutDelayMs) < 0.001)
+    }
+
+    @Test("Smoothest queue expands with adapted delay but remains bounded")
+    func smoothestQueueExpandsWithAdaptedDelayButRemainsBounded() throws {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .smoothest,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .wifi
+        )
+        let baselineDepth = min(
+            policy.maximumQueueDepth,
+            max(1, Int(((policy.baseTargetPlayoutDelayMs + 150) / policy.displayFrameIntervalMs).rounded(.up)) + 1)
+        )
+        #expect(policy.maximumQueueDepth > baselineDepth)
+
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames: [MirageRenderFrame] = []
+
+        _ = buffer.enqueue(
+            makeRenderFrames(count: 1, decodeTime: now)[0],
+            into: &frames,
+            policy: policy,
+            now: now
+        )
+        let firstSelection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now + 0.120
+        )
+        _ = try #require(firstSelection.frame)
+
+        for index in 1 ... 10 {
+            buffer.recordDisplayTickWithoutFrame(
+                policy: policy,
+                now: now + 0.120 + Double(index) * 0.060
+            )
+        }
+        #expect(buffer.smoothestDisplayDebtCapMs(policy: policy) > policy.smoothestDisplayDebtCapMs)
+
+        frames.removeAll()
+        let enqueueStart = now + 1
+        var trimResult = MirageVideoPlayoutBuffer.TrimResult.empty
+        for index in 0 ..< policy.maximumQueueDepth + 8 {
+            let enqueueTime = enqueueStart + Double(index) * 0.001
+            trimResult.absorb(buffer.enqueue(
+                MirageRenderFrame(
+                    pixelBuffer: makePixelBuffer(),
+                    contentRect: .zero,
+                    sequence: UInt64(index + 1),
+                    decodeTime: enqueueTime,
+                    presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                    remotePresentationTime: .invalid
+                ),
+                into: &frames,
+                policy: policy,
+                now: enqueueTime
+            ))
+        }
+
+        #expect(frames.count == policy.maximumQueueDepth)
+        #expect(frames.count > baselineDepth)
+        #expect(frames.first?.sequence == 9)
+        #expect(trimResult.smoothestDepthDrops == 8)
+    }
+
+    @Test("Smoothest drops oldest frames once elastic age window expires")
+    func smoothestDropsOldestFramesOnceElasticAgeWindowExpires() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .smoothest,
+            sourceFPS: 60,
+            displayFPS: 60,
+            transportPathKind: .wifi
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var buffer = MirageVideoPlayoutBuffer()
+        var frames = makeRenderFrames(count: 5, decodeTime: now - 0.700).map {
+            $0.withPlayoutMetadata(
+                transportPathKind: .wifi,
+                targetPlayoutTime: now + 0.050,
+                targetPlayoutDelayMs: policy.maximumTargetPlayoutDelayMs
+            )
+        }
+
+        let selection = buffer.selectFrame(
+            frames: &frames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+
+        #expect(selection.frame == nil)
+        #expect(frames.count == 1)
+        #expect(frames.first?.sequence == 5)
+        #expect(selection.trimResult.smoothestAgeDrops == 4)
+        #expect(selection.trimResult.smoothestFifoResetCount == 1)
+    }
+
     @Test("AWDL preserves ordered playout instead of display debt FIFO reset")
     func awdlPreservesOrderedPlayoutInsteadOfDisplayDebtFifoReset() {
         let policy = MiragePresentationLatencyPolicy(
@@ -942,6 +1098,23 @@ struct RenderCadenceSmoothingTests {
             referenceTime: referenceTime,
             timescale: timescale
         )) == referenceTime)
+    }
+
+    @Test("Immediate presentation timing does not accumulate frame-duration drift")
+    func immediatePresentationTimingDoesNotAccumulateFrameDurationDrift() {
+        let lowestLatencyTiming = MirageRenderPresentationTiming(
+            targetFPS: 60,
+            playoutDelayFrames: 0,
+            latencyMode: .lowestLatency
+        )
+        let smoothestTiming = MirageRenderPresentationTiming(
+            targetFPS: 60,
+            playoutDelayFrames: 4,
+            latencyMode: .smoothest
+        )
+
+        #expect(lowestLatencyTiming.minimumMonotonicPresentationStep == CMTime(value: 1, timescale: 1_000_000_000))
+        #expect(smoothestTiming.minimumMonotonicPresentationStep == CMTime(value: 1, timescale: 60))
     }
 
     @Test("Explicit transport playout delay can raise smoothest to two frames")

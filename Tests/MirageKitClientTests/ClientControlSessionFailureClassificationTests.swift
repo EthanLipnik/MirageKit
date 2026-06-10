@@ -87,6 +87,11 @@ struct ClientControlSessionFailureClassificationTests {
                 )
             ) == .transportLoss
         )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
+                MirageError.protocolError("Host identity mismatch")
+            ) == .hostIdentityMismatch
+        )
     }
 
     @MainActor
@@ -143,6 +148,13 @@ struct ClientControlSessionFailureClassificationTests {
         #expect(
             !MirageClientService.shouldRetryLaterControlSessionAttempt(
                 classification: .other,
+                attempts: attempts,
+                currentAttemptIndex: 0
+            )
+        )
+        #expect(
+            !MirageClientService.shouldRetryLaterControlSessionAttempt(
+                classification: .hostIdentityMismatch,
                 attempts: attempts,
                 currentAttemptIndex: 0
             )

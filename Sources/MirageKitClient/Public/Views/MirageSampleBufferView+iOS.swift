@@ -58,7 +58,7 @@ public class MirageSampleBufferView: UIView {
     }
 
     /// Whether local presentation should aspect-fit frames instead of filling the view.
-    public var prefersLocalAspectFitPresentation: Bool = false {
+    public var prefersLocalAspectFitPresentation: Bool = true {
         didSet {
             guard prefersLocalAspectFitPresentation != oldValue else { return }
             applyRenderConfiguration()

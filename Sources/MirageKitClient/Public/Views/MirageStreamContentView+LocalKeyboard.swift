@@ -16,9 +16,29 @@ import UIKit
 
 extension MirageStreamContentView {
     #if os(iOS)
-    func handleLocalKeyboardOcclusionDetectionChanged(_ isOccluded: Bool) {
-        guard localKeyboardOcclusionActive != isOccluded else { return }
-        localKeyboardOcclusionActive = isOccluded
+    func handleLocalKeyboardOcclusionDetectionChanged(_ occlusionHeight: CGFloat) {
+        let normalizedOcclusionHeight = max(0, occlusionHeight)
+        let isOccluded = normalizedOcclusionHeight > 0
+        localKeyboardOcclusionClearTask?.cancel()
+        localKeyboardOcclusionClearTask = nil
+        if abs(localKeyboardOcclusionHeight - normalizedOcclusionHeight) >= 0.5 {
+            localKeyboardOcclusionHeight = normalizedOcclusionHeight
+        }
+        if isOccluded {
+            if !localKeyboardOcclusionActive {
+                localKeyboardOcclusionActive = true
+            }
+        } else if localKeyboardOcclusionActive {
+            localKeyboardOcclusionClearTask = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: .milliseconds(350))
+                } catch {
+                    return
+                }
+                localKeyboardOcclusionActive = false
+                localKeyboardOcclusionClearTask = nil
+            }
+        }
     }
     #endif
 }

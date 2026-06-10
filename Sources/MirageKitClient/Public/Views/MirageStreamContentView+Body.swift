@@ -64,6 +64,15 @@ private extension MirageStreamContentView {
             .onChange(of: localPresentationPauseActive) {
                 handleLocalPresentationPauseChanged()
             }
+            .onChange(of: keyboardAvoidanceEnabled) {
+                handleKeyboardAvoidancePresentationStateChanged()
+            }
+            .onChange(of: softwareKeyboardVisible) {
+                handleKeyboardAvoidancePresentationStateChanged()
+            }
+            .onChange(of: localKeyboardOcclusionActive) {
+                handleKeyboardAvoidancePresentationStateChanged()
+            }
             .onChange(of: maxDrawableSize) {
                 scheduleDesktopResizeForCurrentMetricsChangeIfNeeded()
             }
@@ -89,8 +98,8 @@ private extension MirageStreamContentView {
         #if os(iOS)
         streamContentWithLifecycleObservers
             .background {
-                LocalKeyboardOcclusionReader(minimumOcclusionHeight: 120) { isOccluded in
-                    handleLocalKeyboardOcclusionDetectionChanged(isOccluded)
+                LocalKeyboardOcclusionReader(minimumOcclusionHeight: 120) { occlusionHeight in
+                    handleLocalKeyboardOcclusionDetectionChanged(occlusionHeight)
                 }
             }
         #else
@@ -137,6 +146,7 @@ private extension MirageStreamContentView {
 
             streamPlatformSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, localPresentationKeyboardBottomInset)
         }
     }
 
@@ -338,6 +348,12 @@ private extension MirageStreamContentView {
         }
     }
 
+    func handleKeyboardAvoidancePresentationStateChanged() {
+        if suppressesWindowDrivenResizeForLocalPresentation {
+            cancelPendingWindowDrivenResizeForLocalPresentation()
+        }
+    }
+
     func handleClientRecoveryStatusChanged() {
         updateRecoveryBlurDebounceState()
         updatePresentationBlurProgressMonitoring()
@@ -383,6 +399,8 @@ private extension MirageStreamContentView {
         appResizeDispatchState.cancel()
         streamScaleTask?.cancel()
         streamScaleTask = nil
+        localKeyboardOcclusionClearTask?.cancel()
+        localKeyboardOcclusionClearTask = nil
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = nil
         cancelInputResumeGate(reason: "stream_content_disappeared")
@@ -397,6 +415,7 @@ private extension MirageStreamContentView {
         latestDrawableViewSize = .zero
         latestDrawableScaleFactor = nil
         localKeyboardOcclusionActive = false
+        localKeyboardOcclusionHeight = 0
         resizeLifecycleState = .active
         if isResizing { isResizing = false }
         clientService.clearTransientDesktopResizeState(streamID: session.streamID)

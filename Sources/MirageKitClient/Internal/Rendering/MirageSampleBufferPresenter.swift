@@ -389,7 +389,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         )
         return makeMonotonicPresentationTime(
             from: scheduledTime,
-            minimumStep: timing.frameDuration
+            minimumStep: timing.minimumMonotonicPresentationStep
         )
     }
 

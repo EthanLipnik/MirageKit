@@ -142,6 +142,8 @@ public struct MirageStreamContentView: View {
     @State var latestDrawableViewSize: CGSize = .zero
     @State var latestDrawableScaleFactor: CGFloat?
     @State var localKeyboardOcclusionActive = false
+    @State var localKeyboardOcclusionHeight: CGFloat = 0
+    @State var localKeyboardOcclusionClearTask: Task<Void, Never>?
     @State var suppressNextOrderedPasteKeyUp = false
 
     /// Creates a streaming content view backed by a session store and client service.
@@ -322,69 +324,32 @@ extension MirageStreamContentView {
                 isDesktopStream: isDesktopStream,
                 useHostResolution: useHostResolution,
                 desktopCaptureSource: clientService.desktopCaptureSource,
-                desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize
+                desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
+                keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+                softwareKeyboardVisible: softwareKeyboardVisible,
+                localKeyboardOcclusionActive: localKeyboardOcclusionActive
             )
     }
 
     /// Whether the stream should preserve source aspect instead of resizing the host/window to fill.
     var prefersLocalAspectFitPresentation: Bool {
-        MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
-            localPresentationPauseActive: localPresentationPauseActive,
-            isDesktopStream: isDesktopStream,
-            useHostResolution: useHostResolution,
-            desktopCaptureSource: clientService.desktopCaptureSource,
-            desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
-            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
-            softwareKeyboardVisible: softwareKeyboardVisible,
-            localKeyboardOcclusionActive: localKeyboardOcclusionActive,
-            appStreamPrefersAspectFitPresentation: appStreamPrefersAspectFitPresentation
-        )
+        MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
+    }
+
+    var localPresentationKeyboardBottomInset: CGFloat {
+        #if os(iOS)
+        keyboardAvoidanceEnabled ? localKeyboardOcclusionHeight : 0
+        #else
+        0
+        #endif
     }
 
     #if os(macOS)
     /// macOS container sizing mode chosen from the current resize policy.
     var macOSContainerSizingMode: MirageStreamContainerSizingMode {
-        isDesktopStream && !prefersLocalAspectFitPresentation ? .viewBounds : .contentLayout
+        isDesktopStream && !suppressesWindowDrivenResizeForLocalPresentation ? .viewBounds : .contentLayout
     }
     #endif
-
-    /// Whether an app-window stream should be aspect-fit because its content ratio differs from the container.
-    var appStreamPrefersAspectFitPresentation: Bool {
-        guard !isDesktopStream else { return false }
-        let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
-            ? latestContainerDisplaySize
-            : latestDrawableViewSize
-        guard containerSize.width > 0,
-              containerSize.height > 0,
-              let streamContentSize = appStreamContentReferenceSize,
-              streamContentSize.width > 0,
-              streamContentSize.height > 0 else {
-            return false
-        }
-        let containerAspectRatio = containerSize.width / containerSize.height
-        let streamAspectRatio = streamContentSize.width / streamContentSize.height
-        let relativeAspectDelta = abs(streamAspectRatio - containerAspectRatio) / max(0.001, containerAspectRatio)
-        return relativeAspectDelta > 0.03
-    }
-
-    /// Best known app-window content size used to decide between fill and aspect-fit presentation.
-    var appStreamContentReferenceSize: CGSize? {
-        if let atlasRegion = session.atlasRegion?.pixelRect,
-           atlasRegion.width > 0,
-           atlasRegion.height > 0 {
-            return atlasRegion.size
-        }
-
-        if let acknowledgement = appStreamStartAcknowledgement,
-            acknowledgement.width > 0,
-            acknowledgement.height > 0 {
-            return CGSize(width: acknowledgement.width, height: acknowledgement.height)
-        }
-
-        let windowSize = session.window.frame.size
-        guard windowSize.width > 0, windowSize.height > 0 else { return nil }
-        return windowSize
-    }
 
     /// Render FPS ceiling chosen from observed cadence, explicit overrides, and display capability.
     var preferredMaximumRenderFPS: Int {

@@ -534,7 +534,8 @@ extension MirageClientService {
             enteredBitrateBps: previousRequest.enteredBitrate,
             requestedTargetBitrateBps: previousRequest.bitrate,
             bitrateAdaptationCeilingBps: previousRequest.bitrateAdaptationCeiling,
-            displayResolution: effectiveDisplayResolution
+            displayResolution: effectiveDisplayResolution,
+            scaleAutomaticTargetBitrate: false
         )
         var latencyMode = previousRequest.latencyMode
         var hostBufferingPolicy = previousRequest.hostBufferingPolicy

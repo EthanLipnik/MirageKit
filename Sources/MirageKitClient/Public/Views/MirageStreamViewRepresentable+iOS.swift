@@ -184,7 +184,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         presentationTier: StreamPresentationTier = .activeLive,
         preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
-        prefersLocalAspectFitPresentation: Bool = false,
+        prefersLocalAspectFitPresentation: Bool = true,
         ignoresSafeArea: Bool = true
     ) {
         self.streamID = streamID

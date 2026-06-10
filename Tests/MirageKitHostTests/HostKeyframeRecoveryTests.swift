@@ -316,11 +316,11 @@ struct HostKeyframeRecoveryTests {
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
-    @Test("AWDL receiver post-resize feedback preserves protected resize keyframe")
-    func awdlReceiverPostResizeFeedbackPreservesProtectedResizeKeyframe() async {
+    @Test("Receiver post-resize feedback preserves protected resize keyframe on wired paths")
+    func receiverPostResizeFeedbackPreservesProtectedResizeKeyframeOnWiredPaths() async {
         let context = makeContext(
-            transportPathKind: .awdl,
-            mediaPathProfile: .awdlRadio
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
         )
 
         await context.scheduleCoalescedRecoveryKeyframe(
@@ -347,11 +347,11 @@ struct HostKeyframeRecoveryTests {
         #expect(!(context.suppressEncodedNonKeyframesUntilKeyframe))
     }
 
-    @Test("AWDL receiver post-resize feedback still bypasses unprotected in-flight keyframe")
-    func awdlReceiverPostResizeFeedbackStillBypassesUnprotectedInFlightKeyframe() async {
+    @Test("Receiver post-resize feedback still bypasses unprotected in-flight keyframe")
+    func receiverPostResizeFeedbackStillBypassesUnprotectedInFlightKeyframe() async {
         let context = makeContext(
-            transportPathKind: .awdl,
-            mediaPathProfile: .awdlRadio
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
         )
 
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -371,11 +371,11 @@ struct HostKeyframeRecoveryTests {
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
-    @Test("AWDL receiver post-resize feedback supersedes pending non-geometry keyframe")
-    func awdlReceiverPostResizeFeedbackSupersedesPendingNonGeometryKeyframe() async {
+    @Test("Receiver post-resize feedback supersedes pending non-geometry keyframe")
+    func receiverPostResizeFeedbackSupersedesPendingNonGeometryKeyframe() async {
         let context = makeContext(
-            transportPathKind: .awdl,
-            mediaPathProfile: .awdlRadio
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
         )
 
         await context.queueKeyframeIfPossible(
@@ -610,8 +610,8 @@ struct HostKeyframeRecoveryTests {
         #expect(boosted + 0.07 < baseline)
     }
 
-    @Test("Runtime bitrate raises quality ceiling without active quality jump")
-    func runtimeBitrateRaisesQualityCeilingWithoutActiveQualityJump() async {
+    @Test("Runtime bitrate raises active quality on clean health")
+    func runtimeBitrateRaisesActiveQualityOnCleanHealth() async {
         let context = makeContext(
             frameRate: 60,
             bitrate: 32_000_000,
@@ -632,7 +632,7 @@ struct HostKeyframeRecoveryTests {
         )
 
         let raisedQuality = await context.activeQuality
-        #expect(abs(raisedQuality - startupQuality) < 0.0001)
+        #expect(raisedQuality > startupQuality)
         #expect(await context.configuredQualityCeiling >= 0.70)
         #expect(await context.qualityCeiling >= 0.70)
     }

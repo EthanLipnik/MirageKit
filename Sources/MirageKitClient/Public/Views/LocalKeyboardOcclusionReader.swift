@@ -11,7 +11,7 @@ import UIKit
 
 struct LocalKeyboardOcclusionReader: UIViewRepresentable {
     let minimumOcclusionHeight: CGFloat
-    let onOcclusionChanged: @MainActor (Bool) -> Void
+    let onOcclusionChanged: @MainActor (CGFloat) -> Void
 
     func makeUIView(context _: Context) -> LocalKeyboardOcclusionReaderView {
         let view = LocalKeyboardOcclusionReaderView()
@@ -36,10 +36,10 @@ final class LocalKeyboardOcclusionReaderView: UIView {
         }
     }
 
-    var onOcclusionChanged: (@MainActor (Bool) -> Void)?
+    var onOcclusionChanged: (@MainActor (CGFloat) -> Void)?
 
     private let keyboardFrameView = UIView()
-    private var lastPublishedOcclusion: Bool?
+    private var lastPublishedOcclusionHeight: CGFloat?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -77,22 +77,26 @@ final class LocalKeyboardOcclusionReaderView: UIView {
         guard window != nil,
               bounds.width > 0,
               bounds.height > 0 else {
-            publishOcclusion(false)
+            publishOcclusionHeight(0)
             return
         }
 
-        let isOccluded = hasLocalKeyboardOcclusion(
+        let occlusionHeight = localKeyboardOcclusionHeight(
             keyboardFrame: keyboardFrameView.frame,
             occlusionBounds: bounds,
             minimumOcclusionHeight: minimumOcclusionHeight
         )
-        publishOcclusion(isOccluded)
+        publishOcclusionHeight(occlusionHeight)
     }
 
-    private func publishOcclusion(_ isOccluded: Bool) {
-        guard lastPublishedOcclusion != isOccluded else { return }
-        lastPublishedOcclusion = isOccluded
-        onOcclusionChanged?(isOccluded)
+    private func publishOcclusionHeight(_ occlusionHeight: CGFloat) {
+        let normalizedOcclusionHeight = max(0, occlusionHeight)
+        if let lastPublishedOcclusionHeight,
+           abs(lastPublishedOcclusionHeight - normalizedOcclusionHeight) < 0.5 {
+            return
+        }
+        lastPublishedOcclusionHeight = normalizedOcclusionHeight
+        onOcclusionChanged?(normalizedOcclusionHeight)
     }
 }
 #endif

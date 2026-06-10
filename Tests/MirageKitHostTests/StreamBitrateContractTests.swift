@@ -88,8 +88,8 @@ struct StreamBitrateContractTests {
         #expect(encodedSize.height <= StreamContext.maxEncodedHeight)
     }
 
-    @Test("Healthy runtime budget refresh does not raise active quality directly")
-    func healthyRuntimeBudgetRefreshDoesNotRaiseActiveQualityDirectly() async {
+    @Test("Healthy runtime budget refresh raises active quality")
+    func healthyRuntimeBudgetRefreshRaisesActiveQuality() async {
         let context = makeContext(bitrate: 180_000_000)
         await context.configureRuntimeQualityRefreshTest(
             size: CGSize(width: 5104, height: 2864),
@@ -101,8 +101,26 @@ struct StreamBitrateContractTests {
             reason: HostAdaptivePFrameController.Reason.healthy.rawValue
         )
 
-        #expect(await context.activeQualityForTest() == 0.04)
+        #expect(await context.activeQualityForTest() > 0.04)
         #expect(await context.steadyQualityCeilingForTest() > 0.04)
+    }
+
+    @Test("Healthy runtime budget refresh clears stale realtime quality ceiling")
+    func healthyRuntimeBudgetRefreshClearsStaleRealtimeQualityCeiling() async {
+        let context = makeContext(bitrate: 76_700_000)
+        await context.configureRuntimeQualityRefreshTest(
+            size: CGSize(width: 2752, height: 2064),
+            activeQuality: 0.20
+        )
+        await context.setRealtimeRuntimeQualityCeilingForTest(0.25)
+
+        await context.refreshRuntimeQualityTargets(
+            for: 120_000_000,
+            reason: HostAdaptivePFrameController.Reason.healthy.rawValue
+        )
+
+        #expect(await context.realtimeRuntimeQualityCeilingForTest() == nil)
+        #expect(await context.activeQualityForTest() > 0.25)
     }
 
     private func makeContext(
@@ -146,6 +164,14 @@ private extension StreamContext {
 
     func steadyQualityCeilingForTest() -> Float {
         steadyQualityCeiling
+    }
+
+    func setRealtimeRuntimeQualityCeilingForTest(_ ceiling: Float) {
+        realtimeRuntimeQualityCeiling = ceiling
+    }
+
+    func realtimeRuntimeQualityCeilingForTest() -> Float? {
+        realtimeRuntimeQualityCeiling
     }
 }
 #endif

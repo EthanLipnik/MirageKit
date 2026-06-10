@@ -118,8 +118,16 @@ struct MirageVideoPlayoutBuffer {
         lastDelayIncreaseTime = 0
     }
 
-    mutating func resetPresentationEpoch(policy: MiragePresentationLatencyPolicy, now: CFAbsoluteTime) {
+    mutating func resetPresentationEpoch(
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime,
+        resetAdaptedDelay: Bool = false
+    ) {
         configureIfNeeded(policy: policy, now: now)
+        if resetAdaptedDelay {
+            adaptedDelayMs = policy.baseTargetPlayoutDelayMs
+            lastDelayIncreaseTime = 0
+        }
         playbackStarted = false
         resetPlayoutAnchors()
         consecutiveBurstFrames = 0
@@ -293,6 +301,18 @@ struct MirageVideoPlayoutBuffer {
         return effectiveDelayMs(policy: policy)
     }
 
+    func smoothestDisplayDebtCapMs(policy: MiragePresentationLatencyPolicy) -> Double {
+        guard policy.usesBufferedPlayout else { return 0 }
+        let targetDelayMs = effectiveDelayMs(policy: policy)
+        if policy.usesAwdlRealtimePolicy {
+            return policy.smoothestDisplayDebtCapMs
+        }
+        if policy.latencyMode == .balanced {
+            return max(50, targetDelayMs + policy.displayFrameIntervalMs * 2)
+        }
+        return max(100, targetDelayMs + 50)
+    }
+
     private enum DelayIncreaseReason {
         case underflow
         case frameAfterEmptyTick
@@ -391,17 +411,19 @@ struct MirageVideoPlayoutBuffer {
         var result = TrimResult.empty
         guard !frames.isEmpty else { return result }
 
+        let maximumQueueDepth = maximumBufferedQueueDepth(policy: policy)
         while frames.count > 1 {
             let byteCount = retainedPixelBufferBytes(frames)
-            guard frames.count > policy.maximumQueueDepth || byteCount > policy.maximumRetainedPixelBufferBytes else { break }
+            guard frames.count > maximumQueueDepth || byteCount > policy.maximumRetainedPixelBufferBytes else { break }
             let ageMs = frameAgeMs(frames.removeFirst(), now: now)
             result.recordSmoothestDepthDrop(ageMs: ageMs)
             noteInstability(now: now)
         }
 
+        let maximumQueueAgeMs = maximumBufferedQueueAgeMs(policy: policy)
         while frames.count > 1,
               let first = frames.first,
-              frameAgeMs(first, now: now) > policy.maximumQueueAgeMs {
+              frameAgeMs(first, now: now) > maximumQueueAgeMs {
             let ageMs = frameAgeMs(frames.removeFirst(), now: now)
             result.recordSmoothestAgeDrop(ageMs: ageMs)
             noteInstability(now: now)
@@ -572,6 +594,32 @@ struct MirageVideoPlayoutBuffer {
             return max(0.025, min(0.080, policy.maximumTargetPlayoutDelayMs / 1000))
         }
         return max(0.050, min(0.150, policy.effectiveTargetPlayoutDelayMs(adaptedDelayMs: adaptedDelayMs) / 2000))
+    }
+
+    private func maximumBufferedQueueDepth(policy: MiragePresentationLatencyPolicy) -> Int {
+        guard policy.usesBufferedPlayout else { return policy.maximumQueueDepth }
+        guard !policy.usesAwdlRealtimePolicy else { return policy.maximumQueueDepth }
+        let slackMs: Double
+        if policy.latencyMode == .balanced {
+            slackMs = policy.displayFrameIntervalMs * 2
+        } else {
+            slackMs = 150
+        }
+        let elasticDepth = Int(
+            ((effectiveDelayMs(policy: policy) + slackMs) / policy.displayFrameIntervalMs).rounded(.up)
+        ) + 1
+        return min(policy.maximumQueueDepth, max(1, elasticDepth))
+    }
+
+    private func maximumBufferedQueueAgeMs(policy: MiragePresentationLatencyPolicy) -> Double {
+        guard policy.usesBufferedPlayout else { return policy.maximumQueueAgeMs }
+        if policy.usesAwdlRealtimePolicy {
+            return policy.maximumQueueAgeMs
+        }
+        if policy.latencyMode == .balanced {
+            return policy.maximumQueueAgeMs
+        }
+        return min(policy.maximumQueueAgeMs, max(300, effectiveDelayMs(policy: policy) + 250))
     }
 
     private func maximumRemoteDeltaSeconds(policy: MiragePresentationLatencyPolicy) -> CFTimeInterval {

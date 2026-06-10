@@ -73,12 +73,18 @@ extension StreamContext {
         await restartCaptureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot
             let backpressure = self?.backpressureActiveSnapshot ?? false
+            let encoderLag = HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: self?.encoderAverageEncodeMsSnapshot ?? 0,
+                inFlightCount: self?.encoderInFlightCountSnapshot ?? 0,
+                frameRate: self?.currentFrameRate ?? 60
+            )
             let shouldDrop = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
                 latencyMode: latencyMode,
                 hostBufferingPolicy: hostBufferingPolicy,
                 pendingFrameCount: snapshot.pending,
                 frameCapacity: snapshot.capacity,
-                backpressureActive: backpressure
+                backpressureActive: backpressure,
+                encoderLag: encoderLag
             )
             guard shouldDrop else { return false }
 

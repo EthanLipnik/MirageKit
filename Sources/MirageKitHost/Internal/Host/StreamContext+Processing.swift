@@ -245,6 +245,13 @@ extension StreamContext {
                 MirageLogger.metrics(
                     "\(dropReason) dropped \(drainResult.droppedBeforeDelivery) stale frames before encode for stream \(streamID)"
                 )
+                if shouldDrainNewestForEncoderLag {
+                    await applyPreEncodeEncoderBacklogPressureIfNeeded(
+                        droppedFrameCount: drainResult.droppedBeforeDelivery,
+                        encoderLag: encoderLagSnapshot,
+                        now: CFAbsoluteTimeGetCurrent()
+                    )
+                }
             }
             guard let frame = drainResult.frame else { return }
 

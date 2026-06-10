@@ -112,7 +112,7 @@ extension StreamContext {
         let baseFrameFlagsSnapshot = baseFrameFlags
 
         await encoder.startEncoding(
-            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime, finishFrame in
+            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime, timing, finishFrame in
                 Task(priority: .userInitiated) {
                     guard let self else {
                         finishFrame()
@@ -122,6 +122,7 @@ extension StreamContext {
                         encodedData: encodedData,
                         isKeyframe: isKeyframe,
                         presentationTime: presentationTime,
+                        timing: timing,
                         pinnedContentRect: pinnedContentRect,
                         logPrefix: logPrefix,
                         callbackSequencer: callbackSequencer,
@@ -139,6 +140,7 @@ extension StreamContext {
         encodedData: Data,
         isKeyframe: Bool,
         presentationTime: CMTime,
+        timing: VideoEncoder.EncodedFrameTiming,
         pinnedContentRect: CGRect?,
         logPrefix: String,
         callbackSequencer: StreamEncodingCallbackSequencer,
@@ -175,6 +177,11 @@ extension StreamContext {
             packetCount: projectedPlan.packetCount,
             isKeyframe: isKeyframe,
             encodedAt: now
+        )
+        await applyPerFrameEncoderTimingPressureIfNeeded(
+            timing,
+            isKeyframe: isKeyframe,
+            now: now
         )
 
         switch admissionDecision.admission {

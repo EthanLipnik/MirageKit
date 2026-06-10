@@ -185,6 +185,9 @@ extension VideoEncoder {
             // Timing: calculate encoding duration
             let encodeEndTime = CFAbsoluteTimeGetCurrent()
             let encodingDuration = (encodeEndTime - info.encodeStartTime) * 1000 // ms
+            let captureToCallbackMs = info.captureTime > 0
+                ? (encodeEndTime - info.captureTime) * 1_000
+                : encodingDuration
             info.performanceTracker?.record(durationMs: encodingDuration)
             if info.frameNumber < 3 {
                 Task(priority: .utility) {
@@ -284,9 +287,6 @@ extension VideoEncoder {
 
             if info.frameNumber < 10 || isKeyframe {
                 let bytesKB = Double(data.count) / 1024.0
-                let captureToCallbackMs = info.captureTime > 0
-                    ? (encodeEndTime - info.captureTime) * 1_000
-                    : 0
                 let captureToCallbackText = captureToCallbackMs.formatted(.number.precision(.fractionLength(1)))
                 let dirtyText = info.captureDirtyPercentage.formatted(.number.precision(.fractionLength(1)))
                 MirageLogger.debug(
@@ -300,8 +300,15 @@ extension VideoEncoder {
 
             info.encodedOutputTelemetry?.recordFrame(byteCount: data.count, isKeyframe: isKeyframe)
             if let handler = info.handler {
+                let timing = VideoEncoder.EncodedFrameTiming(
+                    frameNumber: info.frameNumber,
+                    encodeDurationMs: encodingDuration,
+                    captureToCallbackMs: captureToCallbackMs,
+                    captureDirtyPercentage: info.captureDirtyPercentage,
+                    captureIsIdleFrame: info.captureIsIdleFrame
+                )
                 didTransferCompletion = true
-                handler(data, isKeyframe, pts) {
+                handler(data, isKeyframe, pts, timing) {
                     info.completion?()
                 }
             }

@@ -54,7 +54,7 @@ extension InputCapturingView {
             accessoryView.heightAnchor.constraint(equalToConstant: 44),
         ])
         #else
-        inputView.inputAccessoryView = accessoryView
+        inputView.softwareInputAccessoryView = accessoryView
         #endif
 
         addSubview(inputView)
@@ -203,17 +203,13 @@ extension InputCapturingView {
         guard window?.isKeyWindow == true else { return }
         guard window?.windowScene?.activationState == .foregroundActive else { return }
 
-        if softwareKeyboardVisible && !softwareKeyboardDismissalPending {
-            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
-            MirageLogger.client(
-                "Software keyboard hide observed while requested: stream=\(streamIDText), scheduling recovery"
-            )
-            requestResponderRecovery(.focusChanged)
-            return
-        }
-
         softwareKeyboardDismissalPending = true
         cancelPendingResponderRecovery()
+        if softwareKeyboardField?.isFirstResponder == true {
+            _ = softwareKeyboardField?.resignFirstResponder()
+        } else {
+            handleSoftwareKeyboardResponderChange(isFirstResponder: false)
+        }
         notifySoftwareKeyboardVisibilityChanged(false)
     }
     #endif

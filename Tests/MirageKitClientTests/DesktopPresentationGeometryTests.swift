@@ -91,119 +91,84 @@ struct DesktopPresentationGeometryTests {
         #expect(aspectFitReference == hostDisplaySize)
     }
 
-    @Test("No keyboard allows window-driven resize without local aspect fit")
-    func noKeyboardAllowsResizeWithoutLocalAspectFit() {
+    @Test("No keyboard allows window-driven resize with local aspect fit")
+    func noKeyboardAllowsResizeWithLocalAspectFit() {
         let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
-            isDesktopStream: false,
-            useHostResolution: false,
-            desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true
-        )
-        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
-            localPresentationPauseActive: false,
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
             desktopStreamAllowsClientResize: true,
             keyboardAvoidanceEnabled: true,
             softwareKeyboardVisible: false,
-            localKeyboardOcclusionActive: false,
-            appStreamPrefersAspectFitPresentation: false
+            localKeyboardOcclusionActive: false
         )
-
-        #expect(!suppressesResize)
-        #expect(!prefersAspectFit)
-    }
-
-    @Test("Keyboard avoidance allows window resize and uses local aspect fit")
-    func keyboardAvoidanceAllowsWindowResizeAndUsesLocalAspectFit() {
-        let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
-            isDesktopStream: false,
-            useHostResolution: false,
-            desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true
-        )
-        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
-            localPresentationPauseActive: false,
-            isDesktopStream: false,
-            useHostResolution: false,
-            desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true,
-            keyboardAvoidanceEnabled: true,
-            softwareKeyboardVisible: true,
-            localKeyboardOcclusionActive: false,
-            appStreamPrefersAspectFitPresentation: false
-        )
+        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
 
         #expect(!suppressesResize)
         #expect(prefersAspectFit)
     }
 
-    @Test("Keyboard overlay allows resize without local aspect fit")
-    func keyboardOverlayAllowsResizeWithoutLocalAspectFit() {
+    @Test("Keyboard avoidance suppresses window resize and uses local aspect fit")
+    func keyboardAvoidanceSuppressesWindowResizeAndUsesLocalAspectFit() {
         let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true
+            desktopStreamAllowsClientResize: true,
+            keyboardAvoidanceEnabled: true,
+            softwareKeyboardVisible: true,
+            localKeyboardOcclusionActive: false
         )
-        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
-            localPresentationPauseActive: false,
+        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
+
+        #expect(suppressesResize)
+        #expect(prefersAspectFit)
+    }
+
+    @Test("Keyboard overlay allows resize with local aspect fit")
+    func keyboardOverlayAllowsResizeWithLocalAspectFit() {
+        let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
             desktopStreamAllowsClientResize: true,
             keyboardAvoidanceEnabled: false,
             softwareKeyboardVisible: true,
-            localKeyboardOcclusionActive: false,
-            appStreamPrefersAspectFitPresentation: false
+            localKeyboardOcclusionActive: false
         )
+        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
 
         #expect(!suppressesResize)
-        #expect(!prefersAspectFit)
+        #expect(prefersAspectFit)
     }
 
-    @Test("Keyboard frame occlusion only affects local presentation")
+    @Test("Keyboard frame occlusion suppresses resize when avoidance is enabled")
     func keyboardFrameOcclusionFollowsKeyboardAvoidanceSetting() {
         let avoidsSuppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
-            isDesktopStream: false,
-            useHostResolution: false,
-            desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true
-        )
-        let overlaySuppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
-            isDesktopStream: false,
-            useHostResolution: false,
-            desktopCaptureSource: .virtualDisplay,
-            desktopStreamAllowsClientResize: true
-        )
-        let avoidsWithAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
-            localPresentationPauseActive: false,
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
             desktopStreamAllowsClientResize: true,
             keyboardAvoidanceEnabled: true,
             softwareKeyboardVisible: false,
-            localKeyboardOcclusionActive: true,
-            appStreamPrefersAspectFitPresentation: false
+            localKeyboardOcclusionActive: true
         )
-        let overlaysWithoutAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation(
-            localPresentationPauseActive: false,
+        let overlaySuppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
             isDesktopStream: false,
             useHostResolution: false,
             desktopCaptureSource: .virtualDisplay,
             desktopStreamAllowsClientResize: true,
             keyboardAvoidanceEnabled: false,
             softwareKeyboardVisible: false,
-            localKeyboardOcclusionActive: true,
-            appStreamPrefersAspectFitPresentation: false
+            localKeyboardOcclusionActive: true
         )
+        let avoidsWithAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
+        let overlaysWithAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
 
-        #expect(!avoidsSuppressesResize)
+        #expect(avoidsSuppressesResize)
         #expect(!overlaySuppressesResize)
         #expect(avoidsWithAspectFit)
-        #expect(!overlaysWithoutAspectFit)
+        #expect(overlaysWithAspectFit)
     }
 }
 #endif

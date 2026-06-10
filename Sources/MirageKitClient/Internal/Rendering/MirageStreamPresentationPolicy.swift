@@ -45,10 +45,21 @@ enum MirageStreamPresentationPolicy {
         isDesktopStream: Bool,
         useHostResolution: Bool,
         desktopCaptureSource: MirageDesktopCaptureSource,
-        desktopStreamAllowsClientResize: Bool
+        desktopStreamAllowsClientResize: Bool,
+        keyboardAvoidanceEnabled: Bool,
+        softwareKeyboardVisible: Bool,
+        localKeyboardOcclusionActive: Bool
     )
     -> Bool {
-        suppressesDesktopResizeForLocalPresentation(
+        if keyboardAvoidancePresentationActive(
+            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            localKeyboardOcclusionActive: localKeyboardOcclusionActive
+        ) {
+            return true
+        }
+
+        return suppressesDesktopResizeForLocalPresentation(
             isDesktopStream: isDesktopStream,
             useHostResolution: useHostResolution,
             desktopCaptureSource: desktopCaptureSource,
@@ -56,31 +67,8 @@ enum MirageStreamPresentationPolicy {
         )
     }
 
-    static func prefersLocalAspectFitPresentation(
-        localPresentationPauseActive: Bool,
-        isDesktopStream: Bool,
-        useHostResolution: Bool,
-        desktopCaptureSource: MirageDesktopCaptureSource,
-        desktopStreamAllowsClientResize: Bool,
-        keyboardAvoidanceEnabled: Bool,
-        softwareKeyboardVisible: Bool,
-        localKeyboardOcclusionActive: Bool,
-        appStreamPrefersAspectFitPresentation: Bool
-    )
-    -> Bool {
-        localPresentationPauseActive ||
-            suppressesDesktopResizeForLocalPresentation(
-                isDesktopStream: isDesktopStream,
-                useHostResolution: useHostResolution,
-                desktopCaptureSource: desktopCaptureSource,
-                desktopStreamAllowsClientResize: desktopStreamAllowsClientResize
-            ) ||
-            keyboardAvoidancePresentationActive(
-                keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
-                softwareKeyboardVisible: softwareKeyboardVisible,
-                localKeyboardOcclusionActive: localKeyboardOcclusionActive
-            ) ||
-            appStreamPrefersAspectFitPresentation
+    static func prefersLocalAspectFitPresentation() -> Bool {
+        true
     }
 
     static func localAspectFitReferenceSize(

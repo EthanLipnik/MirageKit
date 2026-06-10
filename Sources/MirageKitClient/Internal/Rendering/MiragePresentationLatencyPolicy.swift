@@ -90,7 +90,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .smoothest:
             return min(
                 32,
-                max(3, Int(((baseTargetPlayoutDelayMs + 150) / displayFrameIntervalMs).rounded(.up)) + 1)
+                max(3, Int(((maximumTargetPlayoutDelayMs + 150) / displayFrameIntervalMs).rounded(.up)) + 1)
             )
         }
     }
@@ -108,7 +108,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .balanced:
             return max(120, displayFrameIntervalMs * 6)
         case .smoothest:
-            return max(300, baseTargetPlayoutDelayMs + 250)
+            return max(300, maximumTargetPlayoutDelayMs + 250)
         }
     }
 

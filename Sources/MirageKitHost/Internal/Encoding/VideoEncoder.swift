@@ -63,6 +63,15 @@ actor VideoEncoder {
         let ultra444Validated: Bool
     }
 
+    /// Timing captured for one VideoToolbox output callback.
+    struct EncodedFrameTiming: Sendable, Equatable {
+        let frameNumber: UInt64
+        let encodeDurationMs: Double
+        let captureToCallbackMs: Double
+        let captureDirtyPercentage: Float
+        let captureIsIdleFrame: Bool
+    }
+
     var compressionSession: VTCompressionSession?
     var configuration: MirageEncoderConfiguration
     let codec: MirageVideoCodec
@@ -91,7 +100,8 @@ actor VideoEncoder {
 
     var isEncoding = false
     var frameNumber: UInt64 = 0
-    var encodedFrameHandler: (@Sendable (Data, Bool, CMTime, @escaping @Sendable () -> Void) -> Void)?
+    var encodedFrameHandler:
+        (@Sendable (Data, Bool, CMTime, EncodedFrameTiming, @escaping @Sendable () -> Void) -> Void)?
     var frameCompletionHandler: (@Sendable () -> Void)?
     var forceNextKeyframe = false
     var isUpdatingDimensions = false
@@ -207,7 +217,8 @@ final class EncodePerformanceTracker: @unchecked Sendable {
 /// Info passed through the encode callback
 final class EncodeInfo: @unchecked Sendable {
     let frameNumber: UInt64
-    let handler: (@Sendable (Data, Bool, CMTime, @escaping @Sendable () -> Void) -> Void)?
+    let handler:
+        (@Sendable (Data, Bool, CMTime, VideoEncoder.EncodedFrameTiming, @escaping @Sendable () -> Void) -> Void)?
     let encodeStartTime: CFAbsoluteTime
     let sessionVersion: UInt64
     let captureTime: CFAbsoluteTime
@@ -224,7 +235,8 @@ final class EncodeInfo: @unchecked Sendable {
 
     init(
         frameNumber: UInt64,
-        handler: (@Sendable (Data, Bool, CMTime, @escaping @Sendable () -> Void) -> Void)?,
+        handler:
+            (@Sendable (Data, Bool, CMTime, VideoEncoder.EncodedFrameTiming, @escaping @Sendable () -> Void) -> Void)?,
         encodeStartTime: CFAbsoluteTime = 0,
         sessionVersion: UInt64 = 0,
         captureTime: CFAbsoluteTime = 0,

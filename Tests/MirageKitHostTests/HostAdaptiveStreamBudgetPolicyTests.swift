@@ -335,6 +335,250 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.realtimeEncoderRateHintBps == settings.bitrate)
     }
 
+    @Test("Per-frame encoder timing pressure cuts automatic quality before metrics window")
+    func perFrameEncoderTimingPressureCutsAutomaticQualityBeforeMetricsWindow() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 12,
+                encodeDurationMs: 45,
+                captureToCallbackMs: 62,
+                captureDirtyPercentage: 100,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+    }
+
+    @Test("ProMotion cadence above 60 fps does not cut automatic quality")
+    func proMotionCadenceAboveSixtyDoesNotCutAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 120,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        #expect(context.runtimeQualityBudgetFrameRate() == 60)
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 12,
+                encodeDurationMs: 13,
+                captureToCallbackMs: 15,
+                captureDirtyPercentage: 2,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+        await context.applyPreEncodeEncoderBacklogPressureIfNeeded(
+            droppedFrameCount: 1,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 13,
+                inFlightCount: 1,
+                frameRate: 120
+            ),
+            now: 10.010
+        )
+        await context.applyFrameTransportBudgetFeedback(
+            StreamPacketSender.FrameTransportCompletion(
+                streamID: context.streamID,
+                frameNumber: 20,
+                isKeyframe: false,
+                didSend: true,
+                frameByteCount: 320_000,
+                wireBytes: 320_000,
+                packetCount: 267,
+                queuedUnreliableDropCounts: QueuedUnreliableDropCounts(),
+                dimensionToken: 0,
+                encodedAt: 10.000,
+                startedAt: 10.002,
+                completedAt: 10.022
+            ),
+            now: 10.022
+        )
+
+        let finalQuality = await context.activeQuality
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
+    }
+
+    @Test("Severe ProMotion encoder lag still cuts automatic quality")
+    func severeProMotionEncoderLagStillCutsAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 120,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 13,
+                encodeDurationMs: 36,
+                captureToCallbackMs: 45,
+                captureDirtyPercentage: 100,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+    }
+
+    @Test("Per-frame transport completion pressure cuts automatic quality before receiver feedback")
+    func perFrameTransportCompletionPressureCutsAutomaticQualityBeforeReceiverFeedback() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyFrameTransportBudgetFeedback(
+            StreamPacketSender.FrameTransportCompletion(
+                streamID: context.streamID,
+                frameNumber: 20,
+                isKeyframe: false,
+                didSend: true,
+                frameByteCount: 900_000,
+                wireBytes: 900_000,
+                packetCount: 750,
+                queuedUnreliableDropCounts: QueuedUnreliableDropCounts(),
+                dimensionToken: 0,
+                encodedAt: 10.000,
+                startedAt: 10.010,
+                completedAt: 10.090
+            ),
+            now: 10.090
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.transportBacklog.rawValue)
+    }
+
+    @Test("Pre-encode encoder backlog drops cut automatic quality immediately")
+    func preEncodeEncoderBacklogDropsCutAutomaticQualityImmediately() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyPreEncodeEncoderBacklogPressureIfNeeded(
+            droppedFrameCount: 2,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 45,
+                inFlightCount: 2,
+                frameRate: 60
+            ),
+            now: 10
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+    }
+
+    @Test("Failed P-frame transport cuts automatic quality immediately")
+    func failedPFrameTransportCutsAutomaticQualityImmediately() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyFrameTransportBudgetFeedback(
+            StreamPacketSender.FrameTransportCompletion(
+                streamID: context.streamID,
+                frameNumber: 24,
+                isKeyframe: false,
+                didSend: false,
+                frameByteCount: 900_000,
+                wireBytes: 900_000,
+                packetCount: 750,
+                queuedUnreliableDropCounts: QueuedUnreliableDropCounts(deadlineExpired: 1),
+                dimensionToken: 0,
+                encodedAt: 10.000,
+                startedAt: 10.010,
+                completedAt: 10.020
+            ),
+            now: 10.020
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.transportBacklog.rawValue)
+    }
+
     @Test("Encoder throughput stays at readability floor when disabled")
     func encoderThroughputStaysAtReadabilityFloorWhenDisabled() async {
         let context = makeContext(
@@ -876,6 +1120,16 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             mediaPathDiagnosticSummary: mediaPathDiagnosticSummary,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
+        )
+    }
+
+    private func raiseAboveReadabilityFloorForPressureTest(_ context: StreamContext) async {
+        await context.applyRealtimeBudgetBitrate(
+            120_000_000,
+            ceilingBitrateBps: 180_000_000,
+            encoderRateHintBps: 120_000_000,
+            senderPacingBitrateBps: 120_000_000,
+            reason: HostAdaptivePFrameController.Reason.healthy.rawValue
         )
     }
 

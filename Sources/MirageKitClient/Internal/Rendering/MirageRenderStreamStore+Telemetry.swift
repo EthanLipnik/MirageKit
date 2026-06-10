@@ -379,7 +379,7 @@ extension MirageRenderStreamStore {
             now: now
         )
         let smoothestDisplayDebtCapMs = latencyPolicy.usesBufferedPlayout
-            ? latencyPolicy.smoothestDisplayDebtCapMs
+            ? state.presentationController.smoothestDisplayDebtCapMs(policy: latencyPolicy)
             : 0
         let smoothestTargetDelayMs = latencyPolicy.usesBufferedPlayout
             ? state.presentationController.smoothestTargetDelayMs(policy: latencyPolicy)

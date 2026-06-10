@@ -250,6 +250,7 @@ extension MirageClientService {
         case transportLoss
         case connectionRefused
         case addressUnavailable
+        case hostIdentityMismatch
         case cancelled
         case other
 
@@ -257,7 +258,7 @@ extension MirageClientService {
             switch self {
             case .timeout, .transportLoss, .connectionRefused, .addressUnavailable:
                 true
-            case .cancelled, .other:
+            case .hostIdentityMismatch, .cancelled, .other:
                 false
             }
         }
@@ -361,6 +362,9 @@ extension MirageClientService {
         if looksLikeBootstrapTransportFailure(reason) {
             return .transportLoss
         }
+        if looksLikeHostIdentityMismatch(reason) {
+            return .hostIdentityMismatch
+        }
         return nil
     }
 
@@ -384,6 +388,10 @@ extension MirageClientService {
         let normalized = reason.lowercased()
         return normalized.contains("control stream closed before receiving bootstrap response") ||
             normalized.contains("authenticated loom session closed before mirage control stream opened")
+    }
+
+    nonisolated static func looksLikeHostIdentityMismatch(_ reason: String) -> Bool {
+        reason.lowercased().contains("host identity mismatch")
     }
 
     nonisolated static func classifyLoomConnectionFailure(
@@ -425,7 +433,7 @@ extension MirageClientService {
         switch classification {
         case .timeout, .transportLoss, .addressUnavailable:
             break
-        case .connectionRefused, .cancelled, .other:
+        case .connectionRefused, .hostIdentityMismatch, .cancelled, .other:
             return nil
         }
 

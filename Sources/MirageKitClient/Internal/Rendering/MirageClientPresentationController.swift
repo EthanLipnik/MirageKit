@@ -17,11 +17,13 @@ struct MirageClientPresentationController {
 
     mutating func resetPresentationEpoch(
         policy: MiragePresentationLatencyPolicy,
-        now: CFAbsoluteTime
+        now: CFAbsoluteTime,
+        resetAdaptedDelay: Bool = false
     ) {
         playoutBuffer.resetPresentationEpoch(
             policy: policy,
-            now: now
+            now: now,
+            resetAdaptedDelay: resetAdaptedDelay
         )
     }
 
@@ -99,5 +101,9 @@ struct MirageClientPresentationController {
 
     func smoothestTargetDelayMs(policy: MiragePresentationLatencyPolicy) -> Double {
         playoutBuffer.smoothestTargetDelayMs(policy: policy)
+    }
+
+    func smoothestDisplayDebtCapMs(policy: MiragePresentationLatencyPolicy) -> Double {
+        playoutBuffer.smoothestDisplayDebtCapMs(policy: policy)
     }
 }

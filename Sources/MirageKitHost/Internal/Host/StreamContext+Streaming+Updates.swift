@@ -80,12 +80,25 @@ extension StreamContext {
             raiseRatio >= 1.12 ||
             now - realtimeLastEncoderRateRaiseTime >= 0.25
         let encoderHintChanged = shouldApplyEncoderRetune && encoderRateHint != encoderConfig.bitrate
+        let appliedEncoderRateHint = shouldApplyEncoderRetune
+            ? encoderRateHint
+            : (encoderConfig.bitrate ?? realtimeEncoderRateHintBps ?? currentTargetBitrateBps ?? targetBitrate)
         if shouldApplyEncoderRetune {
             encoderConfig.bitrate = encoderRateHint
+            realtimeEncoderRateHintBps = encoderRateHint
         }
         currentTargetBitrateBps = targetBitrate
-        realtimeEncoderRateHintBps = encoderRateHint
         realtimeSenderPacingBitrateBps = senderPacingBitrate
+        adaptivePFrameController.retuneForBitrateChange(
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: ceilingBitrateBps ?? bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: minimumBitrateFloor,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            mediaPathProfile: mediaPathProfile,
+            allowsBudgetRaise: Self.realtimeBudgetReasonAllowsFrameBudgetRaise(reason)
+        )
         await packetSender?.setTargetBitrateBps(senderPacingBitrate)
         if encoderHintChanged {
             await encoder?.updateBitrate(encoderRateHint)
@@ -97,11 +110,12 @@ extension StreamContext {
                 realtimeLastEncoderRateRaiseTime = now
             }
         }
-        await refreshRuntimeQualityTargets(for: encoderRateHint, reason: reason)
+        await refreshRuntimeQualityTargets(for: appliedEncoderRateHint, reason: reason)
 
         MirageLogger.metrics(
             "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +
                 "target=\(targetBitrate) ceiling=\(ceiling) encoderHint=\(encoderRateHint) " +
+                "appliedEncoderHint=\(appliedEncoderRateHint) " +
                 "senderPacing=\(senderPacingBitrate) retune=\(shouldApplyEncoderRetune) reason=\(reason)"
         )
         logBitrateContract(event: "realtime_budget_update")
@@ -158,7 +172,18 @@ extension StreamContext {
             let previousBitrate = encoderConfig.bitrate
             encoderConfig = updatedConfig
             currentTargetBitrateBps = encoderConfig.bitrate
+            realtimeEncoderRateHintBps = encoderConfig.bitrate
             requestedTargetBitrate = updatedRequestedTargetBitrate
+            adaptivePFrameController.retuneForBitrateChange(
+                currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+                requestedTargetBitrateBps: requestedTargetBitrate,
+                startupCeilingBps: self.bitrateAdaptationCeiling ?? startupBitrate,
+                minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                mediaPathProfile: mediaPathProfile,
+                allowsBudgetRaise: true
+            )
             if bitrateChanged {
                 realtimeSenderPacingBitrateBps = encoderConfig.bitrate
                 await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
@@ -190,7 +215,18 @@ extension StreamContext {
 
         encoderConfig = updatedConfig
         currentTargetBitrateBps = encoderConfig.bitrate
+        realtimeEncoderRateHintBps = encoderConfig.bitrate
         requestedTargetBitrate = updatedRequestedTargetBitrate
+        adaptivePFrameController.retuneForBitrateChange(
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: self.bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            mediaPathProfile: mediaPathProfile,
+            allowsBudgetRaise: true
+        )
         ultraValidationFailureHandled = false
         ultraValidationSuccessLogged = false
 
@@ -388,6 +424,7 @@ extension StreamContext {
             currentCaptureSize = outputSize
             currentEncodedSize = outputSize
             updateQueueLimits()
+            await applyDerivedQuality(for: outputSize, logLabel: "Resolution update")
 
             if let encoder {
                 try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
@@ -656,6 +693,11 @@ extension StreamContext {
         } catch {
             MirageLogger.error(.stream, error: error, message: "Failed to update display capture exclusions: ")
         }
+    }
+
+    private static func realtimeBudgetReasonAllowsFrameBudgetRaise(_ reason: String) -> Bool {
+        reason == HostAdaptivePFrameController.Reason.healthy.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.startup.rawValue
     }
 }
 

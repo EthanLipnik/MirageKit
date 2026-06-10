@@ -189,7 +189,7 @@ extension MirageHostService {
                 encodedFrameCount: encodedFrameCount
             )
             await stageEncoder.startEncoding(
-                onEncodedFrame: { data, isKeyframe, presentationTime, finishFrame in
+                onEncodedFrame: { data, isKeyframe, presentationTime, _, finishFrame in
                     encodedFrameHandler(data, isKeyframe, presentationTime)
                     finishFrame()
                 },

@@ -568,6 +568,61 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.budgetDecision == nil)
     }
 
+    @Test("Sustained input oversize predicts next P-frame and lowers quality before transport")
+    func sustainedInputOversizePredictsNextPFrameAndLowersQualityBeforeTransport() throws {
+        var controller = HostAdaptivePFrameController()
+        let first = controller.evaluateEncodedFrame(
+            byteCount: 360 * 1024,
+            wireBytes: 360 * 1024,
+            packetCount: packetCount(forWireBytes: 360 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            now: 10
+        )
+        let second = controller.evaluateEncodedFrame(
+            byteCount: 360 * 1024,
+            wireBytes: 360 * 1024,
+            packetCount: packetCount(forWireBytes: 360 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            now: 10.02
+        )
+        let budget = try #require(second.budgetDecision)
+
+        #expect(first.admission == .send)
+        #expect(first.budgetDecision == nil)
+        #expect(second.admission == .sendWithQualityDrop)
+        #expect(budget.reason == .encodedFrame)
+        #expect(budget.quality < 0.60)
+        #expect(budget.maxWireBytes < frameBytes(for: 60_000_000))
+    }
+
     @Test("All latency modes admit fresh oversize frames that fit headroom")
     func allLatencyModesAdmitFreshOversizeFramesThatFitHeadroom() {
         for mode in [MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {

@@ -21,6 +21,20 @@ extension StreamContext {
     private static let encoderThroughputSpikePressureRatio = 1.35
     private static let encoderThroughputCleanBacklogMinimumMs = 80.0
     private static let encoderThroughputCleanBacklogSampleRatio = 1.50
+    private static let highRefreshQualityBudgetFrameRate = 60
+    private static let highRefreshQualityBudgetThresholdFrameRate = 100
+
+    func runtimeQualityBudgetFrameRate() -> Int {
+        guard currentFrameRate >= Self.highRefreshQualityBudgetThresholdFrameRate,
+              !mediaPathProfile.usesAwdlRadioPolicy else {
+            return max(1, currentFrameRate)
+        }
+        return Self.highRefreshQualityBudgetFrameRate
+    }
+
+    func runtimeQualityFrameBudgetMs() -> Double {
+        1_000.0 / Double(runtimeQualityBudgetFrameRate())
+    }
 
     private func encoderCatchUpBacklogThresholdMs() -> Double {
         if mediaPathProfile.usesAwdlRadioPolicy {
@@ -241,12 +255,7 @@ extension StreamContext {
             return
         }
 
-        let cadenceTarget = MirageStreamCadenceTarget(
-            sourceFPS: currentFrameRate,
-            displayFPS: currentFrameRate,
-            latencyMode: latencyMode
-        )
-        let frameBudgetMs = cadenceTarget.sourceFrameBudgetMs
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
         guard frameBudgetMs > 0 else { return }
 
         let pressureThreshold: Double
@@ -402,6 +411,255 @@ extension StreamContext {
                 "encodeAvg=\(avgText)ms budget=\(budgetText)ms " +
                 "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
                 "encodedFPS=\(Self.formattedFPS(encodedFPS))"
+        )
+    }
+
+    func applyPerFrameEncoderTimingPressureIfNeeded(
+        _ timing: VideoEncoder.EncodedFrameTiming,
+        isKeyframe: Bool,
+        now: CFAbsoluteTime
+    ) async {
+        guard !isKeyframe,
+              runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
+              encoderConfig.codec != .proRes4444,
+              currentFrameRate > 0,
+              isRunning else {
+            return
+        }
+        guard encoderCatchUpQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else {
+            return
+        }
+
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
+        let thresholds = perFrameEncoderTimingThresholds(frameBudgetMs: frameBudgetMs)
+        let encodeMs = max(0, timing.encodeDurationMs)
+        let captureToCallbackMs = max(0, timing.captureToCallbackMs)
+        let encodeBehind = encodeMs >= thresholds.encodePressureMs
+        let pipelineBehind = captureToCallbackMs >= thresholds.pipelinePressureMs
+        guard encodeBehind || pipelineBehind else { return }
+
+        if mediaPathProfile.usesAwdlRadioPolicy,
+           (!runtimeQualityAdjustmentEnabled || !currentAwdlFrameBudgetReductionAllowed(now: now)) {
+            realtimePressureState = .pressured
+            realtimePressureReason = HostAdaptivePFrameController.Reason.encoderLag.rawValue
+            let applied = await applyAwdlHostStructuralAdaptationIfNeeded(
+                reason: HostAdaptivePFrameController.Reason.encoderLag.rawValue,
+                averageEncodeMs: encodeMs,
+                frameBudgetMs: frameBudgetMs,
+                at: now
+            )
+            logPerFrameEncoderTimingPressureIfNeeded(
+                timing: timing,
+                frameBudgetMs: frameBudgetMs,
+                encodePressureMs: thresholds.encodePressureMs,
+                pipelinePressureMs: thresholds.pipelinePressureMs,
+                cutScale: nil,
+                structuralAdaptationApplied: applied,
+                now: now
+            )
+            return
+        }
+
+        let encodeCutScale = encodeBehind
+            ? frameBudgetMs / max(1, encodeMs) * 1.05
+            : 1.0
+        let pipelineCutScale = pipelineBehind
+            ? thresholds.pipelinePressureMs / max(1, captureToCallbackMs) * 0.92
+            : 1.0
+        let cutScale = min(
+            0.92,
+            max(thresholds.minimumCutScale, min(encodeCutScale, pipelineCutScale))
+        )
+        let severe = encodeMs >= thresholds.encodePressureMs * 1.75 ||
+            captureToCallbackMs >= thresholds.pipelinePressureMs * 1.55
+        let decision = adaptivePFrameController.recordEncoderTimingPressure(
+            severe: severe,
+            cutScale: cutScale,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: encoderThroughputMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(now: now),
+            now: now
+        )
+        guard let decision else { return }
+        await applyFrameBudgetDecision(decision, now: now)
+        logPerFrameEncoderTimingPressureIfNeeded(
+            timing: timing,
+            frameBudgetMs: frameBudgetMs,
+            encodePressureMs: thresholds.encodePressureMs,
+            pipelinePressureMs: thresholds.pipelinePressureMs,
+            cutScale: cutScale,
+            structuralAdaptationApplied: nil,
+            now: now
+        )
+    }
+
+    private func perFrameEncoderTimingThresholds(
+        frameBudgetMs: Double
+    ) -> (encodePressureMs: Double, pipelinePressureMs: Double, minimumCutScale: Double) {
+        let encodePressureScale: Double
+        let pipelinePressureScale: Double
+        let minimumCutScale: Double
+        switch latencyMode {
+        case .lowestLatency:
+            encodePressureScale = 1.05
+            pipelinePressureScale = 1.75
+            minimumCutScale = 0.68
+        case .balanced:
+            encodePressureScale = 1.18
+            pipelinePressureScale = 3.0
+            minimumCutScale = 0.74
+        case .smoothest:
+            encodePressureScale = 1.45
+            pipelinePressureScale = 6.0
+            minimumCutScale = 0.82
+        }
+        return (
+            encodePressureMs: max(frameBudgetMs * encodePressureScale, frameBudgetMs + 2.0),
+            pipelinePressureMs: max(frameBudgetMs * pipelinePressureScale, frameBudgetMs + 8.0),
+            minimumCutScale: minimumCutScale
+        )
+    }
+
+    private func logPerFrameEncoderTimingPressureIfNeeded(
+        timing: VideoEncoder.EncodedFrameTiming,
+        frameBudgetMs: Double,
+        encodePressureMs: Double,
+        pipelinePressureMs: Double,
+        cutScale: Double?,
+        structuralAdaptationApplied: Bool?,
+        now: CFAbsoluteTime
+    ) {
+        guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
+        encodedFrameQualityLastLogTime = now
+        let cutText = cutScale.map { ($0 * 100).formatted(.number.precision(.fractionLength(0))) + "%" } ?? "gated"
+        let structuralText = structuralAdaptationApplied.map { " structural=\($0)" } ?? ""
+        MirageLogger.metrics(
+            "event=per_frame_encoder_lag stream=\(streamID) frame=\(timing.frameNumber) " +
+                "encodeMs=\(timing.encodeDurationMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "captureToCallbackMs=\(timing.captureToCallbackMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "budgetMs=\(frameBudgetMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "encodeThresholdMs=\(encodePressureMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "pipelineThresholdMs=\(pipelinePressureMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "cut=\(cutText)\(structuralText) dirty=\(timing.captureDirtyPercentage) " +
+                "idle=\(timing.captureIsIdleFrame)"
+        )
+    }
+
+    func applyPreEncodeEncoderBacklogPressureIfNeeded(
+        droppedFrameCount: Int,
+        encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot,
+        now: CFAbsoluteTime
+    ) async {
+        guard droppedFrameCount > 0,
+              runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
+              encoderCatchUpQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
+              encoderConfig.codec != .proRes4444,
+              currentFrameRate > 0,
+              isRunning,
+              HostCaptureAdmissionPolicy.isEncoderLagging(encoderLag, latencyMode: latencyMode) else {
+            return
+        }
+
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
+        let backlogMs = HostCaptureAdmissionPolicy.estimatedPreEncodeBacklogMs(
+            pendingFrameCount: droppedFrameCount,
+            encoderLag: encoderLag
+        )
+        let thresholds = perFrameEncoderTimingThresholds(frameBudgetMs: frameBudgetMs)
+        guard encoderLag.averageEncodeMs >= thresholds.encodePressureMs ||
+            backlogMs >= thresholds.pipelinePressureMs else {
+            return
+        }
+        if mediaPathProfile.usesAwdlRadioPolicy,
+           (!runtimeQualityAdjustmentEnabled || !currentAwdlFrameBudgetReductionAllowed(now: now)) {
+            realtimePressureState = .pressured
+            realtimePressureReason = HostAdaptivePFrameController.Reason.encoderLag.rawValue
+            let applied = await applyAwdlHostStructuralAdaptationIfNeeded(
+                reason: HostAdaptivePFrameController.Reason.encoderLag.rawValue,
+                averageEncodeMs: encoderLag.averageEncodeMs,
+                frameBudgetMs: frameBudgetMs,
+                at: now
+            )
+            logPreEncodeEncoderBacklogPressureIfNeeded(
+                droppedFrameCount: droppedFrameCount,
+                encoderLag: encoderLag,
+                backlogMs: backlogMs,
+                frameBudgetMs: frameBudgetMs,
+                cutScale: nil,
+                structuralAdaptationApplied: applied,
+                now: now
+            )
+            return
+        }
+
+        let pressureBasisMs = max(encoderLag.averageEncodeMs, backlogMs)
+        let cutScale = min(
+            0.92,
+            max(0.64, frameBudgetMs / max(1, pressureBasisMs) * 1.15)
+        )
+        let severe = droppedFrameCount > 1 ||
+            backlogMs >= frameBudgetMs * 3 ||
+            encoderLag.averageEncodeMs >= frameBudgetMs * 1.75
+        let decision = adaptivePFrameController.recordEncoderTimingPressure(
+            severe: severe,
+            cutScale: cutScale,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: encoderThroughputMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(now: now),
+            now: now
+        )
+        guard let decision else { return }
+        await applyFrameBudgetDecision(decision, now: now)
+        logPreEncodeEncoderBacklogPressureIfNeeded(
+            droppedFrameCount: droppedFrameCount,
+            encoderLag: encoderLag,
+            backlogMs: backlogMs,
+            frameBudgetMs: frameBudgetMs,
+            cutScale: cutScale,
+            structuralAdaptationApplied: nil,
+            now: now
+        )
+    }
+
+    private func logPreEncodeEncoderBacklogPressureIfNeeded(
+        droppedFrameCount: Int,
+        encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot,
+        backlogMs: Double,
+        frameBudgetMs: Double,
+        cutScale: Double?,
+        structuralAdaptationApplied: Bool?,
+        now: CFAbsoluteTime
+    ) {
+        guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
+        encodedFrameQualityLastLogTime = now
+        let cutText = cutScale.map { ($0 * 100).formatted(.number.precision(.fractionLength(0))) + "%" } ?? "gated"
+        let structuralText = structuralAdaptationApplied.map { " structural=\($0)" } ?? ""
+        MirageLogger.metrics(
+            "event=pre_encode_encoder_lag stream=\(streamID) dropped=\(droppedFrameCount) " +
+                "encodeAvgMs=\(encoderLag.averageEncodeMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "inFlight=\(encoderLag.inFlightCount) backlogMs=\(backlogMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "budgetMs=\(frameBudgetMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "cut=\(cutText)\(structuralText)"
         )
     }
 
@@ -695,8 +953,9 @@ extension StreamContext {
     func scheduleStillQualityProbeIfNeeded(
         now: CFAbsoluteTime,
         reason: String
-    ) -> Bool {
+    ) async -> Bool {
         guard shouldConsiderStillQualityProbe(now: now) else { return false }
+        await recoverStillRuntimeQualityIfPossible(now: now, reason: reason)
         shouldAdmitIdleQualityProbeFrame = true
         let shouldScheduleDrain = enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason)
         guard shouldScheduleDrain else {
@@ -708,6 +967,30 @@ extension StreamContext {
             "Still quality probe scheduled for stream \(streamID): reason=\(reason)"
         )
         return true
+    }
+
+    private func recoverStillRuntimeQualityIfPossible(
+        now: CFAbsoluteTime,
+        reason: String
+    ) async {
+        guard realtimeRuntimeQualityCeiling != nil else { return }
+        let policy = activeFrameFreshnessPolicy
+        guard sourceIsStill(now: now, policy: policy),
+              !inputIsActive(now: now, policy: policy),
+              receiverFrameBudgetCanRaiseQuality(now: now),
+              await senderFrameBudgetIsHealthy(now: now) else {
+            return
+        }
+        realtimeRuntimeQualityCeiling = nil
+        let targetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? requestedTargetBitrate
+        guard let targetBitrate else { return }
+        await refreshRuntimeQualityTargets(
+            for: targetBitrate,
+            reason: HostAdaptivePFrameController.Reason.healthy.rawValue
+        )
+        MirageLogger.metrics(
+            "Still quality recovery cleared realtime quality ceiling for stream \(streamID): reason=\(reason)"
+        )
     }
 
     private func shouldConsiderStillQualityProbe(now: CFAbsoluteTime) -> Bool {
@@ -735,7 +1018,7 @@ extension StreamContext {
         if receiverDecodeBacklogFrames > 2 { return false }
         if receiverPresentationBacklogFrames > 3 { return false }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
-        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
         let ackLagBudgetMs = receiverAckLagBudgetMs(
             frameBudgetMs: frameBudgetMs,
             standardFrameCount: 2.0,
@@ -783,7 +1066,7 @@ extension StreamContext {
         ) {
             return false
         }
-        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
         let ackLagBudgetMs = receiverAckLagBudgetMs(
             frameBudgetMs: frameBudgetMs,
             standardFrameCount: 3.0,
@@ -812,7 +1095,7 @@ extension StreamContext {
         if receiverPresentationBacklogFrames > 3 { return "presentation-backlog" }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return "receiver-loss" }
         if receiverReassemblyBacklogFrames > 2 || receiverReassemblyBacklogBytes > 650_000 { return "reassembly-backlog" }
-        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
         let ackLagBudgetMs = receiverAckLagBudgetMs(
             frameBudgetMs: frameBudgetMs,
             standardFrameCount: 2.0,
@@ -867,7 +1150,7 @@ extension StreamContext {
         if telemetry.senderLocalDeadlineDrops > 0 { return false }
         if telemetry.nonKeyframeHoldDrops > 0 { return false }
         if telemetry.queuedBytes > queuePressureBytes { return false }
-        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
         let hardPacerBudgetMs = frameBudgetMs * 3.0
         if telemetry.packetPacerFrameMaxSleepMs > Int(hardPacerBudgetMs.rounded(.up)) { return false }
         return true
@@ -877,8 +1160,11 @@ extension StreamContext {
         _ completion: StreamPacketSender.FrameTransportCompletion,
         now: CFAbsoluteTime
     ) async {
-        guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy,
-              completion.didSend else { return }
+        guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else { return }
+        if await applyPerFrameTransportCompletionPressureIfNeeded(completion, now: now) {
+            return
+        }
+        guard completion.didSend else { return }
         let decision = adaptivePFrameController.recordFrameTransportCompletion(
             frameNumber: UInt64(completion.frameNumber),
             wireBytes: completion.wireBytes,
@@ -905,6 +1191,134 @@ extension StreamContext {
         )
         guard let decision else { return }
         await applyFrameBudgetDecision(decision, now: now)
+    }
+
+    private func applyPerFrameTransportCompletionPressureIfNeeded(
+        _ completion: StreamPacketSender.FrameTransportCompletion,
+        now: CFAbsoluteTime
+    ) async -> Bool {
+        guard !completion.isKeyframe,
+              currentFrameRate > 0,
+              completion.sendCompletionMs.isFinite else {
+            return false
+        }
+
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
+        let thresholds = perFrameTransportCompletionThresholds(frameBudgetMs: frameBudgetMs)
+        let sendCompletionMs = max(0, completion.sendCompletionMs)
+        let transportDurationMs = max(0, completion.transportDurationMs)
+        let drops = completion.queuedUnreliableDropCounts
+        let hasPressure = !completion.didSend ||
+            drops.deadlineExpired > 0 ||
+            drops.queueLimit > 0 ||
+            sendCompletionMs >= thresholds.pressureMs ||
+            transportDurationMs >= thresholds.pressureMs
+        guard hasPressure else { return false }
+
+        let severe = !completion.didSend ||
+            sendCompletionMs >= thresholds.severeMs ||
+            transportDurationMs >= thresholds.severeMs ||
+            drops.deadlineExpired > 0 ||
+            drops.queueLimit > 0
+        if mediaPathProfile.usesAwdlRadioPolicy,
+           (!runtimeQualityAdjustmentEnabled || !currentAwdlFrameBudgetReductionAllowed(now: now)) {
+            realtimePressureState = severe ? .severe : .pressured
+            realtimePressureReason = HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+            let applied = await applyAwdlHostStructuralAdaptationIfNeeded(
+                reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+                frameBudgetMs: frameBudgetMs,
+                at: now
+            )
+            logPerFrameTransportCompletionPressureIfNeeded(
+                completion,
+                frameBudgetMs: frameBudgetMs,
+                pressureMs: thresholds.pressureMs,
+                severeMs: thresholds.severeMs,
+                decision: nil,
+                structuralAdaptationApplied: applied,
+                now: now
+            )
+            return true
+        }
+
+        let decision = adaptivePFrameController.recordTransportBacklogPressure(
+            severe: severe,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(now: now),
+            now: now
+        )
+        guard let decision else { return false }
+        await applyFrameBudgetDecision(decision, now: now)
+        logPerFrameTransportCompletionPressureIfNeeded(
+            completion,
+            frameBudgetMs: frameBudgetMs,
+            pressureMs: thresholds.pressureMs,
+            severeMs: thresholds.severeMs,
+            decision: decision,
+            structuralAdaptationApplied: nil,
+            now: now
+        )
+        return true
+    }
+
+    private func perFrameTransportCompletionThresholds(
+        frameBudgetMs: Double
+    ) -> (pressureMs: Double, severeMs: Double) {
+        let pressureScale: Double
+        let severeScale: Double
+        switch latencyMode {
+        case .lowestLatency:
+            pressureScale = 1.50
+            severeScale = 3.0
+        case .balanced:
+            pressureScale = 2.50
+            severeScale = 5.0
+        case .smoothest:
+            pressureScale = 5.0
+            severeScale = 9.0
+        }
+        let pressureMs = max(frameBudgetMs * pressureScale, frameBudgetMs + 10.0)
+        return (
+            pressureMs: pressureMs,
+            severeMs: max(frameBudgetMs * severeScale, pressureMs * 1.8)
+        )
+    }
+
+    private func logPerFrameTransportCompletionPressureIfNeeded(
+        _ completion: StreamPacketSender.FrameTransportCompletion,
+        frameBudgetMs: Double,
+        pressureMs: Double,
+        severeMs: Double,
+        decision: HostFrameBudgetDecision?,
+        structuralAdaptationApplied: Bool?,
+        now: CFAbsoluteTime
+    ) {
+        guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
+        encodedFrameQualityLastLogTime = now
+        let decisionText = decision.map {
+            "state=\($0.state.rawValue) target=\($0.targetBitrateBps) quality=\($0.quality)"
+        } ?? "state=gated"
+        let structuralText = structuralAdaptationApplied.map { " structural=\($0)" } ?? ""
+        MirageLogger.metrics(
+            "event=per_frame_transport_pressure stream=\(streamID) frame=\(completion.frameNumber) " +
+                "sendMs=\(completion.sendCompletionMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "transportMs=\(completion.transportDurationMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "budgetMs=\(frameBudgetMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "pressureMs=\(pressureMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "severeMs=\(severeMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "\(decisionText)\(structuralText)"
+        )
     }
 
     func logAdaptivePFrameAdmissionIfNeeded(

@@ -117,7 +117,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         presentationTier: StreamPresentationTier = .activeLive,
         preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
-        prefersLocalAspectFitPresentation: Bool = false,
+        prefersLocalAspectFitPresentation: Bool = true,
         containerSizingMode: MirageStreamContainerSizingMode = .contentLayout,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,

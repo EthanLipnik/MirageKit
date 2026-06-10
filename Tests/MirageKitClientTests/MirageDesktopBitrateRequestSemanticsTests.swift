@@ -26,8 +26,8 @@ struct MirageDesktopBitrateRequestSemanticsTests {
         #expect(resolved.geometryScaleFactor > 1.0)
     }
 
-    @Test("Automatic bitrate keeps resolved target and ceiling")
-    func automaticBitrateKeepsResolvedTargetAndCeiling() {
+    @Test("Automatic bitrate scales target by desktop geometry and keeps ceiling")
+    func automaticBitrateScalesTargetByDesktopGeometryAndKeepsCeiling() {
         let resolved = MirageDesktopBitrateRequestSemantics.resolve(
             enteredBitrateBps: nil,
             requestedTargetBitrateBps: 76_700_000,
@@ -36,8 +36,23 @@ struct MirageDesktopBitrateRequestSemanticsTests {
         )
 
         #expect(resolved.enteredBitrateBps == nil)
-        #expect(resolved.requestedTargetBitrateBps == 76_700_000)
+        #expect((resolved.requestedTargetBitrateBps ?? 0) > 76_700_000)
+        #expect((resolved.requestedTargetBitrateBps ?? 0) < 221_500_000)
         #expect(resolved.bitrateAdaptationCeilingBps == 221_500_000)
         #expect(resolved.geometryScaleFactor > 1.0)
+    }
+
+    @Test("Automatic bitrate geometry scaling respects ceiling")
+    func automaticBitrateGeometryScalingRespectsCeiling() {
+        let resolved = MirageDesktopBitrateRequestSemantics.resolve(
+            enteredBitrateBps: nil,
+            requestedTargetBitrateBps: 180_000_000,
+            bitrateAdaptationCeilingBps: 221_500_000,
+            displayResolution: CGSize(width: 6016, height: 3384)
+        )
+
+        #expect(resolved.requestedTargetBitrateBps == 221_500_000)
+        #expect(resolved.bitrateAdaptationCeilingBps == 221_500_000)
+        #expect(resolved.geometryScaleFactor == 2.0)
     }
 }
