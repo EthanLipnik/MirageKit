@@ -289,6 +289,9 @@ actor StreamContext {
     var receiverCapacityLearningQuarantineReason: String?
     var receiverLostFrameCount: UInt64 = 0
     var receiverDiscardedPacketCount: UInt64 = 0
+    var lastObservedReceiverLostFrameCount: UInt64?
+    var lastObservedReceiverDiscardedPacketCount: UInt64?
+    var receiverFrameBudgetLossHoldUntil: CFAbsoluteTime = 0
     var receiverPlayoutDelayTargetMs: Double?
     var receiverAcknowledgedFrameNumber: UInt32?
     var receiverAckLagMs: Double?
@@ -326,6 +329,9 @@ actor StreamContext {
     var dependencyRecoveryPendingDropReason: StreamPacketSender.DependencyFrameDropReason?
     var dependencyRecoveryPendingQueuedBytes: Int = 0
     var dependencyRecoveryRetryNecessary = false
+    var lastObservedSenderLocalDeadlineDrops: UInt64?
+    var lastObservedNonKeyframeHoldDrops: UInt64?
+    var senderFrameBudgetDropHoldUntil: CFAbsoluteTime = 0
 
     /// Scheduled keyframe cadence derived from keyFrameInterval/currentFrameRate.
     var keyframeIntervalSeconds: CFAbsoluteTime = 0

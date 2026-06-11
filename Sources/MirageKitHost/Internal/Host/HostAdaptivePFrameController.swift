@@ -231,6 +231,19 @@ struct HostAdaptivePFrameController: Equatable {
     private static let predictivePFrameOversizePacketRatio = 1.15
     private static let predictivePFrameMinimumCutScale = 0.50
     private static let predictivePFrameMaximumCutScale = 0.92
+    private static let motionGrowthPFrameMinimumWireBytes = 96 * 1024
+    private static let motionGrowthPFrameWireRatio = 1.60
+    private static let motionGrowthPFramePacketRatio = 1.45
+    private static let motionGrowthPFrameMinimumCutScale = 0.58
+    private static let motionGrowthPFrameMaximumCutScale = 0.86
+    private static let receiverCadenceMotionGrowthMinimumWireBytes = 64 * 1024
+    private static let receiverCadenceMotionGrowthMinimumDeltaBytes = 32 * 1024
+    private static let receiverCadenceMotionGrowthWireRatio = 1.50
+    private static let receiverCadenceMotionGrowthPacketRatio = 1.35
+    private static let inputMotionBurstDropMinimumWireBytes = 256 * 1024
+    private static let inputMotionBurstDropRatio = 1.55
+    private static let passiveMotionBurstDropMinimumWireBytes = 512 * 1024
+    private static let passiveMotionBurstDropRatio = 2.00
     private static let minimumCapacityLearningWireBytes = 12 * 1024
     private static let minimumCleanBaselineWireBytes = 8 * 1024
     private static let catastrophicPFrameMinimumWireBytes = 4 * 1024 * 1024
@@ -246,10 +259,14 @@ struct HostAdaptivePFrameController: Equatable {
     private static let maximumFailureProbeHeadroom = 0.98
     private static let failureProbeWindowSeconds: CFAbsoluteTime = 60.0
     private static let passiveFailureProbeWindowSeconds: CFAbsoluteTime = 3.0
+    private static let recentPassivePressureRaiseCooldownSeconds: CFAbsoluteTime = 0.20
+    private static let recentInputPressureRaiseCooldownSeconds: CFAbsoluteTime = 0.30
     private static let stillFailureProbeBypassSeconds: CFAbsoluteTime = 0.25
     private static let freshnessPrecutHeadroomMs = 320.0
     private static let freshnessSoftHeadroomMs = 350.0
     private static let freshnessHardStaleFrameAgeMs = 500.0
+    private static let inputMotionQualityTargetClearMs = 33.0
+    private static let passiveMotionQualityTargetClearMs = 80.0
     private static let lowMotionQualityTargetClearMs = 33.0
     private static let lowMotionStillMaximumWireBytes = 192 * 1024
     private static let lowMotionStillBaselineRatio = 4.0
@@ -299,6 +316,8 @@ struct HostAdaptivePFrameController: Equatable {
     private var receiverFailureFrameWireBytes: Int?
     private var receiverFailureSafeWireBytes: Int?
     private var lastReceiverPressureTime: CFAbsoluteTime = 0
+    private var lastFeedbackLostFrameCount: UInt64?
+    private var lastFeedbackDiscardedPacketCount: UInt64?
 
     static func allowedPFrameSpikeRatio(baselineWireBytes: Int) -> Double {
         let baselineKB = max(1.0, Double(max(1, baselineWireBytes)) / 1024.0)
@@ -342,6 +361,14 @@ struct HostAdaptivePFrameController: Equatable {
     ) -> HostFrameBudgetDecision? {
         guard feedback.sequence > latestFeedbackSequence else { return nil }
         latestFeedbackSequence = feedback.sequence
+        let observedNewLoss = lastFeedbackLostFrameCount.map {
+            feedback.lostFrameCount > $0
+        } ?? false
+        let observedNewDiscard = lastFeedbackDiscardedPacketCount.map {
+            feedback.discardedPacketCount > $0
+        } ?? false
+        lastFeedbackLostFrameCount = feedback.lostFrameCount
+        lastFeedbackDiscardedPacketCount = feedback.discardedPacketCount
 
         let input = budgetInput(
             currentBitrateBps: currentBitrateBps,
@@ -360,7 +387,7 @@ struct HostAdaptivePFrameController: Equatable {
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
 
-        let hasLoss = feedback.lostFrameCount > 0 || feedback.discardedPacketCount > 0
+        let hasLoss = observedNewLoss || observedNewDiscard
         let hasRecoveryPanic = feedback.recoveryState == .keyframeRecovery || feedback.recoveryState == .hardRecovery
         guard hasLoss || hasRecoveryPanic else { return nil }
         guard frameBudgetReductionAllowed(
@@ -486,7 +513,13 @@ struct HostAdaptivePFrameController: Equatable {
             wireBytes: wireBytes,
             packetCount: packetCount
         )
-        let baseTargetClearMs = qualityTargetClearMs(policy: policy, stillEnough: qualityStillEnough)
+        let baseTargetClearMs = qualityTargetClearMs(
+            policy: policy,
+            inputActive: inputActive,
+            sourceStill: sourceStill,
+            stillEnough: qualityStillEnough,
+            mediaPathProfile: mediaPathProfile
+        )
         let targetClearMs = timingTargetClearMs(
             baseTargetClearMs,
             currentQuality: currentQuality,
@@ -517,6 +550,7 @@ struct HostAdaptivePFrameController: Equatable {
                    targetBytes: targetBytes,
                    packetTarget: packetTarget,
                    qualityStillEnough: qualityStillEnough,
+                   sourceStill: sourceStill,
                    input: input,
                    currentFrameRate: currentFrameRate,
                    maxPayloadSize: maxPayloadSize,
@@ -532,7 +566,8 @@ struct HostAdaptivePFrameController: Equatable {
                     packetCount: packetCount,
                     quality: currentQuality,
                     receiverHealthy: receiverHealthy,
-                    senderHealthy: senderHealthy
+                    senderHealthy: senderHealthy,
+                    updatesCleanBaseline: false
                 )
                 return HostEncodedFrameAdmissionDecision(
                     admission: .sendWithQualityDrop,
@@ -623,13 +658,72 @@ struct HostAdaptivePFrameController: Equatable {
             )
         }
 
+        let motionRepairTargetBytes = motionBurstPFrameRepairTargetWireBytes(
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            targetBytes: targetBytes,
+            packetTarget: packetTarget,
+            predictedDeliveryMs: predictedDeliveryMs,
+            targetClearMs: targetClearMs,
+            inputActive: inputActive,
+            sourceStill: sourceStill,
+            qualityStillEnough: qualityStillEnough,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        if let motionRepairTargetBytes {
+            recordPressureCeiling(
+                failedTarget: max(targetBytes, wireBytes),
+                safeTarget: motionRepairTargetBytes,
+                now: now
+            )
+            setTargetFrameWireBytes(
+                motionRepairTargetBytes,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize
+            )
+            let qualityScale = oversizeCutScale(
+                targetClearMs: targetClearMs,
+                predictedDeliveryMs: predictedDeliveryMs
+            )
+            let quality = max(qualityFloor, min(steadyQualityCeiling, currentQuality * Float(qualityScale)))
+            let decision = makeDecision(
+                state: .recovery,
+                reason: .encodedFrame,
+                quality: quality,
+                keyframeQuality: quality,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.25)
+            return HostEncodedFrameAdmissionDecision(
+                admission: .dropPFrameStartChainRepair,
+                budgetDecision: decision,
+                sendDeadline: sendDeadline,
+                byteRatio: byteRatio,
+                wireRatio: wireRatio,
+                packetRatio: packetRatio
+            )
+        }
+
         if !canReduceFrameBudget {
             recordAdmittedPFrame(
                 wireBytes: wireBytes,
                 packetCount: packetCount,
                 quality: currentQuality,
                 receiverHealthy: receiverHealthy,
-                senderHealthy: senderHealthy
+                senderHealthy: senderHealthy,
+                updatesCleanBaseline: false
             )
             return HostEncodedFrameAdmissionDecision(
                 admission: .send,
@@ -686,7 +780,8 @@ struct HostAdaptivePFrameController: Equatable {
             packetCount: packetCount,
             quality: currentQuality,
             receiverHealthy: receiverHealthy,
-            senderHealthy: senderHealthy
+            senderHealthy: senderHealthy,
+            updatesCleanBaseline: false
         )
 
         return HostEncodedFrameAdmissionDecision(
@@ -782,7 +877,18 @@ struct HostAdaptivePFrameController: Equatable {
             wireBytes: wireBytes,
             packetCount: packetCount
         )
-        let baseTargetClearMs = qualityTargetClearMs(policy: policy, stillEnough: qualityStillEnough)
+        let receiverMotionGrowthPressureRatio = receiverCadenceMotionGrowthPressureRatio(
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            sourceStill: sourceStill
+        )
+        let baseTargetClearMs = qualityTargetClearMs(
+            policy: policy,
+            inputActive: inputActive,
+            sourceStill: sourceStill,
+            stillEnough: qualityStillEnough,
+            mediaPathProfile: mediaPathProfile
+        )
         let targetClearMs = timingTargetClearMs(
             baseTargetClearMs,
             currentQuality: currentQuality,
@@ -829,22 +935,28 @@ struct HostAdaptivePFrameController: Equatable {
                     )
                 )
             }
-            updateCleanBaseline(from: sample)
         }
 
+        let usesAwdlReceiverCadencePressure = mediaPathProfile.usesAwdlRadioPolicy &&
+            !qualityStillEnough &&
+            isMeaningfulCleanBaselineSample(wireBytes: wireBytes)
+        let usesMotionReceiverCadencePressure = !mediaPathProfile.usesAwdlRadioPolicy &&
+            receiverMotionGrowthPressureRatio != nil &&
+            isMeaningfulCleanBaselineSample(wireBytes: wireBytes)
+        let usesReceiverCadencePressure = usesAwdlReceiverCadencePressure || usesMotionReceiverCadencePressure
+        let pressureDeliveryMs = usesReceiverCadencePressure
+            ? max(transportDeliveryMs, gap, firstPacketGap)
+            : transportDeliveryMs
+        let pressureSampleBytesPerMs = usesReceiverCadencePressure
+            ? Double(max(1, wireBytes)) / max(1, pressureDeliveryMs)
+            : sampleBytesPerMs
         let safeBytes = safeFrameWireBytes(
-            sampleBytesPerMs: sampleBytesPerMs,
+            sampleBytesPerMs: pressureSampleBytesPerMs,
             targetClearMs: targetClearMs,
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
         )
-        let usesReceiverCadencePressure = mediaPathProfile.usesAwdlRadioPolicy &&
-            !qualityStillEnough &&
-            isMeaningfulCleanBaselineSample(wireBytes: wireBytes)
-        let pressureDeliveryMs = usesReceiverCadencePressure
-            ? max(transportDeliveryMs, gap, firstPacketGap)
-            : transportDeliveryMs
         if pressureDeliveryMs > targetClearMs {
             guard frameBudgetReductionAllowed(
                 mediaPathProfile: mediaPathProfile,
@@ -909,10 +1021,14 @@ struct HostAdaptivePFrameController: Equatable {
             )
         }
 
+        if capacityLearningAllowed {
+            updateCleanBaseline(from: sample)
+        }
+
         guard capacityLearningAllowed,
               receiverHealthy,
               now >= qualityRaiseSuppressedUntil else { return nil }
-        let motionClass = motionClass(inputActive: inputActive, sourceStill: qualityStillEnough)
+        let motionClass = motionClass(inputActive: inputActive, sourceStill: sourceStill)
         let predictedCurrentMs = predictedDeliveryMs(
             wireBytes: currentTarget,
             input: input,
@@ -926,6 +1042,11 @@ struct HostAdaptivePFrameController: Equatable {
         let sampledDeliveryAllowsRaise = transportDeliveryMs <= baseTargetClearMs * motionClass.sampledRaiseUtilizationLimit
         guard predictedDeliveryAllowsRaise || sampledDeliveryAllowsRaise else { return nil }
 
+        let maximumTarget = maximumCeilingFrameWireBytes(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
         let raisedTarget = motionClass.ramp(from: currentTarget)
         let cappedRaisedTarget = min(
             raisedTarget,
@@ -937,7 +1058,30 @@ struct HostAdaptivePFrameController: Equatable {
                 now: now
             )
         )
-        guard cappedRaisedTarget > currentTarget else { return nil }
+        let raisedQuality = motionClass.qualityStep(from: currentQuality, ceiling: steadyQualityCeiling)
+        let raiseCooldown = recentPressureRaiseCooldown(for: motionClass, now: now)
+        guard cappedRaisedTarget > currentTarget else {
+            guard cappedRaisedTarget == currentTarget,
+                  currentTarget >= maximumTarget,
+                  raisedQuality > currentQuality + 0.0001 else {
+                return nil
+            }
+            if raiseCooldown > 0 {
+                qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + raiseCooldown)
+            }
+            return makeDecision(
+                state: .observing,
+                reason: .healthy,
+                quality: raisedQuality,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+        }
         setTargetFrameWireBytes(
             cappedRaisedTarget,
             input: input,
@@ -945,10 +1089,13 @@ struct HostAdaptivePFrameController: Equatable {
             maxPayloadSize: maxPayloadSize
         )
         lastRaisedFrameWireBytes = cappedRaisedTarget
+        if raiseCooldown > 0 {
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + raiseCooldown)
+        }
         return makeDecision(
             state: .observing,
             reason: .healthy,
-            quality: motionClass.qualityStep(from: currentQuality, ceiling: steadyQualityCeiling),
+            quality: raisedQuality,
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
@@ -1590,8 +1737,7 @@ struct HostAdaptivePFrameController: Equatable {
         motionClass: MotionClass,
         now: CFAbsoluteTime
     ) -> Int {
-        let maximum = clampFrameWireBytes(
-            wireBytes(forBitrate: input.maximumCeiling, currentFrameRate: currentFrameRate),
+        let maximum = maximumCeilingFrameWireBytes(
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
@@ -1623,6 +1769,34 @@ struct HostAdaptivePFrameController: Equatable {
         let failureLimitedBytes = Int((Double(failureBytes) * headroom).rounded(.down))
         let safeBytes = receiverFailureSafeWireBytes ?? 0
         return min(maximum, max(safeBytes, failureLimitedBytes))
+    }
+
+    private func maximumCeilingFrameWireBytes(
+        input: BudgetInput,
+        currentFrameRate: Int,
+        maxPayloadSize: Int
+    ) -> Int {
+        clampFrameWireBytes(
+            wireBytes(forBitrate: input.maximumCeiling, currentFrameRate: currentFrameRate),
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+    }
+
+    private func recentPressureRaiseCooldown(for motionClass: MotionClass, now: CFAbsoluteTime) -> CFAbsoluteTime {
+        guard lastReceiverPressureTime > 0 else { return 0 }
+        let elapsed = max(0, now - lastReceiverPressureTime)
+        switch motionClass {
+        case .still:
+            return 0
+        case .passive:
+            guard elapsed < Self.passiveFailureProbeWindowSeconds else { return 0 }
+            return Self.recentPassivePressureRaiseCooldownSeconds
+        case .input:
+            guard elapsed < Self.failureProbeWindowSeconds else { return 0 }
+            return Self.recentInputPressureRaiseCooldownSeconds
+        }
     }
 
     private func currentTargetFrameWireBytes(
@@ -1785,6 +1959,7 @@ struct HostAdaptivePFrameController: Equatable {
         targetBytes: Int,
         packetTarget: Int,
         qualityStillEnough: Bool,
+        sourceStill: Bool,
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
@@ -1795,8 +1970,7 @@ struct HostAdaptivePFrameController: Equatable {
         mediaPathProfile: MirageMediaPathProfile,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision? {
-        guard !qualityStillEnough,
-              let lastWireBytes = lastAdmittedPFrameWireBytes,
+        guard let lastWireBytes = lastAdmittedPFrameWireBytes,
               let lastPacketCount = lastAdmittedPFramePacketCount else {
             return nil
         }
@@ -1810,12 +1984,31 @@ struct HostAdaptivePFrameController: Equatable {
             wireBytes: predictedWireBytes,
             packetCount: predictedPacketCount
         )
-        guard exceedsTarget || exceedsCleanSpike else { return nil }
+        let actionableCleanSpike = exceedsCleanSpike &&
+            (predictedWireBytes >= Self.motionGrowthPFrameMinimumWireBytes ||
+                wirePressureRatio >= 0.85 ||
+                packetPressureRatio >= 0.85)
+        let motionGrowthPressureRatio = predictivePFrameMotionGrowthPressureRatio(
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            lastWireBytes: lastWireBytes,
+            lastPacketCount: lastPacketCount,
+            sourceStill: sourceStill
+        )
+        let stillEnoughMotionSpike = !sourceStill && (actionableCleanSpike || motionGrowthPressureRatio != nil)
+        guard !qualityStillEnough || stillEnoughMotionSpike else { return nil }
+        guard exceedsTarget || actionableCleanSpike || motionGrowthPressureRatio != nil else { return nil }
 
-        let pressureRatio = max(wirePressureRatio, packetPressureRatio)
+        let pressureRatio = max(wirePressureRatio, packetPressureRatio, motionGrowthPressureRatio ?? 0)
+        let minimumCutScale = motionGrowthPressureRatio == nil
+            ? Self.predictivePFrameMinimumCutScale
+            : Self.motionGrowthPFrameMinimumCutScale
+        let maximumCutScale = motionGrowthPressureRatio == nil
+            ? Self.predictivePFrameMaximumCutScale
+            : Self.motionGrowthPFrameMaximumCutScale
         let cutScale = max(
-            Self.predictivePFrameMinimumCutScale,
-            min(Self.predictivePFrameMaximumCutScale, Self.safeDeliveryUtilization / max(1.0, pressureRatio))
+            minimumCutScale,
+            min(maximumCutScale, Self.safeDeliveryUtilization / max(1.0, pressureRatio))
         )
         let nextBudget = Int((Double(targetBytes) * cutScale).rounded(.down))
         recordPressureCeiling(
@@ -1860,6 +2053,84 @@ struct HostAdaptivePFrameController: Equatable {
             allowedSpikeRatio: allowedSpikeRatio
         )
         return wireBytes > allowedWireBytes || packetCount > allowedPacketCount
+    }
+
+    private func predictivePFrameMotionGrowthPressureRatio(
+        wireBytes: Int,
+        packetCount: Int,
+        lastWireBytes: Int,
+        lastPacketCount: Int,
+        sourceStill: Bool
+    ) -> Double? {
+        pFrameMotionGrowthPressureRatio(
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            baselineWireBytes: lastWireBytes,
+            baselinePacketCount: lastPacketCount,
+            sourceStill: sourceStill,
+            minimumWireBytes: Self.motionGrowthPFrameMinimumWireBytes,
+            minimumGrowthBytes: 0,
+            wireRatio: Self.motionGrowthPFrameWireRatio,
+            packetRatio: Self.motionGrowthPFramePacketRatio
+        )
+    }
+
+    private func receiverCadenceMotionGrowthPressureRatio(
+        wireBytes: Int,
+        packetCount: Int,
+        sourceStill: Bool
+    ) -> Double? {
+        var result: Double?
+        if let lastWireBytes = lastAdmittedPFrameWireBytes,
+           let lastPacketCount = lastAdmittedPFramePacketCount {
+            result = pFrameMotionGrowthPressureRatio(
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                baselineWireBytes: lastWireBytes,
+                baselinePacketCount: lastPacketCount,
+                sourceStill: sourceStill,
+                minimumWireBytes: Self.receiverCadenceMotionGrowthMinimumWireBytes,
+                minimumGrowthBytes: Self.receiverCadenceMotionGrowthMinimumDeltaBytes,
+                wireRatio: Self.receiverCadenceMotionGrowthWireRatio,
+                packetRatio: Self.receiverCadenceMotionGrowthPacketRatio
+            )
+        }
+        if let baselineWireBytes = recentCleanPFrameBaselineWireBytes,
+           let baselinePacketCount = recentCleanPFrameBaselinePacketCount,
+           let baselineResult = pFrameMotionGrowthPressureRatio(
+               wireBytes: wireBytes,
+               packetCount: packetCount,
+               baselineWireBytes: baselineWireBytes,
+               baselinePacketCount: baselinePacketCount,
+               sourceStill: sourceStill,
+               minimumWireBytes: Self.receiverCadenceMotionGrowthMinimumWireBytes,
+               minimumGrowthBytes: Self.receiverCadenceMotionGrowthMinimumDeltaBytes,
+               wireRatio: Self.receiverCadenceMotionGrowthWireRatio,
+               packetRatio: Self.receiverCadenceMotionGrowthPacketRatio
+           ) {
+            result = max(result ?? 0, baselineResult)
+        }
+        return result
+    }
+
+    private func pFrameMotionGrowthPressureRatio(
+        wireBytes: Int,
+        packetCount: Int,
+        baselineWireBytes: Int,
+        baselinePacketCount: Int,
+        sourceStill: Bool,
+        minimumWireBytes: Int,
+        minimumGrowthBytes: Int,
+        wireRatio: Double,
+        packetRatio: Double
+    ) -> Double? {
+        guard !sourceStill else { return nil }
+        guard wireBytes >= minimumWireBytes else { return nil }
+        guard wireBytes - baselineWireBytes >= minimumGrowthBytes else { return nil }
+        let wireGrowthRatio = Double(max(1, wireBytes)) / Double(max(1, baselineWireBytes))
+        let packetGrowthRatio = Double(max(1, packetCount)) / Double(max(1, baselinePacketCount))
+        guard wireGrowthRatio >= wireRatio || packetGrowthRatio >= packetRatio else { return nil }
+        return max(wireGrowthRatio, packetGrowthRatio)
     }
 
     private func oversizeCutScale(targetClearMs: Double, predictedDeliveryMs: Double) -> Double {
@@ -1920,6 +2191,77 @@ struct HostAdaptivePFrameController: Equatable {
         return clampedRepairTarget
     }
 
+    private func motionBurstPFrameRepairTargetWireBytes(
+        wireBytes: Int,
+        packetCount: Int,
+        targetBytes: Int,
+        packetTarget: Int,
+        predictedDeliveryMs: Double,
+        targetClearMs: Double,
+        inputActive: Bool,
+        sourceStill: Bool,
+        qualityStillEnough: Bool,
+        input: BudgetInput,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        latencyMode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile,
+        receiverPlayoutDelayTargetMs: Double?
+    ) -> Int? {
+        guard usesMotionBurstPFrameRepair(mediaPathProfile: mediaPathProfile),
+              !sourceStill,
+              !qualityStillEnough,
+              predictedDeliveryMs > targetClearMs * 1.20 else {
+            return nil
+        }
+        let minimumWireBytes = inputActive
+            ? Self.inputMotionBurstDropMinimumWireBytes
+            : Self.passiveMotionBurstDropMinimumWireBytes
+        let pressureRatio = inputActive
+            ? Self.inputMotionBurstDropRatio
+            : Self.passiveMotionBurstDropRatio
+        guard wireBytes >= minimumWireBytes else { return nil }
+        let wireRatio = Double(max(0, wireBytes)) / Double(max(1, targetBytes))
+        let packetRatio = Double(max(0, packetCount)) / Double(max(1, packetTarget))
+        guard wireRatio >= pressureRatio || packetRatio >= pressureRatio else { return nil }
+
+        let cutScale = oversizeCutScale(targetClearMs: targetClearMs, predictedDeliveryMs: predictedDeliveryMs)
+        let safeBytes = safeFrameWireBytes(
+            targetClearMs: targetClearMs,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        let repairTarget = min(
+            targetBytes,
+            Int((Double(targetBytes) * cutScale).rounded(.down)),
+            safeBytes
+        )
+        return clampFrameWireBytes(
+            repairTarget,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+    }
+
+    private func usesMotionBurstPFrameRepair(mediaPathProfile: MirageMediaPathProfile) -> Bool {
+        switch mediaPathProfile {
+        case .localWiFi,
+             .wired,
+             .proximityWiredLike:
+            return true
+        case .awdlRadio,
+             .vpnOrOverlay,
+             .other,
+             .unknown:
+            return false
+        }
+    }
+
     private mutating func learnCapacity(
         from sample: HostPFrameSendSample,
         allowsDownwardLearning: Bool
@@ -1955,11 +2297,13 @@ struct HostAdaptivePFrameController: Equatable {
         packetCount: Int,
         quality: Float,
         receiverHealthy: Bool,
-        senderHealthy: Bool
+        senderHealthy: Bool,
+        updatesCleanBaseline: Bool = true
     ) {
         lastAdmittedPFrameWireBytes = wireBytes
         lastAdmittedPFramePacketCount = packetCount
         lastAdmittedPFrameQuality = quality
+        guard updatesCleanBaseline else { return }
         guard receiverHealthy, senderHealthy else { return }
         guard isMeaningfulCleanBaselineSample(wireBytes: wireBytes) else { return }
         if let baseline = recentCleanPFrameBaselineWireBytes {
@@ -2078,8 +2422,18 @@ struct HostAdaptivePFrameController: Equatable {
         wireBytes >= Self.minimumCleanBaselineWireBytes
     }
 
-    private func qualityTargetClearMs(policy: ModePolicy, stillEnough: Bool) -> Double {
-        stillEnough ? max(policy.targetClearMs, Self.lowMotionQualityTargetClearMs) : policy.targetClearMs
+    private func qualityTargetClearMs(
+        policy: ModePolicy,
+        inputActive: Bool,
+        sourceStill: Bool,
+        stillEnough: Bool,
+        mediaPathProfile: MirageMediaPathProfile
+    ) -> Double {
+        guard !mediaPathProfile.usesAwdlRadioPolicy else { return policy.targetClearMs }
+        if stillEnough || sourceStill {
+            return max(policy.targetClearMs, Self.lowMotionQualityTargetClearMs)
+        }
+        return inputActive ? Self.inputMotionQualityTargetClearMs : Self.passiveMotionQualityTargetClearMs
     }
 
     private func timingTargetClearMs(

@@ -138,6 +138,26 @@ struct HostFrameFreshnessPolicyTests {
         #expect(!(await context.receiverFrameBudgetCanRaiseQuality(now: 103)))
     }
 
+    @Test("Receiver cumulative loss counters only block quality raises during recent hold")
+    func receiverCumulativeLossCountersOnlyBlockDuringRecentHold() async {
+        let context = makeContext(latencyMode: .lowestLatency)
+        await context.configureReceiverFreshnessForTesting(
+            now: 100,
+            lastInputTime: 0,
+            lastNonIdleCaptureTime: 99,
+            presentationBacklogFrames: 1,
+            latestPresentedFrameAgeMs: 50
+        )
+        await context.configureReceiverLossGateForTesting(
+            lostFrameCount: 3,
+            discardedPacketCount: 2,
+            holdUntil: 100.5
+        )
+
+        #expect(!(await context.receiverFrameBudgetCanRaiseQuality(now: 100.2)))
+        #expect(await context.receiverFrameBudgetCanRaiseQuality(now: 101.0))
+    }
+
     @Test("Most Responsive treats one pending presentation frame as fresh during input")
     func mostResponsiveAllowsOnePendingPresentationFrameDuringInput() {
         let policy = HostFrameFreshnessPolicy.policy(for: .lowestLatency, frameRate: 60)
@@ -409,6 +429,16 @@ private extension StreamContext {
         self.receiverPlayoutDelayTargetMs = receiverPlayoutDelayTargetMs
         self.receiverAckLagMs = receiverAckLagMs
         self.lastReceiverAckTime = lastReceiverAckTime
+    }
+
+    func configureReceiverLossGateForTesting(
+        lostFrameCount: UInt64,
+        discardedPacketCount: UInt64,
+        holdUntil: CFAbsoluteTime
+    ) {
+        receiverLostFrameCount = lostFrameCount
+        receiverDiscardedPacketCount = discardedPacketCount
+        receiverFrameBudgetLossHoldUntil = holdUntil
     }
 
     func seedAwdlSurvivalDecisionForTesting() {

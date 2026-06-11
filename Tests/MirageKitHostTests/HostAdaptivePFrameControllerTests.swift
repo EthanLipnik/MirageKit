@@ -221,6 +221,49 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.quality < 0.60)
     }
 
+    @Test("Non-AWDL receiver completion gap cuts when motion growth has clean packet span")
+    func nonAwdlReceiverCompletionGapCutsWhenMotionGrowthHasCleanPacketSpan() throws {
+        var controller = HostAdaptivePFrameController()
+        let currentBitrate = 221_500_000
+
+        _ = recordDelivery(
+            controller: &controller,
+            currentBitrate: currentBitrate,
+            requestedBitrate: currentBitrate,
+            startupCeiling: currentBitrate,
+            minimumFloor: 4_800_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 31 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 4,
+            currentQuality: 0.75,
+            mediaPathProfile: .localWiFi
+        )
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            frameNumber: 2,
+            currentBitrate: currentBitrate,
+            requestedBitrate: currentBitrate,
+            startupCeiling: currentBitrate,
+            minimumFloor: 4_800_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 88 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 220,
+            currentQuality: 0.75,
+            mediaPathProfile: .localWiFi,
+            now: 10.02
+        ))
+
+        #expect(decision.reason == .pFrameLatency)
+        #expect(decision.state == .severe)
+        #expect(decision.targetBitrateBps < currentBitrate)
+        #expect(decision.quality < 0.75)
+        #expect(decision.maxWireBytes < frameBytes(for: currentBitrate))
+    }
+
     @Test("AWDL encoded oversize sends before quality reduction is allowed")
     func awdlEncodedOversizeSendsBeforeQualityReductionIsAllowed() {
         var controller = HostAdaptivePFrameController()
@@ -457,8 +500,8 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.maxWireBytes >= frameBytes(for: 2_000_000))
     }
 
-    @Test("Fresh input oversize sends when it fits freshness headroom")
-    func freshInputOversizeSendsWhenItFitsFreshnessHeadroom() throws {
+    @Test("Fresh input oversize sends when it fits motion target")
+    func freshInputOversizeSendsWhenItFitsMotionTarget() throws {
         var controller = HostAdaptivePFrameController()
         let decision = controller.evaluateEncodedFrame(
             byteCount: 180 * 1024,
@@ -539,13 +582,45 @@ struct HostAdaptivePFrameControllerTests {
         #expect(inputAdmission.budgetDecision == nil)
     }
 
-    @Test("Large input oversize sends when it fits freshness headroom")
-    func largeInputOversizeSendsWhenItFitsFreshnessHeadroom() {
+    @Test("Large local input oversize drops before it stalls transport")
+    func largeLocalInputOversizeDropsBeforeItStallsTransport() throws {
         var controller = HostAdaptivePFrameController()
         let decision = controller.evaluateEncodedFrame(
             byteCount: 360 * 1024,
             wireBytes: 360 * 1024,
             packetCount: 308,
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 10
+        )
+        let budget = try #require(decision.budgetDecision)
+
+        #expect(decision.admission == .dropPFrameStartChainRepair)
+        #expect(budget.reason == .encodedFrame)
+        #expect(budget.quality < 0.60)
+    }
+
+    @Test("Input oversize within motion target sends before transport")
+    func inputOversizeWithinMotionTargetSendsBeforeTransport() throws {
+        var controller = HostAdaptivePFrameController()
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: 180 * 1024,
+            wireBytes: 180 * 1024,
+            packetCount: packetCount(forWireBytes: 180 * 1024),
             isKeyframe: false,
             receiverHealthy: true,
             senderHealthy: true,
@@ -568,48 +643,53 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.budgetDecision == nil)
     }
 
-    @Test("Sustained input oversize predicts next P-frame and lowers quality before transport")
-    func sustainedInputOversizePredictsNextPFrameAndLowersQualityBeforeTransport() throws {
+    @Test("Sudden motion growth below bitrate target lowers quality before transport")
+    func suddenMotionGrowthBelowBitrateTargetLowersQualityBeforeTransport() throws {
         var controller = HostAdaptivePFrameController()
+        let currentBitrate = 221_500_000
+        let baselineBytes = 64 * 1024
+        let spikeBytes = 140 * 1024
+        #expect(spikeBytes < frameBytes(for: currentBitrate))
+
         let first = controller.evaluateEncodedFrame(
-            byteCount: 360 * 1024,
-            wireBytes: 360 * 1024,
-            packetCount: packetCount(forWireBytes: 360 * 1024),
+            byteCount: baselineBytes,
+            wireBytes: baselineBytes,
+            packetCount: packetCount(forWireBytes: baselineBytes),
             isKeyframe: false,
             receiverHealthy: true,
             senderHealthy: true,
-            inputActive: true,
+            inputActive: false,
             sourceStill: false,
-            currentBitrateBps: 60_000_000,
-            requestedTargetBitrateBps: 60_000_000,
-            startupCeilingBps: 60_000_000,
-            minimumBitrateFloorBps: 2_000_000,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 4_800_000,
             currentFrameRate: 60,
             maxPayloadSize: 1_200,
-            currentQuality: 0.60,
-            qualityFloor: 0.03,
-            steadyQualityCeiling: 0.90,
+            currentQuality: 0.75,
+            qualityFloor: 0.04,
+            steadyQualityCeiling: 0.94,
             latencyMode: .lowestLatency,
             now: 10
         )
         let second = controller.evaluateEncodedFrame(
-            byteCount: 360 * 1024,
-            wireBytes: 360 * 1024,
-            packetCount: packetCount(forWireBytes: 360 * 1024),
+            byteCount: spikeBytes,
+            wireBytes: spikeBytes,
+            packetCount: packetCount(forWireBytes: spikeBytes),
             isKeyframe: false,
             receiverHealthy: true,
             senderHealthy: true,
-            inputActive: true,
+            inputActive: false,
             sourceStill: false,
-            currentBitrateBps: 60_000_000,
-            requestedTargetBitrateBps: 60_000_000,
-            startupCeilingBps: 60_000_000,
-            minimumBitrateFloorBps: 2_000_000,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 4_800_000,
             currentFrameRate: 60,
             maxPayloadSize: 1_200,
-            currentQuality: 0.60,
-            qualityFloor: 0.03,
-            steadyQualityCeiling: 0.90,
+            currentQuality: 0.75,
+            qualityFloor: 0.04,
+            steadyQualityCeiling: 0.94,
             latencyMode: .lowestLatency,
             now: 10.02
         )
@@ -619,18 +699,76 @@ struct HostAdaptivePFrameControllerTests {
         #expect(first.budgetDecision == nil)
         #expect(second.admission == .sendWithQualityDrop)
         #expect(budget.reason == .encodedFrame)
-        #expect(budget.quality < 0.60)
-        #expect(budget.maxWireBytes < frameBytes(for: 60_000_000))
+        #expect(budget.targetBitrateBps < currentBitrate)
+        #expect(budget.quality < 0.75)
+        #expect(budget.maxWireBytes < frameBytes(for: currentBitrate))
     }
 
-    @Test("All latency modes admit fresh oversize frames that fit headroom")
-    func allLatencyModesAdmitFreshOversizeFramesThatFitHeadroom() {
+    @Test("Small clean spike below active budget does not lower quality before transport")
+    func smallCleanSpikeBelowActiveBudgetDoesNotLowerQualityBeforeTransport() {
+        var controller = HostAdaptivePFrameController()
+        let currentBitrate = 60_000_000
+        let baselineBytes = 11 * 1024
+        let spikeBytes = 42 * 1024
+        #expect(spikeBytes < frameBytes(for: currentBitrate))
+
+        let first = controller.evaluateEncodedFrame(
+            byteCount: baselineBytes,
+            wireBytes: baselineBytes,
+            packetCount: packetCount(forWireBytes: baselineBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 4_800_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.04,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            now: 10
+        )
+        let second = controller.evaluateEncodedFrame(
+            byteCount: spikeBytes,
+            wireBytes: spikeBytes,
+            packetCount: packetCount(forWireBytes: spikeBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 4_800_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.04,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            now: 10.02
+        )
+
+        #expect(first.admission == .send)
+        #expect(first.budgetDecision == nil)
+        #expect(second.admission == .send)
+        #expect(second.budgetDecision == nil)
+    }
+
+    @Test("All latency modes admit fresh oversize frames that fit motion target")
+    func allLatencyModesAdmitFreshOversizeFramesThatFitMotionTarget() {
         for mode in [MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
             var controller = HostAdaptivePFrameController()
             let decision = controller.evaluateEncodedFrame(
-                byteCount: 360 * 1024,
-                wireBytes: 360 * 1024,
-                packetCount: 308,
+                byteCount: 180 * 1024,
+                wireBytes: 180 * 1024,
+                packetCount: 154,
                 isKeyframe: false,
                 receiverHealthy: true,
                 senderHealthy: true,
@@ -986,6 +1124,184 @@ struct HostAdaptivePFrameControllerTests {
         #expect(latestBudget > 64 * 1024)
     }
 
+    @Test("Recent passive motion pressure rate limits healthy raise bursts")
+    func recentPassiveMotionPressureRateLimitsHealthyRaiseBursts() throws {
+        var controller = HostAdaptivePFrameController()
+        let pressureDecision = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 180_000_000,
+            requestedBitrate: 180_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: false,
+            sourceStill: false,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 420,
+            completionGapMs: 420,
+            currentQuality: 0.75,
+            now: 10
+        ))
+        #expect(pressureDecision.reason == .pFrameLatency)
+
+        let firstRaise = try #require(recordDelivery(
+            controller: &controller,
+            frameNumber: 2,
+            currentBitrate: pressureDecision.targetBitrateBps,
+            requestedBitrate: 180_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: false,
+            sourceStill: false,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 4,
+            currentQuality: pressureDecision.quality,
+            now: 10.12
+        ))
+        let suppressedRaise = recordDelivery(
+            controller: &controller,
+            frameNumber: 3,
+            currentBitrate: firstRaise.targetBitrateBps,
+            requestedBitrate: 180_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: false,
+            sourceStill: false,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 4,
+            currentQuality: firstRaise.quality,
+            now: 10.14
+        )
+        let laterRaise = try #require(recordDelivery(
+            controller: &controller,
+            frameNumber: 4,
+            currentBitrate: firstRaise.targetBitrateBps,
+            requestedBitrate: 180_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: false,
+            sourceStill: false,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 4,
+            currentQuality: firstRaise.quality,
+            now: 10.34
+        ))
+
+        #expect(firstRaise.reason == .healthy)
+        #expect(suppressedRaise == nil)
+        #expect(laterRaise.reason == .healthy)
+        #expect(laterRaise.maxWireBytes > firstRaise.maxWireBytes)
+    }
+
+    @Test("Clean samples at bitrate ceiling still raise quality")
+    func cleanSamplesAtBitrateCeilingStillRaiseQuality() throws {
+        var controller = HostAdaptivePFrameController()
+        _ = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 76_700_000,
+            requestedBitrate: 180_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 20 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 4,
+            currentQuality: 0.35,
+            now: 10
+        ))
+        controller.retuneForBitrateChange(
+            currentBitrateBps: 180_000_000,
+            requestedTargetBitrateBps: 180_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            mediaPathProfile: .localWiFi,
+            allowsBudgetRaise: true
+        )
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            frameNumber: 2,
+            currentBitrate: 180_000_000,
+            requestedBitrate: 180_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 160 * 1024,
+            packetSpanMs: 4,
+            completionGapMs: 4,
+            currentQuality: 0.35,
+            now: 10.40
+        ))
+
+        #expect(decision.reason == .healthy)
+        #expect(decision.targetBitrateBps == 180_000_000)
+        #expect(decision.maxWireBytes == frameBytes(for: 180_000_000))
+        #expect(decision.quality > 0.35)
+        #expect(decision.quality < 0.45)
+    }
+
+    @Test("Encoded-frame pressure does not update clean P-frame baseline")
+    func encodedFramePressureDoesNotUpdateCleanPFrameBaseline() throws {
+        var controller = HostAdaptivePFrameController()
+        let currentBitrate = 221_500_000
+        let baselineBytes = 64 * 1024
+        let spikeBytes = 140 * 1024
+
+        _ = controller.evaluateEncodedFrame(
+            byteCount: baselineBytes,
+            wireBytes: baselineBytes,
+            packetCount: packetCount(forWireBytes: baselineBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 4_800_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.75,
+            qualityFloor: 0.04,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            now: 10
+        )
+        let cleanBaseline = try #require(controller.recentCleanPFrameBaselineWireBytes)
+
+        let pressure = controller.evaluateEncodedFrame(
+            byteCount: spikeBytes,
+            wireBytes: spikeBytes,
+            packetCount: packetCount(forWireBytes: spikeBytes),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 4_800_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.75,
+            qualityFloor: 0.04,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            now: 10.02
+        )
+
+        #expect(pressure.budgetDecision?.reason == .encodedFrame)
+        #expect(controller.recentCleanPFrameBaselineWireBytes == cleanBaseline)
+    }
+
     @Test("Sparse source completion gaps with clean packet spans do not cut quality")
     func sparseSourceCompletionGapsWithCleanPacketSpansDoNotCutQuality() throws {
         var controller = HostAdaptivePFrameController()
@@ -1157,6 +1473,35 @@ struct HostAdaptivePFrameControllerTests {
         #expect(backlogDecision == nil)
         #expect(startupRecoveryDecision == nil)
         #expect(keyframeRecoveryDecision?.reason == .clientRecovery)
+    }
+
+    @Test("Cumulative receiver loss feedback only cuts on new loss deltas")
+    func cumulativeReceiverLossFeedbackOnlyCutsOnNewLossDeltas() {
+        var controller = HostAdaptivePFrameController()
+        func update(
+            sequence: UInt64,
+            lostFrameCount: UInt64,
+            now: CFAbsoluteTime
+        ) -> HostFrameBudgetDecision? {
+            controller.update(
+                with: receiverFeedback(sequence: sequence, lostFrameCount: lostFrameCount),
+                currentBitrateBps: 60_000_000,
+                requestedTargetBitrateBps: 60_000_000,
+                startupCeilingBps: 60_000_000,
+                minimumBitrateFloorBps: 2_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_200,
+                currentQuality: 0.60,
+                qualityFloor: 0.03,
+                steadyQualityCeiling: 0.90,
+                now: now
+            )
+        }
+
+        #expect(update(sequence: 1, lostFrameCount: 0, now: 10) == nil)
+        #expect(update(sequence: 2, lostFrameCount: 1, now: 10.1)?.reason == .receiverLoss)
+        #expect(update(sequence: 3, lostFrameCount: 1, now: 10.2) == nil)
+        #expect(update(sequence: 4, lostFrameCount: 2, now: 10.3)?.reason == .receiverLoss)
     }
 
     @Test("Allowed P-frame spike helpers stay monotonic")

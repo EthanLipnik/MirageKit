@@ -26,6 +26,11 @@ extension StreamContext {
         receiverLatestAcceptedFrameNumber = feedback.latestAcceptedFrameNumber
         receiverLatestPresentedFrameNumber = feedback.latestPresentedFrameNumber
         receiverLatestPresentedFrameAgeMs = feedback.latestPresentedFrameAgeMs
+        updateReceiverFrameBudgetLossWindow(
+            lostFrameCount: feedback.lostFrameCount,
+            discardedPacketCount: feedback.discardedPacketCount,
+            now: now
+        )
         receiverLostFrameCount = feedback.lostFrameCount
         receiverDiscardedPacketCount = feedback.discardedPacketCount
         latestReceiverRecoveryCause = feedback.recoveryCause
@@ -110,6 +115,23 @@ extension StreamContext {
         noteReceiverPresentationRecoveryEvidenceIfNeeded(feedback, now: now)
         await scheduleStillQualityProbeIfNeeded(now: now, reason: "receiver-feedback")
         await scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(feedback, now: now)
+    }
+
+    private func updateReceiverFrameBudgetLossWindow(
+        lostFrameCount: UInt64,
+        discardedPacketCount: UInt64,
+        now: CFAbsoluteTime
+    ) {
+        let observedNewLoss = lastObservedReceiverLostFrameCount.map {
+            lostFrameCount > $0
+        } ?? false
+        let observedNewDiscard = lastObservedReceiverDiscardedPacketCount.map {
+            discardedPacketCount > $0
+        } ?? false
+        lastObservedReceiverLostFrameCount = lostFrameCount
+        lastObservedReceiverDiscardedPacketCount = discardedPacketCount
+        guard observedNewLoss || observedNewDiscard else { return }
+        receiverFrameBudgetLossHoldUntil = max(receiverFrameBudgetLossHoldUntil, now + 0.85)
     }
 
     func currentAwdlFrameBudgetReductionAllowed(
@@ -700,19 +722,49 @@ extension StreamContext {
         // and is intentionally left untouched here.
         realtimePressureState = decision.state
         realtimePressureReason = decision.reason.rawValue
-        realtimeRuntimeBitrateCeilingBps = adaptivePFrameController.runtimeCeilingBps
+        let controllerRuntimeCeilingBps = adaptivePFrameController.runtimeCeilingBps
+        realtimeRuntimeBitrateCeilingBps = controllerRuntimeCeilingBps
         guard runtimeQualityAdjustmentEnabled else {
             await applyAwdlManualQualityFrameBudgetSafety(decision)
             logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
             return
         }
         realtimeRuntimeQualityCeiling = decision.state == .observing ? nil : decision.qualityCeiling
+        let appliesGradualHealthyFrameBudget = decision.state == .observing && decision.reason == .healthy
+        let currentBudgetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? decision.targetBitrateBps
+        let currentEncoderRateHint = realtimeEncoderRateHintBps ?? encoderConfig.bitrate ?? currentBudgetBitrate
+        let currentSenderPacingBitrate = realtimeSenderPacingBitrateBps ?? currentBudgetBitrate
+        let decisionSenderPacingBitrate = realtimeSenderPacingBitrate(for: decision)
+        let appliedTargetBitrate = appliesGradualHealthyFrameBudget
+            ? max(decision.targetBitrateBps, currentBudgetBitrate)
+            : decision.targetBitrateBps
+        let appliedEncoderRateHint = appliesGradualHealthyFrameBudget
+            ? max(decision.targetBitrateBps, currentEncoderRateHint, appliedTargetBitrate)
+            : decision.targetBitrateBps
+        let appliedSenderPacingBitrate = appliesGradualHealthyFrameBudget
+            ? max(decisionSenderPacingBitrate, currentSenderPacingBitrate, appliedTargetBitrate)
+            : decisionSenderPacingBitrate
+        let appliedRuntimeBitrateCeiling: Int?
+        if appliesGradualHealthyFrameBudget {
+            appliedRuntimeBitrateCeiling = max(
+                controllerRuntimeCeilingBps ?? 0,
+                appliedTargetBitrate,
+                appliedEncoderRateHint,
+                appliedSenderPacingBitrate
+            )
+        } else {
+            appliedRuntimeBitrateCeiling = controllerRuntimeCeilingBps
+        }
+        realtimeRuntimeBitrateCeilingBps = appliedRuntimeBitrateCeiling
         await applyRealtimeBudgetBitrate(
-            decision.targetBitrateBps,
-            ceilingBitrateBps: realtimeRuntimeBitrateCeilingBps,
-            encoderRateHintBps: decision.targetBitrateBps,
-            senderPacingBitrateBps: realtimeSenderPacingBitrate(for: decision),
-            reason: decision.reason.rawValue
+            appliedTargetBitrate,
+            ceilingBitrateBps: appliedRuntimeBitrateCeiling,
+            encoderRateHintBps: appliedEncoderRateHint,
+            senderPacingBitrateBps: appliedSenderPacingBitrate,
+            reason: decision.reason.rawValue,
+            allowsActiveQualityRaise: appliesGradualHealthyFrameBudget ? false : nil,
+            clearsRuntimeQualityCeiling: appliesGradualHealthyFrameBudget ? true : nil,
+            allowsFrameBudgetRaise: appliesGradualHealthyFrameBudget ? true : nil
         )
         let qualityChanged = await applyFrameBudgetQuality(decision)
         if qualityChanged {
@@ -768,7 +820,11 @@ extension StreamContext {
             for: keyframeQualityCeiling
         )
         let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
-        activeQuality = decisionQuality
+        activeQuality = if decision.state == .observing {
+            max(min(previousQuality, qualityCeiling), decisionQuality)
+        } else {
+            decisionQuality
+        }
         guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return false }
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(

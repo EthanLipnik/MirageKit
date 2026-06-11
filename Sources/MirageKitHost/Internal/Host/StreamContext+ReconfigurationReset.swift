@@ -146,6 +146,7 @@ extension StreamContext {
     /// Restores reconfiguration-time quality and in-flight limits to their current bounds.
     private func resetQualityStateForReconfiguration() {
         maxInFlightFrames = min(minInFlightFrames, maxInFlightFramesCap)
+        clearTransientRuntimePressureForReconfiguration()
         qualityCeiling = resolvedQualityCeiling
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
         clearAwdlHostStructuralQualityReduction()

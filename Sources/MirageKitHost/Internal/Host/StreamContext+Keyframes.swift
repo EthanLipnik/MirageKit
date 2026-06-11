@@ -324,6 +324,15 @@ extension StreamContext {
         }
     }
 
+    func cancelPacketSenderDependencyRecoveryKeyframeRetry() {
+        dependencyRecoveryKeyframeRetryTask?.cancel()
+        dependencyRecoveryKeyframeRetryTask = nil
+        dependencyRecoveryPendingDropFrameNumber = nil
+        dependencyRecoveryPendingDropReason = nil
+        dependencyRecoveryPendingQueuedBytes = 0
+        dependencyRecoveryRetryNecessary = false
+    }
+
     private func schedulePacketSenderDependencyRecoveryKeyframeRetry(
         frameNumber: UInt32,
         reason: String,
@@ -385,6 +394,19 @@ extension StreamContext {
     ) async {
         dependencyRecoveryKeyframeRetryTask = nil
         guard isRunning else { return }
+        guard pendingReceiverAcceptedKeyframeFrameNumber == nil,
+              keyframeInFlightFrameNumber == nil else {
+            return
+        }
+        switch frameChainState {
+        case .normal,
+             .postKeyframeCooling:
+            cancelPacketSenderDependencyRecoveryKeyframeRetry()
+            return
+        case .chainBroken,
+             .emergencyKeyframePending:
+            break
+        }
         let queuedBytes = packetSender?.queuedByteCount ?? dependencyRecoveryPendingQueuedBytes
         dependencyRecoveryPendingQueuedBytes = queuedBytes
         if let packetSender {

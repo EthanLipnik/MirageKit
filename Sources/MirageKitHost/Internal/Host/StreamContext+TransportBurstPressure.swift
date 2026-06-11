@@ -35,24 +35,29 @@ extension StreamContext {
         )
         let localQueuedBytes = telemetry.queuedBytes
         let softQueuedByteThreshold = min(queuePressureBytes, max(384 * 1024, queuePressureBytes / 2))
+        let sendGapQueuedByteThreshold = max(32 * 1024, maxPayloadSize * 4)
 
-        let hasBurstOccupancy = outstandingMax >= 8 ||
+        let hasSendGapOccupancy = outstandingMax >= 16 ||
             pendingMax >= 4 ||
-            queuedUnreliableBytes > 0 ||
-            localQueuedBytes > 0
+            queuedUnreliableBytes >= sendGapQueuedByteThreshold ||
+            localQueuedBytes >= sendGapQueuedByteThreshold
         let hasTimingPressure = queueDwellP99Ms >= 180 ||
             contentProcessedP99Ms >= 180 ||
-            (sendGapP99Ms >= 180 && hasBurstOccupancy)
-        let hasSoftPressure = hasTimingPressure ||
-            outstandingMax >= 24 ||
+            (sendGapP99Ms >= 180 && hasSendGapOccupancy)
+        let hasOccupancyPressure = outstandingMax >= 40 ||
             pendingMax >= 16 ||
             queuedUnreliableBytes >= softQueuedByteThreshold ||
             localQueuedBytes >= queuePressureBytes
+        let hasSoftPressure = hasTimingPressure || hasOccupancyPressure
         guard hasSoftPressure else { return }
 
         let hasSevereTimingPressure = queueDwellP99Ms >= 320 ||
             contentProcessedP99Ms >= 320 ||
-            (sendGapP99Ms >= 320 && hasBurstOccupancy)
+            (sendGapP99Ms >= 320 &&
+                (pendingMax >= 8 ||
+                    outstandingMax >= 32 ||
+                    queuedUnreliableBytes >= softQueuedByteThreshold ||
+                    localQueuedBytes >= queuePressureBytes))
         let hasSeverePressure = hasSevereTimingPressure ||
             outstandingMax >= 48 ||
             pendingMax >= 32 ||

@@ -6,6 +6,7 @@
 //
 
 @testable import MirageKitHost
+import CoreFoundation
 import Foundation
 import MirageKit
 import Testing
@@ -123,6 +124,106 @@ struct StreamBitrateContractTests {
         #expect(await context.activeQualityForTest() > 0.25)
     }
 
+    @Test("Healthy frame budget decision applies gradual quality raise")
+    func healthyFrameBudgetDecisionAppliesGradualQualityRaise() async {
+        let context = makeContext(bitrate: 60_000_000)
+        await context.configureRunningForBitrateContractTest()
+        await context.configureRuntimeQualityRefreshTest(
+            size: CGSize(width: 2752, height: 2064),
+            activeQuality: 0.42
+        )
+        let gradualQuality: Float = 0.44
+
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 221_500_000,
+                maxFrameBytes: 461_459,
+                maxWireBytes: 461_459,
+                maxPacketCount: 385,
+                quality: gradualQuality,
+                qualityCeiling: 0.90,
+                keyframeQuality: 0.70,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 1,
+                state: .observing,
+                reason: .healthy
+            ),
+            now: CFAbsoluteTimeGetCurrent()
+        )
+        let activeQuality = await context.activeQualityForTest()
+
+        #expect(abs(activeQuality - gradualQuality) < 0.0001)
+        #expect(await context.qualityCeilingForTest() > gradualQuality)
+    }
+
+    @Test("Healthy frame budget decision does not lower newer local bitrate raise")
+    func healthyFrameBudgetDecisionDoesNotLowerNewerLocalBitrateRaise() async {
+        let context = makeContext(
+            bitrate: 116_000_000,
+            bitrateAdaptationCeiling: 180_000_000
+        )
+        await context.configureRunningForBitrateContractTest()
+        await context.configureRuntimeQualityRefreshTest(
+            size: CGSize(width: 2752, height: 2064),
+            activeQuality: 0.58
+        )
+        await context.applyRealtimeBudgetBitrate(
+            134_562_413,
+            ceilingBitrateBps: 180_000_000,
+            encoderRateHintBps: 134_562_413,
+            senderPacingBitrateBps: 134_562_413,
+            reason: HostAdaptivePFrameController.Reason.healthy.rawValue
+        )
+        let raisedTarget = await context.currentTargetBitrateForTest()
+        let raisedQuality = await context.activeQualityForTest()
+
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 116_200_000,
+                maxFrameBytes: 242_083,
+                maxWireBytes: 242_083,
+                maxPacketCount: 202,
+                quality: 0.42,
+                qualityCeiling: 0.90,
+                keyframeQuality: 0.70,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 1,
+                state: .observing,
+                reason: .healthy
+            ),
+            now: CFAbsoluteTimeGetCurrent()
+        )
+        let runtimeCeiling = (await context.realtimeRuntimeBitrateCeilingForTest()) ?? 0
+
+        #expect(await context.currentTargetBitrateForTest() == raisedTarget)
+        #expect(await context.realtimeEncoderRateHintForTest() == raisedTarget)
+        #expect(await context.realtimeSenderPacingBitrateForTest() == raisedTarget)
+        #expect(runtimeCeiling >= raisedTarget)
+        #expect(await context.activeQualityForTest() >= raisedQuality)
+    }
+
+    @Test("Bitrate update clears stale runtime pressure ceilings before deriving quality")
+    func bitrateUpdateClearsStaleRuntimePressureCeilingsBeforeDerivingQuality() async throws {
+        let context = makeContext(bitrate: 76_700_000)
+        await context.configureRunningForBitrateContractTest()
+        await context.configureRuntimeQualityRefreshTest(
+            size: CGSize(width: 2752, height: 2064),
+            activeQuality: 0.42
+        )
+        await context.setRealtimeRuntimeQualityCeilingForTest(0.42)
+        await context.setRealtimeRuntimeBitrateCeilingForTest(76_700_000)
+
+        try await context.updateEncoderSettings(
+            colorDepth: nil,
+            bitrate: 221_500_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            updateRequestedTargetBitrate: true
+        )
+
+        #expect(await context.realtimeRuntimeQualityCeilingForTest() == nil)
+        #expect(await context.realtimeRuntimeBitrateCeilingForTest() == nil)
+        #expect(await context.qualityCeilingForTest() > 0.42)
+        #expect(await context.activeQualityForTest() > 0.42)
+    }
+
     private func makeContext(
         bitrate: Int,
         bitrateAdaptationCeiling: Int? = nil,
@@ -153,6 +254,10 @@ struct StreamBitrateContractTests {
 }
 
 private extension StreamContext {
+    func configureRunningForBitrateContractTest() {
+        isRunning = true
+    }
+
     func configureRuntimeQualityRefreshTest(size: CGSize, activeQuality: Float) {
         currentEncodedSize = size
         self.activeQuality = activeQuality
@@ -166,12 +271,36 @@ private extension StreamContext {
         steadyQualityCeiling
     }
 
+    func qualityCeilingForTest() -> Float {
+        qualityCeiling
+    }
+
+    func currentTargetBitrateForTest() -> Int {
+        currentTargetBitrateBps ?? 0
+    }
+
+    func realtimeEncoderRateHintForTest() -> Int {
+        realtimeEncoderRateHintBps ?? 0
+    }
+
+    func realtimeSenderPacingBitrateForTest() -> Int {
+        realtimeSenderPacingBitrateBps ?? 0
+    }
+
     func setRealtimeRuntimeQualityCeilingForTest(_ ceiling: Float) {
         realtimeRuntimeQualityCeiling = ceiling
     }
 
+    func setRealtimeRuntimeBitrateCeilingForTest(_ ceiling: Int) {
+        realtimeRuntimeBitrateCeilingBps = ceiling
+    }
+
     func realtimeRuntimeQualityCeilingForTest() -> Float? {
         realtimeRuntimeQualityCeiling
+    }
+
+    func realtimeRuntimeBitrateCeilingForTest() -> Int? {
+        realtimeRuntimeBitrateCeilingBps
     }
 }
 #endif

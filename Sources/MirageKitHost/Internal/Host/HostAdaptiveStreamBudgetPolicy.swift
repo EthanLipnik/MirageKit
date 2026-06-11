@@ -361,40 +361,40 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         case .localWiFi:
             return PathBudget(
                 startupBitsPerPixelPerFrame: 0.095,
-                maximumBitsPerPixelPerFrame: 0.530,
+                maximumBitsPerPixelPerFrame: 0.900,
                 startupCapBps: 36_000_000,
-                maximumCapBps: 180_000_000,
+                maximumCapBps: 300_000_000,
                 minimumFloorBps: 3_000_000,
                 honorsRequestedStartup: true,
                 honorsAutomaticClientStartup: true,
                 honorsAutomaticClientCeiling: true,
-                minimumAutomaticClientCeilingBps: nil,
+                minimumAutomaticClientCeilingBps: 300_000_000,
                 label: "wifi"
             )
         case .wired:
             return PathBudget(
                 startupBitsPerPixelPerFrame: 0.140,
-                maximumBitsPerPixelPerFrame: 0.450,
+                maximumBitsPerPixelPerFrame: 0.900,
                 startupCapBps: 72_000_000,
-                maximumCapBps: 180_000_000,
+                maximumCapBps: 300_000_000,
                 minimumFloorBps: 8_000_000,
                 honorsRequestedStartup: true,
                 honorsAutomaticClientStartup: true,
                 honorsAutomaticClientCeiling: true,
-                minimumAutomaticClientCeilingBps: nil,
+                minimumAutomaticClientCeilingBps: 300_000_000,
                 label: "wired"
             )
         case .proximityWiredLike:
             return PathBudget(
                 startupBitsPerPixelPerFrame: 0.220,
-                maximumBitsPerPixelPerFrame: 0.650,
+                maximumBitsPerPixelPerFrame: 0.900,
                 startupCapBps: 140_000_000,
                 maximumCapBps: 300_000_000,
                 minimumFloorBps: 12_000_000,
                 honorsRequestedStartup: true,
                 honorsAutomaticClientStartup: true,
                 honorsAutomaticClientCeiling: true,
-                minimumAutomaticClientCeilingBps: nil,
+                minimumAutomaticClientCeilingBps: 300_000_000,
                 label: "proximity"
             )
         case .vpnOrOverlay:

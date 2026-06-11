@@ -506,6 +506,33 @@ struct HostKeyframeRecoveryTests {
         }
     }
 
+    @Test("Successful repair keyframe cancels stale packet dependency retry")
+    func successfulRepairKeyframeCancelsStalePacketDependencyRetry() async {
+        let context = makeContext()
+        let now = CFAbsoluteTimeGetCurrent()
+        await context.configureRunningForRepairRetryTest()
+        await context.setFrameChainStateForTesting(
+            .emergencyKeyframePending(reason: "Packet sender dependency drop", openedAt: now - 0.1),
+            suppressPFrames: true
+        )
+        await context.seedPacketSenderDependencyRecoveryRetryForTesting(
+            frameNumber: 45,
+            reason: .generationAbort
+        )
+
+        await context.handleFrameTransportCompleted(
+            frameTransportCompletion(frameNumber: 46, isKeyframe: true, didSend: true, now: now)
+        )
+
+        #expect(await context.dependencyRecoveryKeyframeRetryTask == nil)
+        #expect(await context.dependencyRecoveryPendingDropFrameNumber == nil)
+        #expect(await context.dependencyRecoveryPendingDropReason == nil)
+        #expect(await context.dependencyRecoveryRetryNecessary == false)
+        #expect(await context.pendingReceiverAcceptedKeyframeFrameNumber == 46)
+
+        await context.stop()
+    }
+
     @Test("Emergency repair keyframe carries discontinuity reset")
     func emergencyRepairKeyframeCarriesDiscontinuityReset() async {
         let context = makeContext()
@@ -1017,6 +1044,39 @@ struct HostKeyframeRecoveryTests {
         #expect(context.frameInbox.pendingCount == 1)
     }
 
+    @Test("Still quality probe raises active quality without receiver timing")
+    func stillQualityProbeRaisesActiveQualityWithoutReceiverTiming() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 180_000_000,
+            runtimeQualityAdjustmentEnabled: true,
+            latencyMode: .lowestLatency,
+            bitrateAdaptationCeiling: 180_000_000
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.updateCaptureSizesIfNeeded(CGSize(width: 2752, height: 2064))
+        await context.configureStillQualityProbeRaiseTest(
+            targetBitrate: 180_000_000,
+            activeQuality: 0.35,
+            qualityCeiling: 0.75
+        )
+        await context.recordCaptureIngress(makeIdleFrame())
+        let initialQuality = await context.activeQuality
+
+        let scheduled = await context.scheduleStillQualityProbeIfNeeded(
+            now: now + 1.0,
+            reason: "test"
+        )
+        let raisedQuality = await context.activeQuality
+
+        #expect(scheduled)
+        #expect(context.frameInbox.pendingCount == 1)
+        #expect(raisedQuality > initialQuality)
+        #expect(raisedQuality < 0.50)
+        #expect(await context.realtimeRuntimeQualityCeiling == nil)
+    }
+
     @Test("Keyframe packet pacing override caps send rate and burst budget")
     func startupPacketPacingCapsKeyframeBurstBudget() {
         let pacingOverride = StreamContext.keyframePacingOverride()
@@ -1248,6 +1308,41 @@ private extension StreamContext {
     func configureRunningForRepairRetryTest() {
         isRunning = true
         shouldEncodeFrames = true
+    }
+
+    func seedPacketSenderDependencyRecoveryRetryForTesting(
+        frameNumber: UInt32,
+        reason: StreamPacketSender.DependencyFrameDropReason
+    ) {
+        dependencyRecoveryKeyframeRetryTask = Task {}
+        dependencyRecoveryPendingDropFrameNumber = frameNumber
+        dependencyRecoveryPendingDropReason = reason
+        dependencyRecoveryPendingQueuedBytes = 64 * 1024
+        dependencyRecoveryRetryNecessary = true
+    }
+
+    func configureStillQualityProbeRaiseTest(
+        targetBitrate: Int,
+        activeQuality: Float,
+        qualityCeiling: Float
+    ) {
+        currentTargetBitrateBps = targetBitrate
+        encoderConfig.bitrate = targetBitrate
+        configuredQualityCeiling = qualityCeiling
+        steadyQualityCeiling = qualityCeiling
+        self.qualityCeiling = qualityCeiling
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: qualityCeiling)
+        self.activeQuality = activeQuality
+        realtimeRuntimeQualityCeiling = nil
+        realtimePressureState = .observing
+        realtimePressureReason = HostAdaptivePFrameController.Reason.healthy.rawValue
+        receiverLostFrameCount = 0
+        receiverDiscardedPacketCount = 0
+        receiverReassemblyBacklogFrames = 0
+        receiverReassemblyBacklogBytes = 0
+        receiverDecodeBacklogFrames = 0
+        receiverPresentationBacklogFrames = 0
     }
 }
 #endif

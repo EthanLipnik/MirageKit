@@ -46,6 +46,13 @@ extension StreamContext {
         let boostDrop: Float?
     }
 
+    func clearTransientRuntimePressureForReconfiguration() {
+        realtimeRuntimeQualityCeiling = nil
+        realtimeRuntimeBitrateCeilingBps = nil
+        realtimePressureState = .observing
+        realtimePressureReason = HostAdaptivePFrameController.Reason.healthy.rawValue
+    }
+
     private func applyHostAdaptiveBudgetIfNeeded(
         for outputSize: CGSize,
         logLabel: String?
@@ -336,7 +343,9 @@ extension StreamContext {
 
     func refreshRuntimeQualityTargets(
         for targetBitrateBps: Int,
-        reason: String
+        reason: String,
+        allowsActiveQualityRaise: Bool? = nil,
+        clearsRuntimeQualityCeiling: Bool? = nil
     ) async {
         guard encoderConfig.codec != .proRes4444 else { return }
         guard currentEncodedSize.width > 0, currentEncodedSize.height > 0 else { return }
@@ -344,8 +353,11 @@ extension StreamContext {
             targetBitrateBps: targetBitrateBps,
             outputSize: currentEncodedSize
         )
+        let defaultRaisesActiveQuality = Self.runtimeQualityRefreshShouldRaiseActiveQuality(reason: reason)
+        let shouldRaiseActiveQuality = allowsActiveQualityRaise ?? defaultRaisesActiveQuality
+        let shouldClearRuntimeQualityCeiling = clearsRuntimeQualityCeiling ?? defaultRaisesActiveQuality
         let shouldRefreshConfiguredQualityCeiling = targets.frameQuality > configuredQualityCeiling ||
-            reason == HostAdaptivePFrameController.Reason.healthy.rawValue ||
+            shouldClearRuntimeQualityCeiling ||
             reason == HostAdaptivePFrameController.Reason.startup.rawValue
         let previousFrameQuality = encoderConfig.frameQuality
         let previousKeyframeQuality = encoderConfig.keyframeQuality
@@ -354,7 +366,7 @@ extension StreamContext {
         let previousQualityCeiling = qualityCeiling
         let previousQualityFloor = qualityFloor
         let previousKeyframeQualityFloor = keyframeQualityFloor
-        if Self.runtimeQualityRefreshShouldRaiseActiveQuality(reason: reason) {
+        if shouldClearRuntimeQualityCeiling {
             realtimeRuntimeQualityCeiling = nil
         }
         encoderConfig.frameQuality = targets.frameQuality
@@ -371,7 +383,6 @@ extension StreamContext {
 
         let previousActiveQuality = activeQuality
         let boundedTargetQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
-        let shouldRaiseActiveQuality = Self.runtimeQualityRefreshShouldRaiseActiveQuality(reason: reason)
         if activeQuality > boundedTargetQuality ||
             (shouldRaiseActiveQuality && activeQuality < boundedTargetQuality) ||
             ((mediaPathProfile.usesAwdlRadioPolicy || usesOptimizedVPNStreamingProfile) &&

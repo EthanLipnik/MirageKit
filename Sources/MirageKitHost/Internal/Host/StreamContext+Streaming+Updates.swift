@@ -32,7 +32,10 @@ extension StreamContext {
         encoderRateHintBps: Int? = nil,
         senderPacingBitrateBps: Int? = nil,
         minimumBitrateFloorBps: Int? = nil,
-        reason: String
+        reason: String,
+        allowsActiveQualityRaise: Bool? = nil,
+        clearsRuntimeQualityCeiling: Bool? = nil,
+        allowsFrameBudgetRaise: Bool? = nil
     ) async {
         guard isRunning else { return }
         guard let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
@@ -65,7 +68,12 @@ extension StreamContext {
         let desiredEncoderHintChanged = encoderRateHint != realtimeEncoderRateHintBps
         let senderPacingChanged = senderPacingBitrate != realtimeSenderPacingBitrateBps
         guard transportBitrateChanged || desiredEncoderHintChanged || senderPacingChanged else {
-            await refreshRuntimeQualityTargets(for: encoderRateHint, reason: reason)
+            await refreshRuntimeQualityTargets(
+                for: encoderRateHint,
+                reason: reason,
+                allowsActiveQualityRaise: allowsActiveQualityRaise,
+                clearsRuntimeQualityCeiling: clearsRuntimeQualityCeiling
+            )
             return
         }
 
@@ -89,6 +97,8 @@ extension StreamContext {
         }
         currentTargetBitrateBps = targetBitrate
         realtimeSenderPacingBitrateBps = senderPacingBitrate
+        let frameBudgetRaiseAllowed = allowsFrameBudgetRaise ??
+            Self.realtimeBudgetReasonAllowsFrameBudgetRaise(reason)
         adaptivePFrameController.retuneForBitrateChange(
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
@@ -97,7 +107,7 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             mediaPathProfile: mediaPathProfile,
-            allowsBudgetRaise: Self.realtimeBudgetReasonAllowsFrameBudgetRaise(reason)
+            allowsBudgetRaise: frameBudgetRaiseAllowed
         )
         await packetSender?.setTargetBitrateBps(senderPacingBitrate)
         if encoderHintChanged {
@@ -110,7 +120,12 @@ extension StreamContext {
                 realtimeLastEncoderRateRaiseTime = now
             }
         }
-        await refreshRuntimeQualityTargets(for: appliedEncoderRateHint, reason: reason)
+        await refreshRuntimeQualityTargets(
+            for: appliedEncoderRateHint,
+            reason: reason,
+            allowsActiveQualityRaise: allowsActiveQualityRaise,
+            clearsRuntimeQualityCeiling: clearsRuntimeQualityCeiling
+        )
 
         MirageLogger.metrics(
             "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +
@@ -193,6 +208,7 @@ extension StreamContext {
                     targetBitrate: encoderConfig.bitrate
                 )
             }
+            clearTransientRuntimePressureForReconfiguration()
             if currentEncodedSize != .zero {
                 await applyDerivedQuality(for: currentEncodedSize, logLabel: "Bitrate update")
             }
@@ -241,6 +257,7 @@ extension StreamContext {
         if let captureEngine { try await captureEngine.updateConfiguration(encoderConfig) }
         updateQueueLimits()
         if currentEncodedSize != .zero {
+            clearTransientRuntimePressureForReconfiguration()
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Encoder settings update")
         }
 
@@ -295,6 +312,7 @@ extension StreamContext {
             captureFrameRate = desiredCaptureRate
         }
         await encoder?.updateFrameRate(clamped)
+        clearTransientRuntimePressureForReconfiguration()
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Frame rate update")
         }

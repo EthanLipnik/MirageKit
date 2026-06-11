@@ -176,7 +176,8 @@ extension StreamContext {
             wireBytes: projectedPlan.wireBytes,
             packetCount: projectedPlan.packetCount,
             isKeyframe: isKeyframe,
-            encodedAt: now
+            encodedAt: now,
+            timing: timing
         )
         await applyPerFrameEncoderTimingPressureIfNeeded(
             timing,

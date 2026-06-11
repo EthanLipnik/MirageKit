@@ -253,6 +253,7 @@ extension StreamContext {
         }
 
         if wasRepairing {
+            cancelPacketSenderDependencyRecoveryKeyframeRetry()
             pendingReceiverAcceptedKeyframeFrameNumber = frameNumber
             MirageLogger.metrics(
                 "Emergency recovery keyframe sent for stream \(streamID); " +
@@ -281,6 +282,7 @@ extension StreamContext {
         suppressEncodedNonKeyframesUntilKeyframe = false
         latestReceiverRecoveryCause = .none
         pendingEmergencyKeyframeQuality = nil
+        cancelPacketSenderDependencyRecoveryKeyframeRetry()
         adaptivePFrameController.resetEncodedOvershootHistory()
         if wasRepairing {
             frameChainState = .postKeyframeCooling(
@@ -322,6 +324,7 @@ extension StreamContext {
             let nextRemaining = max(0, remaining - 1)
             if nextRemaining == 0 {
                 frameChainState = .normal
+                cancelPacketSenderDependencyRecoveryKeyframeRetry()
                 MirageLogger.metrics(
                     "Post-keyframe chain cooling complete for stream \(streamID) at frame \(frameNumber)"
                 )
