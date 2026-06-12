@@ -386,6 +386,7 @@ struct HostAdaptivePFrameController: Equatable {
     private static let cutCoalescingWindowSeconds: CFAbsoluteTime = 0.80
     private static let startupGraceMinimumCutScale = 0.70
     private static let headroomRaiseSafetyScale = 0.75
+    private static let sendDeadlineSerializationHeadroom = 1.35
     private static let minimumFrameWireBytes = 6 * 1024
     private static let minimumPacketCount = 8
     private static let nearFloorTargetRatio = 1.25
@@ -647,6 +648,8 @@ struct HostAdaptivePFrameController: Equatable {
         awdlQualityReductionAllowed: Bool = true,
         deliveryMode: HostFrameDeliveryMode = .realtime,
         encodedSize: CGSize = .zero,
+        queuedBytesAhead: Int = 0,
+        startupProtectionActive: Bool = false,
         now: CFAbsoluteTime
     ) -> HostEncodedFrameAdmissionDecision {
         let input = budgetInput(
@@ -720,7 +723,21 @@ struct HostAdaptivePFrameController: Equatable {
             senderHealthy: senderHealthy
         )
         let effectiveSendDeadline = max(
-            sendDeadline,
+            max(
+                sendDeadline,
+                sizeAwareSendDeadline(
+                    now: now,
+                    wireBytes: wireBytes,
+                    queuedBytesAhead: queuedBytesAhead,
+                    startupProtectionActive: startupProtectionActive,
+                    input: input,
+                    currentFrameRate: currentFrameRate,
+                    maxPayloadSize: maxPayloadSize,
+                    latencyMode: latencyMode,
+                    mediaPathProfile: mediaPathProfile,
+                    receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+                )
+            ),
             lowMotionRampSendDeadline(
                 now: now,
                 deliveryMode: effectiveDeliveryMode,
@@ -3002,6 +3019,66 @@ struct HostAdaptivePFrameController: Equatable {
 
     private func sendDeadline(now: CFAbsoluteTime, currentFrameRate: Int) -> CFAbsoluteTime {
         now + frameInterval(for: currentFrameRate)
+    }
+
+    /// Drop thresholds shorter than a frame's own serialization time convert
+    /// transient size spikes into dependency-chain breaks (and every stream's
+    /// first P-frame into a guaranteed loss while the startup keyframe drains
+    /// ahead of it). Give each frame a deadline that covers its predicted wire
+    /// time plus the queue ahead of it, bounded by a per-mode latency budget.
+    /// Frames still send as fast as the pacer allows — the deadline only decides
+    /// when to give up on one.
+    private func sizeAwareSendDeadline(
+        now: CFAbsoluteTime,
+        wireBytes: Int,
+        queuedBytesAhead: Int,
+        startupProtectionActive: Bool,
+        input: BudgetInput,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        latencyMode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile,
+        receiverPlayoutDelayTargetMs: Double?
+    ) -> CFAbsoluteTime {
+        guard !mediaPathProfile.usesAwdlRadioPolicy else { return now }
+        let frameIntervalMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let latencyCapMs = Self.sendDeadlineLatencyCapMs(
+            frameIntervalMs: frameIntervalMs,
+            latencyMode: latencyMode
+        )
+        if startupProtectionActive {
+            // Datagram-registration latency right after stream start is not part
+            // of the capacity model; give startup frames the full budget.
+            return now + latencyCapMs / 1_000.0
+        }
+        let deliveryMs = predictedDeliveryMs(
+            wireBytes: max(1, wireBytes) + max(0, queuedBytesAhead),
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        let floorMs = min(
+            latencyCapMs,
+            max(frameIntervalMs, deliveryMs * Self.sendDeadlineSerializationHeadroom)
+        )
+        return now + floorMs / 1_000.0
+    }
+
+    private static func sendDeadlineLatencyCapMs(
+        frameIntervalMs: Double,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Double {
+        switch latencyMode {
+        case .lowestLatency:
+            max(80.0, frameIntervalMs * 2.5)
+        case .balanced:
+            max(120.0, frameIntervalMs * 4.0)
+        case .smoothest:
+            max(200.0, frameIntervalMs * 6.0)
+        }
     }
 
     private func lowMotionRampSendDeadline(

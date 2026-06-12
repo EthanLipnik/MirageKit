@@ -584,8 +584,8 @@ extension StreamContext {
         }
         do {
             try await updateFrameRate(clamped, updatesAwdlInteractiveCeiling: false)
-            if let onAwdlInteractiveDesktopGeometryUpdate {
-                await onAwdlInteractiveDesktopGeometryUpdate(streamID)
+            if let onHostAdaptiveDesktopGeometryUpdate {
+                await onHostAdaptiveDesktopGeometryUpdate(streamID)
             }
             lastAwdlInteractiveFrameRateAdjustmentTime = now
             if clamped > 30 {
@@ -656,8 +656,8 @@ extension StreamContext {
                 reason: "awdl-\(reason ?? "interactive")",
                 advancesDimensionToken: true
             )
-            if let onAwdlInteractiveDesktopGeometryUpdate {
-                await onAwdlInteractiveDesktopGeometryUpdate(streamID)
+            if let onHostAdaptiveDesktopGeometryUpdate {
+                await onHostAdaptiveDesktopGeometryUpdate(streamID)
             }
             await prepareAwdlInteractiveScaleKeyframe(
                 multiplier: multiplier,

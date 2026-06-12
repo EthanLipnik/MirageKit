@@ -799,10 +799,9 @@ struct HostAdaptivePFrameControllerTests {
         }
     }
 
-    @Test("Regular VPN readable encoded frames keep existing deadline behavior")
-    func regularVPNReadableEncodedFramesKeepExistingDeadlineBehavior() throws {
+    @Test("Regular VPN readable encoded frames get size-aware deadlines within the latency budget")
+    func regularVPNReadableEncodedFramesGetSizeAwareDeadlines() throws {
         let mildlyLateBytes = 100 * 1024
-        let frameInterval = 1.0 / 60.0
 
         var controller = HostAdaptivePFrameController()
         let decision = controller.evaluateEncodedFrame(
@@ -831,7 +830,11 @@ struct HostAdaptivePFrameControllerTests {
 
         #expect(decision.admission == .sendWithQualityDrop)
         #expect(budget.reason == .encodedFrame)
-        #expect(abs(decision.sendDeadline - (10 + frameInterval)) < 0.0001)
+        // 100 KiB against a 2 Mbps capacity model is far over the realtime clear
+        // target: the frame still gets cut for it, but its deadline covers the
+        // latency budget instead of one frame interval, so the dependency chain
+        // survives while the cut takes effect.
+        #expect(abs(decision.sendDeadline - (10 + 0.080)) < 0.002)
     }
 
     @Test("Optimized VPN readable encoded frames get extended deadline slack")

@@ -29,6 +29,11 @@ extension StreamContext {
     private static let awdlInteractiveFrameQualityFloor: Float = 0.16
     private static let awdlInteractiveKeyframeQualityFloor: Float = 0.14
     private static let qualityRefreshEpsilon: Float = 0.0001
+    // Clarity-first policy for automatic streams: pressure trades frame rate
+    // before it trades readability, so runtime cuts and recovery keyframes hold
+    // a readable encode quality. Bitrate caps remain the hard constraint.
+    private static let automaticClarityQualityFloorMinimum: Float = 0.42
+    private static let automaticClarityKeyframeQualityFloorMinimum: Float = 0.38
 
     private struct DerivedQualityTargets {
         let frameQuality: Float
@@ -120,8 +125,19 @@ extension StreamContext {
             return awdlBoundedInteractiveFrameQuality(floor)
         }
         guard ceiling > 0 else { return 0 }
-        let floor = max(minimumFloor, ceiling * floorFactor)
+        let floor = max(
+            max(minimumFloor, ceiling * floorFactor),
+            automaticClarityFloor(minimum: Self.automaticClarityQualityFloorMinimum)
+        )
         return min(ceiling, floor)
+    }
+
+    private func automaticClarityFloor(minimum: Float) -> Float {
+        guard runtimeQualityAdjustmentEnabled,
+              !mediaPathProfile.usesAwdlRadioPolicy else {
+            return 0
+        }
+        return minimum
     }
 
     /// Returns the runtime keyframe quality floor for the active bitrate policy.
@@ -142,7 +158,10 @@ extension StreamContext {
             )
         }
         guard ceiling > 0 else { return 0 }
-        let floor = max(minimumFloor, ceiling * floorFactor)
+        let floor = max(
+            max(minimumFloor, ceiling * floorFactor),
+            automaticClarityFloor(minimum: Self.automaticClarityKeyframeQualityFloorMinimum)
+        )
         return min(ceiling, floor)
     }
 

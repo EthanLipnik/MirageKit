@@ -191,6 +191,7 @@ extension StreamContext {
             encodedFPS: encodeFPS,
             at: now
         )
+        await applyDynamicCadenceIfNeeded(now: now)
         resetPipelineStatsWindow()
         lastPipelineStatsLogTime = now
     }
@@ -937,6 +938,8 @@ extension StreamContext {
                 policy: freshnessPolicy
             ),
             encodedSize: currentEncodedSize,
+            queuedBytesAhead: packetSender?.queuedByteCount ?? 0,
+            startupProtectionActive: isStartupTransportProtectionActive(now: now),
             now: now
         )
         if !isKeyframe,

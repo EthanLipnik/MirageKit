@@ -287,6 +287,7 @@ extension StreamContext {
     }
 
     func updateFrameRate(_ fps: Int, updatesAwdlInteractiveCeiling: Bool = true) async throws {
+        noteExternalFrameRateChange()
         let clamped = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
             requestedFrameRate: fps,
             mediaPathProfile: mediaPathProfile

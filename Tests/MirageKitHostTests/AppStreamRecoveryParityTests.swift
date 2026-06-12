@@ -116,7 +116,7 @@ struct AppStreamRecoveryParityTests {
             visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
         )
         let recorder = AwdlGeometryUpdateRecorder()
-        await context.setAwdlInteractiveDesktopGeometryUpdateHandler { streamID in
+        await context.setHostAdaptiveDesktopGeometryUpdateHandler { streamID in
             recorder.record(streamID)
         }
 
@@ -138,7 +138,7 @@ struct AppStreamRecoveryParityTests {
         )
         let initialToken = await context.streamStartSnapshot.dimensionToken
         let recorder = AwdlGeometryUpdateRecorder()
-        await context.setAwdlInteractiveDesktopGeometryUpdateHandler { streamID in
+        await context.setHostAdaptiveDesktopGeometryUpdateHandler { streamID in
             recorder.record(streamID)
         }
 

@@ -163,6 +163,9 @@ actor StreamContext {
     var receiverPFrameTimingSampleLastLogTime: CFAbsoluteTime = 0
     var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0
     var lastMotionFrameEncodeTime: CFAbsoluteTime = 0
+    var dynamicCadenceBaseFrameRate: Int?
+    var lastDynamicCadenceStepTime: CFAbsoluteTime = 0
+    var isApplyingDynamicCadenceStep = false
     var lastStillQualityRefreshKeyframeTime: CFAbsoluteTime = 0
     var lowMotionRampCandidateFrameCount: Int = 0
     nonisolated(unsafe) var shouldAdmitIdleQualityProbeFrame = false
@@ -370,7 +373,7 @@ actor StreamContext {
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?
     /// Host callback used to announce AWDL-driven desktop dimension changes before the recovery keyframe.
-    var onAwdlInteractiveDesktopGeometryUpdate: (@MainActor @Sendable (StreamID) async -> Void)?
+    var onHostAdaptiveDesktopGeometryUpdate: (@MainActor @Sendable (StreamID) async -> Void)?
     /// Requested ScreenCaptureKit audio capture channel count for this stream.
     var requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount
 
@@ -577,10 +580,10 @@ actor StreamContext {
         startupBitrate = resolvedEncoderConfig.bitrate
     }
 
-    func setAwdlInteractiveDesktopGeometryUpdateHandler(
+    func setHostAdaptiveDesktopGeometryUpdateHandler(
         _ handler: (@MainActor @Sendable (StreamID) async -> Void)?
     ) {
-        onAwdlInteractiveDesktopGeometryUpdate = handler
+        onHostAdaptiveDesktopGeometryUpdate = handler
     }
 
 }
