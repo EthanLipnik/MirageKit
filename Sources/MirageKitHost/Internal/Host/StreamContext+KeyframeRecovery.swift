@@ -31,7 +31,7 @@ extension StreamContext {
         let queued = queueKeyframeRecoveryRequest(recoveryCause: recoveryCause)
         guard queued else { return false }
         recordAcceptedExplicitKeyframeRequest(recoveryCause: recoveryCause, now: now)
-        await completeAcceptedKeyframeRecoveryRequest(now: now, reason: reason)
+        await completeAcceptedKeyframeRecoveryRequest(now: now, reason: reason, recoveryCause: recoveryCause)
         return true
     }
 
@@ -126,9 +126,25 @@ extension StreamContext {
         return false
     }
 
-    private func completeAcceptedKeyframeRecoveryRequest(now: CFAbsoluteTime, reason: String) async {
+    private func completeAcceptedKeyframeRecoveryRequest(
+        now: CFAbsoluteTime,
+        reason: String,
+        recoveryCause: MirageMediaFeedbackRecoveryCause = .none
+    ) async {
         softRecoveryCount += 1
-        noteLossEvent(reason: reason, enablePFrameFEC: true)
+        // A freeze-timeout request while the source is still and no receiver loss
+        // is in flight is an idle-screen refresh, not a loss event: deliver the
+        // keyframe without arming loss mode or P-frame FEC overhead.
+        let isIdleRefresh = recoveryCause == .freezeTimeout &&
+            receiverFrameBudgetLossHoldUntil <= now &&
+            sourceIsStill(now: now)
+        if isIdleRefresh {
+            MirageLogger.stream(
+                "Idle-refresh keyframe for stream \(streamID): loss mode and FEC skipped"
+            )
+        } else {
+            noteLossEvent(reason: reason, enablePFrameFEC: true)
+        }
         startFrameChainRepair(
             reason: "client-keyframe-request",
             now: now

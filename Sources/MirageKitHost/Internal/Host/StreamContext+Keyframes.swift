@@ -217,6 +217,7 @@ extension StreamContext {
         noteLossEvent(reason: label, enablePFrameFEC: false)
         let now = CFAbsoluteTimeGetCurrent()
         let awdlQualityReductionAllowed = currentAwdlFrameBudgetReductionAllowed(now: now)
+        let startupProtectionActive = isStartupTransportProtectionActive(now: now)
         let budgetDecision = if reason == .staleChain {
             adaptivePFrameController.recordFreshnessPressure(
                 currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
@@ -232,6 +233,7 @@ extension StreamContext {
                 mediaPathProfile: mediaPathProfile,
                 receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
                 awdlQualityReductionAllowed: awdlQualityReductionAllowed,
+                startupProtectionActive: startupProtectionActive,
                 now: now
             )
         } else {
@@ -249,6 +251,7 @@ extension StreamContext {
                 mediaPathProfile: mediaPathProfile,
                 receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
                 awdlQualityReductionAllowed: awdlQualityReductionAllowed,
+                startupProtectionActive: startupProtectionActive,
                 now: now
             )
         }

@@ -30,6 +30,7 @@ extension StreamContext {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - lastStreamStatsLogTime
         guard lastStreamStatsLogTime == 0 || elapsed > 2.0 else { return }
+        decayRealtimePressureStateIfStale(now: now)
         let inFlight = inFlightCount
         if MirageSteadyStateDiagnostics.isEnabled, MirageLogger.isEnabled(.metrics) {
             MirageLogger.metrics(
@@ -103,6 +104,7 @@ extension StreamContext {
                 realtimeDeliveryMode: adaptivePFrameController.latestDeliveryMode.rawValue,
                 realtimeRequiredBitrateForQualityBps: adaptivePFrameController.latestRequiredBitrateForCurrentQualityBps,
                 realtimeObservedPFrameWireBytesP95: adaptivePFrameController.latestObservedPFrameWireBytesP95,
+                realtimeControlRevision: Self.realtimeControlRevision,
                 awdlPolicyState: awdlPolicy?.state.rawValue,
                 awdlPolicyTrigger: awdlPolicy?.trigger.rawValue,
                 awdlSelectedLever: awdlPolicy?.selectedLever.rawValue,

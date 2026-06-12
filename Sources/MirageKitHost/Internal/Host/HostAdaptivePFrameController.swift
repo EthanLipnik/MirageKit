@@ -238,6 +238,7 @@ struct HostAdaptivePFrameController: Equatable {
         case transportBacklog = "transport-backlog"
         case encoderLag = "encoder-lag"
         case adaptiveRepair = "adaptive-repair"
+        case motionOnset = "motion-onset"
     }
 
     private struct BudgetInput: Equatable {
@@ -361,13 +362,30 @@ struct HostAdaptivePFrameController: Equatable {
                 0.88
             }
         }
+
+        func headroomJumpCap(from bytes: Int) -> Int {
+            switch self {
+            case .still:
+                Int((Double(bytes) * 2.00).rounded(.up))
+            case .lowMotionRamp:
+                Int((Double(bytes) * 1.50).rounded(.up))
+            case .passive:
+                Int((Double(bytes) * 1.25).rounded(.up))
+            case .input:
+                Int((Double(bytes) * 1.12).rounded(.up))
+            }
+        }
     }
 
     private static let safeDeliveryUtilization = 0.90
     private static let receiverPanicCutScale = 0.45
+    private static let receiverRecoveryCutScale = 0.70
     private static let senderDeadlineCutScale = 0.70
     private static let receiverFreshnessCutScale = 0.55
     private static let transportBacklogCutScale = 0.78
+    private static let cutCoalescingWindowSeconds: CFAbsoluteTime = 0.80
+    private static let startupGraceMinimumCutScale = 0.70
+    private static let headroomRaiseSafetyScale = 0.75
     private static let minimumFrameWireBytes = 6 * 1024
     private static let minimumPacketCount = 8
     private static let nearFloorTargetRatio = 1.25
@@ -475,6 +493,11 @@ struct HostAdaptivePFrameController: Equatable {
     private var lastReceiverPressureTime: CFAbsoluteTime = 0
     private var lastFeedbackLostFrameCount: UInt64?
     private var lastFeedbackDiscardedPacketCount: UInt64?
+    private var lastFeedbackTransportTimeoutTotal: UInt64?
+    private var lastPanicCutTime: CFAbsoluteTime = 0
+    private var lastPanicCutReason: Reason?
+    private var lastPanicCutPreTargetWireBytes: Int?
+    private var startupGraceCutApplied = false
     private var viabilityController = HostPFrameViabilityController()
 
     static func allowedPFrameSpikeRatio(baselineWireBytes: Int) -> Double {
@@ -527,6 +550,13 @@ struct HostAdaptivePFrameController: Equatable {
         } ?? false
         lastFeedbackLostFrameCount = feedback.lostFrameCount
         lastFeedbackDiscardedPacketCount = feedback.discardedPacketCount
+        let transportTimeoutTotal = (feedback.reassemblerIncompleteFrameTimeouts ?? 0) &+
+            (feedback.reassemblerMissingFragmentTimeouts ?? 0) &+
+            (feedback.reassemblerForwardGapTimeouts ?? 0)
+        let observedNewTransportTimeouts = lastFeedbackTransportTimeoutTotal.map {
+            transportTimeoutTotal > $0
+        } ?? false
+        lastFeedbackTransportTimeoutTotal = transportTimeoutTotal
 
         let input = budgetInput(
             currentBitrateBps: currentBitrateBps,
@@ -556,12 +586,28 @@ struct HostAdaptivePFrameController: Equatable {
             return nil
         }
 
+        // Recovery feedback alone is not congestion. A dynamic SCK source that goes
+        // still makes the receiver's freeze monitor request keyframe recovery with no
+        // packets lost; cutting on it collapses bitrate on perfectly healthy links.
+        // Require fresh loss deltas or corroborating transport evidence in the same
+        // feedback before treating recovery as a panic signal.
+        let hasTransportEvidence = observedNewTransportTimeouts ||
+            feedback.reassemblyBacklogFrames > 0 ||
+            feedback.reassemblyBacklogBytes > 0 ||
+            feedback.reliabilityCauses.contains(.forwardGapStall) ||
+            feedback.reliabilityCauses.contains(.noProgressTimeout)
+        guard hasLoss || hasTransportEvidence else {
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.50)
+            return nil
+        }
+
         adaptiveEpoch &+= 1
         adaptiveEpochStartedAt = now
+        let severe = hasLoss || feedback.recoveryState == .hardRecovery
         let reason: Reason = hasLoss ? .receiverLoss : .clientRecovery
         let decision = cutBudget(
-            scale: Self.receiverPanicCutScale,
-            state: .severe,
+            scale: severe ? Self.receiverPanicCutScale : Self.receiverRecoveryCutScale,
+            state: severe ? .severe : .pressured,
             reason: reason,
             input: input,
             currentFrameRate: currentFrameRate,
@@ -1334,7 +1380,23 @@ struct HostAdaptivePFrameController: Equatable {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
         )
-        let raisedTarget = motionClass.ramp(from: currentTarget)
+        let classRaisedTarget = motionClass.ramp(from: currentTarget)
+        let learnedSafeBytes = safeFrameWireBytes(
+            targetClearMs: baseTargetClearMs,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        // Proven capacity allows jumping past the per-sample class step (bounded per
+        // class) so recovery from a deep cut converges in a few samples, not dozens.
+        let headroomTarget = Int((Double(learnedSafeBytes) * Self.headroomRaiseSafetyScale).rounded(.down))
+        let raisedTarget = max(
+            classRaisedTarget,
+            min(headroomTarget, motionClass.headroomJumpCap(from: currentTarget))
+        )
         let cappedRaisedTarget = min(
             raisedTarget,
             raiseCeilingLimit(
@@ -1407,6 +1469,7 @@ struct HostAdaptivePFrameController: Equatable {
         mediaPathProfile: MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
+        startupProtectionActive: Bool = false,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision? {
         guard frameBudgetReductionAllowed(
@@ -1414,6 +1477,10 @@ struct HostAdaptivePFrameController: Equatable {
             awdlQualityReductionAllowed: awdlQualityReductionAllowed
         ) else {
             qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+            return nil
+        }
+        guard consumeStartupGraceCutAllowance(startupProtectionActive: startupProtectionActive) else {
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.25)
             return nil
         }
         let input = budgetInput(
@@ -1433,8 +1500,10 @@ struct HostAdaptivePFrameController: Equatable {
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
         return cutBudget(
-            scale: Self.senderDeadlineCutScale,
-            state: .severe,
+            scale: startupProtectionActive
+                ? max(Self.senderDeadlineCutScale, Self.startupGraceMinimumCutScale)
+                : Self.senderDeadlineCutScale,
+            state: startupProtectionActive ? .pressured : .severe,
             reason: .senderDeadline,
             input: input,
             currentFrameRate: currentFrameRate,
@@ -1462,6 +1531,7 @@ struct HostAdaptivePFrameController: Equatable {
         mediaPathProfile: MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
+        startupProtectionActive: Bool = false,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision? {
         guard frameBudgetReductionAllowed(
@@ -1469,6 +1539,10 @@ struct HostAdaptivePFrameController: Equatable {
             awdlQualityReductionAllowed: awdlQualityReductionAllowed
         ) else {
             qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+            return nil
+        }
+        guard consumeStartupGraceCutAllowance(startupProtectionActive: startupProtectionActive) else {
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.25)
             return nil
         }
         let input = budgetInput(
@@ -1490,8 +1564,10 @@ struct HostAdaptivePFrameController: Equatable {
         adaptiveEpoch &+= 1
         adaptiveEpochStartedAt = now
         return cutBudget(
-            scale: Self.receiverFreshnessCutScale,
-            state: .severe,
+            scale: startupProtectionActive
+                ? max(Self.receiverFreshnessCutScale, Self.startupGraceMinimumCutScale)
+                : Self.receiverFreshnessCutScale,
+            state: startupProtectionActive ? .pressured : .severe,
             reason: .receiverFreshness,
             input: input,
             currentFrameRate: currentFrameRate,
@@ -1727,6 +1803,89 @@ struct HostAdaptivePFrameController: Equatable {
         )
     }
 
+    /// Idle screens ramp the budget freely (frames are tiny while the source is
+    /// still), so the target can exceed what the path was last proven to clear at
+    /// realtime deadlines. Called on the still→motion transition before the first
+    /// motion frame is encoded: clamps the budget to learned capacity at the
+    /// realtime clear target so the burst starts deliverable instead of piling up.
+    mutating func prepareForMotionOnset(
+        currentBitrateBps: Int?,
+        requestedTargetBitrateBps: Int?,
+        startupCeilingBps: Int?,
+        minimumBitrateFloorBps: Int,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        currentQuality: Float,
+        qualityFloor: Float,
+        steadyQualityCeiling: Float,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        receiverPlayoutDelayTargetMs: Double? = nil,
+        now: CFAbsoluteTime
+    ) -> HostFrameBudgetDecision? {
+        guard targetFrameWireBytes != nil else { return nil }
+        let input = budgetInput(
+            currentBitrateBps: currentBitrateBps,
+            requestedTargetBitrateBps: requestedTargetBitrateBps,
+            startupCeilingBps: startupCeilingBps,
+            minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            mediaPathProfile: mediaPathProfile
+        )
+        let policy = ModePolicy.policy(
+            for: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        let currentTarget = currentTargetFrameWireBytes(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        let motionClearMs = mediaPathProfile.usesAwdlRadioPolicy
+            ? policy.targetClearMs
+            : Self.inputMotionQualityTargetClearMs
+        let safeBytes = safeFrameWireBytes(
+            targetClearMs: motionClearMs,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        guard safeBytes < currentTarget else { return nil }
+        setTargetFrameWireBytes(
+            safeBytes,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        let appliedTarget = currentTargetFrameWireBytes(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        let appliedScale = Float(min(1.0, Double(appliedTarget) / Double(max(1, currentTarget))))
+        let quality = max(
+            qualityFloor,
+            min(steadyQualityCeiling, currentQuality * max(0.5, appliedScale))
+        )
+        qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.20)
+        return makeDecision(
+            state: .observing,
+            reason: .motionOnset,
+            quality: quality,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            steadyQualityCeiling: steadyQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            now: now
+        )
+    }
+
     private func frameBudgetReductionAllowed(
         mediaPathProfile: MirageMediaPathProfile,
         awdlQualityReductionAllowed: Bool
@@ -1734,11 +1893,23 @@ struct HostAdaptivePFrameController: Equatable {
         !mediaPathProfile.usesAwdlRadioPolicy || awdlQualityReductionAllowed
     }
 
+    /// Datagram-registration churn right after stream start produces transient
+    /// deadline drops that say nothing about path capacity. During the startup
+    /// protection window those detectors get a single bounded cut.
+    private mutating func consumeStartupGraceCutAllowance(startupProtectionActive: Bool) -> Bool {
+        guard startupProtectionActive else {
+            startupGraceCutApplied = false
+            return true
+        }
+        guard !startupGraceCutApplied else { return false }
+        startupGraceCutApplied = true
+        return true
+    }
+
     private mutating func cutBudget(
         scale: Double,
         state: PressureState,
         reason: Reason,
-        quality: Float? = nil,
         input: BudgetInput,
         currentFrameRate: Int,
         maxPayloadSize: Int,
@@ -1754,15 +1925,43 @@ struct HostAdaptivePFrameController: Equatable {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
         )
-        setTargetFrameWireBytes(
-            Int((Double(currentTarget) * max(0.10, min(0.98, scale))).rounded(.down)),
+        let boundedScale = max(0.10, min(0.98, scale))
+        var desiredTarget = Int((Double(currentTarget) * boundedScale).rounded(.down))
+        // One underlying event usually fires several detectors within the same beat
+        // (a freeze episode reports freshness, sender deadline, and recovery together).
+        // Within the coalescing window a repeat of the same reason is a no-op, and a
+        // different reason deepens the cut only to its own scale of the pre-event
+        // target instead of compounding multiplicatively.
+        if lastPanicCutTime > 0, now - lastPanicCutTime <= Self.cutCoalescingWindowSeconds {
+            if reason == lastPanicCutReason {
+                desiredTarget = currentTarget
+            } else {
+                let preEventTarget = lastPanicCutPreTargetWireBytes ?? currentTarget
+                let preEventFloor = Int((Double(preEventTarget) * boundedScale).rounded(.down))
+                desiredTarget = min(currentTarget, max(desiredTarget, preEventFloor))
+            }
+        } else {
+            lastPanicCutPreTargetWireBytes = currentTarget
+        }
+        if desiredTarget < currentTarget {
+            setTargetFrameWireBytes(
+                desiredTarget,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize
+            )
+            lastPanicCutTime = now
+            lastPanicCutReason = reason
+        }
+        let appliedTarget = currentTargetFrameWireBytes(
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
         )
-        let decisionQuality = quality ?? max(
+        let appliedScale = Float(min(1.0, Double(appliedTarget) / Double(max(1, currentTarget))))
+        let decisionQuality = max(
             qualityFloor,
-            min(steadyQualityCeiling, currentQuality * Float(max(0.10, min(0.98, scale))))
+            min(steadyQualityCeiling, currentQuality * appliedScale)
         )
         qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
         return makeDecision(

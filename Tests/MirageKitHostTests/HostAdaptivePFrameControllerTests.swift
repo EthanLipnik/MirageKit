@@ -1464,11 +1464,81 @@ struct HostAdaptivePFrameControllerTests {
         }
     }
 
-    @Test("Backlog-only feedback and startup recovery do not cut frame budget")
-    func backlogOnlyFeedbackAndStartupRecoveryDoNotCutFrameBudget() {
+    @Test("Recovery feedback cuts only with loss or corroborating transport evidence")
+    func recoveryFeedbackCutsOnlyWithLossOrCorroboratingTransportEvidence() {
         var controller = HostAdaptivePFrameController()
-        let backlogDecision = controller.update(
-            with: receiverFeedback(sequence: 1, reassemblyBacklogFrames: 1, reassemblyBacklogBytes: 16 * 1024),
+        func update(
+            sequence: UInt64,
+            reassemblyBacklogFrames: Int = 0,
+            reassemblyBacklogBytes: Int = 0,
+            recoveryState: MirageMediaFeedbackRecoveryState = .idle,
+            now: CFAbsoluteTime
+        ) -> HostFrameBudgetDecision? {
+            controller.update(
+                with: receiverFeedback(
+                    sequence: sequence,
+                    reassemblyBacklogFrames: reassemblyBacklogFrames,
+                    reassemblyBacklogBytes: reassemblyBacklogBytes,
+                    recoveryState: recoveryState
+                ),
+                currentBitrateBps: 60_000_000,
+                requestedTargetBitrateBps: 60_000_000,
+                startupCeilingBps: 60_000_000,
+                minimumBitrateFloorBps: 2_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_200,
+                currentQuality: 0.60,
+                qualityFloor: 0.03,
+                steadyQualityCeiling: 0.90,
+                now: now
+            )
+        }
+
+        let backlogDecision = update(
+            sequence: 1,
+            reassemblyBacklogFrames: 1,
+            reassemblyBacklogBytes: 16 * 1024,
+            now: 10
+        )
+        let startupRecoveryDecision = update(sequence: 2, recoveryState: .startup, now: 10.1)
+        // Idle-screen freeze recovery: keyframeRecovery with zero loss and zero
+        // transport evidence must not cut the budget.
+        let uncorroboratedRecoveryDecision = update(
+            sequence: 3,
+            recoveryState: .keyframeRecovery,
+            now: 10.2
+        )
+        let corroboratedRecoveryDecision = update(
+            sequence: 4,
+            reassemblyBacklogFrames: 2,
+            reassemblyBacklogBytes: 64 * 1024,
+            recoveryState: .keyframeRecovery,
+            now: 12.0
+        )
+
+        #expect(backlogDecision == nil)
+        #expect(startupRecoveryDecision == nil)
+        #expect(uncorroboratedRecoveryDecision == nil)
+        #expect(corroboratedRecoveryDecision?.reason == .clientRecovery)
+        #expect(corroboratedRecoveryDecision?.state == .pressured)
+        // Without loss, keyframe recovery cuts the startup probe budget (64 KiB)
+        // at the bounded recovery scale, not the severe panic scale.
+        let startupBudgetBytes = 64 * 1024
+        let recoveryScaleBytes = Int((Double(startupBudgetBytes) * 0.70).rounded(.down))
+        #expect(corroboratedRecoveryDecision?.maxWireBytes == recoveryScaleBytes)
+        #expect(corroboratedRecoveryDecision?.targetBitrateBps == bitrate(forFrameBytes: recoveryScaleBytes))
+    }
+
+    @Test("Hard recovery with transport evidence keeps the severe panic cut")
+    func hardRecoveryWithTransportEvidenceKeepsSeverePanicCut() throws {
+        var controller = HostAdaptivePFrameController()
+        let optionalDecision = controller.update(
+            with: receiverFeedback(
+                sequence: 1,
+                reassemblyBacklogFrames: 3,
+                reassemblyBacklogBytes: 128 * 1024,
+                recoveryState: .hardRecovery
+            ),
             currentBitrateBps: 60_000_000,
             requestedTargetBitrateBps: 60_000_000,
             startupCeilingBps: 60_000_000,
@@ -1480,36 +1550,197 @@ struct HostAdaptivePFrameControllerTests {
             steadyQualityCeiling: 0.90,
             now: 10
         )
-        let startupRecoveryDecision = controller.update(
-            with: receiverFeedback(sequence: 2, recoveryState: .startup),
-            currentBitrateBps: 60_000_000,
-            requestedTargetBitrateBps: 60_000_000,
-            startupCeilingBps: 60_000_000,
-            minimumBitrateFloorBps: 2_000_000,
-            currentFrameRate: 60,
-            maxPayloadSize: 1_200,
-            currentQuality: 0.60,
-            qualityFloor: 0.03,
-            steadyQualityCeiling: 0.90,
-            now: 10.1
-        )
-        let keyframeRecoveryDecision = controller.update(
-            with: receiverFeedback(sequence: 3, recoveryState: .keyframeRecovery),
-            currentBitrateBps: 60_000_000,
-            requestedTargetBitrateBps: 60_000_000,
-            startupCeilingBps: 60_000_000,
-            minimumBitrateFloorBps: 2_000_000,
-            currentFrameRate: 60,
-            maxPayloadSize: 1_200,
-            currentQuality: 0.60,
-            qualityFloor: 0.03,
-            steadyQualityCeiling: 0.90,
-            now: 10.2
-        )
+        let decision = try #require(optionalDecision)
 
-        #expect(backlogDecision == nil)
-        #expect(startupRecoveryDecision == nil)
-        #expect(keyframeRecoveryDecision?.reason == .clientRecovery)
+        #expect(decision.reason == .clientRecovery)
+        #expect(decision.state == .severe)
+        #expect(decision.targetBitrateBps <= Int(Double(60_000_000) * 0.46))
+    }
+
+    @Test("Cut detectors coalesce within one event window instead of compounding")
+    func cutDetectorsCoalesceWithinOneEventWindow() throws {
+        var controller = HostAdaptivePFrameController()
+        func deadlineDrop(now: CFAbsoluteTime) -> HostFrameBudgetDecision? {
+            controller.recordSenderDeadlineDrop(
+                currentBitrateBps: 60_000_000,
+                requestedTargetBitrateBps: 60_000_000,
+                startupCeilingBps: 60_000_000,
+                minimumBitrateFloorBps: 2_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_200,
+                currentQuality: 0.60,
+                qualityFloor: 0.03,
+                steadyQualityCeiling: 0.90,
+                now: now
+            )
+        }
+        func freshnessPressure(now: CFAbsoluteTime) -> HostFrameBudgetDecision? {
+            controller.recordFreshnessPressure(
+                currentBitrateBps: 60_000_000,
+                requestedTargetBitrateBps: 60_000_000,
+                startupCeilingBps: 60_000_000,
+                minimumBitrateFloorBps: 2_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_200,
+                currentQuality: 0.60,
+                qualityFloor: 0.03,
+                steadyQualityCeiling: 0.90,
+                now: now
+            )
+        }
+
+        let first = try #require(deadlineDrop(now: 10))
+        // A different detector in the same event window deepens only to its own
+        // scale of the pre-event target, never multiplicatively below it.
+        let second = try #require(freshnessPressure(now: 10.2))
+        // The same detector repeating in the window is a no-op.
+        let third = try #require(deadlineDrop(now: 10.4))
+        // Outside the window, cuts apply normally again.
+        let fourth = try #require(deadlineDrop(now: 12.0))
+
+        // Fresh controllers start from the 64 KiB lowestLatency startup budget.
+        let preEventBytes = Double(64 * 1024)
+        #expect(first.maxWireBytes == Int((preEventBytes * 0.70).rounded(.down)))
+        #expect(second.maxWireBytes == Int((preEventBytes * 0.55).rounded(.down)))
+        #expect(third.maxWireBytes == second.maxWireBytes)
+        #expect(fourth.maxWireBytes < third.maxWireBytes)
+    }
+
+    @Test("Startup transport protection bounds deadline-drop cuts to one bounded step")
+    func startupTransportProtectionBoundsDeadlineDropCuts() throws {
+        var controller = HostAdaptivePFrameController()
+        func deadlineDrop(
+            startupProtectionActive: Bool,
+            now: CFAbsoluteTime
+        ) -> HostFrameBudgetDecision? {
+            controller.recordSenderDeadlineDrop(
+                currentBitrateBps: 64_000_000,
+                requestedTargetBitrateBps: 64_000_000,
+                startupCeilingBps: 153_000_000,
+                minimumBitrateFloorBps: 8_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_200,
+                currentQuality: 0.60,
+                qualityFloor: 0.03,
+                steadyQualityCeiling: 0.90,
+                startupProtectionActive: startupProtectionActive,
+                now: now
+            )
+        }
+
+        let first = try #require(deadlineDrop(startupProtectionActive: true, now: 10))
+        #expect(first.state == .pressured)
+        // Bounded to the grace scale (0.70) of the 64 KiB startup budget — not the
+        // severe compounding collapse seen in the field.
+        let startupBudgetBytes = Double(64 * 1024)
+        #expect(first.maxWireBytes >= Int((startupBudgetBytes * 0.69).rounded(.down)))
+
+        let second = deadlineDrop(startupProtectionActive: true, now: 10.3)
+        #expect(second == nil)
+
+        let postStartup = try #require(deadlineDrop(startupProtectionActive: false, now: 16))
+        #expect(postStartup.state == .severe)
+        #expect(postStartup.targetBitrateBps < first.targetBitrateBps)
+    }
+
+    @Test("Proven capacity lets input samples jump past the per-sample ramp step")
+    func provenCapacityLetsInputSamplesJumpPastPerSampleRampStep() throws {
+        var controller = HostAdaptivePFrameController()
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 60_000_000,
+            requestedBitrate: 60_000_000,
+            startupCeiling: 180_000_000,
+            minimumFloor: 3_000_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 36 * 1024,
+            packetSpanMs: 2,
+            completionGapMs: 2,
+            currentQuality: 0.50
+        ))
+
+        #expect(decision.reason == .healthy)
+        // The lowestLatency startup budget is 64 KiB; the legacy input step allowed
+        // ~3.5% growth per sample, the capacity-backed jump allows 12%.
+        #expect(decision.maxWireBytes >= Int(Double(64 * 1024) * 1.10))
+    }
+
+    @Test("Motion onset clamps idle-ramped budget back to learned realtime capacity")
+    func motionOnsetClampsIdleRampedBudgetToLearnedRealtimeCapacity() throws {
+        var controller = HostAdaptivePFrameController()
+        // Learn a modest path capacity from a real delivery sample.
+        _ = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 24_000_000,
+            requestedBitrate: 300_000_000,
+            startupCeiling: 300_000_000,
+            minimumFloor: 2_000_000,
+            inputActive: true,
+            sourceStill: false,
+            wireBytes: 60_000,
+            packetSpanMs: 20,
+            completionGapMs: 20,
+            currentQuality: 0.40,
+            now: 10
+        ))
+        // Idle ramp: still samples drive the budget far beyond proven capacity.
+        var currentBitrate = 24_000_000
+        var currentQuality: Float = 0.40
+        for frameNumber in 2...12 {
+            guard let decision = recordDelivery(
+                controller: &controller,
+                frameNumber: UInt64(frameNumber),
+                currentBitrate: currentBitrate,
+                requestedBitrate: 300_000_000,
+                startupCeiling: 300_000_000,
+                minimumFloor: 2_000_000,
+                inputActive: false,
+                sourceStill: true,
+                wireBytes: 12 * 1024,
+                packetSpanMs: 2,
+                completionGapMs: 2,
+                currentQuality: currentQuality,
+                now: 10 + Double(frameNumber) * 0.25
+            ) else { continue }
+            currentBitrate = decision.targetBitrateBps
+            currentQuality = decision.quality
+        }
+        let rampedTarget = try #require(controller.operatingTargetWireBytes)
+
+        let optionalClampDecision = controller.prepareForMotionOnset(
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: 300_000_000,
+            startupCeilingBps: 300_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: currentQuality,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            now: 14
+        )
+        let clampDecision = try #require(optionalClampDecision)
+
+        #expect(clampDecision.reason == .motionOnset)
+        #expect(clampDecision.state == .observing)
+        #expect(clampDecision.maxWireBytes < rampedTarget)
+        #expect(clampDecision.targetBitrateBps < currentBitrate)
+
+        // Already clamped: a second onset in the same state is a no-op.
+        let repeatDecision = controller.prepareForMotionOnset(
+            currentBitrateBps: clampDecision.targetBitrateBps,
+            requestedTargetBitrateBps: 300_000_000,
+            startupCeilingBps: 300_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: clampDecision.quality,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            now: 14.1
+        )
+        #expect(repeatDecision == nil)
     }
 
     @Test("Cumulative receiver loss feedback only cuts on new loss deltas")

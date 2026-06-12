@@ -868,9 +868,22 @@ extension StreamContext {
             now - realtimeLastLogTime >= 2.0 else {
             return
         }
+        let stateChanged = realtimeLastLoggedState != decision.state
         realtimeLastLogTime = now
         realtimeLastLoggedState = decision.state
         realtimeLastLoggedBitrateCeilingBps = realtimeRuntimeBitrateCeilingBps
+        if stateChanged {
+            // State transitions go to the stream log so support archives capture
+            // governor behavior; per-tick detail stays on the metrics channel.
+            let transitionBitrateText = (currentTargetBitrateBps ?? encoderConfig.bitrate)
+                .map { mirageFormattedMegabitRate($0) } ?? "auto"
+            MirageLogger.stream(
+                "Realtime budget state=\(decision.state.rawValue) reason=\(decision.reason.rawValue) " +
+                    "stream=\(streamID) target=\(mirageFormattedMegabitRate(decision.targetBitrateBps)) " +
+                    "current=\(transitionBitrateText) " +
+                    "quality=\(formatAwdlMetric(Double(decision.quality)))"
+            )
+        }
 
         let ceilingText = realtimeRuntimeBitrateCeilingBps
             .map { mirageFormattedMegabitRate($0) }

@@ -385,6 +385,11 @@ extension StreamContext {
                     continue
                 }
             }
+            await applyMotionOnsetBudgetClampIfNeeded(
+                isIdleFrame: isIdleFrame,
+                dirtyPercentage: frame.info.dirtyPercentage,
+                now: frameAdmissionTime
+            )
 
             setContentRect(resolvedOutgoingContentRect(for: frame))
             enforceCaptureColorAttachments(on: frame.pixelBuffer)

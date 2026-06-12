@@ -266,12 +266,29 @@ extension StreamController {
               now - latestHostMetricsTime <= max(2.0, Self.freezeTimeout * 2.0) else {
             return false
         }
+        return Self.hostMetricsIndicateDynamicallyIdleCapture(hostMetrics)
+    }
+
+    /// ScreenCaptureKit delivers content frames only when the screen changes, but
+    /// always-on virtual displays keep raw capture callbacks (idle duplicates)
+    /// flowing, so raw capture fps cannot distinguish "host idle" from "delivery
+    /// stalled". Prefer content-change evidence when the host reports it.
+    static func hostMetricsIndicateDynamicallyIdleCapture(_ hostMetrics: StreamMetricsMessage) -> Bool {
+        guard hostMetrics.encodedFPS <= 0.5, hostMetrics.idleEncodedFPS <= 0.5 else {
+            return false
+        }
+        if let cadence = hostMetrics.captureCadence {
+            if let observedSCKFPS = cadence.observedSCKFPS {
+                return observedSCKFPS <= 0.5
+            }
+            if let renderableFrameFPS = cadence.renderableFrameFPS {
+                return renderableFrameFPS <= 0.5
+            }
+        }
         let captureIngressFPS = hostMetrics.captureIngressFPS ?? 0
         let captureFPS = hostMetrics.captureFPS ?? 0
         let encodeAttemptFPS = hostMetrics.encodeAttemptFPS ?? 0
-        return hostMetrics.encodedFPS <= 0.5 &&
-            hostMetrics.idleEncodedFPS <= 0.5 &&
-            captureIngressFPS <= 0.5 &&
+        return captureIngressFPS <= 0.5 &&
             captureFPS <= 0.5 &&
             encodeAttemptFPS <= 0.5
     }

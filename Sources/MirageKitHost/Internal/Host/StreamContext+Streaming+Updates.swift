@@ -208,7 +208,12 @@ extension StreamContext {
                     targetBitrate: encoderConfig.bitrate
                 )
             }
-            clearTransientRuntimePressureForReconfiguration()
+            // Lift runtime ceilings so the commanded bitrate's derived quality can
+            // apply, but keep the pressure state: rewriting it to observing/healthy
+            // here made every client probe look like a host-initiated healthy ramp,
+            // which deadlocked the client's adaptation loop against this host.
+            realtimeRuntimeQualityCeiling = nil
+            realtimeRuntimeBitrateCeilingBps = nil
             hostAdaptiveBudgetApplied = true
             if currentEncodedSize != .zero {
                 await applyDerivedQuality(for: currentEncodedSize, logLabel: "Bitrate update")

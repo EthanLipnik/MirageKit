@@ -162,6 +162,7 @@ actor StreamContext {
     var senderFreshnessLastLogTime: CFAbsoluteTime = 0
     var receiverPFrameTimingSampleLastLogTime: CFAbsoluteTime = 0
     var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0
+    var lastMotionFrameEncodeTime: CFAbsoluteTime = 0
     var lastStillQualityRefreshKeyframeTime: CFAbsoluteTime = 0
     var lowMotionRampCandidateFrameCount: Int = 0
     nonisolated(unsafe) var shouldAdmitIdleQualityProbeFrame = false

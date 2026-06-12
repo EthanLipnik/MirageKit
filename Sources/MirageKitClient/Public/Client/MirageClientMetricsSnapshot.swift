@@ -250,6 +250,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostRealtimeBitrateCeiling: Int?
     /// Host-side realtime pressure state.
     public var hostRealtimePressureState: String?
+    public var hostRealtimeControlRevision: Int?
     /// Host-side realtime pressure reason.
     public var hostRealtimePressureReason: String?
     /// Host-side frame delivery class for the latest adaptive P-frame decision.
@@ -547,6 +548,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostStartupBitrate: Int? = nil,
         hostRealtimeBitrateCeiling: Int? = nil,
         hostRealtimePressureState: String? = nil,
+        hostRealtimeControlRevision: Int? = nil,
         hostRealtimePressureReason: String? = nil,
         hostRealtimeDeliveryMode: String? = nil,
         hostRealtimeRequiredBitrateForQualityBps: Int? = nil,
@@ -676,6 +678,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostStartupBitrate = hostStartupBitrate
         self.hostRealtimeBitrateCeiling = hostRealtimeBitrateCeiling
         self.hostRealtimePressureState = hostRealtimePressureState
+        self.hostRealtimeControlRevision = hostRealtimeControlRevision
         self.hostRealtimePressureReason = hostRealtimePressureReason
         self.hostRealtimeDeliveryMode = hostRealtimeDeliveryMode
         self.hostRealtimeRequiredBitrateForQualityBps = hostRealtimeRequiredBitrateForQualityBps

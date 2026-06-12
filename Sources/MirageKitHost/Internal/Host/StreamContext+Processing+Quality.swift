@@ -25,6 +25,32 @@ extension StreamContext {
     private static let highRefreshQualityBudgetThresholdFrameRate = 100
     private static let lowMotionRampDirtyPercentage: Float = 6.0
     private static let lowMotionRampRequiredCleanFrames = 3
+    private static let realtimePressureDecaySeconds: CFAbsoluteTime = 2.5
+
+    /// Advertised in stream metrics so clients know this host's realtime governor
+    /// owns automatic bitrate and they should not run their own probe loop.
+    static let realtimeControlRevision = 1
+
+    /// Pressure states are set by discrete cut decisions; without raises (an idle
+    /// screen starves them) the last state would otherwise latch forever, holding
+    /// remote adaptation loops in their post-instability state. Decay back to
+    /// observing once no detector has fired for a quiet window and the sender
+    /// queue is drained.
+    func decayRealtimePressureStateIfStale(now: CFAbsoluteTime) {
+        guard realtimePressureState != .observing else { return }
+        guard now - adaptivePFrameController.latestDecisionTime >= Self.realtimePressureDecaySeconds,
+              now - realtimeLastEncoderThroughputAdjustmentTime >= Self.realtimePressureDecaySeconds,
+              receiverFrameBudgetLossHoldUntil <= now,
+              senderFrameBudgetDropHoldUntil <= now,
+              (packetSender?.queuedByteCount ?? 0) <= queuePressureBytes / 2 else {
+            return
+        }
+        realtimePressureState = .observing
+        realtimePressureReason = HostAdaptivePFrameController.Reason.healthy.rawValue
+        MirageLogger.stream(
+            "Realtime pressure decayed to observing for stream \(streamID) after quiet window"
+        )
+    }
 
     func runtimeQualityBudgetFrameRate() -> Int {
         guard currentFrameRate >= Self.highRefreshQualityBudgetThresholdFrameRate,
@@ -579,6 +605,50 @@ extension StreamContext {
                 "pipelineThresholdMs=\(pipelinePressureMs.formatted(.number.precision(.fractionLength(1)))) " +
                 "cut=\(cutText)\(structuralText) dirty=\(timing.captureDirtyPercentage) " +
                 "idle=\(timing.captureIsIdleFrame)"
+        )
+    }
+
+    /// Clamps the frame budget back to proven realtime capacity when meaningful
+    /// motion resumes after a still period. Idle screens ramp the budget freely
+    /// (still frames are tiny), so without this the first motion burst encodes
+    /// against a target the path may never have cleared at realtime deadlines.
+    func applyMotionOnsetBudgetClampIfNeeded(
+        isIdleFrame: Bool,
+        dirtyPercentage: Float,
+        now: CFAbsoluteTime
+    ) async {
+        guard !isIdleFrame, dirtyPercentage > Self.lowMotionRampDirtyPercentage else { return }
+        let previousMotionTime = lastMotionFrameEncodeTime
+        lastMotionFrameEncodeTime = now
+        guard runtimeQualityAdjustmentEnabled,
+              encoderConfig.codec != .proRes4444,
+              previousMotionTime > 0 else {
+            return
+        }
+        let policy = activeFrameFreshnessPolicy
+        let stillGap = max(policy.stillContentWindow * 2.0, 0.75)
+        guard now - previousMotionTime >= stillGap else { return }
+        let decision = adaptivePFrameController.prepareForMotionOnset(
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            now: now
+        )
+        guard let decision else { return }
+        await applyFrameBudgetDecision(decision, now: now)
+        MirageLogger.stream(
+            "Motion onset clamped stream \(streamID) budget to "
+                + "\(decision.targetBitrateBps)bps quality=\(decision.quality) "
+                + "(stillGap=\(Int((now - previousMotionTime) * 1000))ms dirty=\(dirtyPercentage))"
         )
     }
 
