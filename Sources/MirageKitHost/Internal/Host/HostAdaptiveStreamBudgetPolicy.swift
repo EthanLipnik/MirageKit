@@ -150,12 +150,12 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
 
         let minimumFloor = min(
             max(1, maximumCeiling),
-            max(1, pathBudget.minimumFloorBps, manualFloor ?? 0, automaticReadabilityFloor ?? 0)
+            max(1, pathBudget.minimumFloorBps, manualFloor ?? 0)
         )
         let encoderThroughputMinimumFloor = if request.encoderCatchUpQualityAdjustmentEnabled {
             min(
                 max(1, maximumCeiling),
-                max(1, pathBudget.minimumFloorBps, automaticReadabilityFloor ?? 0)
+                max(1, pathBudget.minimumFloorBps)
             )
         } else {
             minimumFloor

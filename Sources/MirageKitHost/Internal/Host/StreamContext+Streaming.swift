@@ -278,7 +278,8 @@ extension StreamContext {
             ),
             targetFrameRate: currentFrameRate,
             pacingOverride: pacingOverride,
-            usesAwdlRealtimeQueuePolicy: mediaPathProfile.usesAwdlRadioPolicy
+            usesAwdlRealtimeQueuePolicy: mediaPathProfile.usesAwdlRadioPolicy,
+            deliveryMode: admissionDecision.deliveryMode
         )
         packetSender.enqueue(workItem)
     }

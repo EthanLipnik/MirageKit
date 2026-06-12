@@ -551,10 +551,15 @@ struct HostAdaptivePFrameControllerTests {
             qualityFloor: 0.03,
             steadyQualityCeiling: 0.90,
             latencyMode: .lowestLatency,
+            deliveryMode: .lowMotionRamp,
             now: 10
         )
+        let recoveryBudget = try #require(recoveryAdmission.budgetDecision)
         #expect(recoveryAdmission.admission == .send)
-        #expect(recoveryAdmission.budgetDecision == nil)
+        #expect(recoveryAdmission.deliveryMode == .lowMotionRamp)
+        #expect(recoveryBudget.reason == .healthy)
+        #expect(recoveryBudget.quality == 0.20)
+        #expect(recoveryBudget.targetBitrateBps > 12_000_000)
 
         var inputController = HostAdaptivePFrameController()
         let inputAdmission = inputController.evaluateEncodedFrame(
@@ -578,8 +583,10 @@ struct HostAdaptivePFrameControllerTests {
             latencyMode: .lowestLatency,
             now: 10
         )
-        #expect(inputAdmission.admission == .send)
-        #expect(inputAdmission.budgetDecision == nil)
+        let inputBudget = try #require(inputAdmission.budgetDecision)
+        #expect(inputAdmission.admission == .sendWithQualityDrop)
+        #expect(inputAdmission.deliveryMode == .realtime)
+        #expect(inputBudget.reason == .encodedFrame)
     }
 
     @Test("Large local input oversize drops before it stalls transport")
@@ -1071,6 +1078,36 @@ struct HostAdaptivePFrameControllerTests {
         #expect(secondDecision.quality > firstDecision.quality)
     }
 
+    @Test("Report-sized low-motion P-frame recommends bitrate raise before quality-only ramp")
+    func reportSizedLowMotionPFrameRecommendsBitrateRaiseBeforeQualityOnlyRamp() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            currentBitrate: 36_000_000,
+            requestedBitrate: 36_000_000,
+            startupCeiling: 75_500_000,
+            minimumFloor: 12_000_000,
+            inputActive: false,
+            sourceStill: false,
+            deliveryMode: .lowMotionRamp,
+            wireBytes: 170_533,
+            packetSpanMs: 34.5,
+            completionGapMs: 34.5,
+            currentQuality: 0.80,
+            mediaPathProfile: .vpnOrOverlay,
+            currentFrameRate: 30
+        ))
+
+        #expect(decision.reason == .healthy)
+        #expect(decision.targetBitrateBps > 36_000_000)
+        #expect(decision.targetBitrateBps >= 50_000_000)
+        #expect(decision.quality == 0.80)
+        #expect(controller.latestDeliveryMode == .lowMotionRamp)
+        #expect((controller.latestRequiredBitrateForCurrentQualityBps ?? 0) > 36_000_000)
+        #expect(controller.latestObservedPFrameWireBytesP95 == 170_533)
+    }
+
     @Test("Still clean samples can probe past a recent motion pressure ceiling")
     func stillCleanSamplesCanProbePastRecentMotionPressureCeiling() throws {
         var controller = HostAdaptivePFrameController()
@@ -1549,6 +1586,7 @@ private func recordDelivery(
     minimumFloor: Int = 2_000_000,
     inputActive: Bool = true,
     sourceStill: Bool = false,
+    deliveryMode: HostFrameDeliveryMode = .realtime,
     capacityLearningAllowed: Bool = true,
     completionAgeAtFeedbackMs: Double = 0,
     wireBytes: Int,
@@ -1577,6 +1615,7 @@ private func recordDelivery(
         capacityLearningAllowed: capacityLearningAllowed,
         inputActive: inputActive,
         sourceStill: sourceStill,
+        deliveryMode: deliveryMode,
         currentBitrateBps: currentBitrate,
         requestedTargetBitrateBps: requestedBitrate,
         startupCeilingBps: startupCeiling,

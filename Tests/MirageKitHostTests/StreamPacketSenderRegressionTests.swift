@@ -152,6 +152,40 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Frame transport completion preserves low-motion delivery mode")
+    func frameTransportCompletionPreservesLowMotionDeliveryMode() async throws {
+        let completions = Locked<[StreamPacketSender.FrameTransportCompletion]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, _, onComplete in onComplete(nil) },
+            onFrameTransportCompleted: { completion in
+                completions.withLock { $0.append(completion) }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 406,
+                sequenceNumberStart: 4060,
+                generation: generation,
+                deliveryMode: .lowMotionRamp
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            completions.read { !$0.isEmpty }
+        }
+
+        let completion = try #require(completions.read { $0.first })
+        #expect(completion.deliveryMode == .lowMotionRamp)
+
+        await sender.stop()
+    }
+
     @Test("Repeated sender-local deadline-past P-frames enter stale-chain repair after two late sends")
     func repeatedSenderLocalDeadlinePastPFramesEnterStaleChainRepairAfterTwoLateSends() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
@@ -779,7 +813,8 @@ func makeStreamPacketWorkItem(
     hardSendDeadline: CFAbsoluteTime? = nil,
     fecBlockSize: Int = 0,
     pacingOverride: StreamPacketSender.PacingOverride? = nil,
-    usesAwdlRealtimeQueuePolicy: Bool = false
+    usesAwdlRealtimeQueuePolicy: Bool = false,
+    deliveryMode: HostFrameDeliveryMode = .realtime
 ) -> StreamPacketSender.WorkItem {
     StreamPacketSender.WorkItem(
         encodedData: payload,
@@ -801,7 +836,8 @@ func makeStreamPacketWorkItem(
         sendDeadline: sendDeadline,
         hardSendDeadline: hardSendDeadline,
         pacingOverride: pacingOverride,
-        usesAwdlRealtimeQueuePolicy: usesAwdlRealtimeQueuePolicy
+        usesAwdlRealtimeQueuePolicy: usesAwdlRealtimeQueuePolicy,
+        deliveryMode: deliveryMode
     )
 }
 

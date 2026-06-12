@@ -30,6 +30,9 @@ extension StreamPacketSender {
             return hardSendDeadline
         }
         let frameInterval = 1.0 / Double(max(1, item.targetFrameRate))
+        if item.deliveryMode == .lowMotionRamp {
+            return item.sendDeadline + max(0.10, frameInterval * 6.0)
+        }
         return item.sendDeadline + frameInterval * 2.0
     }
 
@@ -64,6 +67,7 @@ extension StreamPacketSender {
               latenessMs != nil else {
             return false
         }
+        if item.deliveryMode == .lowMotionRamp { return false }
         return lateReservedPFrameStreak >= 2
     }
 

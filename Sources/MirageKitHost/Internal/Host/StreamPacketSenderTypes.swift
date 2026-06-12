@@ -13,6 +13,12 @@ import MirageKit
 
 #if os(macOS)
 
+enum HostFrameDeliveryMode: String, Sendable, Equatable, Hashable {
+    case realtime
+    case lowMotionRamp
+    case recovery
+}
+
 struct QueuedUnreliableDropCounts: Sendable, Equatable {
     var deadlineExpired: UInt64 = 0
     var queueLimit: UInt64 = 0
@@ -246,6 +252,7 @@ extension StreamPacketSender {
         let targetFrameRate: Int
         let pacingOverride: PacingOverride?
         let usesAwdlRealtimeQueuePolicy: Bool
+        let deliveryMode: HostFrameDeliveryMode
 
         init(
             encodedData: Data,
@@ -268,7 +275,8 @@ extension StreamPacketSender {
             hardSendDeadline: CFAbsoluteTime? = nil,
             targetFrameRate: Int = 60,
             pacingOverride: PacingOverride?,
-            usesAwdlRealtimeQueuePolicy: Bool = false
+            usesAwdlRealtimeQueuePolicy: Bool = false,
+            deliveryMode: HostFrameDeliveryMode = .realtime
         ) {
             let resolvedTargetFrameRate = max(1, targetFrameRate)
             self.encodedData = encodedData
@@ -292,6 +300,7 @@ extension StreamPacketSender {
             self.hardSendDeadline = hardSendDeadline?.isFinite == true ? hardSendDeadline : nil
             self.pacingOverride = pacingOverride
             self.usesAwdlRealtimeQueuePolicy = usesAwdlRealtimeQueuePolicy
+            self.deliveryMode = deliveryMode
         }
     }
 
@@ -305,6 +314,29 @@ extension StreamPacketSender {
         let isParity: Bool
         let isRecovery: Bool
         let sendDeadline: CFAbsoluteTime
+        let deliveryMode: HostFrameDeliveryMode
+
+        init(
+            streamID: StreamID,
+            frameNumber: UInt32,
+            fragmentIndex: Int,
+            fragmentCount: Int,
+            isKeyframe: Bool,
+            isParity: Bool,
+            isRecovery: Bool,
+            sendDeadline: CFAbsoluteTime,
+            deliveryMode: HostFrameDeliveryMode = .realtime
+        ) {
+            self.streamID = streamID
+            self.frameNumber = frameNumber
+            self.fragmentIndex = fragmentIndex
+            self.fragmentCount = fragmentCount
+            self.isKeyframe = isKeyframe
+            self.isParity = isParity
+            self.isRecovery = isRecovery
+            self.sendDeadline = sendDeadline
+            self.deliveryMode = deliveryMode
+        }
     }
 
     /// Snapshot of sender delay, pacing, and drop telemetry for one reporting window.
@@ -388,6 +420,37 @@ extension StreamPacketSender {
         let encodedAt: CFAbsoluteTime
         let startedAt: CFAbsoluteTime
         let completedAt: CFAbsoluteTime
+        let deliveryMode: HostFrameDeliveryMode
+
+        init(
+            streamID: StreamID,
+            frameNumber: UInt32,
+            isKeyframe: Bool,
+            didSend: Bool,
+            frameByteCount: Int,
+            wireBytes: Int,
+            packetCount: Int,
+            queuedUnreliableDropCounts: QueuedUnreliableDropCounts,
+            dimensionToken: UInt16,
+            encodedAt: CFAbsoluteTime,
+            startedAt: CFAbsoluteTime,
+            completedAt: CFAbsoluteTime,
+            deliveryMode: HostFrameDeliveryMode = .realtime
+        ) {
+            self.streamID = streamID
+            self.frameNumber = frameNumber
+            self.isKeyframe = isKeyframe
+            self.didSend = didSend
+            self.frameByteCount = frameByteCount
+            self.wireBytes = wireBytes
+            self.packetCount = packetCount
+            self.queuedUnreliableDropCounts = queuedUnreliableDropCounts
+            self.dimensionToken = dimensionToken
+            self.encodedAt = encodedAt
+            self.startedAt = startedAt
+            self.completedAt = completedAt
+            self.deliveryMode = deliveryMode
+        }
 
         var sendCompletionMs: Double {
             max(0, (completedAt - encodedAt) * 1000)

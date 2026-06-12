@@ -42,6 +42,9 @@ extension MirageClientMetricsStore {
             snapshot.hostRealtimeBitrateCeiling = metrics.realtimeBitrateCeiling
             snapshot.hostRealtimePressureState = metrics.realtimePressureState
             snapshot.hostRealtimePressureReason = metrics.realtimePressureReason
+            snapshot.hostRealtimeDeliveryMode = metrics.realtimeDeliveryMode
+            snapshot.hostRealtimeRequiredBitrateForQualityBps = metrics.realtimeRequiredBitrateForQualityBps
+            snapshot.hostRealtimeObservedPFrameWireBytesP95 = metrics.realtimeObservedPFrameWireBytesP95
             snapshot.hostAwdlPolicyState = metrics.awdlPolicyState
             snapshot.hostAwdlPolicyTrigger = metrics.awdlPolicyTrigger
             snapshot.hostAwdlSelectedLever = metrics.awdlSelectedLever

@@ -69,7 +69,8 @@ extension StreamPacketSender {
             dimensionToken: item.dimensionToken,
             encodedAt: item.encodedAt,
             startedAt: startedAt,
-            completedAt: completedAt
+            completedAt: completedAt,
+            deliveryMode: item.deliveryMode
         ))
     }
 

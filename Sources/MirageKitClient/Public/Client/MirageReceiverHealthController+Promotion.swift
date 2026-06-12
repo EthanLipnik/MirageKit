@@ -39,6 +39,34 @@ extension MirageReceiverHealthController {
         pendingPromotion = nil
     }
 
+    /// Cancels an in-flight promotion probe as failed and returns the rollback target.
+    public mutating func cancelPendingPromotionAsFailed(
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) -> CancelledPromotion? {
+        guard let pendingPromotion else { return nil }
+        recordFailedPromotion(
+            failedBitrateBps: pendingPromotion.targetBitrateBps,
+            fallbackBitrateBps: pendingPromotion.previousBitrateBps,
+            severe: false
+        )
+        self.pendingPromotion = nil
+        state = .backingOff
+        lastTransitionAt = now
+        resetSampleCounters()
+        nextProbeAllowedAt = max(
+            nextProbeAllowedAt,
+            now + probeCooldown(
+                success: false,
+                now: now,
+                qualityRecovery: pendingPromotion.qualityRecovery
+            )
+        )
+        return CancelledPromotion(
+            failedBitrateBps: pendingPromotion.targetBitrateBps,
+            fallbackBitrateBps: pendingPromotion.previousBitrateBps
+        )
+    }
+
     /// Starts a promotion probe when the clean-sample streak and cooldown allow it.
     mutating func probeActionIfReady(
         sample: ReceiverHealthSample,

@@ -100,6 +100,37 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Low-motion ramp P-frames are not abandoned by reserved-frame freshness")
+    func lowMotionRampPFramesAreNotAbandonedByReservedFrameFreshness() async {
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, _, onComplete in onComplete(nil) }
+        )
+        let normalItem = makeStreamPacketWorkItem(
+            payload: makeStreamPacketPayload(byteCount: 128),
+            streamID: 45,
+            frameNumber: 304,
+            sequenceNumberStart: 3030,
+            generation: 0,
+            sendDeadline: CFAbsoluteTimeGetCurrent() - 1
+        )
+        _ = await sender.recordReservedPFrameLatenessIfNeeded(normalItem, now: CFAbsoluteTimeGetCurrent())
+        _ = await sender.recordReservedPFrameLatenessIfNeeded(normalItem, now: CFAbsoluteTimeGetCurrent())
+
+        let lowMotionItem = makeStreamPacketWorkItem(
+            payload: makeStreamPacketPayload(byteCount: 128),
+            streamID: 45,
+            frameNumber: 305,
+            sequenceNumberStart: 3040,
+            generation: 0,
+            sendDeadline: CFAbsoluteTimeGetCurrent() - 1,
+            deliveryMode: .lowMotionRamp
+        )
+
+        #expect(sender.shouldAbandonReservedPFrameForFreshness(normalItem, latenessMs: 1))
+        #expect(!sender.shouldAbandonReservedPFrameForFreshness(lowMotionItem, latenessMs: 1))
+    }
+
     @Test("Finite non-keyframe deadline does not prevent delivery")
     func finiteNonKeyframeDeadlineDoesNotPreventDelivery() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])

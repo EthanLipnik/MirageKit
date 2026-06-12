@@ -252,6 +252,12 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostRealtimePressureState: String?
     /// Host-side realtime pressure reason.
     public var hostRealtimePressureReason: String?
+    /// Host-side frame delivery class for the latest adaptive P-frame decision.
+    public var hostRealtimeDeliveryMode: String?
+    /// Host-computed bitrate required to carry the current P-frame quality, in bits per second.
+    public var hostRealtimeRequiredBitrateForQualityBps: Int?
+    /// Host-observed 95th percentile P-frame wire size for the current quality bucket, in bytes.
+    public var hostRealtimeObservedPFrameWireBytesP95: Int?
     /// Host-side AWDL media controller state.
     public var hostAwdlPolicyState: String?
     /// Host-side AWDL media controller trigger.
@@ -542,6 +548,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostRealtimeBitrateCeiling: Int? = nil,
         hostRealtimePressureState: String? = nil,
         hostRealtimePressureReason: String? = nil,
+        hostRealtimeDeliveryMode: String? = nil,
+        hostRealtimeRequiredBitrateForQualityBps: Int? = nil,
+        hostRealtimeObservedPFrameWireBytesP95: Int? = nil,
         hostAwdlPolicyState: String? = nil,
         hostAwdlPolicyTrigger: String? = nil,
         hostAwdlSelectedLever: String? = nil,
@@ -668,6 +677,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostRealtimeBitrateCeiling = hostRealtimeBitrateCeiling
         self.hostRealtimePressureState = hostRealtimePressureState
         self.hostRealtimePressureReason = hostRealtimePressureReason
+        self.hostRealtimeDeliveryMode = hostRealtimeDeliveryMode
+        self.hostRealtimeRequiredBitrateForQualityBps = hostRealtimeRequiredBitrateForQualityBps
+        self.hostRealtimeObservedPFrameWireBytesP95 = hostRealtimeObservedPFrameWireBytesP95
         self.hostAwdlPolicyState = hostAwdlPolicyState
         self.hostAwdlPolicyTrigger = hostAwdlPolicyTrigger
         self.hostAwdlSelectedLever = hostAwdlSelectedLever

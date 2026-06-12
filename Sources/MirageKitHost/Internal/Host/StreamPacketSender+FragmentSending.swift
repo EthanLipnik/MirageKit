@@ -515,7 +515,8 @@ extension StreamPacketSender {
             isKeyframe: item.isKeyframe,
             isParity: isParity,
             isRecovery: !item.isKeyframe && !isParity && item.fecBlockSize > 1,
-            sendDeadline: transportSendDeadline(for: item)
+            sendDeadline: transportSendDeadline(for: item),
+            deliveryMode: item.deliveryMode
         )
     }
 

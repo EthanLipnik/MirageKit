@@ -27,6 +27,12 @@ public struct MirageReceiverHealthController: Sendable {
         case probe(targetBitrateBps: Int)
     }
 
+    /// Details for a promotion probe that was cancelled before it could settle.
+    public struct CancelledPromotion: Sendable, Equatable {
+        public let failedBitrateBps: Int
+        public let fallbackBitrateBps: Int
+    }
+
     /// Strategy for recovering from a learned promotion ceiling after failed probes.
     public enum PromotionRecoveryMode: String, Sendable, Equatable {
         /// Recover slowly once the current route has settled below the learned ceiling.

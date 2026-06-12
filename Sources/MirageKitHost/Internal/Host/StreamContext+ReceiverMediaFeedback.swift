@@ -428,6 +428,7 @@ extension StreamContext {
                 capacityLearningAllowed: canLearnCapacity,
                 inputActive: inputActive,
                 sourceStill: sourceStill,
+                deliveryMode: completion.deliveryMode,
                 currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
                 requestedTargetBitrateBps: requestedTargetBitrate,
                 startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,

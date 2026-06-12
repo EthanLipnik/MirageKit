@@ -33,8 +33,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
         #expect(decision?.maximumCeilingBps == 300_000_000)
-        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
-        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.minimumBitrateFloorBps == 3_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 3_000_000)
     }
 
     @Test("VPN automatic stream honors selected client ceiling")
@@ -57,12 +57,13 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision?.startupBitrateBps == 64_000_000)
         #expect(decision?.maximumCeilingBps == 64_000_000)
-        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
-        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(expectedReadabilityFloor > 8_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 8_000_000)
     }
 
-    @Test("Optimized VPN large stream starts at selected target and keeps readable floor")
-    func optimizedVPNLargeStreamStartsAtSelectedTargetAndKeepsReadableFloor() throws {
+    @Test("Optimized VPN large stream starts readable and keeps elastic recovery floor")
+    func optimizedVPNLargeStreamStartsReadableAndKeepsElasticRecoveryFloor() throws {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
             request(
                 requestedBitrateBps: 36_000_000,
@@ -86,8 +87,38 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision?.startupBitrateBps == 36_000_000)
         #expect((decision?.maximumCeilingBps ?? 0) > 70_000_000)
-        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
-        #expect((decision?.minimumBitrateFloorBps ?? 0) > 20_000_000)
+        #expect(expectedReadabilityFloor > 20_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+        #expect((decision?.startupBitrateBps ?? 0) > (decision?.minimumBitrateFloorBps ?? 0))
+    }
+
+    @Test("Optimized VPN runtime quality floor stays elastic under pressure")
+    func optimizedVPNRuntimeQualityFloorStaysElasticUnderPressure() async {
+        let context = makeContext(
+            bitrate: 36_000_000,
+            frameRate: 30,
+            bitrateAdaptationCeiling: 240_000_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let outputSize = CGSize(width: 2048, height: 1536)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.applyRealtimeBudgetBitrate(
+            8_000_000,
+            ceilingBitrateBps: 36_000_000,
+            encoderRateHintBps: 8_000_000,
+            senderPacingBitrateBps: 8_000_000,
+            minimumBitrateFloorBps: 8_000_000,
+            reason: "unit-test-vpn-pressure"
+        )
+
+        let qualityFloor = await context.qualityFloor
+        let keyframeQualityFloor = await context.keyframeQualityFloor
+        #expect(qualityFloor < 0.50)
+        #expect(keyframeQualityFloor < 0.42)
     }
 
     @Test("WiFi ProMotion automatic stream starts at readability floor")
@@ -119,8 +150,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
         #expect((decision?.startupBitrateBps ?? 0) > 36_000_000)
         #expect(decision?.maximumCeilingBps == 300_000_000)
-        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
-        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.minimumBitrateFloorBps == 3_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 3_000_000)
     }
 
     @Test("VPN custom stream can ramp beyond automatic ceiling")
@@ -204,8 +235,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.startupBitrateBps == expectedReadabilityFloor)
         #expect((decision?.startupBitrateBps ?? 0) > 120_000_000)
         #expect(decision?.maximumCeilingBps == 300_000_000)
-        #expect(decision?.minimumBitrateFloorBps == expectedReadabilityFloor)
-        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == expectedReadabilityFloor)
+        #expect(decision?.minimumBitrateFloorBps == 12_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 12_000_000)
     }
 
     @Test("High-resolution custom bitrate can keep encoder catch-up pinned to readability floor")
@@ -451,8 +482,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await raiseAboveReadabilityFloorForPressureTest(context)
         let originalTarget = context.currentTargetBitrateBps ?? 0
         let originalQuality = await context.activeQuality
+        let budgetFrameRate = await context.runtimeQualityBudgetFrameRate()
 
-        #expect(context.runtimeQualityBudgetFrameRate() == 60)
+        #expect(budgetFrameRate == 60)
 
         await context.applyPerFrameEncoderTimingPressureIfNeeded(
             VideoEncoder.EncodedFrameTiming(
@@ -950,8 +982,6 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(context.currentFrameRate == 45)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await !context.currentAwdlQualityReductionAllowed())
-        let pressureReason = await context.realtimePressureReason
-        #expect(pressureReason == "receiver-p-frame-timing")
     }
 
     @Test("Missing client ceiling keeps host-owned recovery ceiling")

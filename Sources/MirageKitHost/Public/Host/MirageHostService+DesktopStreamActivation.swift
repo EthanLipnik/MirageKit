@@ -396,8 +396,9 @@ extension StreamPacketSender.TransportPacketMetadata {
         } else {
             .realtimeInterFrame
         }
-        let dropsWhenExpired = !isKeyframe
-        let dropsWhenQueueFull = !isKeyframe && !isRecovery
+        let preservesLowMotionRampFrame = deliveryMode == .lowMotionRamp && !isKeyframe
+        let dropsWhenExpired = !isKeyframe && !preservesLowMotionRampFrame
+        let dropsWhenQueueFull = !isKeyframe && !isRecovery && !preservesLowMotionRampFrame
         return LoomQueuedUnreliableSendOptions(
             deadlineUptime: loomDeadlineUptime,
             importance: importance,

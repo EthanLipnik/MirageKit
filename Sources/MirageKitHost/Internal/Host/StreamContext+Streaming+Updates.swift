@@ -209,6 +209,7 @@ extension StreamContext {
                 )
             }
             clearTransientRuntimePressureForReconfiguration()
+            hostAdaptiveBudgetApplied = true
             if currentEncodedSize != .zero {
                 await applyDerivedQuality(for: currentEncodedSize, logLabel: "Bitrate update")
             }

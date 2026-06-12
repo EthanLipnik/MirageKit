@@ -28,13 +28,6 @@ extension StreamContext {
     private static let mapperMinimumQuality: Float = 0.03
     private static let awdlInteractiveFrameQualityFloor: Float = 0.16
     private static let awdlInteractiveKeyframeQualityFloor: Float = 0.14
-    private static let optimizedVPNRuntimeFrameQualityFloor: Float = 0.50
-    private static let optimizedVPNRuntimeKeyframeQualityFloor: Float = 0.42
-    private static let optimizedVPNProfileStartupBitratesBps: Set<Int> = [
-        24_000_000,
-        30_000_000,
-        36_000_000,
-    ]
     private static let qualityRefreshEpsilon: Float = 0.0001
 
     private struct DerivedQualityTargets {
@@ -127,10 +120,7 @@ extension StreamContext {
             return awdlBoundedInteractiveFrameQuality(floor)
         }
         guard ceiling > 0 else { return 0 }
-        let optimizedVPNReadableFloor = usesOptimizedVPNStreamingProfile
-            ? min(ceiling, Self.optimizedVPNRuntimeFrameQualityFloor)
-            : 0
-        let floor = max(minimumFloor, ceiling * floorFactor, optimizedVPNReadableFloor)
+        let floor = max(minimumFloor, ceiling * floorFactor)
         return min(ceiling, floor)
     }
 
@@ -152,24 +142,8 @@ extension StreamContext {
             )
         }
         guard ceiling > 0 else { return 0 }
-        let optimizedVPNReadableFloor = usesOptimizedVPNStreamingProfile
-            ? min(ceiling, Self.optimizedVPNRuntimeKeyframeQualityFloor)
-            : 0
-        let floor = max(minimumFloor, ceiling * floorFactor, optimizedVPNReadableFloor)
+        let floor = max(minimumFloor, ceiling * floorFactor)
         return min(ceiling, floor)
-    }
-
-    private var usesOptimizedVPNStreamingProfile: Bool {
-        guard mediaPathProfile == .vpnOrOverlay,
-              explicitEnteredTargetBitrate == nil,
-              currentFrameRate == 30,
-              let requestedTargetBitrate,
-              Self.optimizedVPNProfileStartupBitratesBps.contains(requestedTargetBitrate),
-              let bitrateAdaptationCeiling,
-              bitrateAdaptationCeiling >= requestedTargetBitrate else {
-            return false
-        }
-        return true
     }
 
     func resolvedRuntimeQualityCeiling(for proposedCeiling: Float) -> Float {
@@ -385,8 +359,7 @@ extension StreamContext {
         let boundedTargetQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
         if activeQuality > boundedTargetQuality ||
             (shouldRaiseActiveQuality && activeQuality < boundedTargetQuality) ||
-            ((mediaPathProfile.usesAwdlRadioPolicy || usesOptimizedVPNStreamingProfile) &&
-                activeQuality < qualityFloor) {
+            (mediaPathProfile.usesAwdlRadioPolicy && activeQuality < qualityFloor) {
             activeQuality = boundedTargetQuality
         }
         if Self.qualityValuesDiffer(previousActiveQuality, activeQuality) {

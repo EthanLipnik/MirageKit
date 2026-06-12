@@ -23,6 +23,8 @@ extension StreamContext {
     private static let encoderThroughputCleanBacklogSampleRatio = 1.50
     private static let highRefreshQualityBudgetFrameRate = 60
     private static let highRefreshQualityBudgetThresholdFrameRate = 100
+    private static let lowMotionRampDirtyPercentage: Float = 6.0
+    private static let lowMotionRampRequiredCleanFrames = 3
 
     func runtimeQualityBudgetFrameRate() -> Int {
         guard currentFrameRate >= Self.highRefreshQualityBudgetThresholdFrameRate,
@@ -859,6 +861,12 @@ extension StreamContext {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
             awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(),
+            deliveryMode: deliveryModeForEncodedFrame(
+                now: now,
+                timing: timing,
+                policy: freshnessPolicy
+            ),
+            encodedSize: currentEncodedSize,
             now: now
         )
         if !isKeyframe,
@@ -1005,6 +1013,32 @@ extension StreamContext {
         if timing.captureIsIdleFrame { return true }
         if timing.captureDirtyPercentage > 0.5 { return false }
         return streamStill
+    }
+
+    private func deliveryModeForEncodedFrame(
+        now: CFAbsoluteTime,
+        timing: VideoEncoder.EncodedFrameTiming?,
+        policy: HostFrameFreshnessPolicy
+    ) -> HostFrameDeliveryMode {
+        guard !inputIsActiveForEncodedFrame(now: now, timing: timing, policy: policy) else {
+            lowMotionRampCandidateFrameCount = 0
+            return .realtime
+        }
+        guard let timing else {
+            return sourceIsStill(now: now, policy: policy) ? .lowMotionRamp : .realtime
+        }
+        if timing.captureIsIdleFrame || sourceIsStillForEncodedFrame(now: now, timing: timing, policy: policy) {
+            lowMotionRampCandidateFrameCount = Self.lowMotionRampRequiredCleanFrames
+            return .lowMotionRamp
+        }
+        if timing.captureDirtyPercentage <= Self.lowMotionRampDirtyPercentage {
+            lowMotionRampCandidateFrameCount += 1
+        } else {
+            lowMotionRampCandidateFrameCount = 0
+        }
+        return lowMotionRampCandidateFrameCount >= Self.lowMotionRampRequiredCleanFrames
+            ? .lowMotionRamp
+            : .realtime
     }
 
     func updateIdleQualityProbeAdmissionHint(now: CFAbsoluteTime) {
@@ -1308,7 +1342,12 @@ extension StreamContext {
         now: CFAbsoluteTime
     ) async {
         guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else { return }
-        if await applyPerFrameTransportCompletionPressureIfNeeded(completion, now: now) {
+        let deliveryMode = completion.deliveryMode
+        if await applyPerFrameTransportCompletionPressureIfNeeded(
+            completion,
+            deliveryMode: deliveryMode,
+            now: now
+        ) {
             return
         }
         guard completion.didSend else { return }
@@ -1321,6 +1360,7 @@ extension StreamContext {
             timingSource: .localSendCompletion,
             receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
             capacityLearningAllowed: false,
+            deliveryMode: deliveryMode,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -1342,6 +1382,7 @@ extension StreamContext {
 
     private func applyPerFrameTransportCompletionPressureIfNeeded(
         _ completion: StreamPacketSender.FrameTransportCompletion,
+        deliveryMode: HostFrameDeliveryMode,
         now: CFAbsoluteTime
     ) async -> Bool {
         guard !completion.isKeyframe,
@@ -1355,6 +1396,19 @@ extension StreamContext {
         let sendCompletionMs = max(0, completion.sendCompletionMs)
         let transportDurationMs = max(0, completion.transportDurationMs)
         let drops = completion.queuedUnreliableDropCounts
+        if deliveryMode == .lowMotionRamp,
+           completion.didSend,
+           drops.isEmpty,
+           sendCompletionMs <= HostPFrameViabilityController.targetClearMilliseconds(
+               deliveryMode: deliveryMode,
+               mediaPathProfile: mediaPathProfile
+           ),
+           transportDurationMs <= HostPFrameViabilityController.targetClearMilliseconds(
+               deliveryMode: deliveryMode,
+               mediaPathProfile: mediaPathProfile
+           ) {
+            return false
+        }
         let deadlineDropPressureThreshold = UInt64(max(2, (completion.packetCount + 15) / 16))
         let deadlineDropSevereThreshold = UInt64(max(4, (completion.packetCount + 3) / 4))
         let deadlineDropPressure = drops.deadlineExpired >= deadlineDropPressureThreshold ||

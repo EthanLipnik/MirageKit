@@ -215,6 +215,39 @@ struct ReceiverHealthControllerTests {
         #expect(rollback == .backoff(targetBitrateBps: 20_000_000))
     }
 
+    @Test("Pending probe cancellation records failed ceiling and cools down")
+    func pendingProbeCancellationRecordsFailedCeilingAndCoolsDown() throws {
+        var controller = MirageReceiverHealthController()
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        let probe = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2
+        )
+        let cancellation = controller.cancelPendingPromotionAsFailed(now: 3)
+        let cancelledPromotion = try #require(cancellation)
+        let immediateRetry = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 4
+        )
+
+        #expect(probe == .probe(targetBitrateBps: 32_000_000))
+        #expect(cancelledPromotion.failedBitrateBps == 32_000_000)
+        #expect(cancelledPromotion.fallbackBitrateBps == 20_000_000)
+        #expect(immediateRetry == .none)
+        #expect(controller.state == .backingOff)
+    }
+
     @Test("Pending probe ignores decode stalls without unsafe ceiling")
     func pendingProbeIgnoresDecodeStallsWithoutUnsafeCeiling() {
         var controller = MirageReceiverHealthController()

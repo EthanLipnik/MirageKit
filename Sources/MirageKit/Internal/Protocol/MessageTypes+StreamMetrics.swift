@@ -158,6 +158,9 @@ package struct StreamMetricsMessage: Codable {
     package let realtimeBitrateCeiling: Int?
     package let realtimePressureState: String?
     package let realtimePressureReason: String?
+    package let realtimeDeliveryMode: String?
+    package let realtimeRequiredBitrateForQualityBps: Int?
+    package let realtimeObservedPFrameWireBytesP95: Int?
     package let awdlPolicyState: String?
     package let awdlPolicyTrigger: String?
     package let awdlSelectedLever: String?
@@ -262,6 +265,9 @@ package struct StreamMetricsMessage: Codable {
         realtimeBitrateCeiling: Int? = nil,
         realtimePressureState: String? = nil,
         realtimePressureReason: String? = nil,
+        realtimeDeliveryMode: String? = nil,
+        realtimeRequiredBitrateForQualityBps: Int? = nil,
+        realtimeObservedPFrameWireBytesP95: Int? = nil,
         awdlPolicyState: String? = nil,
         awdlPolicyTrigger: String? = nil,
         awdlSelectedLever: String? = nil,
@@ -365,6 +371,9 @@ package struct StreamMetricsMessage: Codable {
         self.realtimeBitrateCeiling = realtimeBitrateCeiling
         self.realtimePressureState = realtimePressureState
         self.realtimePressureReason = realtimePressureReason
+        self.realtimeDeliveryMode = realtimeDeliveryMode
+        self.realtimeRequiredBitrateForQualityBps = realtimeRequiredBitrateForQualityBps
+        self.realtimeObservedPFrameWireBytesP95 = realtimeObservedPFrameWireBytesP95
         self.awdlPolicyState = awdlPolicyState
         self.awdlPolicyTrigger = awdlPolicyTrigger
         self.awdlSelectedLever = awdlSelectedLever
