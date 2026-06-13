@@ -124,6 +124,8 @@ extension StreamContext {
     /// Clears capture, startup, and pressure state that is no longer valid after reconfiguration.
     private func clearCaptureAndPressureStateForReconfiguration() {
         clearBackpressureState(log: false)
+        transportFrameAdmissionState = HostTransportFrameAdmissionPolicy.State()
+        transportAdmissionPressureState = HostTransportAdmissionPressureState()
         realtimeLastEncoderThroughputAdjustmentTime = 0
         lastCapturedFrame = nil
         cachedStartupFrame = nil

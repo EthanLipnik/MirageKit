@@ -30,6 +30,20 @@ enum HostEncodedFrameAdmission: Sendable, Equatable {
     case dropPFrameStartChainRepair
 }
 
+enum HostPreEncodePFrameAdmission: Sendable, Equatable {
+    case send
+    case skipBeforeEncode
+    case sendWithFutureQualityDrop
+}
+
+struct HostPreEncodePFrameAdmissionDecision: Sendable, Equatable {
+    let admission: HostPreEncodePFrameAdmission
+    let budgetDecision: HostFrameBudgetDecision?
+    let reason: HostAdaptivePFrameController.Reason?
+    let predictedWireBytes: Int
+    let targetWireBytes: Int
+}
+
 enum TimingSource: Sendable, Equatable {
     case remoteAck
     case clientAssembled
@@ -404,6 +418,13 @@ struct HostAdaptivePFrameController: Equatable {
     private static let predictivePFrameOversizePacketRatio = 1.15
     private static let predictivePFrameMinimumCutScale = 0.50
     private static let predictivePFrameMaximumCutScale = 0.92
+    private static let preEncodeMostlyStillDirtyPercentage: Float = 1.0
+    private static let preEncodeLowMotionDirtyPercentage: Float = 6.0
+    private static let preEncodeRiskMinimumWireBytes = 64 * 1024
+    private static let preEncodeTransportRiskRatio = 0.85
+    private static let preEncodeQualityDropRatio = 1.12
+    private static let preEncodeSkipMinimumCutScale = 0.50
+    private static let preEncodeSkipMaximumCutScale = 0.86
     private static let motionGrowthPFrameMinimumWireBytes = 96 * 1024
     private static let motionGrowthPFrameWireRatio = 1.60
     private static let motionGrowthPFramePacketRatio = 1.45
@@ -622,6 +643,153 @@ struct HostAdaptivePFrameController: Equatable {
         )
         qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.50)
         return decision
+    }
+
+    mutating func evaluatePreEncodePFrame(
+        dirtyPercentage: Float,
+        inputActive: Bool,
+        sourceStill: Bool,
+        receiverHealthy: Bool,
+        senderHealthy: Bool,
+        queuedBytesAhead: Int,
+        unstartedPFrameCount: Int,
+        receiverReassemblyBacklogFrames: Int,
+        receiverReassemblyBacklogBytes: Int,
+        currentBitrateBps: Int?,
+        requestedTargetBitrateBps: Int?,
+        startupCeilingBps: Int?,
+        minimumBitrateFloorBps: Int,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        currentQuality: Float,
+        qualityFloor: Float,
+        steadyQualityCeiling: Float,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        receiverPlayoutDelayTargetMs: Double? = nil,
+        awdlQualityReductionAllowed: Bool = true,
+        now: CFAbsoluteTime
+    ) -> HostPreEncodePFrameAdmissionDecision {
+        let input = budgetInput(
+            currentBitrateBps: currentBitrateBps,
+            requestedTargetBitrateBps: requestedTargetBitrateBps,
+            startupCeilingBps: startupCeilingBps,
+            minimumBitrateFloorBps: minimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            mediaPathProfile: mediaPathProfile
+        )
+        initializeIfNeeded(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+
+        let targetBytes = currentTargetFrameWireBytes(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        let packetTarget = packetCountForWireBytes(targetBytes, maxPayloadSize: maxPayloadSize)
+        let predictedWireBytes = preEncodePredictedPFrameWireBytes(targetBytes: targetBytes)
+        let predictedPacketCount = packetCountForWireBytes(predictedWireBytes, maxPayloadSize: maxPayloadSize)
+        let baseDecision = HostPreEncodePFrameAdmissionDecision(
+            admission: .send,
+            budgetDecision: nil,
+            reason: nil,
+            predictedWireBytes: predictedWireBytes,
+            targetWireBytes: targetBytes
+        )
+
+        guard frameBudgetReductionAllowed(
+            mediaPathProfile: mediaPathProfile,
+            awdlQualityReductionAllowed: awdlQualityReductionAllowed
+        ) else {
+            return baseDecision
+        }
+        guard !sourceStill,
+              dirtyPercentage > Self.preEncodeMostlyStillDirtyPercentage else {
+            return baseDecision
+        }
+
+        let transportStressed = !senderHealthy ||
+            !receiverHealthy ||
+            queuedBytesAhead >= max(targetBytes, 128 * 1024) ||
+            unstartedPFrameCount >= 2 ||
+            receiverReassemblyBacklogFrames > 0 ||
+            receiverReassemblyBacklogBytes > 0
+        let wireRatio = Double(max(0, predictedWireBytes)) / Double(max(1, targetBytes))
+        let packetRatio = Double(max(0, predictedPacketCount)) / Double(max(1, packetTarget))
+        let motionRisk = dirtyPercentage > Self.preEncodeLowMotionDirtyPercentage &&
+            predictedWireBytes >= Self.preEncodeRiskMinimumWireBytes &&
+            (wireRatio >= Self.preEncodeTransportRiskRatio ||
+                packetRatio >= Self.preEncodeTransportRiskRatio)
+        let strongOversizeRisk = wireRatio >= Self.preEncodeQualityDropRatio ||
+            packetRatio >= Self.preEncodeQualityDropRatio
+
+        guard transportStressed || strongOversizeRisk else {
+            return baseDecision
+        }
+
+        let reason: Reason = transportStressed ? .transportBacklog : .encodedFrame
+        let pressureRatio = max(wireRatio, packetRatio, 1.0)
+        let cutScale = max(
+            Self.preEncodeSkipMinimumCutScale,
+            min(Self.preEncodeSkipMaximumCutScale, Self.safeDeliveryUtilization / pressureRatio)
+        )
+        let safeBytes = safeFrameWireBytes(
+            targetClearMs: ModePolicy.policy(
+                for: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+            ).targetClearMs,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        let nextBudget = min(
+            targetBytes,
+            safeBytes,
+            Int((Double(targetBytes) * cutScale).rounded(.down))
+        )
+        recordPressureCeiling(
+            failedTarget: max(targetBytes, predictedWireBytes),
+            safeTarget: nextBudget,
+            now: now
+        )
+        setTargetFrameWireBytes(
+            nextBudget,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        let quality = max(qualityFloor, min(steadyQualityCeiling, currentQuality * Float(cutScale)))
+        let decision = makeDecision(
+            state: .pressured,
+            reason: reason,
+            quality: quality,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            steadyQualityCeiling: steadyQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            now: now
+        )
+        qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + (transportStressed ? 0.15 : 0.10))
+
+        return HostPreEncodePFrameAdmissionDecision(
+            admission: transportStressed && motionRisk ? .skipBeforeEncode : .sendWithFutureQualityDrop,
+            budgetDecision: decision,
+            reason: reason,
+            predictedWireBytes: predictedWireBytes,
+            targetWireBytes: targetBytes
+        )
     }
 
     mutating func evaluateEncodedFrame(
@@ -1003,8 +1171,16 @@ struct HostAdaptivePFrameController: Equatable {
                 now: now
             )
             qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.25)
+            recordAdmittedPFrame(
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                quality: currentQuality,
+                receiverHealthy: receiverHealthy,
+                senderHealthy: senderHealthy,
+                updatesCleanBaseline: false
+            )
             return HostEncodedFrameAdmissionDecision(
-                admission: .dropPFrameStartChainRepair,
+                admission: .sendWithQualityDrop,
                 budgetDecision: decision,
                 sendDeadline: effectiveSendDeadline,
                 byteRatio: byteRatio,
@@ -2515,6 +2691,24 @@ struct HostAdaptivePFrameController: Equatable {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize
         )
+    }
+
+    private func preEncodePredictedPFrameWireBytes(targetBytes: Int) -> Int {
+        var predicted = targetBytes
+        if let lastAdmittedPFrameWireBytes {
+            predicted = max(predicted, lastAdmittedPFrameWireBytes)
+        }
+        if let latestObservedPFrameWireBytesP95 {
+            predicted = max(predicted, latestObservedPFrameWireBytesP95)
+        }
+        if let recentCleanPFrameBaselineWireBytes {
+            let allowedSpikeRatio = Self.allowedPFrameSpikeRatio(baselineWireBytes: recentCleanPFrameBaselineWireBytes)
+            predicted = max(
+                predicted,
+                Int((Double(recentCleanPFrameBaselineWireBytes) * allowedSpikeRatio).rounded(.up))
+            )
+        }
+        return max(1, predicted)
     }
 
     private mutating func predictivePFrameOversizeDecision(

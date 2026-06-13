@@ -1044,8 +1044,8 @@ struct HostKeyframeRecoveryTests {
         #expect(context.frameInbox.pendingCount == 1)
     }
 
-    @Test("Still quality probe raises active quality without receiver timing")
-    func stillQualityProbeRaisesActiveQualityWithoutReceiverTiming() async {
+    @Test("Still quality probe restores active quality without receiver timing")
+    func stillQualityProbeRestoresActiveQualityWithoutReceiverTiming() async {
         let context = makeContext(
             frameRate: 60,
             bitrate: 180_000_000,
@@ -1069,11 +1069,15 @@ struct HostKeyframeRecoveryTests {
             reason: "test"
         )
         let raisedQuality = await context.activeQuality
+        let targetQuality = await max(
+            context.qualityFloor,
+            min(context.configuredQualityCeiling, context.qualityCeiling)
+        )
 
         #expect(scheduled)
         #expect(context.frameInbox.pendingCount == 1)
         #expect(raisedQuality > initialQuality)
-        #expect(raisedQuality < 0.50)
+        #expect(abs(Double(raisedQuality - targetQuality)) < 0.0001)
         #expect(await context.realtimeRuntimeQualityCeiling == nil)
     }
 

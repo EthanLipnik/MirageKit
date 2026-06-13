@@ -162,14 +162,12 @@ extension CaptureStreamOutput {
             isIdleFrame: isIdleFrame
         )
 
-        let totalPixels = bufferWidth * bufferHeight
-        let dirtyPercentage: Float = if isIdleFrame {
-            0
-        } else if totalPixels > 0 {
-            100
-        } else {
-            0
-        }
+        let dirtyPercentage = CaptureDirtyRegionMetrics.dirtyPercentage(
+            dirtyRectsValue: attachments?[.dirtyRects],
+            contentRect: contentRect.isEmpty ? fullRect : contentRect,
+            fullRect: fullRect,
+            isIdleFrame: isIdleFrame
+        )
 
         frameCount += 1
         if frameCount == 1 { MirageLogger.capture("Frame \(frameCount): \(bufferWidth)x\(bufferHeight)") }

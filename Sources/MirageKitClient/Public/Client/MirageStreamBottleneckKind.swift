@@ -90,6 +90,9 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
         let transportDropCount = snapshot.hostTransportPressureDropCount
+        let transportAdmissionSkips = snapshot.hostTransportAdmissionSkips ?? 0
+        let transportAdmissionActive = transportAdmissionSkips > 0 ||
+            (snapshot.hostTransportAdmissionActiveHoldMs ?? 0) > 0
         let transportAssessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
                 queueBytes: queueBytes,
@@ -137,7 +140,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             uniqueSubmittedFPS + presentationGapGrace < submittedFPS &&
             snapshot.pendingFrameCount > 0
 
-        let networkBound = transportAssessment.primaryStress && !transportAssessment.isPacerOnlyStress
+        let networkBound = transportAdmissionActive ||
+            (transportAssessment.primaryStress && !transportAssessment.isPacerOnlyStress)
         let sourceOrRecoveryCadenceLimited =
             max(receivedFPS, decodedFPS) > 0 &&
             max(receivedFPS, decodedFPS) < targetFPS * 0.85 &&

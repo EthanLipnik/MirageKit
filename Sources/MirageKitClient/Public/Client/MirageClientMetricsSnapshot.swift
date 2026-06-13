@@ -275,6 +275,20 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostAwdlPacingBudgetBps: Int?
     /// Number of frames rejected by host capture admission control.
     public var hostCaptureAdmissionDrops: UInt64?
+    /// Number of host frames skipped before encode due to transport admission throttling.
+    public var hostTransportAdmissionSkips: UInt64?
+    /// Current host-side pre-encode transport admission mode.
+    public var hostTransportAdmissionMode: String?
+    /// Host-side reason for pre-encode transport admission throttling.
+    public var hostTransportAdmissionReason: String?
+    /// Host-side evidence summary for pre-encode transport admission throttling.
+    public var hostTransportAdmissionEvidence: String?
+    /// Minimum interval between admitted P-frames while transport admission throttling is active.
+    public var hostTransportAdmissionMinimumFrameIntervalMs: Double?
+    /// Remaining hold time for sustained host transport admission pressure.
+    public var hostTransportAdmissionActiveHoldMs: Double?
+    /// Current skip-burst count for host transport admission throttling.
+    public var hostTransportAdmissionSkipBurstCount: UInt64?
     /// Host frame budget, in milliseconds.
     public var hostFrameBudgetMs: Double?
     /// Average host encode duration, in milliseconds.
@@ -561,6 +575,13 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostAwdlQualityReductionAllowed: Bool? = nil,
         hostAwdlPacingBudgetBps: Int? = nil,
         hostCaptureAdmissionDrops: UInt64? = nil,
+        hostTransportAdmissionSkips: UInt64? = nil,
+        hostTransportAdmissionMode: String? = nil,
+        hostTransportAdmissionReason: String? = nil,
+        hostTransportAdmissionEvidence: String? = nil,
+        hostTransportAdmissionMinimumFrameIntervalMs: Double? = nil,
+        hostTransportAdmissionActiveHoldMs: Double? = nil,
+        hostTransportAdmissionSkipBurstCount: UInt64? = nil,
         hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
         hostCaptureIngressFPS: Double? = nil,
@@ -691,6 +712,13 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostAwdlQualityReductionAllowed = hostAwdlQualityReductionAllowed
         self.hostAwdlPacingBudgetBps = hostAwdlPacingBudgetBps
         self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
+        self.hostTransportAdmissionSkips = hostTransportAdmissionSkips
+        self.hostTransportAdmissionMode = hostTransportAdmissionMode
+        self.hostTransportAdmissionReason = hostTransportAdmissionReason
+        self.hostTransportAdmissionEvidence = hostTransportAdmissionEvidence
+        self.hostTransportAdmissionMinimumFrameIntervalMs = hostTransportAdmissionMinimumFrameIntervalMs
+        self.hostTransportAdmissionActiveHoldMs = hostTransportAdmissionActiveHoldMs
+        self.hostTransportAdmissionSkipBurstCount = hostTransportAdmissionSkipBurstCount
         self.hostFrameBudgetMs = hostFrameBudgetMs
         self.hostAverageEncodeMs = hostAverageEncodeMs
         self.hostCaptureIngressFPS = hostCaptureIngressFPS

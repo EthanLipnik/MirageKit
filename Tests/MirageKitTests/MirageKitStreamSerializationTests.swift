@@ -147,6 +147,13 @@ struct MirageKitStreamSerializationTests {
             awdlResolutionScale: 0.875,
             awdlQualityReductionAllowed: false,
             awdlHostPacingBudgetBps: 24_000_000,
+            transportAdmissionSkips: 3,
+            transportAdmissionMode: "soft-throttle",
+            transportAdmissionReason: "transport-backlog",
+            transportAdmissionEvidence: "soft:transport-backlog",
+            transportAdmissionMinimumFrameIntervalMs: 33.3,
+            transportAdmissionActiveHoldMs: 750,
+            transportAdmissionSkipBurstCount: 4,
             averageEncodeMs: 13.2,
             captureCadence: captureCadence,
             sendQueueBytes: 262_144,
@@ -208,6 +215,13 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.awdlResolutionScale == 0.875)
         #expect(decoded.awdlQualityReductionAllowed == false)
         #expect(decoded.awdlHostPacingBudgetBps == 24_000_000)
+        #expect(decoded.transportAdmissionSkips == 3)
+        #expect(decoded.transportAdmissionMode == "soft-throttle")
+        #expect(decoded.transportAdmissionReason == "transport-backlog")
+        #expect(decoded.transportAdmissionEvidence == "soft:transport-backlog")
+        #expect(decoded.transportAdmissionMinimumFrameIntervalMs == 33.3)
+        #expect(decoded.transportAdmissionActiveHoldMs == 750)
+        #expect(decoded.transportAdmissionSkipBurstCount == 4)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
         #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)

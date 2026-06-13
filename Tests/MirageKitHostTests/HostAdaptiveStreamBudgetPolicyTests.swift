@@ -8,6 +8,8 @@
 #if os(macOS)
 import CoreFoundation
 import CoreGraphics
+import CoreMedia
+import CoreVideo
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
@@ -394,6 +396,28 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect((context.currentTargetBitrateBps ?? 0) > originalTarget)
         #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
+    }
+
+    @Test("Still quality probe restores active quality to ceiling immediately")
+    func stillQualityProbeRestoresActiveQualityToCeilingImmediately() async {
+        let context = makeContext(
+            bitrate: 300_000_000,
+            bitrateAdaptationCeiling: 300_000_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let now: CFAbsoluteTime = 30
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.setActiveQualityForRealtimeBudgetTest(0.42)
+        await context.markSourceStillForRealtimeBudgetTest(at: now)
+        await context.setLastCapturedFrameForStillQualityProbeTest(makeIdleFrame(now: now - 0.05))
+        let ceiling = await min(context.configuredQualityCeiling, context.qualityCeiling)
+
+        let scheduled = await context.scheduleStillQualityProbeIfNeeded(now: now, reason: "test")
+
+        #expect(scheduled)
+        #expect(await abs(Double(context.activeQuality - ceiling)) < 0.0001)
     }
 
     @Test("Per-frame encoder timing pressure cuts automatic quality before metrics window")
@@ -950,7 +974,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(decision.admission == .dropPFrameStartChainRepair)
+        #expect(decision.admission == .sendWithQualityDrop)
         #expect(decision.budgetDecision?.reason == .encodedFrame)
     }
 
@@ -1362,6 +1386,35 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         )
     }
 
+    private func makeIdleFrame(now: CFAbsoluteTime) -> CapturedFrame {
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            8,
+            8,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &pixelBuffer
+        )
+        #expect(status == kCVReturnSuccess)
+        guard let pixelBuffer else {
+            Issue.record("Failed to create CVPixelBuffer")
+            fatalError("Failed to create CVPixelBuffer")
+        }
+
+        return CapturedFrame(
+            pixelBuffer: pixelBuffer,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            duration: CMTime(value: 1, timescale: 60),
+            captureTime: now,
+            info: CapturedFrameInfo(
+                contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+                dirtyPercentage: 0,
+                isIdleFrame: true
+            )
+        )
+    }
+
     private func raiseAboveReadabilityFloorForPressureTest(_ context: StreamContext) async {
         await context.applyRealtimeBudgetBitrate(
             120_000_000,
@@ -1504,6 +1557,11 @@ private extension StreamContext {
 
     func setActiveQualityForRealtimeBudgetTest(_ quality: Float) {
         activeQuality = quality
+    }
+
+    func setLastCapturedFrameForStillQualityProbeTest(_ frame: CapturedFrame) {
+        lastCapturedFrame = frame
+        lastCapturedFrameTime = frame.captureTime
     }
 
     func recordReceiverPFrameCompletionForTimingTest(

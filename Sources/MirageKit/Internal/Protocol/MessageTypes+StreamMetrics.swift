@@ -170,6 +170,13 @@ package struct StreamMetricsMessage: Codable {
     package let awdlQualityReductionAllowed: Bool?
     package let awdlHostPacingBudgetBps: Int?
     package let captureAdmissionDrops: UInt64?
+    package let transportAdmissionSkips: UInt64?
+    package let transportAdmissionMode: String?
+    package let transportAdmissionReason: String?
+    package let transportAdmissionEvidence: String?
+    package let transportAdmissionMinimumFrameIntervalMs: Double?
+    package let transportAdmissionActiveHoldMs: Double?
+    package let transportAdmissionSkipBurstCount: UInt64?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
     package let captureIngressFPS: Double?
@@ -278,6 +285,13 @@ package struct StreamMetricsMessage: Codable {
         awdlQualityReductionAllowed: Bool? = nil,
         awdlHostPacingBudgetBps: Int? = nil,
         captureAdmissionDrops: UInt64? = nil,
+        transportAdmissionSkips: UInt64? = nil,
+        transportAdmissionMode: String? = nil,
+        transportAdmissionReason: String? = nil,
+        transportAdmissionEvidence: String? = nil,
+        transportAdmissionMinimumFrameIntervalMs: Double? = nil,
+        transportAdmissionActiveHoldMs: Double? = nil,
+        transportAdmissionSkipBurstCount: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
         captureIngressFPS: Double? = nil,
@@ -385,6 +399,13 @@ package struct StreamMetricsMessage: Codable {
         self.awdlQualityReductionAllowed = awdlQualityReductionAllowed
         self.awdlHostPacingBudgetBps = awdlHostPacingBudgetBps
         self.captureAdmissionDrops = captureAdmissionDrops
+        self.transportAdmissionSkips = transportAdmissionSkips
+        self.transportAdmissionMode = transportAdmissionMode
+        self.transportAdmissionReason = transportAdmissionReason
+        self.transportAdmissionEvidence = transportAdmissionEvidence
+        self.transportAdmissionMinimumFrameIntervalMs = transportAdmissionMinimumFrameIntervalMs
+        self.transportAdmissionActiveHoldMs = transportAdmissionActiveHoldMs
+        self.transportAdmissionSkipBurstCount = transportAdmissionSkipBurstCount
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs
         self.captureIngressFPS = captureIngressFPS

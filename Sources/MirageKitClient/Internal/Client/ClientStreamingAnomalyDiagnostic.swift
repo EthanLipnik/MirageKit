@@ -247,6 +247,8 @@ func clientStreamingAnomalyDiagnostic(
     let hostCaptureDriftText = (sample.hostMetrics?.captureCadence?.displayTimeDriftCount).map(String.init) ?? "--"
     let virtualTimingText = (sample.hostMetrics?.captureCadence?.virtualDisplayTimingSuspect).map { $0 ? "true" : "false" } ?? "--"
     let captureAdmissionDropsText = sample.hostMetrics?.captureAdmissionDrops.map(String.init) ?? "--"
+    let transportAdmissionSkipsText = sample.hostMetrics?.transportAdmissionSkips.map(String.init) ?? "--"
+    let transportAdmissionHoldText = formattedMs(sample.hostMetrics?.transportAdmissionActiveHoldMs)
     let awdlQualityReductionText = sample.hostMetrics?.awdlQualityReductionAllowed.map { $0 ? "true" : "false" } ?? "--"
     let videoIngress = sample.videoIngressMetrics
     let decoderFormat = sample.decoderOutputPixelFormat ?? "unknown"
@@ -302,6 +304,9 @@ func clientStreamingAnomalyDiagnostic(
         "decoderFormat=\(decoderFormat) hardwareDecoder=\(hardwareDecoderText) " +
         "hostEncoded=\(hostEncodedText)fps hostCapture=\(hostCaptureText)fps " +
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +
+        "transportAdmissionSkips=\(transportAdmissionSkipsText) " +
+        "transportAdmissionMode=\(sample.hostMetrics?.transportAdmissionMode ?? "--") " +
+        "transportAdmissionHold=\(transportAdmissionHoldText)ms " +
         "hostCaptureGapP99=\(hostCaptureGapP99Text)ms hostCaptureWorstGap=\(hostCaptureWorstGapText)ms " +
         "hostDisplayDrift=\(hostCaptureDriftText) virtualTimingSuspect=\(virtualTimingText) " +
         "hostAwdlState=\(sample.hostMetrics?.awdlPolicyState ?? "--") " +

@@ -22,6 +22,8 @@ struct HostCadencePressureDiagnosticSample: Sendable, Equatable {
     let sendCompletionAverageMs: Double
     let packetPacerAverageSleepMs: Double
     let transportDropCount: UInt64
+    let transportAdmissionSkips: UInt64
+    let transportAdmissionActiveHoldMs: Double
 
     init(
         targetFPS: Int,
@@ -36,7 +38,9 @@ struct HostCadencePressureDiagnosticSample: Sendable, Equatable {
         sendStartDelayAverageMs: Double = 0,
         sendCompletionAverageMs: Double = 0,
         packetPacerAverageSleepMs: Double = 0,
-        transportDropCount: UInt64 = 0
+        transportDropCount: UInt64 = 0,
+        transportAdmissionSkips: UInt64 = 0,
+        transportAdmissionActiveHoldMs: Double = 0
     ) {
         self.targetFPS = targetFPS
         self.frameBudgetMs = frameBudgetMs
@@ -51,6 +55,8 @@ struct HostCadencePressureDiagnosticSample: Sendable, Equatable {
         self.sendCompletionAverageMs = max(0, sendCompletionAverageMs)
         self.packetPacerAverageSleepMs = max(0, packetPacerAverageSleepMs)
         self.transportDropCount = transportDropCount
+        self.transportAdmissionSkips = transportAdmissionSkips
+        self.transportAdmissionActiveHoldMs = max(0, transportAdmissionActiveHoldMs)
     }
 
     init(metrics: StreamMetricsMessage) {
@@ -67,7 +73,9 @@ struct HostCadencePressureDiagnosticSample: Sendable, Equatable {
             sendStartDelayAverageMs: metrics.sendStartDelayAverageMs ?? 0,
             sendCompletionAverageMs: metrics.sendCompletionAverageMs ?? 0,
             packetPacerAverageSleepMs: metrics.packetPacerAverageSleepMs ?? 0,
-            transportDropCount: metrics.transportPressureDropCount
+            transportDropCount: metrics.transportPressureDropCount,
+            transportAdmissionSkips: metrics.transportAdmissionSkips ?? 0,
+            transportAdmissionActiveHoldMs: metrics.transportAdmissionActiveHoldMs ?? 0
         )
     }
 }
@@ -113,6 +121,10 @@ func hostCadencePressureDiagnostic(
         (captureFPS <= 0 || captureFPS + fpsGapGrace >= targetFPS)
     let encodedDeficit = encodedFPS > 0 && encodedFPS + fpsGapGrace < targetFPS
     guard encodedDeficit else { return nil }
+    guard sample.transportAdmissionSkips == 0,
+          sample.transportAdmissionActiveHoldMs <= 0 else {
+        return nil
+    }
 
     let transportAssessment = MirageTransportPressure.assess(
         sample: MirageTransportPressureSample(

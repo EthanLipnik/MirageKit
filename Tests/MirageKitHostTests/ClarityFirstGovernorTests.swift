@@ -177,6 +177,21 @@ struct ClarityFirstGovernorTests {
         #expect(await context.testCurrentFrameRate() == 60)
     }
 
+    @Test("Transport admission pressure demotes cadence before quality floor")
+    func transportAdmissionPressureDemotesCadenceBeforeQualityFloor() async {
+        let context = makeContext()
+        await context.configureForDynamicCadenceTest(
+            pressure: .observing,
+            quality: 0.80,
+            floor: 0.42
+        )
+        await context.configureSustainedTransportAdmissionPressureForTest(now: 10)
+
+        await context.applySustainedTransportAdmissionPressureIfNeeded(now: 10)
+
+        #expect(await context.testCurrentFrameRate() == 45)
+    }
+
     @Test("Recovered quality with headroom promotes cadence back toward base")
     func recoveredQualityWithHeadroomPromotesCadenceBackTowardBase() async {
         let context = makeContext()
@@ -268,6 +283,20 @@ private extension StreamContext {
 
     func testCurrentFrameRate() -> Int {
         currentFrameRate
+    }
+
+    func configureSustainedTransportAdmissionPressureForTest(now: CFAbsoluteTime) {
+        transportAdmissionPressureState = HostTransportAdmissionPressureState(
+            mode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidence: "soft:transport-backlog",
+            firstSkipTime: now - 0.2,
+            lastSkipTime: now,
+            activeUntil: now + 1.0,
+            skipBurstCount: 3,
+            lastMinimumFrameIntervalMs: 33.3,
+            lastStructuralStepTime: 0
+        )
     }
 }
 #endif

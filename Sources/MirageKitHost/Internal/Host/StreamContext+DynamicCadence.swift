@@ -61,6 +61,32 @@ extension StreamContext {
         }
     }
 
+    func applySustainedTransportAdmissionPressureIfNeeded(now: CFAbsoluteTime) async {
+        guard transportAdmissionPressureState.isActive(now: now) else { return }
+        guard now - transportAdmissionPressureState.lastStructuralStepTime >= 1.0 else { return }
+
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            let applied = await applyAwdlHostStructuralAdaptationIfNeeded(
+                reason: "transport-admission",
+                at: now
+            )
+            if applied {
+                transportAdmissionPressureState.lastStructuralStepTime = now
+            }
+            return
+        }
+
+        if await applyTransportAdmissionDynamicCadenceIfNeeded(now: now) {
+            transportAdmissionPressureState.lastStructuralStepTime = now
+            return
+        }
+
+        guard transportAdmissionPressureState.activeDuration(now: now) >= 2.0 else { return }
+        if await applyTransportAdmissionScaleStepIfNeeded(now: now) {
+            transportAdmissionPressureState.lastStructuralStepTime = now
+        }
+    }
+
     /// Pressure with quality already at the clarity floor means the quality
     /// lever is exhausted — trade frame rate next, never readability.
     private func shouldDemoteDynamicCadence(
@@ -123,12 +149,13 @@ extension StreamContext {
         return target
     }
 
+    @discardableResult
     private func applyDynamicCadenceStep(
         to target: Int,
         from currentRate: Int,
         direction: String,
         now: CFAbsoluteTime
-    ) async {
+    ) async -> Bool {
         if dynamicCadenceBaseFrameRate == nil {
             dynamicCadenceBaseFrameRate = currentRate
         }
@@ -150,8 +177,78 @@ extension StreamContext {
                     "floor=\(qualityFloor.formatted(.number.precision(.fractionLength(2)))) " +
                     "state=\(realtimePressureState.rawValue))"
             )
+            return true
         } catch {
             MirageLogger.error(.stream, error: error, message: "Dynamic cadence step failed: ")
+            return false
+        }
+    }
+
+    private func applyTransportAdmissionDynamicCadenceIfNeeded(now: CFAbsoluteTime) async -> Bool {
+        guard isRunning,
+              runtimeQualityAdjustmentEnabled,
+              !mediaPathProfile.usesAwdlRadioPolicy,
+              encoderConfig.codec != .proRes4444,
+              !isResizing else {
+            return false
+        }
+
+        let ladder = dynamicCadenceLadder()
+        guard ladder.count > 1,
+              currentFrameRate > (ladder.last ?? currentFrameRate),
+              now - lastDynamicCadenceStepTime >= 1.0,
+              let target = ladder.first(where: { $0 < currentFrameRate }) else {
+            return false
+        }
+        return await applyDynamicCadenceStep(
+            to: target,
+            from: currentFrameRate,
+            direction: "transport-admission-demote",
+            now: now
+        )
+    }
+
+    private func applyTransportAdmissionScaleStepIfNeeded(now: CFAbsoluteTime) async -> Bool {
+        guard isRunning,
+              runtimeQualityAdjustmentEnabled,
+              !mediaPathProfile.usesAwdlRadioPolicy,
+              encoderConfig.codec != .proRes4444,
+              !isResizing else {
+            return false
+        }
+
+        let ladder = dynamicCadenceLadder()
+        guard currentFrameRate <= (ladder.last ?? currentFrameRate) else { return false }
+        let baseScale = requestedStreamScale
+        guard baseScale > 0 else { return false }
+        let currentMultiplier = Double(streamScale / baseScale)
+        let targetMultiplier: Double
+        if currentMultiplier > 0.876 {
+            targetMultiplier = 0.875
+        } else if currentMultiplier > 0.751 {
+            targetMultiplier = 0.75
+        } else {
+            return false
+        }
+
+        do {
+            try await updateEmergencyRecoveryScale(
+                CGFloat(Double(baseScale) * targetMultiplier),
+                reason: "transport-admission",
+                advancesDimensionToken: true
+            )
+            if let onHostAdaptiveDesktopGeometryUpdate {
+                await onHostAdaptiveDesktopGeometryUpdate(streamID)
+            }
+            await encoder?.forceKeyframe()
+            MirageLogger.metrics(
+                "Transport admission structural scale step for stream \(streamID): " +
+                    "targetMultiplier=\(targetMultiplier.formatted(.number.precision(.fractionLength(3))))"
+            )
+            return true
+        } catch {
+            MirageLogger.error(.stream, error: error, message: "Transport admission scale step failed: ")
+            return false
         }
     }
 

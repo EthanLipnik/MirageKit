@@ -323,12 +323,6 @@ extension StreamContext {
             if !forceKeyframe { forceKeyframe = shouldEmitPendingKeyframe(queueBytes: queueBytes) }
 
             let frameAdmissionTime = CFAbsoluteTimeGetCurrent()
-            if !forceKeyframe, shouldSkipPFrameBeforeReservationForFreshness(now: frameAdmissionTime) {
-                backpressureDropIntervalCount += 1
-                droppedFrameCount += 1
-                await logStreamStatsIfNeeded()
-                continue
-            }
 
             if freshnessBurstActive {
                 if await exitFreshnessBurstIfNeeded(
@@ -373,23 +367,62 @@ extension StreamContext {
             }
 
             let isIdleFrame = frame.info.isIdleFrame
+            let admissionFreshnessPolicy = activeFrameFreshnessPolicy
+            let sourceStillAtAdmission = sourceIsStill(now: frameAdmissionTime, policy: admissionFreshnessPolicy)
+            let inputActiveAtAdmission = inputIsActive(now: frameAdmissionTime, policy: admissionFreshnessPolicy)
+            var admitsStillQualityProbe = false
             if isIdleFrame {
                 if forceKeyframe {
                     shouldAdmitIdleQualityProbeFrame = false
                 } else if shouldEncodeStillQualityProbeFrame(now: frameAdmissionTime) {
                     lastStillQualityProbeEncodeTime = frameAdmissionTime
                     shouldAdmitIdleQualityProbeFrame = false
+                    admitsStillQualityProbe = true
                 } else {
                     updateIdleQualityProbeAdmissionHint(now: frameAdmissionTime)
                     await logStreamStatsIfNeeded()
                     continue
                 }
+            } else if !forceKeyframe,
+                      shouldAdmitIdleQualityProbeFrame,
+                      sourceStillAtAdmission,
+                      !inputActiveAtAdmission,
+                      frame.info.dirtyPercentage <= 0.5 {
+                shouldAdmitIdleQualityProbeFrame = false
+                lastStillQualityProbeEncodeTime = frameAdmissionTime
+                admitsStillQualityProbe = true
+            }
+
+            if !forceKeyframe,
+               !admitsStillQualityProbe,
+               shouldSkipPFrameBeforeReservationForFreshness(now: frameAdmissionTime) {
+                backpressureDropIntervalCount += 1
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
+            }
+            if await shouldSkipPFrameForTransportAdmission(
+                forceKeyframe: forceKeyframe,
+                admitsStillQualityProbe: admitsStillQualityProbe,
+                now: frameAdmissionTime
+            ) {
+                await logStreamStatsIfNeeded()
+                continue
             }
             await applyMotionOnsetBudgetClampIfNeeded(
                 isIdleFrame: isIdleFrame,
                 dirtyPercentage: frame.info.dirtyPercentage,
                 now: frameAdmissionTime
             )
+            if await shouldSkipPFrameForPreEncodeBudgetAdmission(
+                frame: frame,
+                forceKeyframe: forceKeyframe,
+                admitsStillQualityProbe: admitsStillQualityProbe,
+                now: frameAdmissionTime
+            ) {
+                await logStreamStatsIfNeeded()
+                continue
+            }
 
             setContentRect(resolvedOutgoingContentRect(for: frame))
             enforceCaptureColorAttachments(on: frame.pixelBuffer)

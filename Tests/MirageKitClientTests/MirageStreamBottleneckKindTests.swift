@@ -54,6 +54,22 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .networkBound)
     }
 
+    @Test("Transport admission pacing classifies as network-bound")
+    func transportAdmissionPacingClassifiesAsNetworkBound() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostEncodedFPS = 30
+        snapshot.hostEncodeAttemptFPS = 30
+        snapshot.receivedFPS = 30
+        snapshot.decodedFPS = 30
+        snapshot.layerEnqueueFPS = 30
+        snapshot.uniqueLayerEnqueueFPS = 30
+        snapshot.clientVisibleFrameFPS = 30
+        snapshot.hostTransportAdmissionSkips = 30
+        snapshot.hostTransportAdmissionActiveHoldMs = 750
+
+        #expect(snapshot.bottleneckKind == .networkBound)
+    }
+
     @Test("Clean transport window clears prior network-bound classification inputs")
     func cleanTransportWindowClearsPriorNetworkBoundClassificationInputs() {
         var stressedSnapshot = baselineSnapshot()

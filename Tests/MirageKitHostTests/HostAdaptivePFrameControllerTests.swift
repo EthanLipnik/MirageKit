@@ -589,8 +589,8 @@ struct HostAdaptivePFrameControllerTests {
         #expect(inputBudget.reason == .encodedFrame)
     }
 
-    @Test("Large local input oversize drops before it stalls transport")
-    func largeLocalInputOversizeDropsBeforeItStallsTransport() throws {
+    @Test("Large local input oversize sends and drops quality for future frames")
+    func largeLocalInputOversizeSendsAndDropsQualityForFutureFrames() throws {
         var controller = HostAdaptivePFrameController()
         let decision = controller.evaluateEncodedFrame(
             byteCount: 360 * 1024,
@@ -616,9 +616,96 @@ struct HostAdaptivePFrameControllerTests {
         )
         let budget = try #require(decision.budgetDecision)
 
-        #expect(decision.admission == .dropPFrameStartChainRepair)
+        #expect(decision.admission == .sendWithQualityDrop)
         #expect(budget.reason == .encodedFrame)
         #expect(budget.quality < 0.60)
+    }
+
+    @Test("Pre-encode transport stress skips high-motion P-frame with budget drop")
+    func preEncodeTransportStressSkipsHighMotionPFrameWithBudgetDrop() throws {
+        var controller = HostAdaptivePFrameController()
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 120 * 1024,
+            wireBytes: 120 * 1024,
+            packetCount: packetCount(forWireBytes: 120 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 9.9
+        )
+
+        let decision = controller.evaluatePreEncodePFrame(
+            dirtyPercentage: 100,
+            inputActive: true,
+            sourceStill: false,
+            receiverHealthy: true,
+            senderHealthy: false,
+            queuedBytesAhead: 300 * 1024,
+            unstartedPFrameCount: 2,
+            receiverReassemblyBacklogFrames: 0,
+            receiverReassemblyBacklogBytes: 0,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 10
+        )
+        let budget = try #require(decision.budgetDecision)
+
+        #expect(decision.admission == .skipBeforeEncode)
+        #expect(budget.reason == .transportBacklog)
+        #expect(budget.quality < 0.60)
+    }
+
+    @Test("Pre-encode admission keeps mostly-still frames sendable")
+    func preEncodeAdmissionKeepsMostlyStillFramesSendable() {
+        var controller = HostAdaptivePFrameController()
+        let decision = controller.evaluatePreEncodePFrame(
+            dirtyPercentage: 0.5,
+            inputActive: false,
+            sourceStill: false,
+            receiverHealthy: false,
+            senderHealthy: false,
+            queuedBytesAhead: 300 * 1024,
+            unstartedPFrameCount: 2,
+            receiverReassemblyBacklogFrames: 1,
+            receiverReassemblyBacklogBytes: 64 * 1024,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 10
+        )
+
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
     }
 
     @Test("Input oversize within motion target sends before transport")

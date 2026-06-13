@@ -204,6 +204,7 @@ actor StreamContext {
     var encodeRejectedIntervalCount: UInt64 = 0
     var encodeErrorIntervalCount: UInt64 = 0
     var backpressureDropIntervalCount: UInt64 = 0
+    var transportAdmissionSkippedIntervalCount: UInt64 = 0
     var encodeSkipQueueFullIntervalCount: UInt64 = 0
     var encodeSkipDimensionIntervalCount: UInt64 = 0
     var encodeSkipInactiveIntervalCount: UInt64 = 0
@@ -262,6 +263,8 @@ actor StreamContext {
     nonisolated(unsafe) var encoderAverageEncodeMsSnapshot: Double = 0
     nonisolated(unsafe) var encoderInFlightCountSnapshot: Int = 0
     var backpressureActivatedAt: CFAbsoluteTime = 0
+    var transportFrameAdmissionState = HostTransportFrameAdmissionPolicy.State()
+    var transportAdmissionPressureState = HostTransportAdmissionPressureState()
     var transportSendErrorTimestamps: [CFAbsoluteTime] = []
     var lastTransportSendErrorRecoveryTime: CFAbsoluteTime = 0
     let transportSendErrorWindow: CFAbsoluteTime = 1.0

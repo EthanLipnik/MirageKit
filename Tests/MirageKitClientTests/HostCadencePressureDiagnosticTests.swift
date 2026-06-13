@@ -103,5 +103,30 @@ struct HostCadencePressureDiagnosticTests {
 
         #expect(diagnostic?.kind == .captureAdmissionPressure)
     }
+
+    @Test("Transport admission pacing suppresses host cadence pressure diagnostic")
+    func transportAdmissionPacingSuppressesHostCadencePressureDiagnostic() {
+        let diagnostic = hostCadencePressureDiagnostic(
+            sample: HostCadencePressureDiagnosticSample(
+                targetFPS: 60,
+                frameBudgetMs: 16.67,
+                encodedFPS: 29,
+                captureAdmissionDrops: 0,
+                averageEncodeMs: 11.5,
+                captureIngressFPS: 60,
+                captureFPS: 60,
+                encodeAttemptFPS: 29,
+                queueBytes: 0,
+                sendStartDelayAverageMs: 0.2,
+                sendCompletionAverageMs: 1.0,
+                packetPacerAverageSleepMs: 0.1,
+                transportDropCount: 0,
+                transportAdmissionSkips: 31,
+                transportAdmissionActiveHoldMs: 750
+            )
+        )
+
+        #expect(diagnostic == nil)
+    }
 }
 #endif

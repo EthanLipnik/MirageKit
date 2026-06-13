@@ -54,6 +54,13 @@ extension MirageClientMetricsStore {
             snapshot.hostAwdlQualityReductionAllowed = metrics.awdlQualityReductionAllowed
             snapshot.hostAwdlPacingBudgetBps = metrics.awdlHostPacingBudgetBps
             snapshot.hostCaptureAdmissionDrops = metrics.captureAdmissionDrops
+            snapshot.hostTransportAdmissionSkips = metrics.transportAdmissionSkips
+            snapshot.hostTransportAdmissionMode = metrics.transportAdmissionMode
+            snapshot.hostTransportAdmissionReason = metrics.transportAdmissionReason
+            snapshot.hostTransportAdmissionEvidence = metrics.transportAdmissionEvidence
+            snapshot.hostTransportAdmissionMinimumFrameIntervalMs = metrics.transportAdmissionMinimumFrameIntervalMs
+            snapshot.hostTransportAdmissionActiveHoldMs = metrics.transportAdmissionActiveHoldMs
+            snapshot.hostTransportAdmissionSkipBurstCount = metrics.transportAdmissionSkipBurstCount
             snapshot.hostFrameBudgetMs = metrics.frameBudgetMs
             snapshot.hostAverageEncodeMs = metrics.averageEncodeMs
             snapshot.hostCaptureIngressFPS = metrics.captureIngressFPS

@@ -340,7 +340,7 @@ extension StreamPacketSender {
     }
 
     /// Snapshot of sender delay, pacing, and drop telemetry for one reporting window.
-    struct TelemetrySnapshot {
+    struct TelemetrySnapshot: Sendable {
         let queuedBytes: Int
         let unstartedPFrameCount: Int
         let oldestUnstartedPFrameAgeMs: Double

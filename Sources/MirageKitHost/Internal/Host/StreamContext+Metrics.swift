@@ -113,6 +113,15 @@ extension StreamContext {
                 awdlQualityReductionAllowed: awdlPolicy?.qualityReductionAllowed,
                 awdlHostPacingBudgetBps: awdlPolicy?.hostPacingBudgetBps,
                 captureAdmissionDrops: captureDroppedIntervalCount,
+                transportAdmissionSkips: transportAdmissionSkippedIntervalCount,
+                transportAdmissionMode: transportAdmissionPressureState.mode.rawValue,
+                transportAdmissionReason: transportAdmissionPressureState.reason,
+                transportAdmissionEvidence: transportAdmissionPressureState.evidence,
+                transportAdmissionMinimumFrameIntervalMs: transportAdmissionPressureState.lastMinimumFrameIntervalMs,
+                transportAdmissionActiveHoldMs: transportAdmissionPressureState.activeHoldMs(
+                    now: CFAbsoluteTimeGetCurrent()
+                ),
+                transportAdmissionSkipBurstCount: transportAdmissionPressureState.skipBurstCount,
                 frameBudgetMs: frameBudgetMs,
                 averageEncodeMs: resolvedAverageEncodeMs,
                 captureIngressFPS: lastCaptureIngressFPS,

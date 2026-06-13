@@ -23,9 +23,28 @@ extension StreamContext {
     private static let encoderThroughputCleanBacklogSampleRatio = 1.50
     private static let highRefreshQualityBudgetFrameRate = 60
     private static let highRefreshQualityBudgetThresholdFrameRate = 100
+    private static let mostlyStillDirtyPercentage: Float = 1.0
     private static let lowMotionRampDirtyPercentage: Float = 6.0
     private static let lowMotionRampRequiredCleanFrames = 3
     private static let realtimePressureDecaySeconds: CFAbsoluteTime = 2.5
+
+    private enum EncodedFrameMotionClass {
+        case still
+        case mostlyStill
+        case lowMotion
+        case highMotion
+
+        var deliveryMode: HostFrameDeliveryMode {
+            switch self {
+            case .still,
+                 .mostlyStill,
+                 .lowMotion:
+                .lowMotionRamp
+            case .highMotion:
+                .realtime
+            }
+        }
+    }
 
     /// Advertised in stream metrics so clients know this host's realtime governor
     /// owns automatic bitrate and they should not run their own probe loop.
@@ -172,7 +191,8 @@ extension StreamContext {
 
             MirageLogger.metrics(
                 "Pipeline: ingress=\(ingressText)fps capture=\(captureText)fps drop=\(captureDroppedIntervalCount) " +
-                    "bp=\(backpressureDropIntervalCount) encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
+                    "bp=\(backpressureDropIntervalCount) transportSkip=\(transportAdmissionSkippedIntervalCount) " +
+                    "encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
                     "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
                     "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
                     "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
@@ -206,6 +226,7 @@ extension StreamContext {
         encodeRejectedIntervalCount = 0
         encodeErrorIntervalCount = 0
         backpressureDropIntervalCount = 0
+        transportAdmissionSkippedIntervalCount = 0
         encodeSkipQueueFullIntervalCount = 0
         encodeSkipDimensionIntervalCount = 0
         encodeSkipInactiveIntervalCount = 0
@@ -955,6 +976,78 @@ extension StreamContext {
         return decision
     }
 
+    func shouldSkipPFrameForPreEncodeBudgetAdmission(
+        frame: CapturedFrame,
+        forceKeyframe: Bool,
+        admitsStillQualityProbe: Bool,
+        now: CFAbsoluteTime
+    ) async -> Bool {
+        guard !forceKeyframe,
+              !admitsStillQualityProbe,
+              !frame.info.isIdleFrame,
+              runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else {
+            return false
+        }
+
+        let policy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: now, policy: policy)
+        let sourceStill = sourceIsStill(now: now, policy: policy)
+        let senderTelemetry = await packetSender?.telemetrySnapshot
+        let decision = adaptivePFrameController.evaluatePreEncodePFrame(
+            dirtyPercentage: frame.info.dirtyPercentage,
+            inputActive: inputActive,
+            sourceStill: sourceStill,
+            receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
+            senderHealthy: await senderFrameBudgetIsHealthy(now: now),
+            queuedBytesAhead: senderTelemetry?.queuedBytes ?? packetSender?.queuedByteCount ?? 0,
+            unstartedPFrameCount: senderTelemetry?.unstartedPFrameCount ?? 0,
+            receiverReassemblyBacklogFrames: receiverReassemblyBacklogFrames,
+            receiverReassemblyBacklogBytes: receiverReassemblyBacklogBytes,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+            awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(),
+            now: now
+        )
+
+        if let budgetDecision = decision.budgetDecision {
+            await applyFrameBudgetDecision(budgetDecision, now: now)
+        }
+
+        switch decision.admission {
+        case .send:
+            return false
+        case .sendWithFutureQualityDrop:
+            logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-quality-drop", now: now)
+            return false
+        case .skipBeforeEncode:
+            droppedFrameCount += 1
+            transportAdmissionSkippedIntervalCount += 1
+            let intervalMs = 1_000.0 / Double(max(1, currentFrameRate)) * 2.0
+            let admissionDecision = HostTransportFrameAdmissionPolicy.Decision(
+                admitsFrame: false,
+                mode: .softThrottle,
+                reason: decision.reason?.rawValue ?? HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+                evidence: "pre-encode:\(decision.reason?.rawValue ?? "budget")",
+                minimumFrameIntervalMs: intervalMs,
+                activeHoldMs: 0
+            )
+            transportAdmissionPressureState.noteSkip(admissionDecision, now: now)
+            logPreEncodePFrameAdmissionIfNeeded(decision, action: "skip", now: now)
+            await applySustainedTransportAdmissionPressureIfNeeded(now: now)
+            return true
+        }
+    }
+
     func handleDroppedPFrameForTransportBudget(
         byteCount: Int,
         wireBytes: Int,
@@ -1093,25 +1186,40 @@ extension StreamContext {
         timing: VideoEncoder.EncodedFrameTiming?,
         policy: HostFrameFreshnessPolicy
     ) -> HostFrameDeliveryMode {
+        motionClassForEncodedFrame(now: now, timing: timing, policy: policy).deliveryMode
+    }
+
+    private func motionClassForEncodedFrame(
+        now: CFAbsoluteTime,
+        timing: VideoEncoder.EncodedFrameTiming?,
+        policy: HostFrameFreshnessPolicy
+    ) -> EncodedFrameMotionClass {
         guard !inputIsActiveForEncodedFrame(now: now, timing: timing, policy: policy) else {
             lowMotionRampCandidateFrameCount = 0
-            return .realtime
+            return .highMotion
         }
         guard let timing else {
-            return sourceIsStill(now: now, policy: policy) ? .lowMotionRamp : .realtime
+            if sourceIsStill(now: now, policy: policy) {
+                lowMotionRampCandidateFrameCount = Self.lowMotionRampRequiredCleanFrames
+                return .still
+            }
+            lowMotionRampCandidateFrameCount = 0
+            return .highMotion
         }
         if timing.captureIsIdleFrame || sourceIsStillForEncodedFrame(now: now, timing: timing, policy: policy) {
             lowMotionRampCandidateFrameCount = Self.lowMotionRampRequiredCleanFrames
-            return .lowMotionRamp
+            return .still
+        }
+        if timing.captureDirtyPercentage <= Self.mostlyStillDirtyPercentage {
+            lowMotionRampCandidateFrameCount = Self.lowMotionRampRequiredCleanFrames
+            return .mostlyStill
         }
         if timing.captureDirtyPercentage <= Self.lowMotionRampDirtyPercentage {
             lowMotionRampCandidateFrameCount += 1
         } else {
             lowMotionRampCandidateFrameCount = 0
         }
-        return lowMotionRampCandidateFrameCount >= Self.lowMotionRampRequiredCleanFrames
-            ? .lowMotionRamp
-            : .realtime
+        return lowMotionRampCandidateFrameCount >= Self.lowMotionRampRequiredCleanFrames ? .lowMotion : .highMotion
     }
 
     func updateIdleQualityProbeAdmissionHint(now: CFAbsoluteTime) {
@@ -1196,12 +1304,12 @@ extension StreamContext {
 
         let previousQuality = activeQuality
         let targetQuality = max(qualityFloor, min(configuredQualityCeiling, qualityCeiling))
-        let raisedQuality = min(targetQuality, max(previousQuality + 0.08, previousQuality * 1.20))
+        let raisedQuality = targetQuality
         guard raisedQuality > previousQuality + 0.0001 else { return }
         activeQuality = raisedQuality
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(
-            "Still quality probe raised quality for stream \(streamID): " +
+            "Still quality probe restored quality for stream \(streamID): " +
                 "active=\(previousQuality.formatted(.number.precision(.fractionLength(2))))" +
                 "->\(activeQuality.formatted(.number.precision(.fractionLength(2)))) " +
                 "ceiling=\(targetQuality.formatted(.number.precision(.fractionLength(2)))) " +
@@ -1646,6 +1754,24 @@ extension StreamContext {
                 "activeWireBudget=\(budgetKB) activePacketBudget=\(packetBudgetText) " +
                 "cleanBaseline=\(baselineText) cleanBaselinePackets=\(baselinePacketText) " +
                 "allowedLogRatio=\(allowedText) absoluteRatio=\(ratioText)"
+        )
+    }
+
+    private func logPreEncodePFrameAdmissionIfNeeded(
+        _ decision: HostPreEncodePFrameAdmissionDecision,
+        action: String,
+        now: CFAbsoluteTime
+    ) {
+        guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
+        encodedFrameQualityLastLogTime = now
+        let predictedKB = (Double(decision.predictedWireBytes) / 1024.0)
+            .formatted(.number.precision(.fractionLength(1)))
+        let targetKB = (Double(decision.targetWireBytes) / 1024.0)
+            .formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.metrics(
+            "event=pre_encode_p_frame_admission stream=\(streamID) action=\(action) " +
+                "predictedWireKB=\(predictedKB) targetWireKB=\(targetKB) " +
+                "reason=\(decision.reason?.rawValue ?? "none")"
         )
     }
 
