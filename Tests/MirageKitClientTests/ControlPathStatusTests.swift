@@ -90,6 +90,22 @@ struct ControlPathStatusTests {
         #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 120)
     }
 
+    @MainActor
+    @Test("LLW path kind uses local WiFi media policy")
+    func llwPathKindUsesLocalWiFiMediaPolicy() {
+        let service = MirageClientService(deviceName: "Control Path LLW Test")
+        let snapshot = Self.snapshot(interfaceNames: ["llw0"], usesWiFi: true)
+
+        service.handleControlPathUpdate(snapshot)
+
+        #expect(service.currentControlPathKind == .awdl)
+        #expect(!service.currentMediaPathUsesAwdlRadioPolicy)
+        #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .lowestLatency)
+        #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .freshestFrame)
+        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(true) == true)
+        #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 120)
+    }
+
     @Test("Host metrics preserve unsupported realtime transport drops")
     func hostMetricsPreserveUnsupportedRealtimeTransportDrops() throws {
         let store = MirageClientMetricsStore()

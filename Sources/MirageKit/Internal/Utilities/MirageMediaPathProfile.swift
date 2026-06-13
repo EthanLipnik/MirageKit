@@ -59,6 +59,9 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
             if interfaces.hasBridge {
                 return .wired
             }
+            if interfaces.hasLowLatencyWireless && !interfaces.hasAWDL {
+                return .localWiFi
+            }
             return .awdlRadio
         }
         if interfaces.hasApplePrivateNCM {
@@ -108,8 +111,14 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         if interfaces.hasBridge {
             return .wired
         }
+        if interfaces.hasLowLatencyWireless && !interfaces.hasAWDL {
+            return .localWiFi
+        }
         if resolved == .proximityWiredLike && interfaces.names.isEmpty {
             return .proximityWiredLike
+        }
+        if resolved == .localWiFi && interfaces.names.isEmpty {
+            return .localWiFi
         }
         return .awdlRadio
     }

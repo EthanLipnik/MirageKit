@@ -223,8 +223,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Wi-Fi preference ranks mixed wired LAN and Wi-Fi before LLW")
-    func wifiPreferenceRanksMixedWiredLANAndWiFiBeforeLowLatencyWireless() {
+    @Test("Wi-Fi preference keeps LLW ahead of Wi-Fi while demoting AWDL")
+    func wifiPreferenceKeepsLowLatencyWirelessAheadOfWiFiWhileDemotingAwdl() {
         let service = MirageClientService(deviceName: "Test Device")
 
         #expect(
@@ -238,14 +238,18 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 service.controlSessionRouteRank(for: .wifiLAN)
         )
         #expect(
+            service.controlSessionRouteRank(for: .lowLatencyWireless) <
+                service.controlSessionRouteRank(for: .wifiLAN)
+        )
+        #expect(
             service.controlSessionRouteRank(for: .wifiLAN) <
-                service.controlSessionRouteRank(for: .lowLatencyWireless)
+                service.controlSessionRouteRank(for: .awdl)
         )
     }
 
     @MainActor
-    @Test("Client can prefer Wi-Fi LAN attempts before LLW while keeping wired proximity first")
-    func controlSessionAttemptsPreferWiFiBeforeLowLatencyWirelessWhenRequested() throws {
+    @Test("Client keeps LLW attempts before Wi-Fi while demoting AWDL")
+    func controlSessionAttemptsKeepLowLatencyWirelessBeforeWiFiWhileDemotingAwdl() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61046))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61047))
@@ -302,13 +306,12 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(attempts.map(\.routeTier) == [
             .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
             .bridge, .bridge, .bridge,
-            .wifiLAN, .wifiLAN, .wifiLAN,
             .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
+            .wifiLAN, .wifiLAN, .wifiLAN,
             .awdl, .awdl,
         ])
-        #expect(attempts.prefix(6).allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts[6..<9].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts[9..<12].allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.prefix(9).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[9..<12].allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.suffix(2).allSatisfy { $0.isPeerToPeerPreferred })
     }
 
@@ -892,8 +895,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Active AWDL route suppression filters low-latency wireless endpoints")
-    func activeAwdlRouteSuppressionFiltersLowLatencyWirelessEndpoints() throws {
+    @Test("Active AWDL route suppression does not filter low-latency wireless endpoints")
+    func activeAwdlRouteSuppressionDoesNotFilterLowLatencyWirelessEndpoints() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61058))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61059))
@@ -941,16 +944,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        let expectedFallbackUDPEndpoint: NWEndpoint = try .hostPort(
-            host: .ipv4(#require(IPv4Address("192.168.1.50"))),
-            port: udpPort
-        )
-
-        #expect(attempts.count == 3)
-        #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(!attempts.contains { $0.routeTier == .lowLatencyWireless })
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
-        #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
+        #expect(attempts.contains { $0.routeTier == .lowLatencyWireless })
+        #expect(attempts.prefix(3).allSatisfy { $0.routeTier == .lowLatencyWireless })
+        #expect(attempts.prefix(3).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.prefix(3).map(\.transportKind) == [.udp, .quic, .tcp])
     }
 
     @MainActor

@@ -105,7 +105,7 @@ struct HostMediaSendProfileRetuneTests {
             hostSnapshot: Self.snapshot(kind: .wifi),
             clientPathKind: .awdl,
             clientMediaPathProfile: .awdlRadio,
-            clientPathSignature: "status=satisfied|kind=awdl|media=awdlRadio|if=llw0"
+            clientPathSignature: "status=satisfied|kind=awdl|media=awdlRadio|if=awdl0"
         )
         host.mediaPathClientEvidenceByStreamID[42] = HostStreamMediaPathClientEvidence(policy: startPolicy)
 
@@ -116,6 +116,27 @@ struct HostMediaSendProfileRetuneTests {
 
         #expect(retunePolicy.transportPathKind == .awdl)
         #expect(retunePolicy.mediaPathProfile == .awdlRadio)
+    }
+
+    @Test("Active retune uses stored client LLW evidence as local WiFi")
+    @MainActor
+    func activeRetuneUsesStoredClientLlwEvidenceAsLocalWiFi() {
+        let host = MirageHostService(hostName: "Retune LLW Evidence Host")
+        let startPolicy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: Self.snapshot(kind: .wifi),
+            clientPathKind: .awdl,
+            clientMediaPathProfile: .awdlRadio,
+            clientPathSignature: "status=satisfied|kind=awdl|media=awdlRadio|if=llw0"
+        )
+        host.mediaPathClientEvidenceByStreamID[42] = HostStreamMediaPathClientEvidence(policy: startPolicy)
+
+        let retunePolicy = host.effectiveMediaPathPolicyForActiveMediaRetune(
+            hostSnapshot: Self.snapshot(kind: .wifi),
+            streamID: 42
+        )
+
+        #expect(retunePolicy.transportPathKind == .wifi)
+        #expect(retunePolicy.mediaPathProfile == .localWiFi)
     }
 
     private func makeContext(
@@ -151,12 +172,12 @@ struct HostMediaSendProfileRetuneTests {
         switch kind {
         case .awdl:
             MirageNetworkPathClassifier.classify(
-                interfaceNames: ["llw0"],
-                usesWiFi: true,
+                interfaceNames: ["awdl0"],
+                usesWiFi: false,
                 usesWired: false,
                 usesCellular: false,
                 usesLoopback: false,
-                usesOther: false,
+                usesOther: true,
                 status: "satisfied",
                 isExpensive: false,
                 isConstrained: false,

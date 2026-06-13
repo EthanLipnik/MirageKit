@@ -153,11 +153,11 @@ extension MirageClientService {
             1
         case .sameWiredEthernet:
             2
-        case .mixedEthernetSameLAN:
-            3
-        case .wifiLAN:
-            4
         case .lowLatencyWireless:
+            3
+        case .mixedEthernetSameLAN:
+            4
+        case .wifiLAN:
             5
         case .vpn:
             6
@@ -1115,11 +1115,11 @@ extension MirageClientService {
     }
 
     private static func isAwdlRadioInterfaceName(_ interfaceName: String) -> Bool {
-        interfaceName.hasPrefix("awdl") || interfaceName.hasPrefix("llw")
+        interfaceName.hasPrefix("awdl")
     }
 
     private static func isAwdlRadioRouteTier(_ routeTier: ControlSessionRouteTier) -> Bool {
-        routeTier == .awdl || routeTier == .lowLatencyWireless
+        routeTier == .awdl
     }
 }
 
@@ -1155,10 +1155,6 @@ private extension MirageDebugRouteOverride {
                 attempt.routeTier == .bridge ||
                 attempt.requiredInterfaceType == .wiredEthernet
         }
-    }
-
-    private static func isAwdlRadioInterfaceName(_ interfaceName: String) -> Bool {
-        interfaceName.hasPrefix("awdl") || interfaceName.hasPrefix("llw")
     }
 }
 

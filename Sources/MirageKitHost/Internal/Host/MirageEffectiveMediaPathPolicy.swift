@@ -118,6 +118,12 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         signature: String?
     ) -> MirageMediaPathProfile? {
         guard kind == .awdl else { return nil }
+        if profile == .vpnOrOverlay {
+            return .vpnOrOverlay
+        }
+        if pathSignatureHasLowLatencyWireless(signature) && !pathSignatureHasAWDL(signature) {
+            return .localWiFi
+        }
         if profile.usesAwdlRadioPolicy {
             return .awdlRadio
         }
@@ -129,9 +135,10 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         case .vpnOrOverlay:
             return .vpnOrOverlay
         case .awdlRadio,
-             .localWiFi,
              .other,
              .unknown:
+            return .awdlRadio
+        case .localWiFi:
             return .awdlRadio
         }
     }
@@ -146,6 +153,14 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         interfaceNames(from: signature).contains {
             $0.hasPrefix("bridge") || $0.contains("thunderbolt")
         }
+    }
+
+    private static func pathSignatureHasLowLatencyWireless(_ signature: String?) -> Bool {
+        interfaceNames(from: signature).contains { $0.hasPrefix("llw") }
+    }
+
+    private static func pathSignatureHasAWDL(_ signature: String?) -> Bool {
+        interfaceNames(from: signature).contains { $0.hasPrefix("awdl") }
     }
 
     private static func interfaceNames(from signature: String?) -> [String] {
@@ -172,6 +187,9 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         }
         if resolvedProfile.usesAwdlRadioPolicy {
             return .awdl
+        }
+        if resolvedProfile == .localWiFi, clientKind == .awdl {
+            return .wifi
         }
         if clientPolicyKind != .unknown {
             return clientPolicyKind

@@ -99,12 +99,25 @@ struct MirageEffectiveMediaPathPolicyTests {
                 hostSnapshot: hostSnapshot,
                 clientPathKind: .awdl,
                 clientMediaPathProfile: .awdlRadio,
-                clientPathSignature: "status=satisfied|kind=awdl|media=awdlRadio|if=llw0"
+                clientPathSignature: "status=satisfied|kind=awdl|media=awdlRadio|if=awdl0"
             )
 
             #expect(policy.transportPathKind == .awdl)
             #expect(policy.mediaPathProfile == .awdlRadio)
         }
+    }
+
+    @Test("Stored client LLW evidence resolves local WiFi policy")
+    func storedClientLlwEvidenceResolvesLocalWiFiPolicy() {
+        let policy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: Self.snapshot(kind: .wifi),
+            clientPathKind: .awdl,
+            clientMediaPathProfile: .awdlRadio,
+            clientPathSignature: "status=satisfied|kind=awdl|media=awdlRadio|if=llw0"
+        )
+
+        #expect(policy.transportPathKind == .wifi)
+        #expect(policy.mediaPathProfile == .localWiFi)
     }
 
     @Test("AWDL resolved media path selects proximity realtime display queue")
@@ -139,8 +152,8 @@ struct MirageEffectiveMediaPathPolicyTests {
         )
     }
 
-    @Test("Low-latency wireless host snapshot resolves AWDL radio policy")
-    func lowLatencyWirelessHostSnapshotResolvesAwdlRadioPolicy() {
+    @Test("Low-latency wireless host snapshot resolves local WiFi policy")
+    func lowLatencyWirelessHostSnapshotResolvesLocalWiFiPolicy() {
         let hostSnapshot = MirageNetworkPathClassifier.classify(
             interfaceNames: ["llw0"],
             usesWiFi: true,
@@ -156,7 +169,7 @@ struct MirageEffectiveMediaPathPolicyTests {
         )
 
         #expect(hostSnapshot.kind == .awdl)
-        #expect(hostSnapshot.mediaProfile == .awdlRadio)
+        #expect(hostSnapshot.mediaProfile == .localWiFi)
 
         let policy = MirageEffectiveMediaPathPolicy.resolve(
             hostSnapshot: hostSnapshot,
@@ -165,9 +178,22 @@ struct MirageEffectiveMediaPathPolicyTests {
             clientPathSignature: "client-wifi"
         )
 
-        #expect(policy.transportPathKind == .awdl)
-        #expect(policy.mediaPathProfile == .awdlRadio)
-        #expect(LoomAuthenticatedSession.mirageMediaSendProfile(for: policy.mediaPathProfile) == .proximityRealtimeDisplay)
+        #expect(policy.transportPathKind == .wifi)
+        #expect(policy.mediaPathProfile == .localWiFi)
+        #expect(LoomAuthenticatedSession.mirageMediaSendProfile(for: policy.mediaPathProfile) == .interactiveMedia)
+    }
+
+    @Test("AWDL proximity claim with LLW signature resolves local WiFi policy")
+    func awdlProximityClaimWithLlwSignatureResolvesLocalWiFiPolicy() {
+        let policy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: Self.snapshot(kind: .wired),
+            clientPathKind: .awdl,
+            clientMediaPathProfile: .proximityWiredLike,
+            clientPathSignature: "status=satisfied|kind=awdl|media=proximityWiredLike|if=llw0"
+        )
+
+        #expect(policy.transportPathKind == .wifi)
+        #expect(policy.mediaPathProfile == .localWiFi)
     }
 
     @Test("AWDL proximity claim without NCM signature resolves radio policy")
@@ -176,7 +202,7 @@ struct MirageEffectiveMediaPathPolicyTests {
             hostSnapshot: Self.snapshot(kind: .wired),
             clientPathKind: .awdl,
             clientMediaPathProfile: .proximityWiredLike,
-            clientPathSignature: "status=satisfied|kind=awdl|media=proximityWiredLike|if=llw0"
+            clientPathSignature: "status=satisfied|kind=awdl|media=proximityWiredLike|if=awdl0"
         )
 
         #expect(policy.transportPathKind == .awdl)

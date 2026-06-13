@@ -187,8 +187,12 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
     /// Whether the active path uses Apple's AWDL radio interface.
     public var usesAwdlRadioInterface: Bool {
-        interfaceNames.containsInterfaceName(withPrefix: "awdl") ||
-            interfaceNames.containsInterfaceName(withPrefix: "llw")
+        interfaceNames.containsInterfaceName(withPrefix: "awdl")
+    }
+
+    /// Whether the active path uses Apple's low-latency wireless interface.
+    public var usesLowLatencyWirelessInterface: Bool {
+        interfaceNames.containsInterfaceName(withPrefix: "llw")
     }
 
     /// Whether the active path uses a Thunderbolt Bridge-style wired interface.
@@ -223,20 +227,20 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         let normalizedNames = interfaceNames.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
+        let hasAWDL = normalizedNames.contains { $0.hasPrefix("awdl") }
+        let hasLowLatencyWireless = normalizedNames.contains { $0.hasPrefix("llw") }
         if mediaProfile == .proximityWiredLike,
            normalizedNames.contains(where: { $0.hasPrefix("anpi") || $0.hasPrefix("apni") }) {
             return .applePrivateNCM
-        }
-        if (mediaProfile == .proximityWiredLike || mediaProfile.usesAwdlRadioPolicy),
-           normalizedNames.contains(where: { $0.hasPrefix("llw") }) {
-            return .lowLatencyWireless
         }
         if mediaProfile == .wired,
            normalizedNames.contains(where: { $0.contains("thunderbolt") || $0.contains("bridge") }) {
             return .thunderboltBridge
         }
-        if mediaProfile.usesAwdlRadioPolicy,
-           normalizedNames.contains(where: { $0.hasPrefix("awdl") }) {
+        if hasLowLatencyWireless && !hasAWDL {
+            return .lowLatencyWireless
+        }
+        if mediaProfile.usesAwdlRadioPolicy, hasAWDL {
             return .awdl
         }
         if mediaProfile == .vpnOrOverlay,

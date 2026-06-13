@@ -383,14 +383,15 @@ extension MirageClientService {
     }
 
     private static func isAwdlRadioInterfaceName(_ interfaceName: String) -> Bool {
-        interfaceName.hasPrefix("awdl") || interfaceName.hasPrefix("llw")
+        interfaceName.hasPrefix("awdl")
     }
 
     var currentMediaPathUsesAwdlRadioPolicy: Bool {
         guard let snapshot = controlPathSnapshot else { return false }
         return MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: snapshot.kind,
-            mediaPathProfile: snapshot.mediaProfile
+            mediaPathProfile: snapshot.mediaProfile,
+            interfaceNames: snapshot.interfaceNames
         ).usesAwdlRadioPolicy
     }
 
@@ -398,7 +399,8 @@ extension MirageClientService {
         guard let snapshot = controlPathSnapshot else { return nil }
         return MirageMediaPathProfile.resolveRealtimeProfile(
             pathKind: snapshot.kind,
-            mediaPathProfile: snapshot.mediaProfile
+            mediaPathProfile: snapshot.mediaProfile,
+            interfaceNames: snapshot.interfaceNames
         )
     }
 }

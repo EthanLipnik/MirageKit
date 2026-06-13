@@ -208,8 +208,8 @@ struct ClientNetworkPathStatusTests {
         #expect(status.displayName == "Thunderbolt Bridge")
     }
 
-    @Test("Low-latency wireless interfaces use AWDL realtime display policy")
-    func lowLatencyWirelessClassifierUsesAwdlRealtimeDisplayPolicy() {
+    @Test("Low-latency wireless interfaces use local Wi-Fi media policy")
+    func lowLatencyWirelessClassifierUsesLocalWiFiMediaPolicy() {
         let snapshot = MirageNetworkPathClassifier.classify(
             interfaceNames: ["llw0"],
             usesWiFi: true,
@@ -226,11 +226,29 @@ struct ClientNetworkPathStatusTests {
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
         #expect(snapshot.kind == .awdl)
-        #expect(snapshot.mediaProfile == .awdlRadio)
-        #expect(status.usesFixedRealtimeDisplayPolicy)
+        #expect(snapshot.mediaProfile == .localWiFi)
+        #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(!status.usesProximityWiredLikePolicy)
-        #expect(status.usesAwdlRadioInterface)
+        #expect(!status.usesAwdlRadioInterface)
+        #expect(status.usesLowLatencyWirelessInterface)
         #expect(status.displayName == "Low-Latency Wireless")
+    }
+
+    @Test("AWDL path kind with only LLW resolves local Wi-Fi media policy")
+    func awdlPathKindWithOnlyLowLatencyWirelessResolvesLocalWiFiMediaPolicy() {
+        let profile = MirageMediaPathProfile.classify(
+            pathKind: .awdl,
+            interfaceNames: ["llw0"],
+            usesWiFi: true
+        )
+        let resolved = MirageMediaPathProfile.resolveRealtimeProfile(
+            pathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            interfaceNames: ["llw0"]
+        )
+
+        #expect(profile == .localWiFi)
+        #expect(resolved == .localWiFi)
     }
 
     @Test("Wi-Fi baseline uses local Wi-Fi media policy")
