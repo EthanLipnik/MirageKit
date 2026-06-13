@@ -531,6 +531,8 @@ extension StreamContext {
             encodeSkipInactiveIntervalCount += 1
         case .noSession:
             encodeSkipNoSessionIntervalCount += 1
+        case .pixelFormatMismatch:
+            encodeSkipPixelFormatMismatchIntervalCount += 1
         }
     }
 

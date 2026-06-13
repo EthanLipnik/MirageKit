@@ -124,6 +124,7 @@ extension VideoEncoder {
             MirageLogger.error(.encoder, "VTSessionSetProperty \(key) failed: \(status)")
             return .failed
         }
+        appliedPropertyKeys.insert(key)
         return .applied
     }
 
@@ -150,6 +151,7 @@ extension VideoEncoder {
             MirageLogger.error(.encoder, "VTSessionSetProperty \(key)=nil failed: \(status)")
             return .failed
         }
+        appliedPropertyKeys.remove(key)
         return .applied
     }
 
@@ -163,6 +165,9 @@ extension VideoEncoder {
                 MirageLogger.encoder("Encoder property unsupported: \(key)")
             }
             return .unsupported
+        }
+        guard appliedPropertyKeys.contains(key) else {
+            return .applied
         }
 
         var existingValue: Unmanaged<CFTypeRef>?
@@ -190,6 +195,7 @@ extension VideoEncoder {
 
     nonisolated static let unsupportedEncoderPropertyStatuses: Set<OSStatus> = [
         -12900,
+        -12902,
     ]
 
     func setPropertyTracked(

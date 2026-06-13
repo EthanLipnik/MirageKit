@@ -194,7 +194,7 @@ extension StreamContext {
                     "bp=\(backpressureDropIntervalCount) transportSkip=\(transportAdmissionSkippedIntervalCount) " +
                     "encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
                     "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
-                    "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
+                    "session=\(encodeSkipNoSessionIntervalCount) pixelFormat=\(encodeSkipPixelFormatMismatchIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
                     "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
                     "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms encodeBacklogMax=\(encodeBacklogText)ms"
             )
@@ -231,6 +231,7 @@ extension StreamContext {
         encodeSkipDimensionIntervalCount = 0
         encodeSkipInactiveIntervalCount = 0
         encodeSkipNoSessionIntervalCount = 0
+        encodeSkipPixelFormatMismatchIntervalCount = 0
         syntheticIntervalCount = 0
         worstEncodeStartCaptureAgeMs = 0
     }

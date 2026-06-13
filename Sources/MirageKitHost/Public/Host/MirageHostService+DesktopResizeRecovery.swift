@@ -36,7 +36,7 @@ extension MirageHostService {
                 hasPreResizeSnapshot: preResizeSnapshot != nil
             ) {
             case .rollbackToLastKnownGood:
-                MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
+                MirageLogger.host("Desktop resize failed; attempting rollback: \(resizeError)")
                 if let preResizeSnapshot {
                     do {
                         let restoredContext = try await rollbackDesktopResolutionChange(
@@ -60,24 +60,29 @@ extension MirageHostService {
                                 expectedPixelResolution: restoredSnapshot.resolution
                             )
                             if !mirroringRestored {
-                                throw MirageError.protocolError(
-                                    "Unified desktop resize rollback could not restore display mirroring"
+                                MirageLogger.host(
+                                    "Unified desktop resize rollback could not restore display mirroring; " +
+                                        "switching to main display fallback"
                                 )
+                                completionContext = try await switchDesktopStreamToMainDisplayFallback(
+                                    streamID: streamID,
+                                    request: request,
+                                    context: restoredContext,
+                                    reason: "desktop_resize_mirroring_restore_failed"
+                                )
+                                outcome = .rolledBack
+                                shouldRestoreMirroring = false
                             }
-                            shouldRestoreMirroring = false
                         }
                     } catch {
-                        MirageLogger.error(
-                            .host,
-                            error: error,
-                            message: "Failed to roll back desktop resize to the last known good resolution: "
-                        )
+                        MirageLogger.host("Desktop resize recovery failed after rollback attempt: \(error)")
                         shouldStopStreamWithError = true
                     }
                 } else {
                     shouldStopStreamWithError = true
                 }
             case .mainDisplayFallback:
+                MirageLogger.host("Desktop resize failed; attempting main display fallback: \(resizeError)")
                 do {
                     let fallbackContext = try await switchDesktopStreamToMainDisplayFallback(
                         streamID: streamID,
@@ -90,16 +95,17 @@ extension MirageHostService {
                     shouldRestoreMirroring = false
                 } catch {
                     MirageLogger.host("Main display fallback after desktop resize failure was unavailable: \(error)")
-                    MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
                     shouldStopStreamWithError = true
                 }
             case .stopStream:
-                MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
                 shouldStopStreamWithError = true
             }
         } else {
-            MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
             shouldStopStreamWithError = streamID == desktopStreamID
+        }
+
+        if shouldStopStreamWithError {
+            MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
         }
 
         return DesktopResizeFailureHandlingResult(

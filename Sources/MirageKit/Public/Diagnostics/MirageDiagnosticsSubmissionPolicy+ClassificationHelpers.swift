@@ -135,6 +135,9 @@ extension MirageDiagnosticsSubmissionPolicy {
             [
                 "failed to send input",
                 "failed to send session state",
+                "failed to send desktopstreamstopped",
+                "failed to close audio stream",
+                "failed to close video stream",
                 "audio transport send failed",
                 "failed reopening audio transport",
                 "control channel closed",

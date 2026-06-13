@@ -223,6 +223,16 @@ public enum MirageDiagnosticsSubmissionPolicy {
             )
         }
 
+        if lowercasedMessage.contains("ultra color depth validation failed") &&
+            lowercasedMessage.contains("downgrading to pro") {
+            return breadcrumbOnly(
+                issueKind: "ultra-color-depth-validation",
+                failureStage: "runtime-validation",
+                recoveryOutcome: "recovered",
+                fallbackUsed: "pro-color-depth"
+            )
+        }
+
         if lowercasedMessage.contains("display current space restore remained incomplete") {
             return breadcrumbOnly(
                 issueKind: "display-space-restore",

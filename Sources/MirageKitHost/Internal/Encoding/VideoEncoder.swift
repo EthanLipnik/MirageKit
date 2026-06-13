@@ -90,6 +90,7 @@ actor VideoEncoder {
     var supportedPropertyKeys: Set<CFString> = []
     var didQuerySupportedProperties = false
     var loggedUnsupportedKeys: Set<CFString> = []
+    var appliedPropertyKeys: Set<CFString> = []
     var didLogPixelFormat = false
     var baseQuality: Float
     var qualityOverrideActive = false

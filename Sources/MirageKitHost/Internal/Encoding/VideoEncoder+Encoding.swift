@@ -47,6 +47,9 @@ enum EncodeSkipReason: String {
 
     /// The encoder in-flight limit is already full.
     case queueFull = "queue full"
+
+    /// The captured frame pixel format does not match the active compression session.
+    case pixelFormatMismatch = "pixel format mismatch"
 }
 
 /// Admission result for a captured frame entering the encoder.
@@ -85,17 +88,21 @@ extension VideoEncoder {
         let pixelBuffer = frame.pixelBuffer
 
         let bufferPixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        if !didLogPixelFormat {
-            let bufferFourCC = Self.fourCCString(bufferPixelFormat)
-            let sessionFourCC = Self.fourCCString(pixelFormatType)
-            if bufferPixelFormat != pixelFormatType {
-                MirageLogger.error(
-                    .encoder,
-                    "Pixel format mismatch. Buffer=\(bufferFourCC) (\(bufferPixelFormat)) session=\(sessionFourCC) (\(pixelFormatType))"
+        let sessionPixelFormat = pixelFormatType
+        let bufferFourCC = Self.fourCCString(bufferPixelFormat)
+        let sessionFourCC = Self.fourCCString(sessionPixelFormat)
+        if bufferPixelFormat != sessionPixelFormat {
+            if !didLogPixelFormat {
+                MirageLogger.encoder(
+                    "Pixel format mismatch. Buffer=\(bufferFourCC) (\(bufferPixelFormat)) session=\(sessionFourCC) (\(sessionPixelFormat)); dropping frame"
                 )
-            } else {
-                MirageLogger.encoder("Pixel format match: \(bufferFourCC) (\(bufferPixelFormat))")
+                didLogPixelFormat = true
             }
+            return .skipped(.pixelFormatMismatch)
+        }
+
+        if !didLogPixelFormat {
+            MirageLogger.encoder("Pixel format match: \(bufferFourCC) (\(bufferPixelFormat))")
             didLogPixelFormat = true
         }
 

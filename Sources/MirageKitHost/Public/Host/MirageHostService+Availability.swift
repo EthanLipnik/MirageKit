@@ -9,6 +9,7 @@
 
 import Loom
 import MirageKit
+import Network
 
 #if os(macOS)
 @MainActor
@@ -65,7 +66,10 @@ extension MirageHostService {
         }
 
         await loomNode.updateAdvertisement(updatedAdvertisement)
-        notifyCloudKitLocalEndpointHintChangedIfNeeded()
+        notifyCloudKitLocalEndpointHintChangedIfNeeded(
+            localEndpointHosts: localNetworkMonitor.localEndpointHosts,
+            localNetworkSnapshot: localNetworkSnapshot
+        )
     }
 
     /// Updates host maintenance availability while a software update is active.
@@ -118,8 +122,19 @@ extension MirageHostService {
         )
     }
 
-    private func notifyCloudKitLocalEndpointHintChangedIfNeeded() {
-        let fingerprint = Self.cloudKitLocalEndpointHintFingerprint(currentCloudKitPeerAdvertisement())
+    private func notifyCloudKitLocalEndpointHintChangedIfNeeded(
+        localEndpointHosts: [NWEndpoint.Host],
+        localNetworkSnapshot: MirageLocalNetworkSnapshot
+    ) {
+        guard onCloudKitLocalEndpointHintChanged != nil else { return }
+        let fingerprint = Self.cloudKitLocalEndpointHintFingerprint(
+            localEndpointHosts: localEndpointHosts,
+            localNetworkSnapshot: localNetworkSnapshot
+        )
+        notifyCloudKitLocalEndpointHintChangedIfNeeded(fingerprint: fingerprint)
+    }
+
+    private func notifyCloudKitLocalEndpointHintChangedIfNeeded(fingerprint: String?) {
         guard fingerprint != lastCloudKitLocalEndpointHintFingerprint else { return }
         lastCloudKitLocalEndpointHintFingerprint = fingerprint
         guard fingerprint != nil else { return }
@@ -127,16 +142,37 @@ extension MirageHostService {
     }
 
     private static func cloudKitLocalEndpointHintFingerprint(
-        _ advertisement: LoomPeerAdvertisement
+        localEndpointHosts: [NWEndpoint.Host],
+        localNetworkSnapshot: MirageLocalNetworkSnapshot
     ) -> String? {
-        guard let hint = advertisement.mirageLocalNetworkEndpointHints.first else {
+        let hosts = normalizedLocalEndpointHosts(localEndpointHosts)
+        let networkSignatures = MirageLocalNetworkSnapshot.subnetSignatureSet(
+            wifiSubnetSignatures: localNetworkSnapshot.wifiSubnetSignatures,
+            wiredSubnetSignatures: localNetworkSnapshot.wiredSubnetSignatures
+        )
+        guard !hosts.isEmpty, !networkSignatures.isEmpty else {
             return nil
         }
         return [
-            hint.network.wifiSubnetSignatures.joined(separator: ","),
-            hint.network.wiredSubnetSignatures.joined(separator: ","),
-            hint.hosts.joined(separator: ","),
+            localNetworkSnapshot.wifiSubnetSignatures.joined(separator: ","),
+            localNetworkSnapshot.wiredSubnetSignatures.joined(separator: ","),
+            hosts.joined(separator: ","),
         ].joined(separator: "|")
+    }
+
+    private static func normalizedLocalEndpointHosts(_ hosts: [NWEndpoint.Host]) -> [String] {
+        var seenHosts = Set<String>()
+        var normalizedHosts: [String] = []
+        for host in hosts {
+            let hostString = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let address = IPv4Address(hostString),
+                  MirageEndpointClassifier.classify(.ipv4(address)) == .privateLAN,
+                  seenHosts.insert(hostString).inserted else {
+                continue
+            }
+            normalizedHosts.append(hostString)
+        }
+        return normalizedHosts
     }
 
     static func advertisement(

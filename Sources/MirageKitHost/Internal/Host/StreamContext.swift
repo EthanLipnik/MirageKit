@@ -209,6 +209,7 @@ actor StreamContext {
     var encodeSkipDimensionIntervalCount: UInt64 = 0
     var encodeSkipInactiveIntervalCount: UInt64 = 0
     var encodeSkipNoSessionIntervalCount: UInt64 = 0
+    var encodeSkipPixelFormatMismatchIntervalCount: UInt64 = 0
     var lastPipelineStatsLogTime: CFAbsoluteTime = 0
     var pipelineStatsLogScheduled = false
     let pipelineStatsInterval: CFAbsoluteTime = 2.0

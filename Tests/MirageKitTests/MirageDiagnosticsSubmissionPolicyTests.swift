@@ -194,6 +194,39 @@ struct MirageDiagnosticsSubmissionPolicyTests {
         #expect(classification.issueKind == "expected-transport-close")
     }
 
+    @Test("Expected host stream cleanup closures stay breadcrumb-only")
+    func expectedHostStreamCleanupClosuresStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "host",
+                message: "Failed to close video stream 2: ",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "Loom.LoomError",
+                    domain: "Loom.LoomError",
+                    code: 3
+                )
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "expected-transport-close")
+    }
+
+    @Test("Successful Ultra validation downgrades stay breadcrumb-only")
+    func successfulUltraValidationDowngradesStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "stream",
+                message: "Ultra color depth validation failed for stream 2: pixelFormat=10-bit (xf44), chroma=4:2:0, profile=automatic; downgrading to Pro"
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "ultra-color-depth-validation")
+        #expect(classification.recoveryOutcome == "recovered")
+        #expect(classification.fallbackUsed == "pro-color-depth")
+    }
+
     @Test("Protocol incompatibility is breadcrumb-only")
     func protocolIncompatibilityIsBreadcrumbOnly() {
         let classification = MirageDiagnosticsSubmissionPolicy.classification(

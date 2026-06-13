@@ -29,6 +29,15 @@ actor CursorMonitor {
     /// Maximum interval between cursor position heartbeats when the cursor has not moved.
     private static let positionHeartbeatInterval: CFAbsoluteTime = 0.5
 
+    /// Maximum rate for cursor-shape API sampling; position still updates at the stream cadence.
+    private static let cursorShapeRefreshInterval: CFAbsoluteTime = 1.0 / 30.0
+
+    /// Cursor-shape samples slower than this trigger a short backoff before the next shape query.
+    private static let slowCursorShapeSampleThresholdMilliseconds: Double = 25.0
+
+    /// Backoff applied after a slow cursor-shape sample.
+    private static let slowCursorShapeSampleBackoffInterval: CFAbsoluteTime = 0.25
+
     /// Delay between cursor samples.
     private let pollingInterval: TimeInterval
 
@@ -53,6 +62,10 @@ actor CursorMonitor {
 
     /// Wall-clock time of the most recent cursor position update for each stream.
     private var lastCursorPositionSentAt: [StreamID: CFAbsoluteTime] = [:]
+
+    /// Cached cursor shape reused between throttled AppKit cursor-shape samples.
+    private var cachedCursorShape: (cursorType: MirageCursorType, source: String)?
+    private var nextCursorShapeRefreshTime: CFAbsoluteTime = 0
 
     /// Callback invoked when a stream's cursor shape or visibility changes.
     private var onCursorChange: (@Sendable (StreamID, MirageCursorType, Bool, CFAbsoluteTime) async -> Void)?
@@ -112,6 +125,8 @@ actor CursorMonitor {
         clearTrackedStreamState()
         cachedStreams.removeAll()
         lastWindowFrameRefreshTime = 0
+        cachedCursorShape = nil
+        nextCursorShapeRefreshTime = 0
         onCursorChange = nil
         onCursorPosition = nil
     }
@@ -222,12 +237,17 @@ actor CursorMonitor {
     }
 
     private func currentCursorSample() async -> CursorSample {
-        await MainActor.run {
+        let now = CFAbsoluteTimeGetCurrent()
+        let shouldRefreshShape = cachedCursorShape == nil || now >= nextCursorShapeRefreshTime
+        let cachedShape = cachedCursorShape
+        let sample = await MainActor.run {
             let sampleStart = CFAbsoluteTimeGetCurrent()
             let mouseLocation = NSEvent.mouseLocation
-            let resolvedCursor = Self.resolvedCursorType(
-                currentSystemCursor: NSCursor.currentSystem
-            )
+            let resolvedCursor = if shouldRefreshShape {
+                Self.resolvedCursorType(currentSystemCursor: NSCursor.currentSystem)
+            } else {
+                cachedShape ?? Self.resolvedCursorType(currentSystemCursor: nil)
+            }
             return CursorSample(
                 mouseLocation: mouseLocation,
                 cursorType: resolvedCursor.cursorType,
@@ -236,6 +256,14 @@ actor CursorMonitor {
                 sampleMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: sampleStart)
             )
         }
+        if shouldRefreshShape {
+            cachedCursorShape = (sample.cursorType, sample.source)
+            let interval = sample.sampleMilliseconds >= Self.slowCursorShapeSampleThresholdMilliseconds
+                ? Self.slowCursorShapeSampleBackoffInterval
+                : Self.cursorShapeRefreshInterval
+            nextCursorShapeRefreshTime = sample.sampledAt + interval
+        }
+        return sample
     }
 
     private func shouldSendCursorPosition(streamID: StreamID, position: CGPoint, now: CFAbsoluteTime) -> Bool {

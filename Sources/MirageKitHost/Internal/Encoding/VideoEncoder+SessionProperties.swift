@@ -217,6 +217,7 @@ extension VideoEncoder {
         guard status == noErr, let session else { throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
 
         hardwareStatusRefreshAttempts = 0
+        appliedPropertyKeys = []
         loadSupportedProperties(session)
         try configureSession(session, width: width, height: height)
         logHardwareStatus(session, reason: "session_create")
