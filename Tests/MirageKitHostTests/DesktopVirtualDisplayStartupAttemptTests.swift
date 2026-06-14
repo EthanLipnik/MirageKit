@@ -85,8 +85,8 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         #expect(!attempts[0].isCachedTarget)
     }
 
-    @Test("Startup attempts prefer Retina equivalent for large 1x requests")
-    func startupAttemptsPreferRetinaEquivalentForLargeOneXRequests() {
+    @Test("Startup attempts never request Retina for large 1x requests")
+    func startupAttemptsNeverRequestRetinaForLargeOneXRequests() {
         let plan = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 2304, height: 1296),
             requestedScaleFactor: 1.0,
@@ -105,13 +105,11 @@ struct DesktopVirtualDisplayStartupAttemptTests {
             requestedColorSpace: .sRGB
         ).attempts
 
-        #expect(attempts.count == 2)
-        #expect(attempts[0].label == "retina-equivalent")
-        #expect(attempts[0].backingScale.scaleFactor == 2.0)
+        #expect(attempts.count == 1)
+        #expect(attempts[0].label == "primary")
+        #expect(attempts[0].backingScale.scaleFactor == 1.0)
         #expect(attempts[0].backingScale.pixelResolution == CGSize(width: 2304, height: 1296))
-        #expect(attempts[1].label == "primary")
-        #expect(attempts[1].backingScale.scaleFactor == 1.0)
-        #expect(attempts[1].backingScale.pixelResolution == CGSize(width: 2304, height: 1296))
+        #expect(!attempts.contains { $0.backingScale.scaleFactor > 1.5 })
     }
 
     @Test("Degraded startup targets are not persisted as preferred cache entries")

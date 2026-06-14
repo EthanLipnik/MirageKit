@@ -187,7 +187,7 @@ extension MirageClientService {
         )
     }
 
-    func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
+    public func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
         let alignedViewSize = MirageStreamGeometry.normalizedLogicalSize(viewSize)
         guard alignedViewSize.width > 0, alignedViewSize.height > 0 else { return .zero }
 
