@@ -7,20 +7,11 @@
 //  Runtime construction of CGVirtualDisplay modes and settings.
 //
 
-import CoreVideo
 import Foundation
 import MirageKit
 
 #if os(macOS)
 extension CGVirtualDisplayBridge {
-    private static let transferFunctionCodeSRGB = UInt32(
-        CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_sRGB)
-    )
-    private static let transferFunctionCode709 = UInt32(
-        CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2)
-    )
-    private static let transferFunctionCodeUnknown: UInt32 = 2
-
     struct ModeActivationAttempt {
         let modeWidth: Int
         let modeHeight: Int
@@ -29,7 +20,6 @@ extension CGVirtualDisplayBridge {
     }
 
     struct TransferFunctionAttempt {
-        let code: UInt32
         let label: String
     }
 
@@ -38,8 +28,7 @@ extension CGVirtualDisplayBridge {
         modeClass: NSObject.Type,
         width: Int,
         height: Int,
-        refreshRate: Double,
-        transferFunction: UInt32
+        refreshRate: Double
     )
     -> AnyObject? {
         let allocSelector = NSSelectorFromString("alloc")
@@ -48,52 +37,22 @@ extension CGVirtualDisplayBridge {
             return nil
         }
 
-        let initWithTransferFunctionSelector = NSSelectorFromString("initWithWidth:height:refreshRate:transferFunction:")
         let initSelector = NSSelectorFromString("initWithWidth:height:refreshRate:")
-        let setTransferFunctionSelector = NSSelectorFromString("setTransferFunction:")
-
-        let initialized: AnyObject
-        if (allocatedMode as AnyObject).responds(to: initWithTransferFunctionSelector) {
-            typealias InitModeWithTransferFunctionIMP = @convention(c)
-                (AnyObject, Selector, UInt32, UInt32, Double, UInt32) -> Unmanaged<AnyObject>
-            let initIMP = (allocatedMode as AnyObject).method(for: initWithTransferFunctionSelector)
-            let initialize = unsafeBitCast(initIMP, to: InitModeWithTransferFunctionIMP.self)
-            initialized = initialize(
-                allocatedMode as AnyObject,
-                initWithTransferFunctionSelector,
-                UInt32(width),
-                UInt32(height),
-                refreshRate,
-                transferFunction
-            ).takeRetainedValue()
-        } else {
-            guard (allocatedMode as AnyObject).responds(to: initSelector) else {
-                MirageLogger.error(
-                    .host,
-                    "CGVirtualDisplayMode doesn't respond to initWithWidth:height:refreshRate: or initWithWidth:height:refreshRate:transferFunction:"
-                )
-                return nil
-            }
-            typealias InitModeIMP = @convention(c) (AnyObject, Selector, UInt32, UInt32, Double) -> Unmanaged<AnyObject>
-            let initIMP = (allocatedMode as AnyObject).method(for: initSelector)
-            let initialize = unsafeBitCast(initIMP, to: InitModeIMP.self)
-            initialized = initialize(
-                allocatedMode as AnyObject,
-                initSelector,
-                UInt32(width),
-                UInt32(height),
-                refreshRate
-            ).takeRetainedValue()
+        guard (allocatedMode as AnyObject).responds(to: initSelector) else {
+            MirageLogger.error(.host, "CGVirtualDisplayMode doesn't respond to initWithWidth:height:refreshRate:")
+            return nil
         }
 
-        if (initialized as AnyObject).responds(to: setTransferFunctionSelector) {
-            typealias SetTransferFunctionIMP = @convention(c) (AnyObject, Selector, UInt32) -> Void
-            let setTransferFunctionIMP = (initialized as AnyObject).method(for: setTransferFunctionSelector)
-            let setTransferFunction = unsafeBitCast(setTransferFunctionIMP, to: SetTransferFunctionIMP.self)
-            setTransferFunction(initialized as AnyObject, setTransferFunctionSelector, transferFunction)
-        }
-
-        return initialized
+        typealias InitModeIMP = @convention(c) (AnyObject, Selector, UInt32, UInt32, Double) -> Unmanaged<AnyObject>
+        let initIMP = (allocatedMode as AnyObject).method(for: initSelector)
+        let initialize = unsafeBitCast(initIMP, to: InitModeIMP.self)
+        return initialize(
+            allocatedMode as AnyObject,
+            initSelector,
+            UInt32(width),
+            UInt32(height),
+            refreshRate
+        ).takeRetainedValue()
     }
 
     /// Applies private virtual-display settings to an allocated display object.
@@ -152,29 +111,9 @@ extension CGVirtualDisplayBridge {
         return deduped
     }
 
-    /// Returns the ordered transfer-function tags to try for virtual-display modes.
+    /// Returns the transfer-function policy to use for virtual-display modes.
     static func transferFunctionAttempts() -> [TransferFunctionAttempt] {
-        let preferred = TransferFunctionAttempt(
-            code: transferFunctionCodeSRGB,
-            label: "sRGB(\(transferFunctionCodeSRGB))"
-        )
-        let rec709 = TransferFunctionAttempt(
-            code: transferFunctionCode709,
-            label: "ITU-R-709(\(transferFunctionCode709))"
-        )
-        let unknown = TransferFunctionAttempt(
-            code: transferFunctionCodeUnknown,
-            label: "unknown(\(transferFunctionCodeUnknown))"
-        )
-
-        // Display P3 and sRGB both use SDR transfer functions; prefer explicit sRGB tagging first.
-        let ordered = [preferred, rec709, unknown]
-        var deduped: [TransferFunctionAttempt] = []
-        var seen = Set<UInt32>()
-        for candidate in ordered where seen.insert(candidate.code).inserted {
-            deduped.append(candidate)
-        }
-        return deduped
+        [TransferFunctionAttempt(label: "descriptor-default")]
     }
 
     /// Reads the private transfer-function tag from a CGVirtualDisplayMode when exposed.

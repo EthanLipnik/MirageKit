@@ -45,8 +45,7 @@ extension CGVirtualDisplayBridge {
                     modeClass: modeClass,
                     width: attempt.modeWidth,
                     height: attempt.modeHeight,
-                    refreshRate: refreshRate,
-                    transferFunction: transferFunction.code
+                    refreshRate: refreshRate
                 ) else { continue }
 
                 let settings = settingsClass.init()
