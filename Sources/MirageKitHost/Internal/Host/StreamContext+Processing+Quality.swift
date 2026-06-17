@@ -1409,6 +1409,15 @@ extension StreamContext {
               await senderFrameBudgetIsHealthy(now: now) else {
             return
         }
+        let targetQuality = max(qualityFloor, min(configuredQualityCeiling, qualityCeiling))
+        guard streamQualityGovernor.allowsFrameIntentQualityWrite(
+            targetQuality: targetQuality,
+            currentQuality: activeQuality,
+            contract: currentStreamQualityContract(),
+            now: now
+        ) else {
+            return
+        }
         realtimeRuntimeQualityCeiling = nil
         let targetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? requestedTargetBitrate
         guard let targetBitrate else { return }

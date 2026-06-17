@@ -168,6 +168,10 @@ struct StreamQualityDecision: Sendable, Equatable {
 }
 
 struct HostStreamQualityGovernor: Sendable, Equatable {
+    private static let localMotionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.50
+    private static let localRuntimeReductionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.50
+    private static let remoteRuntimeReductionQualityRaiseHoldSeconds: CFAbsoluteTime = 1.00
+
     struct RuntimeDecisionResult: Sendable, Equatable {
         let decision: HostFrameBudgetDecision?
         let streamDecision: StreamQualityDecision
@@ -462,7 +466,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         guard targetQuality > currentQuality else { return true }
         if contract.mediaPathProfile.usesLocalBulkTransportPolicy,
            lastMotionPressureTime > 0,
-           now - lastMotionPressureTime < 1.5,
+           now - lastMotionPressureTime < Self.localMotionQualityRaiseHoldSeconds,
            let latestMotionQualityTarget,
            targetQuality > max(latestMotionQualityTarget, contract.localMotionQualityFloor) + 0.001 {
             latestDecision = makeDecision(
@@ -480,7 +484,10 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             )
             return false
         }
-        guard now - lastRuntimeReductionTime >= 1.0 else {
+        let runtimeReductionHoldSeconds = contract.mediaPathProfile.usesLocalBulkTransportPolicy
+            ? Self.localRuntimeReductionQualityRaiseHoldSeconds
+            : Self.remoteRuntimeReductionQualityRaiseHoldSeconds
+        guard now - lastRuntimeReductionTime >= runtimeReductionHoldSeconds else {
             latestDecision = makeDecision(
                 state: latestDecision.state,
                 evidenceClass: latestDecision.evidenceClass,

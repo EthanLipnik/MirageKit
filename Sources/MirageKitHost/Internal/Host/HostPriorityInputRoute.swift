@@ -65,6 +65,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     private let clientName: String
     private let controlChannel: MirageControlChannel?
     private let inputScheduler: HostInputMessageScheduler
+    private let noteInputActivity: @Sendable (StreamID) -> Void
     private let lock = NSLock()
     private var state = State()
 
@@ -72,23 +73,27 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         sessionID: UUID,
         clientName: String,
         controlChannel: MirageControlChannel,
-        inputScheduler: HostInputMessageScheduler
+        inputScheduler: HostInputMessageScheduler,
+        noteInputActivity: @escaping @Sendable (StreamID) -> Void = { _ in }
     ) {
         self.sessionID = sessionID
         self.clientName = clientName
         self.controlChannel = controlChannel
         self.inputScheduler = inputScheduler
+        self.noteInputActivity = noteInputActivity
     }
 
     init(
         sessionID: UUID = UUID(),
         clientName: String = "test",
-        inputScheduler: HostInputMessageScheduler
+        inputScheduler: HostInputMessageScheduler,
+        noteInputActivity: @escaping @Sendable (StreamID) -> Void = { _ in }
     ) {
         self.sessionID = sessionID
         self.clientName = clientName
         controlChannel = nil
         self.inputScheduler = inputScheduler
+        self.noteInputActivity = noteInputActivity
     }
 
     deinit {
@@ -223,7 +228,11 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         guard accepted else { return }
 
         do {
-            inputScheduler.enqueue(try envelope.inputControlMessage())
+            let message = try envelope.inputControlMessage()
+            if let inputMessage = try? InputEventMessage.deserializePayload(message.payload) {
+                noteInputActivity(inputMessage.streamID)
+            }
+            inputScheduler.enqueue(message)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to route priority input envelope: ")
         }
@@ -241,6 +250,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         do {
             let batch = try MirageContinuousInputBatch.deserialize(envelope.inputPayload)
             MirageInputLatencyTelemetry.shared.recordHostContinuousBatchReceive(batch)
+            noteInputActivity(batch.streamID)
             inputScheduler.enqueueContinuousBatch(batch)
         } catch {
             recordMalformedEnvelope()

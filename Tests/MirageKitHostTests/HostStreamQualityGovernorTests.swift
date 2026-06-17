@@ -243,6 +243,34 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.blockedLeverReason == "motion-quality-raise-blocked")
     }
 
+    @Test("Proximity motion pressure allows clarity raise after local hold")
+    func proximityMotionPressureAllowsClarityRaiseAfterLocalHold() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        _ = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                quality: 0.20,
+                state: .pressured,
+                reason: .encodedFrame
+            ),
+            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 20
+        )
+
+        let allowed = governor.allowsFrameIntentQualityWrite(
+            targetQuality: 0.66,
+            currentQuality: contract.localMotionQualityFloor,
+            contract: contract,
+            now: 20.6
+        )
+
+        #expect(allowed)
+    }
+
     @Test("Proximity soft evidence cannot start transport admission skips")
     func proximitySoftEvidenceCannotStartTransportAdmissionSkips() {
         var governor = HostStreamQualityGovernor()

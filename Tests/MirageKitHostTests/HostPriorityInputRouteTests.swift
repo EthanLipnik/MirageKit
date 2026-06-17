@@ -52,10 +52,13 @@ struct HostPriorityInputRouteTests {
         let streamID: StreamID = 802
         let queue = DispatchQueue(label: "com.mirage.tests.host-priority-input-continuous")
         let events = Locked<[MirageInputEvent]>([])
+        let activeStreamIDs = Locked<[StreamID]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordHostPriorityInputEvent(from: message, into: events)
         }
-        let route = HostPriorityInputRoute(inputScheduler: scheduler)
+        let route = HostPriorityInputRoute(inputScheduler: scheduler) { streamID in
+            activeStreamIDs.withLock { $0.append(streamID) }
+        }
 
         route.handleControlInputMessage(try priorityContinuousInputMessage(
             eventID: 10,
@@ -75,6 +78,7 @@ struct HostPriorityInputRouteTests {
             )
         ))
 
+        #expect(activeStreamIDs.read { $0 } == [streamID])
         try await waitForHostPriorityEvents(events, count: 2)
 
         #expect(events.read { $0.map(\.timestamp) } == [1, 2])

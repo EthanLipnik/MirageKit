@@ -488,11 +488,16 @@ struct HostAdaptiveFrameCoordinator: Sendable, Equatable {
         if canUseStartupProbe(input.now) {
             return input.sourceStill && !input.inputActive ? .clarityRefresh : .probe
         }
-        if input.admitsStillQualityProbe || (input.sourceStill && !input.inputActive && input.dirtyPercentage <= Self.stillDirtyPercentage) {
-            return .clarityRefresh
-        }
         if input.inputActive || input.dirtyPercentage > Self.lowMotionDirtyPercentage {
             return .realtimeMotion
+        }
+        if input.admitsStillQualityProbe,
+           input.sourceStill,
+           input.receiverState == .healthy {
+            return .clarityRefresh
+        }
+        if input.sourceStill && !input.inputActive && input.dirtyPercentage <= Self.stillDirtyPercentage {
+            return .clarityRefresh
         }
         if input.dirtyPercentage <= Self.stillDirtyPercentage {
             return .clarityRefresh

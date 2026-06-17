@@ -44,6 +44,40 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(decision.deadlineClass == HostAdaptiveFrameCoordinator.DeadlineClass.relaxed)
     }
 
+    @Test("Still quality probe yields to active input")
+    func stillQualityProbeYieldsToActiveInput() {
+        var coordinator = HostAdaptiveFrameCoordinator()
+
+        let decision = coordinator.evaluateFrame(makeInput(
+            dirtyPercentage: 0,
+            sourceStill: true,
+            inputActive: true,
+            admitsStillQualityProbe: true
+        ))
+
+        #expect(decision.intent == HostAdaptiveFrameCoordinator.FrameIntent.realtimeMotion)
+        #expect(decision.lane == HostAdaptiveFrameCoordinator.Lane.realtime)
+        #expect(decision.deadlineClass == HostAdaptiveFrameCoordinator.DeadlineClass.realtime)
+        #expect(decision.reason == "input-active")
+    }
+
+    @Test("Still quality probe yields to dirty motion")
+    func stillQualityProbeYieldsToDirtyMotion() {
+        var coordinator = HostAdaptiveFrameCoordinator()
+
+        let decision = coordinator.evaluateFrame(makeInput(
+            dirtyPercentage: 12,
+            sourceStill: true,
+            inputActive: false,
+            admitsStillQualityProbe: true
+        ))
+
+        #expect(decision.intent == HostAdaptiveFrameCoordinator.FrameIntent.realtimeMotion)
+        #expect(decision.lane == HostAdaptiveFrameCoordinator.Lane.realtime)
+        #expect(decision.deadlineClass == HostAdaptiveFrameCoordinator.DeadlineClass.realtime)
+        #expect(decision.reason == "motion")
+    }
+
     @Test("Idle frame without probe classifies as idle skip")
     func idleFrameWithoutProbeClassifiesAsIdleSkip() {
         var coordinator = HostAdaptiveFrameCoordinator()

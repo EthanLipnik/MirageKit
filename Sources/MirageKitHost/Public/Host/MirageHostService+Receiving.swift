@@ -29,7 +29,17 @@ extension MirageHostService {
             sessionID: clientContext.sessionID,
             clientName: clientContext.client.name,
             controlChannel: clientContext.controlChannel,
-            inputScheduler: inputScheduler
+            inputScheduler: inputScheduler,
+            noteInputActivity: { [weak self] streamID in
+                guard let self else { return }
+                dispatchMainWork { [weak self] in
+                    guard let self,
+                          let streamContext = self.streamsByID[streamID] else {
+                        return
+                    }
+                    await streamContext.noteClientInput()
+                }
+            }
         )
         storePriorityInputRoute(priorityInputRoute, sessionID: clientContext.sessionID)
         priorityInputRoute.startIfAvailable(clientContext: clientContext)
