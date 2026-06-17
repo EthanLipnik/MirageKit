@@ -23,6 +23,12 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         var lastAdmittedFrameTime: CFAbsoluteTime = 0
         var lastLoggedMode: Mode = .normal
         var lastSkipLogTime: CFAbsoluteTime = 0
+        var hasSenderDropCounterBaseline = false
+        var lastSenderLocalDeadlineDrops: UInt64 = 0
+        var lastStalePacketDrops: UInt64 = 0
+        var lastLateNonKeyframeSends: UInt64 = 0
+        var lastQueuedUnreliableDeadlineExpiredDrops: UInt64 = 0
+        var lastQueuedUnreliableQueueLimitDrops: UInt64 = 0
     }
 
     struct Signal: Sendable, Equatable {
@@ -31,6 +37,7 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         let mediaPathProfile: MirageMediaPathProfile
         let pressureState: HostAdaptivePFrameController.PressureState
         let pressureReason: String?
+        let transportPressureIsActionable: Bool
         let senderQueuedBytes: Int
         let unstartedPFrameCount: Int
         let oldestUnstartedPFrameAgeMs: Double
@@ -40,6 +47,9 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         let lateNonKeyframeSends: UInt64
         let queuedUnreliableDeadlineExpiredDrops: UInt64
         let queuedUnreliableQueueLimitDrops: UInt64
+        let queuedUnreliablePendingPackets: Int
+        let queuedUnreliableOutstandingPackets: Int
+        let queuedUnreliableQueuedBytes: Int
         let queuedUnreliableQueueDwellP99Ms: Double
         let queuedUnreliableSendGapP99Ms: Double
         let queuedUnreliableContentProcessedP99Ms: Double
@@ -62,6 +72,7 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
             mediaPathProfile: MirageMediaPathProfile,
             pressureState: HostAdaptivePFrameController.PressureState,
             pressureReason: String?,
+            transportPressureIsActionable: Bool = true,
             senderTelemetry: StreamPacketSender.TelemetrySnapshot?,
             queuePressureBytes: Int,
             maxQueuedBytes: Int,
@@ -78,6 +89,7 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
             self.mediaPathProfile = mediaPathProfile
             self.pressureState = pressureState
             self.pressureReason = pressureReason
+            self.transportPressureIsActionable = transportPressureIsActionable
             senderQueuedBytes = max(0, senderTelemetry?.queuedBytes ?? 0)
             unstartedPFrameCount = max(0, senderTelemetry?.unstartedPFrameCount ?? 0)
             oldestUnstartedPFrameAgeMs = max(0, senderTelemetry?.oldestUnstartedPFrameAgeMs ?? 0)
@@ -87,6 +99,9 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
             lateNonKeyframeSends = senderTelemetry?.lateNonKeyframeSends ?? 0
             queuedUnreliableDeadlineExpiredDrops = senderTelemetry?.queuedUnreliableDeadlineExpiredDrops ?? 0
             queuedUnreliableQueueLimitDrops = senderTelemetry?.queuedUnreliableQueueLimitDrops ?? 0
+            queuedUnreliablePendingPackets = max(0, senderTelemetry?.queuedUnreliablePendingPackets ?? 0)
+            queuedUnreliableOutstandingPackets = max(0, senderTelemetry?.queuedUnreliableOutstandingPackets ?? 0)
+            queuedUnreliableQueuedBytes = max(0, senderTelemetry?.queuedUnreliableQueuedBytes ?? 0)
             queuedUnreliableQueueDwellP99Ms = max(0, senderTelemetry?.queuedUnreliableQueueDwellP99Ms ?? 0)
             queuedUnreliableSendGapP99Ms = max(0, senderTelemetry?.queuedUnreliableSendGapP99Ms ?? 0)
             queuedUnreliableContentProcessedP99Ms = max(
@@ -144,13 +159,23 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         }
     }
 
+    private struct SenderDropCounterDeltas: Sendable, Equatable {
+        let senderLocalDeadlineDrops: UInt64
+        let stalePacketDrops: UInt64
+        let lateNonKeyframeSends: UInt64
+        let lateNonKeyframeSendWindowReachedThreshold: Bool
+        let queuedUnreliableDeadlineExpiredDrops: UInt64
+        let queuedUnreliableQueueLimitDrops: UInt64
+    }
+
     static func evaluate(
         state: inout State,
         signal: Signal,
         bypass: Bool,
         now: CFAbsoluteTime
     ) -> Decision {
-        let currentEvidence = evidence(signal)
+        let senderDropCounterDeltas = consumeSenderDropCounterDeltas(state: &state, signal: signal)
+        let currentEvidence = evidence(signal, senderDropCounterDeltas: senderDropCounterDeltas)
         let mode = updateMode(state: &state, signal: signal, evidence: currentEvidence, now: now)
         let intervalMs = minimumFrameIntervalMs(mode: mode, signal: signal)
         let evidenceReason = currentEvidence.reason
@@ -216,6 +241,65 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         }
     }
 
+    private static func consumeSenderDropCounterDeltas(
+        state: inout State,
+        signal: Signal
+    ) -> SenderDropCounterDeltas {
+        let hasBaseline = state.hasSenderDropCounterBaseline
+        let lastLateNonKeyframeSends = state.lastLateNonKeyframeSends
+        let lateNonKeyframeSendsDelta = senderDropCounterDelta(
+            current: signal.lateNonKeyframeSends,
+            previous: lastLateNonKeyframeSends,
+            hasBaseline: hasBaseline
+        )
+        let lateNonKeyframeSendWindowReachedThreshold = hasBaseline &&
+            signal.lateNonKeyframeSends >= 2 &&
+            lastLateNonKeyframeSends < 2
+
+        let deltas = SenderDropCounterDeltas(
+            senderLocalDeadlineDrops: senderDropCounterDelta(
+                current: signal.senderLocalDeadlineDrops,
+                previous: state.lastSenderLocalDeadlineDrops,
+                hasBaseline: hasBaseline
+            ),
+            stalePacketDrops: senderDropCounterDelta(
+                current: signal.stalePacketDrops,
+                previous: state.lastStalePacketDrops,
+                hasBaseline: hasBaseline
+            ),
+            lateNonKeyframeSends: lateNonKeyframeSendsDelta,
+            lateNonKeyframeSendWindowReachedThreshold: lateNonKeyframeSendWindowReachedThreshold,
+            queuedUnreliableDeadlineExpiredDrops: senderDropCounterDelta(
+                current: signal.queuedUnreliableDeadlineExpiredDrops,
+                previous: state.lastQueuedUnreliableDeadlineExpiredDrops,
+                hasBaseline: hasBaseline
+            ),
+            queuedUnreliableQueueLimitDrops: senderDropCounterDelta(
+                current: signal.queuedUnreliableQueueLimitDrops,
+                previous: state.lastQueuedUnreliableQueueLimitDrops,
+                hasBaseline: hasBaseline
+            )
+        )
+
+        state.hasSenderDropCounterBaseline = true
+        state.lastSenderLocalDeadlineDrops = signal.senderLocalDeadlineDrops
+        state.lastStalePacketDrops = signal.stalePacketDrops
+        state.lastLateNonKeyframeSends = signal.lateNonKeyframeSends
+        state.lastQueuedUnreliableDeadlineExpiredDrops = signal.queuedUnreliableDeadlineExpiredDrops
+        state.lastQueuedUnreliableQueueLimitDrops = signal.queuedUnreliableQueueLimitDrops
+        return deltas
+    }
+
+    private static func senderDropCounterDelta(
+        current: UInt64,
+        previous: UInt64,
+        hasBaseline: Bool
+    ) -> UInt64 {
+        guard hasBaseline else { return 0 }
+        guard current >= previous else { return current }
+        return current - previous
+    }
+
     private static func updateMode(
         state: inout State,
         signal: Signal,
@@ -256,7 +340,7 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
     private static func shouldReleaseImmediately(_ signal: Signal) -> Bool {
         guard signal.sourceStill, !signal.inputActive else { return false }
         guard signal.senderQueuedBytes <= signal.queuePressureBytes / 2,
-              signal.queuedUnreliableQueuedBytesMax <= signal.queuePressureBytes / 2,
+              signal.queuedUnreliableQueuedBytes <= signal.queuePressureBytes / 2,
               signal.receiverReassemblyBacklogFrames == 0,
               signal.receiverReassemblyBacklogBytes == 0,
               !signal.receiverLossHoldActive else {
@@ -265,47 +349,61 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         return true
     }
 
-    private static func evidence(_ signal: Signal) -> Evidence {
+    private static func evidence(
+        _ signal: Signal,
+        senderDropCounterDeltas: SenderDropCounterDeltas
+    ) -> Evidence {
         let frameIntervalMs = 1_000.0 / Double(max(1, signal.currentFrameRate))
         let transportReason = pressureReasonIsTransport(signal.pressureReason)
+        let usesLocalBulkTransport = signal.mediaPathProfile.usesLocalBulkTransportPolicy
+        let hardSenderDropPressure = senderDropCounterDeltas.senderLocalDeadlineDrops > 0 ||
+            senderDropCounterDeltas.stalePacketDrops > 0 ||
+            senderDropCounterDeltas.queuedUnreliableDeadlineExpiredDrops > 0
 
-        if signal.pressureState == .severe, transportReason {
+        if signal.transportPressureIsActionable,
+           signal.pressureState == .severe,
+           transportReason {
             return .hard(signal.pressureReason ?? HostAdaptivePFrameController.Reason.transportBacklog.rawValue)
         }
         if signal.senderQueuedBytes >= signal.maxQueuedBytes ||
-            signal.queuedUnreliableQueueLimitDrops > 0 ||
-            signal.receiverReassemblyBacklogFrames >= 8 ||
-            signal.receiverReassemblyBacklogBytes >= 2_000_000 {
+            senderDropCounterDeltas.queuedUnreliableQueueLimitDrops > 0 ||
+            (signal.transportPressureIsActionable &&
+                (signal.receiverReassemblyBacklogFrames >= 8 ||
+                    signal.receiverReassemblyBacklogBytes >= 2_000_000)) {
             return .hard(HostAdaptivePFrameController.Reason.transportBacklog.rawValue)
         }
 
         let queuedPFrameStress = signal.unstartedPFrameCount >= 2 &&
             (signal.oldestUnstartedPFrameAgeMs >= frameIntervalMs * 2.0 ||
                 signal.oldestUnstartedPFrameLatenessMs > 0)
-        let deadlineStress = signal.senderLocalDeadlineDrops > 0 ||
-            signal.stalePacketDrops > 0 ||
-            signal.lateNonKeyframeSends >= 2 ||
-            signal.queuedUnreliableDeadlineExpiredDrops > 0
-        let queuedUnreliableOccupancyStress = signal.queuedUnreliablePendingPacketMax >= 8 ||
-            signal.queuedUnreliableOutstandingPacketMax >= 32 ||
-            signal.queuedUnreliableQueuedBytesMax >= max(32 * 1024, signal.queuePressureBytes / 2)
-        let queuedUnreliableTimingStress = signal.queuedUnreliableQueueDwellP99Ms >= max(120, frameIntervalMs * 4.0) ||
-            signal.queuedUnreliableContentProcessedP99Ms >= max(120, frameIntervalMs * 4.0) ||
-            (signal.queuedUnreliableSendGapP99Ms >= max(120, frameIntervalMs * 4.0) &&
-                queuedUnreliableOccupancyStress)
-        let receiverTransportStress = signal.receiverLossHoldActive ||
-            signal.receiverReassemblyBacklogFrames > 0 ||
-            signal.receiverReassemblyBacklogBytes > 0
-        let ackLagStress = receiverFeedbackIsFresh(signal) &&
+        let lateNonKeyframeSendStress = senderDropCounterDeltas.lateNonKeyframeSends >= 2 ||
+            senderDropCounterDeltas.lateNonKeyframeSendWindowReachedThreshold
+        let deadlineStress = hardSenderDropPressure ||
+            (!usesLocalBulkTransport && lateNonKeyframeSendStress)
+        let liveQueuedUnreliableBacklogStress = signal.queuedUnreliablePendingPackets >= 8 ||
+            signal.queuedUnreliableQueuedBytes >= max(32 * 1024, signal.queuePressureBytes / 2)
+        let liveQueuedUnreliableQueuePressure = signal.queuedUnreliableQueuedBytes >= signal.queuePressureBytes
+        let queuedUnreliableTimingStress = liveQueuedUnreliableBacklogStress &&
+            (signal.queuedUnreliableQueueDwellP99Ms >= max(120, frameIntervalMs * 4.0) ||
+                signal.queuedUnreliableContentProcessedP99Ms >= max(120, frameIntervalMs * 4.0) ||
+                signal.queuedUnreliableSendGapP99Ms >= max(120, frameIntervalMs * 4.0))
+        let receiverTransportStress = signal.transportPressureIsActionable &&
+            (signal.receiverLossHoldActive ||
+                signal.receiverReassemblyBacklogFrames > 0 ||
+                signal.receiverReassemblyBacklogBytes > 0)
+        let ackLagStress = signal.transportPressureIsActionable &&
+            receiverFeedbackIsFresh(signal) &&
             (signal.receiverAckLagMs ?? 0) >= max(120, frameIntervalMs * 4.0)
 
-        if signal.pressureState == .pressured, transportReason {
+        if signal.transportPressureIsActionable,
+           signal.pressureState == .pressured,
+           transportReason {
             return .soft(signal.pressureReason ?? HostAdaptivePFrameController.Reason.transportBacklog.rawValue)
         }
-        if queuedPFrameStress ||
+        if (!usesLocalBulkTransport && queuedPFrameStress) ||
             deadlineStress ||
-            queuedUnreliableOccupancyStress ||
-            queuedUnreliableTimingStress ||
+            liveQueuedUnreliableQueuePressure ||
+            (!usesLocalBulkTransport && queuedUnreliableTimingStress) ||
             receiverTransportStress ||
             ackLagStress {
             return .soft(HostAdaptivePFrameController.Reason.transportBacklog.rawValue)

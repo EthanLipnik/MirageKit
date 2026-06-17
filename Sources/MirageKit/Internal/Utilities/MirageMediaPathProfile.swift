@@ -22,6 +22,20 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         self == .awdlRadio
     }
 
+    package var usesLocalBulkTransportPolicy: Bool {
+        switch self {
+        case .localWiFi,
+             .wired,
+             .proximityWiredLike:
+            true
+        case .awdlRadio,
+             .vpnOrOverlay,
+             .other,
+             .unknown:
+            false
+        }
+    }
+
     package var usesRemoteTolerance: Bool {
         switch self {
         case .vpnOrOverlay:

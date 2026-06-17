@@ -129,9 +129,23 @@ extension MirageHostService {
             mediaEncryptionEnabled: mediaEncryptionEnabled,
             datagramRegistrationToken: datagramRegistrationToken,
             autoTrustGranted: autoTrustGranted,
-            remoteAccessAllowed: MiragePeerAdvertisementMetadata.vpnAccessEnabled(in: advertisedPeerAdvertisement)
+            remoteAccessAllowed: MiragePeerAdvertisementMetadata.vpnAccessEnabled(in: advertisedPeerAdvertisement),
+            adaptiveGovernorRevision: MirageAdaptiveGovernorProtocol.revision,
+            hostOwnedRuntimeSupport: true,
+            adaptiveFeedbackClassesSupported: acceptedAdaptiveFeedbackClasses(for: request),
+            adaptiveLegacyFallbackMode: MirageAdaptiveGovernorProtocol.legacyFallbackMode
         )
         return (response, mediaSecurity)
+    }
+
+    private func acceptedAdaptiveFeedbackClasses(for request: MirageSessionBootstrapRequest) -> [String] {
+        guard let requested = request.adaptiveFeedbackClassesSupported,
+              !requested.isEmpty else {
+            return MirageAdaptiveGovernorProtocol.feedbackClasses
+        }
+        let supported = Set(MirageAdaptiveGovernorProtocol.feedbackClasses)
+        let accepted = requested.filter { supported.contains($0) }
+        return accepted.isEmpty ? MirageAdaptiveGovernorProtocol.feedbackClasses : accepted
     }
 
     /// Returns whether accepted media streams should be encrypted for a session.

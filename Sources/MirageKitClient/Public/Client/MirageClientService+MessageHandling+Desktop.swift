@@ -103,6 +103,34 @@ extension MirageClientService {
                 ? desktopDimensionTokenByStream[streamID]
                 : nil
             let dimensionToken = started.dimensionToken
+            if isActiveDesktopSession,
+               previousStreamID == streamID,
+               hasController,
+               !requestStartPending,
+               started.transitionPhase == nil,
+               started.transitionID == nil,
+               let previousDimensionToken,
+               let dimensionToken,
+               previousDimensionToken == dimensionToken {
+                let normalizedFrameRate = MirageRenderModePolicy.normalizedTargetFPS(started.frameRate)
+                let currentFrameRate = refreshRateOverridesByStream[streamID]
+                guard currentFrameRate != normalizedFrameRate else {
+                    MirageLogger.client(
+                        "Ignoring duplicate desktop cadence update for stream \(streamID): \(started.frameRate)Hz"
+                    )
+                    return
+                }
+                await applyStreamCadenceTarget(
+                    started.frameRate,
+                    for: streamID,
+                    reason: "desktop stream cadence update"
+                )
+                refreshRateOverridesByStream[streamID] = normalizedFrameRate
+                MirageLogger.client(
+                    "Applied desktop cadence update for stream \(streamID): \(started.frameRate)Hz"
+                )
+                return
+            }
             let acceptanceDecision = desktopStreamStartAcceptanceDecision(
                 streamID: streamID,
                 previousStreamID: isActiveDesktopSession ? previousStreamID : nil,

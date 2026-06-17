@@ -430,6 +430,62 @@ extension MirageHostService {
             MirageLogger.error(.host, error: error, message: "Failed to send streamStarted update: ")
         }
     }
+
+    func sendStreamCadenceUpdate(streamID: StreamID) async {
+        guard let context = streamsByID[streamID] else {
+            MirageLogger.debug(.host, "No stream found for stream cadence update: \(streamID)")
+            return
+        }
+        guard streamID == desktopStreamID else { return }
+        guard let clientContext = desktopStreamClientContext else { return }
+        guard let desktopSessionID else {
+            MirageLogger.error(.host, "Missing desktop session ID for cadence update on stream \(streamID)")
+            return
+        }
+
+        let streamStart = await context.streamStartSnapshot
+        let displayResolution = await currentDesktopStartedResolution(
+            fallback: CGSize(
+                width: streamStart.encodedDimensions.width,
+                height: streamStart.encodedDimensions.height
+            )
+        )
+        let encodedResolution = CGSize(
+            width: streamStart.encodedDimensions.width,
+            height: streamStart.encodedDimensions.height
+        )
+        let geometryContract = reusableCurrentDesktopGeometryContract(
+            displayPixelResolution: displayResolution,
+            encodedPixelResolution: encodedResolution,
+            refreshTargetHz: streamStart.targetFrameRate
+        )
+        let message = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: Int(displayResolution.width),
+            height: Int(displayResolution.height),
+            frameRate: streamStart.targetFrameRate,
+            codec: streamStart.codec,
+            displayCount: 1,
+            dimensionToken: streamStart.dimensionToken,
+            acceptedMediaMaxPacketSize: streamStart.mediaMaxPacketSize,
+            captureSource: desktopCaptureSource,
+            allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+            acceptedDisplayScaleFactor: geometryContract.acceptedDisplayScaleFactor,
+            presentationWidth: Int(geometryContract.presentationResolution.width.rounded()),
+            presentationHeight: Int(geometryContract.presentationResolution.height.rounded()),
+            desktopGeometryContractID: geometryContract.contractID,
+            desktopGeometrySceneIdentity: geometryContract.sceneIdentity,
+            desktopGeometryDisplayPixelWidth: Int(geometryContract.displayPixelResolution.width.rounded()),
+            desktopGeometryDisplayPixelHeight: Int(geometryContract.displayPixelResolution.height.rounded()),
+            desktopGeometryEncodedPixelWidth: Int(geometryContract.encodedPixelResolution.width.rounded()),
+            desktopGeometryEncodedPixelHeight: Int(geometryContract.encodedPixelResolution.height.rounded()),
+            desktopGeometryRefreshTargetHz: geometryContract.refreshTargetHz ?? streamStart.targetFrameRate
+        )
+        if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
+            MirageLogger.error(.host, "Failed to encode desktop cadence update for stream \(streamID)")
+        }
+    }
 }
 
 #endif

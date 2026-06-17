@@ -23,15 +23,19 @@ extension MirageClientService {
         var attempts: [ControlSessionAttempt] = []
         let transportOrder = controlSessionTransportOrder()
 
-        if !explicitVPNRoute {
-            attempts.append(
-                contentsOf: proximityPreferredControlSessionAttempts(
-                    for: host,
-                    localNetwork: resolvedLocalNetwork,
-                    transportOrder: transportOrder
-                )
+        attempts.append(
+            contentsOf: proximityPreferredControlSessionAttempts(
+                for: host,
+                localNetwork: resolvedLocalNetwork,
+                transportOrder: transportOrder
             )
-        }
+        )
+        attempts.append(
+            contentsOf: optimisticLowLatencyWirelessControlSessionAttempts(
+                for: host,
+                transportOrder: transportOrder
+            )
+        )
 
         var resolvedAttempts: [ControlSessionAttempt] = []
         for transportKind in transportOrder {
@@ -313,6 +317,54 @@ extension MirageClientService {
         return attempts
     }
 
+    func optimisticLowLatencyWirelessControlSessionAttempts(
+        for host: LoomPeer,
+        transportOrder: [LoomTransportKind]
+    ) -> [ControlSessionAttempt] {
+        guard shouldAttemptOptimisticLowLatencyWireless(for: host) else {
+            return []
+        }
+        guard let selectedHost = optimisticLowLatencyWirelessControlHost(for: host) else {
+            return []
+        }
+
+        let optimisticTransportOrder = transportOrder.filter { $0 == .udp }
+        guard !optimisticTransportOrder.isEmpty else { return [] }
+        MirageLogger.client(
+            "Adding optimistic LLW control probe for \(host.name): " +
+                "host=\(selectedHost)"
+        )
+        return proximityPreferredControlSessionAttempts(
+            for: host,
+            transportOrder: optimisticTransportOrder,
+            selectedHost: selectedHost,
+            discoveredInterface: nil,
+            routeTier: .lowLatencyWireless,
+            isOptimisticProximityProbe: true,
+            proximityInterfaceKind: .lowLatencyWireless,
+            endpointSource: "bonjour-optimistic-llw"
+        )
+    }
+
+    func shouldAttemptOptimisticLowLatencyWireless(for host: LoomPeer) -> Bool {
+        guard networkConfig.enablePeerToPeer else { return false }
+        guard isBonjourDiscoveredHost(host) else { return false }
+        return !hasLowLatencyWirelessRouteEvidence(for: host)
+    }
+
+    func hasLowLatencyWirelessRouteEvidence(for host: LoomPeer) -> Bool {
+        if host.discoveredInterfaces.contains(where: { $0.kind == .lowLatencyWireless }) {
+            return true
+        }
+        return scopedProximityResolvedHosts(for: host).contains { scopedHost in
+            Self.proximityRouteTier(forEndpointHost: scopedHost) == .lowLatencyWireless
+        }
+    }
+
+    func optimisticLowLatencyWirelessControlHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        bonjourServiceControlHost(for: host)
+    }
+
     func interfaceScopedHost(
         _ host: NWEndpoint.Host,
         interface: NWInterface?
@@ -417,6 +469,8 @@ extension MirageClientService {
         selectedHost: NWEndpoint.Host,
         discoveredInterface: LoomDiscoveredInterface?,
         routeTier: ControlSessionRouteTier,
+        isOptimisticProximityProbe: Bool = false,
+        proximityInterfaceKind: LoomDiscoveredInterfaceKind? = nil,
         proximityInterfaceNames: [String] = [],
         endpointSource: String
     ) -> [ControlSessionAttempt] {
@@ -429,8 +483,11 @@ extension MirageClientService {
         } else {
             requiredInterfaceType = nil
         }
-        let source = discoveredInterface.map {
-            "bonjour-proximity-\(proximityLogName(for: $0.kind))"
+        let resolvedProximityInterfaceKind = discoveredInterface.map {
+            self.proximityInterfaceKind(for: $0, routeTier: routeTier)
+        } ?? proximityInterfaceKind
+        let source = resolvedProximityInterfaceKind.map {
+            "bonjour-proximity-\(proximityLogName(for: $0))"
         } ?? endpointSource
         let proximityTransportOrder = routeTier == .awdl
             ? transportOrder.filter { $0 != .tcp }
@@ -445,8 +502,6 @@ extension MirageClientService {
                 return nil
             }
 
-            let candidateKind = controlSessionCandidateKind(for: endpoint, host: host)
-            guard candidateKind != .overlay else { return nil }
             logControlSessionEndpointSelection(
                 transportKind: transportKind,
                 hostName: host.name,
@@ -458,16 +513,26 @@ extension MirageClientService {
                 hostName: host.name,
                 endpoint: endpoint,
                 transportKind: transportKind,
-                candidateKind: candidateKind,
+                candidateKind: .local,
                 routeTier: routeTier,
                 endpointSource: source,
                 requiredInterface: requiredInterface,
                 requiredInterfaceType: requiredInterfaceType,
                 isPeerToPeerPreferred: true,
-                proximityInterfaceKind: discoveredInterface?.kind,
+                isOptimisticProximityProbe: isOptimisticProximityProbe,
+                proximityInterfaceKind: resolvedProximityInterfaceKind,
                 proximityInterfaceNames: discoveredInterface.map { [$0.name] } ?? proximityInterfaceNames
             )
         }
+    }
+
+    func proximityInterfaceKind(
+        for discoveredInterface: LoomDiscoveredInterface,
+        routeTier: ControlSessionRouteTier
+    ) -> LoomDiscoveredInterfaceKind {
+        Self.proximityInterfaceKind(forInterfaceName: discoveredInterface.name) ??
+            Self.proximityInterfaceKind(forRouteTier: routeTier) ??
+            discoveredInterface.kind
     }
 
     func proximityLogName(for kind: LoomDiscoveredInterfaceKind) -> String {
@@ -516,8 +581,22 @@ extension MirageClientService {
     }
 
     func peerToPeerPreferredBonjourControlHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        if let serviceHost = bonjourServiceControlHost(for: host) {
+            return serviceHost
+        }
         if let preferredBonjourHost = preferredBonjourControlHost(for: host) {
             return preferredBonjourHost
+        }
+
+        return nil
+    }
+
+    func bonjourServiceControlHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        if case let .service(name, _, _, _) = host.endpoint {
+            let serviceName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !serviceName.isEmpty {
+                return Self.expandedBonjourHosts(for: NWEndpoint.Host(serviceName)).first
+            }
         }
 
         let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -727,7 +806,18 @@ extension MirageClientService {
         host: LoomPeer,
         localNetwork: ControlSessionNetworkDiagnostics
     ) -> ControlSessionRouteTier? {
-        switch discoveredInterface.kind {
+        if let nameRouteTier = Self.proximityRouteTier(forInterfaceName: discoveredInterface.name) {
+            switch nameRouteTier {
+            case .applePrivateNCM, .bridge, .lowLatencyWireless:
+                return nameRouteTier
+            case .awdl:
+                return awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) ? nil : .awdl
+            case .sameWiredEthernet, .mixedEthernetSameLAN, .wifiLAN, .vpn, .other:
+                break
+            }
+        }
+
+        return switch discoveredInterface.kind {
         case .applePrivateNCM:
             .applePrivateNCM
         case .bridge:
@@ -992,6 +1082,38 @@ extension MirageClientService {
             return .awdl
         }
         return nil
+    }
+
+    static func proximityInterfaceKind(forInterfaceName name: String) -> LoomDiscoveredInterfaceKind? {
+        switch proximityRouteTier(forInterfaceName: name) {
+        case .applePrivateNCM:
+            .applePrivateNCM
+        case .bridge:
+            .bridge
+        case .lowLatencyWireless:
+            .lowLatencyWireless
+        case .awdl:
+            .awdl
+        case .sameWiredEthernet, .mixedEthernetSameLAN, .wifiLAN, .vpn, .other, nil:
+            nil
+        }
+    }
+
+    static func proximityInterfaceKind(forRouteTier routeTier: ControlSessionRouteTier) -> LoomDiscoveredInterfaceKind? {
+        switch routeTier {
+        case .applePrivateNCM:
+            .applePrivateNCM
+        case .bridge:
+            .bridge
+        case .lowLatencyWireless:
+            .lowLatencyWireless
+        case .awdl:
+            .awdl
+        case .sameWiredEthernet:
+            .wiredEthernet
+        case .mixedEthernetSameLAN, .wifiLAN, .vpn, .other:
+            nil
+        }
     }
 
     static func proximityRouteTier(forEndpointHost host: NWEndpoint.Host) -> ControlSessionRouteTier? {

@@ -49,15 +49,35 @@ package struct MirageSessionBootstrapRequest: Codable {
     /// Whether the host may disconnect an existing client to accept this request.
     package let requestTakeoverIfBusy: Bool
 
+    /// Optional adaptive governor revision supported by the client.
+    package let adaptiveGovernorRevision: Int?
+
+    /// Whether the client understands host-owned runtime quality adaptation.
+    package let hostOwnedRuntimeSupport: Bool?
+
+    /// Adaptive feedback evidence classes the client can report or understand.
+    package let adaptiveFeedbackClassesSupported: [String]?
+
+    /// Legacy fallback mode used when the peer does not advertise governor support.
+    package let adaptiveLegacyFallbackMode: String?
+
     /// Creates a bootstrap request for protocol validation and media-encryption policy.
     package init(
         protocolVersion: Int,
         clientRequiresMediaEncryption: Bool,
-        requestTakeoverIfBusy: Bool = false
+        requestTakeoverIfBusy: Bool = false,
+        adaptiveGovernorRevision: Int? = nil,
+        hostOwnedRuntimeSupport: Bool? = nil,
+        adaptiveFeedbackClassesSupported: [String]? = nil,
+        adaptiveLegacyFallbackMode: String? = nil
     ) {
         self.protocolVersion = protocolVersion
         self.clientRequiresMediaEncryption = clientRequiresMediaEncryption
         self.requestTakeoverIfBusy = requestTakeoverIfBusy
+        self.adaptiveGovernorRevision = adaptiveGovernorRevision
+        self.hostOwnedRuntimeSupport = hostOwnedRuntimeSupport
+        self.adaptiveFeedbackClassesSupported = adaptiveFeedbackClassesSupported
+        self.adaptiveLegacyFallbackMode = adaptiveLegacyFallbackMode
     }
 }
 
@@ -96,6 +116,18 @@ package struct MirageSessionBootstrapResponse: Codable {
     /// Optional detail for authorization-policy rejection.
     package let authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason?
 
+    /// Optional adaptive governor revision supported by the host.
+    package let adaptiveGovernorRevision: Int?
+
+    /// Whether the host owns runtime bitrate, quality, FPS, admission, and scale.
+    package let hostOwnedRuntimeSupport: Bool?
+
+    /// Adaptive feedback evidence classes supported for this session.
+    package let adaptiveFeedbackClassesSupported: [String]?
+
+    /// Legacy fallback mode used for mixed-version peers.
+    package let adaptiveLegacyFallbackMode: String?
+
     /// Creates a bootstrap response for either an accepted or rejected session.
     package init(
         accepted: Bool,
@@ -108,7 +140,11 @@ package struct MirageSessionBootstrapResponse: Codable {
         rejectionReason: MirageSessionBootstrapRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
         protocolMismatchClientVersion: Int? = nil,
-        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil
+        authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? = nil,
+        adaptiveGovernorRevision: Int? = nil,
+        hostOwnedRuntimeSupport: Bool? = nil,
+        adaptiveFeedbackClassesSupported: [String]? = nil,
+        adaptiveLegacyFallbackMode: String? = nil
     ) {
         self.accepted = accepted
         self.hostID = hostID
@@ -121,6 +157,10 @@ package struct MirageSessionBootstrapResponse: Codable {
         self.protocolMismatchHostVersion = protocolMismatchHostVersion
         self.protocolMismatchClientVersion = protocolMismatchClientVersion
         self.authorizationFailureReason = authorizationFailureReason
+        self.adaptiveGovernorRevision = adaptiveGovernorRevision
+        self.hostOwnedRuntimeSupport = hostOwnedRuntimeSupport
+        self.adaptiveFeedbackClassesSupported = adaptiveFeedbackClassesSupported
+        self.adaptiveLegacyFallbackMode = adaptiveLegacyFallbackMode
     }
 }
 

@@ -116,11 +116,6 @@ extension MirageHostService {
             throw MirageError.protocolError("Client is disconnected or disconnecting")
         }
 
-        await cancelQualityTest(
-            for: clientContext.client.id,
-            reason: "custom stream startup"
-        )
-
         let streamID = nextStreamID
         nextStreamID += 1
         var retainMediaPathClientEvidence = false

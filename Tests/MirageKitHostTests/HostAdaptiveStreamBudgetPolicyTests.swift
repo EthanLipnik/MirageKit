@@ -368,8 +368,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.realtimeEncoderRateHintBps == settings.bitrate)
     }
 
-    @Test("Non-still encoder throughput raise does not jump active quality")
-    func nonStillEncoderThroughputRaiseDoesNotJumpActiveQuality() async {
+    @Test("Non-still clean encoder throughput raises active quality within ceiling")
+    func nonStillCleanEncoderThroughputRaisesActiveQualityWithinCeiling() async {
         let context = makeContext(
             bitrate: 54_100_000,
             bitrateAdaptationCeiling: 180_000_000,
@@ -393,9 +393,11 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             at: 10.05
         )
         let finalQuality = await context.activeQuality
+        let finalConfiguredCeiling = await context.configuredQualityCeiling
 
         #expect((context.currentTargetBitrateBps ?? 0) > originalTarget)
-        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
+        #expect(finalQuality > originalQuality)
+        #expect(finalQuality <= finalConfiguredCeiling)
     }
 
     @Test("Still quality probe restores active quality to ceiling immediately")
@@ -452,6 +454,41 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
         #expect(await context.activeQuality < originalQuality)
         #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+    }
+
+    @Test("Startup local-clean encoder threshold wobble does not cut automatic quality")
+    func startupLocalCleanEncoderThresholdWobbleDoesNotCutAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        await context.setStartupTransportProtectionForRealtimeBudgetTest(until: 20)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 36,
+                encodeDurationMs: 18.8,
+                captureToCallbackMs: 19.4,
+                captureDirtyPercentage: 56.37,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+        let finalQuality = await context.activeQuality
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
     }
 
     @Test("Still low-motion encoder threshold wobble does not cut automatic quality")
@@ -593,8 +630,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         let context = makeContext(
             bitrate: 120_000_000,
             bitrateAdaptationCeiling: 221_500_000,
-            transportPathKind: .wifi,
-            mediaPathProfile: .localWiFi
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
         )
         let outputSize = CGSize(width: 2752, height: 2064)
 
@@ -668,6 +705,41 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
     }
 
+    @Test("Startup pipeline jitter without encode pressure does not cut automatic quality")
+    func startupPipelineJitterWithoutEncodePressureDoesNotCutAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setStartupTransportProtectionForRealtimeBudgetTest(until: 20)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 4,
+                encodeDurationMs: 15.2,
+                captureToCallbackMs: 52.3,
+                captureDirtyPercentage: 76.6,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+        let finalQuality = await context.activeQuality
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
+    }
+
     @Test("Sparse send-gap P99 without backlog does not cut automatic quality")
     func sparseSendGapP99WithoutBacklogDoesNotCutAutomaticQuality() async {
         let context = makeContext(
@@ -704,8 +776,81 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
     }
 
-    @Test("Queue dwell P99 still cuts automatic quality")
-    func queueDwellP99StillCutsAutomaticQuality() async {
+    @Test("Queue dwell P99 with live backlog is evidence-only")
+    func queueDwellP99WithLiveBacklogIsEvidenceOnly() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyQueuedUnreliableBurstPressureIfNeeded(
+            queuedUnreliableTelemetry(
+                sendGapP99Ms: 40,
+                queueDwellP99Ms: 220,
+                contentProcessedP99Ms: 0.3,
+                outstandingMax: 1,
+                pendingMax: 4,
+                queuedBytesMax: 3_915,
+                enqueuedCount: 23,
+                completedCount: 22
+            ),
+            now: 10
+        )
+
+        let finalQuality = await context.activeQuality
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
+    }
+
+    @Test("Local bulk queue dwell P99 observes soft backlog")
+    func localBulkQueueDwellP99ObservesSoftBacklog() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 300_000_000,
+            transportPathKind: .awdl,
+            mediaPathProfile: .proximityWiredLike
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyQueuedUnreliableBurstPressureIfNeeded(
+            queuedUnreliableTelemetry(
+                sendGapP99Ms: 40,
+                queueDwellP99Ms: 220,
+                contentProcessedP99Ms: 0.3,
+                outstandingMax: 1,
+                pendingMax: 4,
+                queuedBytesMax: 3_915,
+                enqueuedCount: 23,
+                completedCount: 22
+            ),
+            now: 10
+        )
+        let finalQuality = await context.activeQuality
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
+    }
+
+    @Test("Queue dwell P99 without live backlog does not cut automatic quality")
+    func queueDwellP99WithoutLiveBacklogDoesNotCutAutomaticQuality() async {
         let context = makeContext(
             bitrate: 120_000_000,
             bitrateAdaptationCeiling: 221_500_000,
@@ -728,16 +873,16 @@ struct HostAdaptiveStreamBudgetPolicyTests {
                 contentProcessedP99Ms: 0.3,
                 outstandingMax: 1,
                 pendingMax: 1,
-                queuedBytesMax: 3_915,
+                queuedBytesMax: 160 * 1024,
                 enqueuedCount: 23,
                 completedCount: 22
             ),
             now: 10
         )
+        let finalQuality = await context.activeQuality
 
-        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
-        #expect(await context.activeQuality < originalQuality)
-        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.transportBacklog.rawValue)
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(abs(Double(finalQuality - originalQuality)) < 0.0001)
     }
 
     @Test("Pre-encode encoder backlog drops cut automatic quality immediately")
@@ -946,8 +1091,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await !context.currentAwdlQualityReductionAllowed())
     }
 
-    @Test("Dirty encoded frame overrides stale still state before transport admission")
-    func dirtyEncodedFrameOverridesStaleStillStateBeforeTransportAdmission() async {
+    @Test("Dirty encoded frame observes oversize without clean transport pressure")
+    func dirtyEncodedFrameObservesOversizeWithoutCleanTransportPressure() async {
         let context = makeContext(
             bitrate: 60_000_000,
             bitrateAdaptationCeiling: 300_000_000,
@@ -974,8 +1119,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(decision.admission == .sendWithQualityDrop)
-        #expect(decision.budgetDecision?.reason == .encodedFrame)
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
+        #expect(decision.byteRatio > 1.0)
     }
 
     @Test("AWDL receiver P-frame timing sample steps structural ladder before quality")
@@ -1562,6 +1708,10 @@ private extension StreamContext {
     func setLastCapturedFrameForStillQualityProbeTest(_ frame: CapturedFrame) {
         lastCapturedFrame = frame
         lastCapturedFrameTime = frame.captureTime
+    }
+
+    func setStartupTransportProtectionForRealtimeBudgetTest(until deadline: CFAbsoluteTime) {
+        startupTransportProtectionDeadline = deadline
     }
 
     func recordReceiverPFrameCompletionForTimingTest(

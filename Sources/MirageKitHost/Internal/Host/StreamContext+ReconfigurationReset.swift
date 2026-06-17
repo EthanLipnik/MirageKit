@@ -90,6 +90,11 @@ extension StreamContext {
         pendingKeyframeRequiresReset = state.requiresReset
         pendingEmergencyKeyframeQuality = state.emergencyQuality
         suppressEncodedNonKeyframesUntilKeyframe = true
+        adaptiveFrameCoordinator.startKeyframeBarrier(
+            kind: .reconfiguration,
+            reason: state.reason,
+            now: CFAbsoluteTimeGetCurrent()
+        )
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = state.lastKeyframeRequestTime
         protectedGeometryRecoveryKeyframeReason = state.protectedReason ?? state.reason
@@ -109,6 +114,10 @@ extension StreamContext {
         protectedGeometryRecoveryKeyframeReason = nil
         pendingEmergencyKeyframeQuality = nil
         suppressEncodedNonKeyframesUntilKeyframe = false
+        pendingReceiverAcceptedKeyframeFrameNumber = nil
+        pendingReceiverAcceptedKeyframeReason = nil
+        receiverKeyframeAcceptanceFallbackTask?.cancel()
+        receiverKeyframeAcceptanceFallbackTask = nil
         frameChainState = .normal
         frameChainRepairKeyframeRetryTask?.cancel()
         frameChainRepairKeyframeRetryTask = nil
@@ -124,6 +133,8 @@ extension StreamContext {
     /// Clears capture, startup, and pressure state that is no longer valid after reconfiguration.
     private func clearCaptureAndPressureStateForReconfiguration() {
         clearBackpressureState(log: false)
+        adaptiveFrameCoordinator.reset()
+        pendingAdaptiveFrameIntentsByPresentationTime.removeAll()
         transportFrameAdmissionState = HostTransportFrameAdmissionPolicy.State()
         transportAdmissionPressureState = HostTransportAdmissionPressureState()
         realtimeLastEncoderThroughputAdjustmentTime = 0

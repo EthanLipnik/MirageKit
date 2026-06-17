@@ -448,9 +448,6 @@ public final class MirageClientService {
     /// Receive loop for the current audio media stream.
     var audioStreamReceiveTask: Task<Void, Never>?
 
-    /// Receive loops for quality-test media streams keyed by test ID.
-    var qualityTestStreamReceiveTasks: [UUID: Task<Void, Never>] = [:]
-
     /// Stream ID currently registered for host audio playback.
     var audioRegisteredStreamID: StreamID?
 
@@ -602,24 +599,6 @@ public final class MirageClientService {
     /// Streams that received their first media packet during startup.
     var streamStartupFirstPacketReceived: Set<StreamID> = []
 
-    // MARK: - Quality Test State
-
-    /// Continuation waiting for a quality-test benchmark result from the host.
-    var qualityTestBenchmarkContinuation: CheckedContinuation<QualityTestBenchmarkMessage?, Never>?
-    /// Continuation waiting for the next quality-test stage completion.
-    var qualityTestStageCompletionContinuation: CheckedContinuation<QualityTestStageCompleteMessage?, Never>?
-    /// Stage completion messages that arrived before a waiter was installed.
-    var qualityTestStageCompletionBuffer: [QualityTestStageCompleteMessage] = []
-    /// Quality-test identifier currently awaiting benchmark or stage-completion responses.
-    var qualityTestPendingTestID: UUID?
-    /// Monotonic waiter token used to invalidate stale benchmark timeouts.
-    var qualityTestBenchmarkWaiterID: UInt64 = 0
-    /// Monotonic waiter token used to invalidate stale stage-completion timeouts.
-    var qualityTestStageCompletionWaiterID: UInt64 = 0
-    /// Timeout task for the active quality-test benchmark waiter.
-    var qualityTestBenchmarkTimeoutTask: Task<Void, Never>?
-    /// Timeout task for the active quality-test stage-completion waiter.
-    var qualityTestStageCompletionTimeoutTask: Task<Void, Never>?
     /// Continuation waiting for the host support-log archive URL.
     var hostSupportLogArchiveContinuation: CheckedContinuation<URL, Error>?
     /// Request identifier for the active host support-log archive transfer.

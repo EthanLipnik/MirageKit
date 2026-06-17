@@ -24,8 +24,6 @@ final class MirageClientFastPathState: @unchecked Sendable {
         var mediaSecurityPacketKey: MirageMediaPacketKey?
         var activeAudioStreamID: StreamID?
         var audioDecodeTargetChannelCount: Int = 2
-        var qualityTestAccumulator: QualityTestAccumulator?
-        var qualityTestActiveTestID: UUID?
         var activeStreamIDs: Set<StreamID> = []
         var startupPacketPending: Set<StreamID> = []
         var reassemblersByStream: [StreamID: FrameReassembler] = [:]
@@ -180,26 +178,6 @@ final class MirageClientFastPathState: @unchecked Sendable {
         withLock { state in
             state.lastInboundControlActivityTime = now
             state.lastInboundMediaActivityTime = now
-        }
-    }
-
-    var qualityTestContext: (accumulator: QualityTestAccumulator?, testID: UUID?) {
-        withLock { state in
-            (state.qualityTestAccumulator, state.qualityTestActiveTestID)
-        }
-    }
-
-    func setQualityTestAccumulator(_ accumulator: QualityTestAccumulator, testID: UUID) {
-        withLock { state in
-            state.qualityTestAccumulator = accumulator
-            state.qualityTestActiveTestID = testID
-        }
-    }
-
-    func clearQualityTestAccumulator() {
-        withLock { state in
-            state.qualityTestAccumulator = nil
-            state.qualityTestActiveTestID = nil
         }
     }
 

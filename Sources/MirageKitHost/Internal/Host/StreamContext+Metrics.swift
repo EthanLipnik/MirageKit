@@ -69,6 +69,7 @@ extension StreamContext {
                 policy: capturePolicy
             )
             let awdlPolicy = transportController.latestAwdlMediaDecision
+            let streamQualityDecision = latestStreamQualityDecision()
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -105,6 +106,14 @@ extension StreamContext {
                 realtimeRequiredBitrateForQualityBps: adaptivePFrameController.latestRequiredBitrateForCurrentQualityBps,
                 realtimeObservedPFrameWireBytesP95: adaptivePFrameController.latestObservedPFrameWireBytesP95,
                 realtimeControlRevision: Self.realtimeControlRevision,
+                adaptiveGovernorRevision: MirageAdaptiveGovernorProtocol.revision,
+                adaptiveGovernorDecisionID: streamQualityDecision.id,
+                adaptiveGovernorState: streamQualityDecision.state.rawValue,
+                adaptiveGovernorEvidenceClass: streamQualityDecision.evidenceClass.rawValue,
+                adaptiveGovernorCause: streamQualityDecision.cause.rawValue,
+                adaptiveGovernorSelectedLever: streamQualityDecision.selectedLever.rawValue,
+                adaptiveGovernorBlockedLeverReason: streamQualityDecision.blockedLeverReason,
+                adaptiveGovernorEvidenceSummary: streamQualityDecision.evidenceSummary,
                 awdlPolicyState: awdlPolicy?.state.rawValue,
                 awdlPolicyTrigger: awdlPolicy?.trigger.rawValue,
                 awdlSelectedLever: awdlPolicy?.selectedLever.rawValue,

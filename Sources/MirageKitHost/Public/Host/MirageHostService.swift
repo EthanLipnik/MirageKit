@@ -101,9 +101,6 @@ public final class MirageHostService {
     /// Provider used for client-initiated host support log archive export.
     public var hostSupportLogArchiveProvider: (@MainActor @Sendable () async throws -> URL)?
 
-    /// Provider for the most recent cached host capture benchmark capability.
-    public var hostCaptureCapabilityProvider: (@MainActor @Sendable () -> MirageHostCaptureCapability?)?
-
     /// Authorizer used for client-initiated Mirage Host app relaunch requests.
     public var hostApplicationRestartAuthorizer: (@MainActor @Sendable (MirageConnectedClient) async -> Bool)?
 
@@ -327,17 +324,6 @@ public final class MirageHostService {
     var transportRefreshRequests: UInt64 = 0
     var transportSendErrorReported: Set<StreamID> = []
     var controlChannelSendFailureReported: Set<UUID> = []
-
-    // MARK: - Quality Test State
-
-    /// Active quality-test orchestration tasks by client.
-    var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
-    /// Session tokens that invalidate stale quality-test tasks by client.
-    var qualityTestSessionTokensByClientID: [UUID: UUID] = [:]
-    /// Active quality-test IDs by client.
-    var qualityTestIDsByClientID: [UUID: UUID] = [:]
-    /// Loom media streams opened for active quality tests by client.
-    var qualityTestStreamsByClientID: [UUID: LoomMultiplexedStream] = [:]
 
     /// Time after which a client error is treated as stale for reporting.
     let clientErrorTimeoutSeconds: CFAbsoluteTime = 2.0

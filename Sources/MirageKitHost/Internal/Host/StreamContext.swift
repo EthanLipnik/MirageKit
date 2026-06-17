@@ -153,6 +153,8 @@ actor StreamContext {
     let explicitKeyframeRequestDuplicateWindow: CFAbsoluteTime = 1.0
     var frameChainRepairKeyframeRetryTask: Task<Void, Never>?
     var pendingReceiverAcceptedKeyframeFrameNumber: UInt32?
+    var pendingReceiverAcceptedKeyframeReason: String?
+    var receiverKeyframeAcceptanceFallbackTask: Task<Void, Never>?
     var emergencyRecoveryBaseStreamScale: CGFloat?
     var emergencyRecoveryScaleIndex: Int = 0
     var emergencyRecoveryCleanPFrames: Int = 0
@@ -161,6 +163,7 @@ actor StreamContext {
     var encodeStageLastLogTime: CFAbsoluteTime = 0
     var senderFreshnessLastLogTime: CFAbsoluteTime = 0
     var receiverPFrameTimingSampleLastLogTime: CFAbsoluteTime = 0
+    var receiverFrameBudgetObserveOnlyLastLogTime: CFAbsoluteTime = 0
     var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0
     var lastMotionFrameEncodeTime: CFAbsoluteTime = 0
     var dynamicCadenceBaseFrameRate: Int?
@@ -274,6 +277,9 @@ actor StreamContext {
     var transportSendErrorBursts: UInt64 = 0
     var transportController = HostStreamTransportController()
     var adaptivePFrameController = HostAdaptivePFrameController()
+    var adaptiveFrameCoordinator = HostAdaptiveFrameCoordinator()
+    var streamQualityGovernor = HostStreamQualityGovernor()
+    var pendingAdaptiveFrameIntentsByPresentationTime: [Int64: HostAdaptiveFrameCoordinator.FrameIntent] = [:]
     var realtimeRuntimeQualityCeiling: Float?
     var realtimeRuntimeBitrateCeilingBps: Int?
     var realtimeEncoderRateHintBps: Int?
@@ -376,8 +382,10 @@ actor StreamContext {
 
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?
-    /// Host callback used to announce AWDL-driven desktop dimension changes before the recovery keyframe.
+    /// Host callback used to announce desktop dimension changes before the recovery keyframe.
     var onHostAdaptiveDesktopGeometryUpdate: (@MainActor @Sendable (StreamID) async -> Void)?
+    /// Host callback used to announce frame-rate-only cadence changes without a resize transition.
+    var onHostAdaptiveDesktopCadenceUpdate: (@MainActor @Sendable (StreamID) async -> Void)?
     /// Requested ScreenCaptureKit audio capture channel count for this stream.
     var requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount
 
@@ -588,6 +596,12 @@ actor StreamContext {
         _ handler: (@MainActor @Sendable (StreamID) async -> Void)?
     ) {
         onHostAdaptiveDesktopGeometryUpdate = handler
+    }
+
+    func setHostAdaptiveDesktopCadenceUpdateHandler(
+        _ handler: (@MainActor @Sendable (StreamID) async -> Void)?
+    ) {
+        onHostAdaptiveDesktopCadenceUpdate = handler
     }
 
 }

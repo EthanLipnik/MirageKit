@@ -650,6 +650,7 @@ struct HostAdaptivePFrameController: Equatable {
         inputActive: Bool,
         sourceStill: Bool,
         receiverHealthy: Bool,
+        receiverPressureActionable: Bool = true,
         senderHealthy: Bool,
         queuedBytesAhead: Int,
         unstartedPFrameCount: Int,
@@ -714,12 +715,14 @@ struct HostAdaptivePFrameController: Equatable {
             return baseDecision
         }
 
+        let receiverTransportStressed = receiverPressureActionable &&
+            (!receiverHealthy ||
+                receiverReassemblyBacklogFrames > 0 ||
+                receiverReassemblyBacklogBytes > 0)
         let transportStressed = !senderHealthy ||
-            !receiverHealthy ||
+            receiverTransportStressed ||
             queuedBytesAhead >= max(targetBytes, 128 * 1024) ||
-            unstartedPFrameCount >= 2 ||
-            receiverReassemblyBacklogFrames > 0 ||
-            receiverReassemblyBacklogBytes > 0
+            unstartedPFrameCount >= 2
         let wireRatio = Double(max(0, predictedWireBytes)) / Double(max(1, targetBytes))
         let packetRatio = Double(max(0, predictedPacketCount)) / Double(max(1, packetTarget))
         let motionRisk = dirtyPercentage > Self.preEncodeLowMotionDirtyPercentage &&
@@ -814,6 +817,8 @@ struct HostAdaptivePFrameController: Equatable {
         mediaPathProfile: MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil,
         awdlQualityReductionAllowed: Bool = true,
+        budgetReductionActionable: Bool = true,
+        contentComplexityReductionActionable: Bool = false,
         deliveryMode: HostFrameDeliveryMode = .realtime,
         encodedSize: CGSize = .zero,
         queuedBytesAhead: Int = 0,
@@ -965,6 +970,13 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             awdlQualityReductionAllowed: awdlQualityReductionAllowed
         )
+        let canApplyTransportFrameBudgetReduction = canReduceFrameBudget &&
+            (budgetReductionActionable || mediaPathProfile.usesAwdlRadioPolicy)
+        let canApplyFrameBudgetReduction = canApplyTransportFrameBudgetReduction ||
+            (canReduceFrameBudget && contentComplexityReductionActionable)
+        let startupWarmupAdmission = startupProtectionActive &&
+            senderHealthy &&
+            (!mediaPathProfile.usesAwdlRadioPolicy || receiverHealthy)
         if predictedDeliveryMs <= targetClearMs || nearFloorFrameTolerated {
             if let viabilityDecision = lowMotionRampViabilityDecision(
                 snapshot: viabilitySnapshot,
@@ -986,7 +998,9 @@ struct HostAdaptivePFrameController: Equatable {
                     packetCount: packetCount,
                     quality: currentQuality,
                     receiverHealthy: receiverHealthy,
-                    senderHealthy: senderHealthy
+                    senderHealthy: senderHealthy,
+                    updatesPredictionBaseline: !startupProtectionActive,
+                    updatesCleanBaseline: !startupProtectionActive
                 )
                 return HostEncodedFrameAdmissionDecision(
                     admission: .send,
@@ -999,8 +1013,9 @@ struct HostAdaptivePFrameController: Equatable {
                     requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
                 )
             }
-            if canReduceFrameBudget,
+            if canApplyFrameBudgetReduction,
                !nearFloorFrameTolerated,
+               !startupWarmupAdmission,
                let predictiveDecision = predictivePFrameOversizeDecision(
                    wireBytes: wireBytes,
                    packetCount: packetCount,
@@ -1024,6 +1039,7 @@ struct HostAdaptivePFrameController: Equatable {
                     quality: currentQuality,
                     receiverHealthy: receiverHealthy,
                     senderHealthy: senderHealthy,
+                    updatesPredictionBaseline: !startupProtectionActive,
                     updatesCleanBaseline: false
                 )
                 return HostEncodedFrameAdmissionDecision(
@@ -1042,7 +1058,31 @@ struct HostAdaptivePFrameController: Equatable {
                 packetCount: packetCount,
                 quality: currentQuality,
                 receiverHealthy: receiverHealthy,
-                senderHealthy: senderHealthy
+                senderHealthy: senderHealthy,
+                updatesPredictionBaseline: !startupProtectionActive,
+                updatesCleanBaseline: !startupProtectionActive
+            )
+            return HostEncodedFrameAdmissionDecision(
+                admission: .send,
+                budgetDecision: nil,
+                sendDeadline: effectiveSendDeadline,
+                byteRatio: byteRatio,
+                wireRatio: wireRatio,
+                packetRatio: packetRatio,
+                deliveryMode: effectiveDeliveryMode,
+                requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+            )
+        }
+
+        if startupWarmupAdmission {
+            recordAdmittedPFrame(
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                quality: currentQuality,
+                receiverHealthy: receiverHealthy,
+                senderHealthy: senderHealthy,
+                updatesPredictionBaseline: false,
+                updatesCleanBaseline: false
             )
             return HostEncodedFrameAdmissionDecision(
                 admission: .send,
@@ -1071,6 +1111,19 @@ struct HostAdaptivePFrameController: Equatable {
         if let repairTargetBytes {
             guard canReduceFrameBudget else {
                 qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.50)
+                return HostEncodedFrameAdmissionDecision(
+                    admission: .dropPFrameStartChainRepair,
+                    budgetDecision: nil,
+                    sendDeadline: effectiveSendDeadline,
+                    byteRatio: byteRatio,
+                    wireRatio: wireRatio,
+                    packetRatio: packetRatio,
+                    deliveryMode: effectiveDeliveryMode,
+                    requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+                )
+            }
+            guard canApplyTransportFrameBudgetReduction else {
+                qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
                 return HostEncodedFrameAdmissionDecision(
                     admission: .dropPFrameStartChainRepair,
                     budgetDecision: nil,
@@ -1140,7 +1193,8 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
-        if let motionRepairTargetBytes {
+        if canApplyFrameBudgetReduction,
+           let motionRepairTargetBytes {
             recordPressureCeiling(
                 failedTarget: max(targetBytes, wireBytes),
                 safeTarget: motionRepairTargetBytes,
@@ -1177,6 +1231,7 @@ struct HostAdaptivePFrameController: Equatable {
                 quality: currentQuality,
                 receiverHealthy: receiverHealthy,
                 senderHealthy: senderHealthy,
+                updatesPredictionBaseline: !startupProtectionActive,
                 updatesCleanBaseline: false
             )
             return HostEncodedFrameAdmissionDecision(
@@ -1191,13 +1246,14 @@ struct HostAdaptivePFrameController: Equatable {
             )
         }
 
-        if !canReduceFrameBudget {
+        if !canApplyFrameBudgetReduction {
             recordAdmittedPFrame(
                 wireBytes: wireBytes,
                 packetCount: packetCount,
                 quality: currentQuality,
                 receiverHealthy: receiverHealthy,
                 senderHealthy: senderHealthy,
+                updatesPredictionBaseline: !startupProtectionActive,
                 updatesCleanBaseline: false
             )
             return HostEncodedFrameAdmissionDecision(
@@ -1258,6 +1314,7 @@ struct HostAdaptivePFrameController: Equatable {
             quality: currentQuality,
             receiverHealthy: receiverHealthy,
             senderHealthy: senderHealthy,
+            updatesPredictionBaseline: !startupProtectionActive,
             updatesCleanBaseline: false
         )
 
@@ -1463,6 +1520,9 @@ struct HostAdaptivePFrameController: Equatable {
             maxPayloadSize: maxPayloadSize
         )
         if pressureDeliveryMs > targetClearMs {
+            guard capacityLearningAllowed || mediaPathProfile.usesAwdlRadioPolicy else {
+                return nil
+            }
             guard frameBudgetReductionAllowed(
                 mediaPathProfile: mediaPathProfile,
                 awdlQualityReductionAllowed: awdlQualityReductionAllowed
@@ -2595,6 +2655,25 @@ struct HostAdaptivePFrameController: Equatable {
         mediaPathProfile: MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Double {
+        let bytesPerMs = modeledBytesPerMs(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
+        )
+        return Double(max(1, wireBytes)) / max(1, bytesPerMs)
+    }
+
+    private func modeledBytesPerMs(
+        input: BudgetInput,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        latencyMode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
+        receiverPlayoutDelayTargetMs: Double? = nil
+    ) -> Double {
         let learned = learnedBytesPerMs ?? defaultBytesPerMs(
             input: input,
             currentFrameRate: currentFrameRate,
@@ -2603,7 +2682,9 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
-        return Double(max(1, wireBytes)) / max(1, learned)
+        guard !mediaPathProfile.usesAwdlRadioPolicy else { return learned }
+        let pacingBytesPerMs = Double(max(1, input.currentBitrate)) / 8.0 / 1_000.0
+        return min(learned, max(1, pacingBytesPerMs))
     }
 
     private func defaultBytesPerMs(
@@ -2648,7 +2729,9 @@ struct HostAdaptivePFrameController: Equatable {
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
     }
 
@@ -2661,7 +2744,7 @@ struct HostAdaptivePFrameController: Equatable {
         mediaPathProfile: MirageMediaPathProfile = .unknown,
         receiverPlayoutDelayTargetMs: Double? = nil
     ) -> Int {
-        let learned = learnedBytesPerMs ?? defaultBytesPerMs(
+        let learned = modeledBytesPerMs(
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
@@ -3056,11 +3139,14 @@ struct HostAdaptivePFrameController: Equatable {
         quality: Float,
         receiverHealthy: Bool,
         senderHealthy: Bool,
+        updatesPredictionBaseline: Bool = true,
         updatesCleanBaseline: Bool = true
     ) {
-        lastAdmittedPFrameWireBytes = wireBytes
-        lastAdmittedPFramePacketCount = packetCount
-        lastAdmittedPFrameQuality = quality
+        if updatesPredictionBaseline {
+            lastAdmittedPFrameWireBytes = wireBytes
+            lastAdmittedPFramePacketCount = packetCount
+            lastAdmittedPFrameQuality = quality
+        }
         guard updatesCleanBaseline else { return }
         guard receiverHealthy, senderHealthy else { return }
         guard isMeaningfulCleanBaselineSample(wireBytes: wireBytes) else { return }

@@ -516,7 +516,8 @@ extension StreamPacketSender {
             isParity: isParity,
             isRecovery: !item.isKeyframe && !isParity && item.fecBlockSize > 1,
             sendDeadline: transportSendDeadline(for: item),
-            deliveryMode: item.deliveryMode
+            deliveryMode: item.deliveryMode,
+            dropsWhenExpired: transportDropsWhenExpired(for: item, isParity: isParity)
         )
     }
 
@@ -525,6 +526,14 @@ extension StreamPacketSender {
             return item.sendDeadline
         }
         return hardSendDeadline(for: item)
+    }
+
+    private func transportDropsWhenExpired(for item: WorkItem, isParity: Bool) -> Bool {
+        guard !item.isKeyframe else { return false }
+        guard item.deliveryMode != .lowMotionRamp else { return false }
+        if item.usesAwdlRealtimeQueuePolicy { return true }
+        if isParity { return true }
+        return item.deliveryMode == .recovery
     }
 
     private nonisolated func logQueuedUnreliableTransportDrop(

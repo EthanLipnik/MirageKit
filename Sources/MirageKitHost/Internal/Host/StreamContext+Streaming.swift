@@ -31,6 +31,15 @@ enum StreamCaptureEngineSetupError: Error, LocalizedError {
     }
 }
 
+private struct EncodedFrameSendWork: Sendable {
+    let packetSender: StreamPacketSender
+    let workItem: StreamPacketSender.WorkItem
+
+    func enqueue() {
+        packetSender.enqueue(workItem)
+    }
+}
+
 extension StreamContext {
     /// Configures the packet sender for encoded frame output with per-fragment transport metadata.
     func setupPacketSender(
@@ -94,7 +103,7 @@ extension StreamContext {
     }
 
     /// Starts the encoder with a shared encoding callback. The callback handles frame
-    /// numbering, FEC, fragmentation, and packet enqueue — identical across all capture modes.
+    /// numbering, FEC, fragmentation, and packet send preparation — identical across all capture modes.
     ///
     /// - Parameters:
     ///   - pinnedContentRect: If non-nil, all frames use this content rect. Otherwise `currentContentRect` is used.
@@ -118,7 +127,7 @@ extension StreamContext {
                         finishFrame()
                         return
                     }
-                    await self.handleEncodedFrameForStreaming(
+                    let sendWork = await self.prepareEncodedFrameForStreaming(
                         encodedData: encodedData,
                         isKeyframe: isKeyframe,
                         presentationTime: presentationTime,
@@ -129,6 +138,7 @@ extension StreamContext {
                         baseFrameFlagsSnapshot: baseFrameFlagsSnapshot
                     )
                     finishFrame()
+                    sendWork?.enqueue()
                 }
             }, onFrameComplete: { [weak self] in
                 Task(priority: .userInitiated) { await self?.finishEncoding() }
@@ -136,7 +146,7 @@ extension StreamContext {
         )
     }
 
-    private func handleEncodedFrameForStreaming(
+    private func prepareEncodedFrameForStreaming(
         encodedData: Data,
         isKeyframe: Bool,
         presentationTime: CMTime,
@@ -145,18 +155,21 @@ extension StreamContext {
         logPrefix: String,
         callbackSequencer: StreamEncodingCallbackSequencer,
         baseFrameFlagsSnapshot: FrameFlags
-    ) async {
-        guard let packetSender else { return }
+    ) async -> EncodedFrameSendWork? {
+        guard let packetSender else { return nil }
         guard shouldEncodeFrames else {
             MirageLogger.stream(
                 "Dropping encoded frame after client background pause stream=\(streamID) keyframe=\(isKeyframe)"
             )
-            return
+            return nil
         }
 
         let now = CFAbsoluteTimeGetCurrent()
+        let adaptiveIntent = pendingAdaptiveFrameIntentsByPresentationTime.removeValue(
+            forKey: presentationTime.value
+        ) ?? (isKeyframe ? .recoveryKeyframe : adaptiveFrameCoordinator.lastFrameIntent)
         if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe || frameChainSuppressesPFrames {
-            return
+            return nil
         }
 
         let frameByteCount = encodedData.count
@@ -197,7 +210,7 @@ extension StreamContext {
                 evaluation: admissionDecision,
                 encodedAt: now
             )
-            return
+            return nil
         }
 
         let reservation = callbackSequencer.reserve(
@@ -219,6 +232,20 @@ extension StreamContext {
                     packetCount: projectedPlan.packetCount,
                     evaluation: admissionDecision,
                     action: "send-quality-drop",
+                    now: now
+                )
+            } else if admissionDecision.budgetDecision == nil,
+                      max(
+                          admissionDecision.byteRatio,
+                          max(admissionDecision.wireRatio, admissionDecision.packetRatio)
+                      ) >= 1.10 {
+                logAdaptivePFrameAdmissionIfNeeded(
+                    frameNumber: reservation.frameNumber,
+                    byteCount: frameByteCount,
+                    wireBytes: projectedPlan.wireBytes,
+                    packetCount: projectedPlan.packetCount,
+                    evaluation: admissionDecision,
+                    action: "send-observe-only",
                     now: now
                 )
             }
@@ -250,9 +277,17 @@ extension StreamContext {
                 frameNumber: reservation.frameNumber,
                 queuedBytes: queuedBytes
             )
+            adaptiveFrameCoordinator.bindKeyframeFrameNumber(reservation.frameNumber, now: now)
             markKeyframeInFlight(frameNumber: reservation.frameNumber)
             markKeyframeSent()
         }
+        adaptiveFrameCoordinator.noteFrameReserved(
+            frameNumber: reservation.frameNumber,
+            intent: adaptiveIntent,
+            wireBytes: reservation.wireBytes,
+            quality: activeQuality,
+            now: now
+        )
         let workItem = StreamPacketSender.WorkItem(
             encodedData: encodedData,
             frameByteCount: frameByteCount,
@@ -281,7 +316,7 @@ extension StreamContext {
             usesAwdlRealtimeQueuePolicy: mediaPathProfile.usesAwdlRadioPolicy,
             deliveryMode: admissionDecision.deliveryMode
         )
-        packetSender.enqueue(workItem)
+        return EncodedFrameSendWork(packetSender: packetSender, workItem: workItem)
     }
 
     private func awdlHardSendDeadline(

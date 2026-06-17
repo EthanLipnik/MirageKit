@@ -21,7 +21,6 @@ public extension MirageClientService {
         encoderOverrides: MirageEncoderOverrides? = nil
     ) async throws -> ClientStreamSession {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-        await cancelActiveQualityTest(reason: "custom stream startup", notifyHost: true)
         _ = await refreshCurrentControlPathKind()
 
         let trimmedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines)

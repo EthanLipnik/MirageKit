@@ -64,10 +64,6 @@ extension MirageClientService {
         videoIngressLastDropCountByStream.removeAll(keepingCapacity: false)
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
-        for task in qualityTestStreamReceiveTasks.values {
-            task.cancel()
-        }
-        qualityTestStreamReceiveTasks.removeAll()
         activeMediaStreams.removeAll()
         refreshActiveStreamTransportBudgetPolicy()
     }
@@ -118,28 +114,6 @@ extension MirageClientService {
                 }
                 guard let service = serviceBox.value else { return }
                 await service.finishVideoStreamReceiveLoop(streamID: streamID)
-            }
-        }
-    }
-
-    private func startQualityTestStreamReceiveLoop(
-        stream: LoomMultiplexedStream,
-        testID: UUID,
-        label: String
-    ) {
-        qualityTestStreamReceiveTasks[testID]?.cancel()
-        let serviceBox = WeakSendableBox(self)
-        qualityTestStreamReceiveTasks[testID] = Task.detached(priority: .userInitiated) {
-            [stream, testID, label, serviceBox] in
-            for await data in stream.incomingBytes {
-                guard !Task.isCancelled else { break }
-                serviceBox.value?.handleIncomingQualityTestData(data, expectedTestID: testID)
-            }
-            guard let service = serviceBox.value else { return }
-            await MainActor.run {
-                service.qualityTestStreamReceiveTasks.removeValue(forKey: testID)
-                service.activeMediaStreams.removeValue(forKey: label)
-                MirageLogger.client("Quality-test stream receive loop ended for test \(testID.uuidString)")
             }
         }
     }
@@ -246,16 +220,6 @@ extension MirageClientService {
         }
     }
 
-    private nonisolated func handleIncomingQualityTestData(_ data: Data, expectedTestID: UUID) {
-        guard data.count >= mirageQualityTestHeaderSize,
-              let header = QualityTestPacketHeader.deserialize(from: data),
-              header.testID == expectedTestID else {
-            return
-        }
-
-        handleQualityTestPacket(header, data: data)
-    }
-
     func logStartupFirstPacketIfNeeded(streamID: StreamID) {
         guard let baseTime = streamStartupBaseTimes[streamID],
               !streamStartupFirstPacketReceived.contains(streamID) else {
@@ -331,13 +295,6 @@ extension MirageClientService {
             )
             activeMediaStreams[label] = stream
             await startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
-
-        case let .qualityTest(testID):
-            MirageLogger.client(
-                "Accepted incoming quality-test stream for test \(testID.uuidString)"
-            )
-            activeMediaStreams[label] = stream
-            startQualityTestStreamReceiveLoop(stream: stream, testID: testID, label: label)
 
         case .transferData:
             break

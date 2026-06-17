@@ -349,9 +349,6 @@ extension StreamContext {
         let defaultRaisesActiveQuality = Self.runtimeQualityRefreshShouldRaiseActiveQuality(reason: reason)
         let shouldRaiseActiveQuality = allowsActiveQualityRaise ?? defaultRaisesActiveQuality
         let shouldClearRuntimeQualityCeiling = clearsRuntimeQualityCeiling ?? defaultRaisesActiveQuality
-        let shouldRefreshConfiguredQualityCeiling = targets.frameQuality > configuredQualityCeiling ||
-            shouldClearRuntimeQualityCeiling ||
-            reason == HostAdaptivePFrameController.Reason.startup.rawValue
         let previousFrameQuality = encoderConfig.frameQuality
         let previousKeyframeQuality = encoderConfig.keyframeQuality
         let previousConfiguredQualityCeiling = configuredQualityCeiling
@@ -359,24 +356,40 @@ extension StreamContext {
         let previousQualityCeiling = qualityCeiling
         let previousQualityFloor = qualityFloor
         let previousKeyframeQualityFloor = keyframeQualityFloor
+        let refreshedFrameQuality = shouldClearRuntimeQualityCeiling
+            ? max(previousFrameQuality, targets.frameQuality)
+            : targets.frameQuality
+        let refreshedKeyframeQuality = shouldClearRuntimeQualityCeiling
+            ? max(previousKeyframeQuality, targets.keyframeQuality)
+            : targets.keyframeQuality
+        let shouldRefreshConfiguredQualityCeiling = refreshedFrameQuality > configuredQualityCeiling ||
+            reason == HostAdaptivePFrameController.Reason.startup.rawValue
         if shouldClearRuntimeQualityCeiling {
             realtimeRuntimeQualityCeiling = nil
         }
-        encoderConfig.frameQuality = targets.frameQuality
-        encoderConfig.keyframeQuality = targets.keyframeQuality
+        encoderConfig.frameQuality = refreshedFrameQuality
+        encoderConfig.keyframeQuality = min(refreshedFrameQuality, refreshedKeyframeQuality)
         if shouldRefreshConfiguredQualityCeiling {
-            configuredQualityCeiling = targets.frameQuality
+            configuredQualityCeiling = refreshedFrameQuality
         }
-        steadyQualityCeiling = targets.frameQuality
-        qualityCeiling = min(resolvedQualityCeiling, targets.frameQuality)
+        steadyQualityCeiling = refreshedFrameQuality
+        let proposedRuntimeQualityCeiling = if shouldClearRuntimeQualityCeiling,
+                                               !mediaPathProfile.usesAwdlRadioPolicy {
+            max(qualityCeiling, configuredQualityCeiling, refreshedFrameQuality)
+        } else {
+            refreshedFrameQuality
+        }
+        qualityCeiling = min(resolvedQualityCeiling, proposedRuntimeQualityCeiling)
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
             for: min(targets.keyframeQuality, qualityCeiling)
         )
 
         let previousActiveQuality = activeQuality
-        let boundedTargetQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
-        if activeQuality > boundedTargetQuality ||
+        let boundedTargetQuality = max(qualityFloor, min(refreshedFrameQuality, qualityCeiling))
+        let shouldLowerActiveQuality = !shouldClearRuntimeQualityCeiling ||
+            mediaPathProfile.usesAwdlRadioPolicy
+        if (shouldLowerActiveQuality && activeQuality > boundedTargetQuality) ||
             (shouldRaiseActiveQuality && activeQuality < boundedTargetQuality) ||
             (mediaPathProfile.usesAwdlRadioPolicy && activeQuality < qualityFloor) {
             activeQuality = boundedTargetQuality

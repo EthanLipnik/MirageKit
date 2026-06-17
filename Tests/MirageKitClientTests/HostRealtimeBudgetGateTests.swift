@@ -45,6 +45,14 @@ struct HostRealtimeBudgetGateTests {
             )
         }
     }
+
+    @Test("Realtime adaptation ownership follows host capability revisions")
+    func realtimeAdaptationOwnershipFollowsCapabilityRevisions() {
+        #expect(MirageClientMetricsSnapshot().hostOwnsRealtimeAdaptation == false)
+        #expect(MirageClientMetricsSnapshot(hostRealtimeControlRevision: 0).hostOwnsRealtimeAdaptation == false)
+        #expect(MirageClientMetricsSnapshot(hostRealtimeControlRevision: 1).hostOwnsRealtimeAdaptation)
+        #expect(MirageClientMetricsSnapshot(hostAdaptiveGovernorRevision: 2).hostOwnsRealtimeAdaptation)
+    }
 }
 
 @Suite("Host Production Cadence Gate")

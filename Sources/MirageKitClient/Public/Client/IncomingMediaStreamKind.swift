@@ -12,7 +12,6 @@ import MirageKit
 enum IncomingMediaStreamKind: Equatable {
     case video(StreamID)
     case audio(StreamID)
-    case qualityTest(UUID)
     case transferData
     case unknown
 
@@ -34,13 +33,6 @@ enum IncomingMediaStreamKind: Equatable {
             return .audio(streamID)
         }
 
-        if label.hasPrefix("quality-test/") {
-            let testIDString = String(label.dropFirst("quality-test/".count))
-            guard let testID = UUID(uuidString: testIDString) else { return .unknown }
-            return .qualityTest(testID)
-        }
-
         return .unknown
     }
 }
-

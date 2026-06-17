@@ -99,12 +99,6 @@ extension MirageHostService {
             .stopDesktopStream: .message { [weak self] message in
                 await self?.handleStopDesktopStream(message)
             },
-            .qualityTestRequest: .messageAndClient { [weak self] message, clientContext in
-                await self?.handleQualityTestRequest(message, from: clientContext)
-            },
-            .qualityTestCancel: .messageAndClient { [weak self] message, clientContext in
-                await self?.handleQualityTestCancel(message, from: clientContext)
-            },
             .hostSoftwareUpdateStatusRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleHostSoftwareUpdateStatusRequest(message, from: clientContext)
             },
@@ -131,6 +125,18 @@ extension MirageHostService {
             },
             .stopCustomStream: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleStopCustomStream(message, from: clientContext)
+            },
+            .qualityTestRequest: .message { [weak self] message in
+                self?.handleLegacyQualityTestMessage(message)
+            },
+            .qualityTestResult: .message { [weak self] message in
+                self?.handleLegacyQualityTestMessage(message)
+            },
+            .qualityTestStageComplete: .message { [weak self] message in
+                self?.handleLegacyQualityTestMessage(message)
+            },
+            .qualityTestCancel: .message { [weak self] message in
+                self?.handleLegacyQualityTestMessage(message)
             }
         ]
     }
@@ -159,6 +165,10 @@ extension MirageHostService {
 
     nonisolated static func shouldLogReceivedControlMessageType(_ type: ControlMessageType) -> Bool {
         type != .receiverMediaFeedback
+    }
+
+    private func handleLegacyQualityTestMessage(_ message: ControlMessage) {
+        MirageLogger.host("Ignoring legacy quality-test control message: \(message.type)")
     }
 
     private func handleStopStreamMessage(_ message: ControlMessage) async {

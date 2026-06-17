@@ -31,6 +31,11 @@ extension StreamContext {
         now: CFAbsoluteTime
     ) {
         suppressEncodedNonKeyframesUntilKeyframe = true
+        adaptiveFrameCoordinator.startKeyframeBarrier(
+            kind: .recovery,
+            reason: reason,
+            now: now
+        )
         switch frameChainState {
         case .chainBroken,
              .emergencyKeyframePending:
@@ -182,6 +187,12 @@ extension StreamContext {
         let frameNumber = completion.frameNumber
         let isKeyframe = completion.isKeyframe
         let didSend = completion.didSend
+        adaptiveFrameCoordinator.noteFrameTransportCompletion(
+            frameNumber: frameNumber,
+            didSend: didSend,
+            queuedUnreliableDropCount: completion.queuedUnreliableDropCounts.total,
+            now: now
+        )
 
         if didSend {
             recordFrameTransportCompletion(completion)
@@ -197,8 +208,28 @@ extension StreamContext {
                     keyframeInFlightFrameNumber = nil
                 }
                 logKeyframeTransportCompletion(completion)
-                handleSuccessfulKeyframeTransport(frameNumber: frameNumber, now: now)
+                let senderQueuedBytes = packetSender?.queuedByteCount ?? 0
+                let allowsStartupLocalRelease = !usesDependencyKeyframeReceiverAcceptanceGate &&
+                    senderQueuedBytes <= queuePressureBytes
+                if let release = adaptiveFrameCoordinator.noteKeyframeTransportCompletion(
+                    frameNumber: frameNumber,
+                    didSend: true,
+                    allowsStartupLocalRelease: allowsStartupLocalRelease,
+                    now: now
+                ) {
+                    releaseAdaptiveKeyframeBarrier(release)
+                    return
+                }
+                handleSuccessfulKeyframeTransport(frameNumber: frameNumber)
             } else {
+                if let release = adaptiveFrameCoordinator.noteKeyframeTransportCompletion(
+                    frameNumber: frameNumber,
+                    didSend: false,
+                    allowsStartupLocalRelease: false,
+                    now: now
+                ) {
+                    releaseAdaptiveKeyframeBarrier(release)
+                }
                 handleFailedKeyframeTransport(frameNumber: frameNumber, now: now)
             }
             return
@@ -241,7 +272,7 @@ extension StreamContext {
         }
     }
 
-    private func handleSuccessfulKeyframeTransport(frameNumber: UInt32, now: CFAbsoluteTime) {
+    private func handleSuccessfulKeyframeTransport(frameNumber: UInt32) {
         let wasRepairing: Bool
         switch frameChainState {
         case .chainBroken,
@@ -255,19 +286,30 @@ extension StreamContext {
         if wasRepairing {
             cancelPacketSenderDependencyRecoveryKeyframeRetry()
             pendingReceiverAcceptedKeyframeFrameNumber = frameNumber
+            let gateReason = pendingReceiverAcceptedKeyframeReason ?? "frame-chain repair"
+            pendingReceiverAcceptedKeyframeReason = gateReason
             MirageLogger.metrics(
-                "Emergency recovery keyframe sent for stream \(streamID); " +
+                "Dependency keyframe sent for stream \(streamID): " +
+                    "frame=\(frameNumber) reason=\(gateReason); " +
                     "waiting for receiver acceptance before resuming P-frames"
+            )
+            scheduleReceiverKeyframeAcceptanceFallbackIfNeeded(
+                frameNumber: frameNumber,
+                reason: gateReason
             )
         }
     }
 
     func handleReceiverAcceptedKeyframe(
         frameNumber: UInt32,
-        evidence: String,
-        now: CFAbsoluteTime
+        evidence: String
     ) {
         guard pendingReceiverAcceptedKeyframeFrameNumber == frameNumber else { return }
+        let gateReason = pendingReceiverAcceptedKeyframeReason ?? "frame-chain repair"
+        let adaptiveRelease = adaptiveFrameCoordinator.noteReceiverAcceptedKeyframe(
+            frameNumber: frameNumber,
+            now: CFAbsoluteTimeGetCurrent()
+        )
         let wasRepairing: Bool
         switch frameChainState {
         case .chainBroken,
@@ -279,9 +321,12 @@ extension StreamContext {
         }
 
         pendingReceiverAcceptedKeyframeFrameNumber = nil
+        pendingReceiverAcceptedKeyframeReason = nil
         suppressEncodedNonKeyframesUntilKeyframe = false
         latestReceiverRecoveryCause = .none
         pendingEmergencyKeyframeQuality = nil
+        receiverKeyframeAcceptanceFallbackTask?.cancel()
+        receiverKeyframeAcceptanceFallbackTask = nil
         cancelPacketSenderDependencyRecoveryKeyframeRetry()
         adaptivePFrameController.resetEncodedOvershootHistory()
         if wasRepairing {
@@ -289,14 +334,30 @@ extension StreamContext {
                 untilCleanPFrames: postEmergencyKeyframeCleanPFrameCount
             )
             MirageLogger.metrics(
-                "Emergency recovery keyframe accepted for stream \(streamID): " +
-                    "frame=\(frameNumber) evidence=\(evidence) " +
-                    "cooling until \(postEmergencyKeyframeCleanPFrameCount) clean P-frames"
+                "Dependency keyframe accepted for stream \(streamID): " +
+                    "frame=\(frameNumber) evidence=\(evidence) reason=\(gateReason) " +
+                "cooling until \(postEmergencyKeyframeCleanPFrameCount) clean P-frames"
             )
         }
+        if let adaptiveRelease {
+            releaseAdaptiveKeyframeBarrier(adaptiveRelease)
+        }
+        scheduleProcessingIfNeeded()
     }
 
     private func handleFailedKeyframeTransport(frameNumber: UInt32, now: CFAbsoluteTime) {
+        if let gateReason = pendingReceiverAcceptedKeyframeReason {
+            pendingReceiverAcceptedKeyframeFrameNumber = nil
+            pendingReceiverAcceptedKeyframeReason = nil
+            suppressEncodedNonKeyframesUntilKeyframe = false
+            receiverKeyframeAcceptanceFallbackTask?.cancel()
+            receiverKeyframeAcceptanceFallbackTask = nil
+            MirageLogger.stream(
+                "Dependency keyframe transport failed for stream \(streamID): " +
+                    "frame=\(frameNumber) reason=\(gateReason); releasing receiver acceptance gate"
+            )
+            scheduleProcessingIfNeeded()
+        }
         if pendingReceiverAcceptedKeyframeFrameNumber == frameNumber {
             pendingReceiverAcceptedKeyframeFrameNumber = nil
         }
@@ -308,6 +369,11 @@ extension StreamContext {
                 openedAt: now
             )
             suppressEncodedNonKeyframesUntilKeyframe = true
+            adaptiveFrameCoordinator.startKeyframeBarrier(
+                kind: .recovery,
+                reason: reason,
+                now: now
+            )
             scheduleFrameChainRepairKeyframeRetry(
                 reason: reason,
                 bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
@@ -414,6 +480,51 @@ extension StreamContext {
                 "packets=\(completion.packetCount) sendMs=\(sendMs) transportMs=\(transportMs) " +
                 "reason=\(reason)"
         )
+    }
+
+    private func scheduleReceiverKeyframeAcceptanceFallbackIfNeeded(
+        frameNumber: UInt32,
+        reason: String
+    ) {
+        guard pendingReceiverAcceptedKeyframeReason != nil else { return }
+        receiverKeyframeAcceptanceFallbackTask?.cancel()
+        let delaySeconds = receiverKeyframeAcceptanceFallbackDelay()
+        receiverKeyframeAcceptanceFallbackTask = Task(priority: .userInitiated) { [weak self] in
+            try? await Task.sleep(for: .seconds(delaySeconds))
+            guard !Task.isCancelled else { return }
+            await self?.releaseReceiverKeyframeAcceptanceGateIfTimedOut(
+                frameNumber: frameNumber,
+                reason: reason
+            )
+        }
+    }
+
+    private func releaseReceiverKeyframeAcceptanceGateIfTimedOut(
+        frameNumber: UInt32,
+        reason: String
+    ) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard pendingReceiverAcceptedKeyframeFrameNumber == frameNumber,
+              pendingReceiverAcceptedKeyframeReason == reason else {
+            return
+        }
+        let adaptiveRelease = adaptiveFrameCoordinator.releaseKeyframeBarrierAfterReceiverAcceptanceTimeout(
+            frameNumber: frameNumber,
+            now: now
+        )
+        pendingReceiverAcceptedKeyframeFrameNumber = nil
+        pendingReceiverAcceptedKeyframeReason = nil
+        suppressEncodedNonKeyframesUntilKeyframe = false
+        receiverKeyframeAcceptanceFallbackTask = nil
+        MirageLogger.stream(
+            "Receiver acceptance timed out for dependency keyframe stream=\(streamID) " +
+                "frame=\(frameNumber) reason=\(reason); resuming P-frames"
+        )
+        if let adaptiveRelease {
+            releaseAdaptiveKeyframeBarrier(adaptiveRelease)
+        } else {
+            scheduleProcessingIfNeeded()
+        }
     }
 
     func scheduleFrameChainRepairKeyframeRetry(
@@ -567,6 +678,11 @@ private extension StreamContext {
         let playoutSeconds = max(0, receiverPlayoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs) / 1_000
         let constrainedTimeout = max(activeKeyframeInFlightCap, playoutSeconds + 1.0)
         return mediaPathProfile.usesAwdlRadioPolicy ? constrainedTimeout : activeKeyframeInFlightCap
+    }
+
+    func receiverKeyframeAcceptanceFallbackDelay() -> CFAbsoluteTime {
+        let playoutSeconds = max(0, receiverPlayoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs) / 1_000
+        return max(activeKeyframeInFlightCap, playoutSeconds + 0.5)
     }
 }
 #endif

@@ -110,6 +110,32 @@ struct ClientHelloHandshakeStateTests {
     }
 
     @MainActor
+    @Test("Trust-pending bootstrap progress marks manual approval as pending")
+    func trustPendingBootstrapProgressMarksManualApprovalPending() throws {
+        let service = MirageClientService(deviceName: "Test Device")
+        let attemptID = service.beginConnectAttempt()
+        let port = try #require(NWEndpoint.Port(rawValue: 61040))
+        let attempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Studio",
+            endpoint: .hostPort(host: NWEndpoint.Host("studio.local"), port: port),
+            transportKind: .udp,
+            candidateKind: .local
+        )
+        service.connectionState = .connecting
+        service.authorizationState = .verifyingTrust
+
+        service.handleConnectBootstrapProgress(
+            LoomAuthenticatedSessionBootstrapProgress(phase: .trustPendingApproval),
+            attempt: attempt,
+            attemptID: attemptID
+        )
+
+        #expect(service.connectionState == .handshaking(host: "Studio"))
+        #expect(service.authorizationState == .awaitingManualApproval)
+        #expect(service.isAwaitingManualApproval)
+    }
+
+    @MainActor
     @Test("Trust-pending bootstrap phase extends the control-session timeout budget")
     func trustPendingBootstrapPhaseExtendsControlSessionTimeoutBudget() async {
         let tracker = ConnectSessionBootstrapProgressTracker()

@@ -361,7 +361,7 @@ extension MirageClientService {
                 requiredInterface: attempt.requiredInterface,
                 requiredInterfaceType: attempt.requiredInterfaceType,
                 onTrustPending: { @MainActor [weak self] in
-                    self?.authorizationState = .verifyingTrust
+                    self?.authorizationState = .awaitingManualApproval
                 },
                 onBootstrapProgress: { [weak self] progress in
                     Task {
@@ -516,6 +516,9 @@ extension MirageClientService {
     }
 
     func controlSessionInitialConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.isOptimisticProximityProbe {
+            return .milliseconds(750)
+        }
         if attempt.isPeerToPeerPreferred {
             return .seconds(2)
         }
@@ -534,6 +537,9 @@ extension MirageClientService {
     }
 
     func controlSessionActivePhaseIdleTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.isOptimisticProximityProbe {
+            return .milliseconds(750)
+        }
         if attempt.isPeerToPeerPreferred {
             return .seconds(2)
         }
@@ -552,6 +558,9 @@ extension MirageClientService {
     }
 
     func absoluteControlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.isOptimisticProximityProbe {
+            return .milliseconds(1500)
+        }
         if attempt.isPeerToPeerPreferred {
             return .seconds(6)
         }
@@ -586,7 +595,9 @@ extension MirageClientService {
             return
         }
 
-        if progress.phase == .ready {
+        if progress.phase == .trustPendingApproval {
+            authorizationState = .awaitingManualApproval
+        } else if progress.phase == .ready {
             authorizationState = .approved
         }
 

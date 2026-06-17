@@ -224,13 +224,13 @@ extension StreamPacketSender {
     }
 
     /// Optional pacing override for one frame.
-    struct PacingOverride: Equatable {
+    struct PacingOverride: Equatable, Sendable {
         let rateBps: Int
         let burstBytes: Int
     }
 
     /// Encoded frame work item queued for packetization and transport submission.
-    struct WorkItem {
+    struct WorkItem: Sendable {
         let encodedData: Data
         let frameByteCount: Int
         let isKeyframe: Bool
@@ -315,6 +315,7 @@ extension StreamPacketSender {
         let isRecovery: Bool
         let sendDeadline: CFAbsoluteTime
         let deliveryMode: HostFrameDeliveryMode
+        let dropsWhenExpired: Bool
 
         init(
             streamID: StreamID,
@@ -325,7 +326,8 @@ extension StreamPacketSender {
             isParity: Bool,
             isRecovery: Bool,
             sendDeadline: CFAbsoluteTime,
-            deliveryMode: HostFrameDeliveryMode = .realtime
+            deliveryMode: HostFrameDeliveryMode = .realtime,
+            dropsWhenExpired: Bool? = nil
         ) {
             self.streamID = streamID
             self.frameNumber = frameNumber
@@ -336,6 +338,7 @@ extension StreamPacketSender {
             self.isRecovery = isRecovery
             self.sendDeadline = sendDeadline
             self.deliveryMode = deliveryMode
+            self.dropsWhenExpired = dropsWhenExpired ?? (!isKeyframe && deliveryMode != .lowMotionRamp)
         }
     }
 

@@ -56,7 +56,11 @@ public extension MirageClientService {
         MirageSessionBootstrapRequest(
             protocolVersion: protocolVersionOverride ?? Int(MirageKit.protocolVersion),
             clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
-            requestTakeoverIfBusy: requestTakeoverIfBusy
+            requestTakeoverIfBusy: requestTakeoverIfBusy,
+            adaptiveGovernorRevision: MirageAdaptiveGovernorProtocol.revision,
+            hostOwnedRuntimeSupport: true,
+            adaptiveFeedbackClassesSupported: MirageAdaptiveGovernorProtocol.feedbackClasses,
+            adaptiveLegacyFallbackMode: MirageAdaptiveGovernorProtocol.legacyFallbackMode
         )
     }
 

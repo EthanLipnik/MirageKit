@@ -15,7 +15,6 @@ enum ClientHeartbeatProbeDecision: Equatable {
     case waitForInboundActivity
     case skipActiveStream
     case skipGracePeriod
-    case skipQualityTest
     case skipOperationInFlight
     case sendPing
 }
@@ -31,13 +30,11 @@ func clientHeartbeatProbeDecision(
     hasActiveStreams: Bool,
     hasPendingStreamSetup: Bool,
     isWithinGracePeriod: Bool,
-    qualityTestActive: Bool,
     hasInFlightPingOrHostOperation: Bool
 ) -> ClientHeartbeatProbeDecision {
     guard !hasActiveStreams else { return .skipActiveStream }
     guard !hasPendingStreamSetup else { return .skipOperationInFlight }
     guard !isWithinGracePeriod else { return .skipGracePeriod }
-    guard !qualityTestActive else { return .skipQualityTest }
     guard !hasInFlightPingOrHostOperation else { return .skipOperationInFlight }
     guard inactivityDuration >= inactivityThreshold else { return .waitForInboundActivity }
     return .sendPing
@@ -74,7 +71,6 @@ extension MirageClientService {
                     hasActiveStreams: !self.controllersByStream.isEmpty,
                     hasPendingStreamSetup: self.pendingStreamSetupRequestID != nil,
                     isWithinGracePeriod: self.heartbeatGraceDeadline.map { ContinuousClock.now < $0 } ?? false,
-                    qualityTestActive: self.qualityTestPendingTestID != nil,
                     hasInFlightPingOrHostOperation: !self.pingContinuations.isEmpty || hasInFlightHostOperation
                 )
                 guard decision == .sendPing else {

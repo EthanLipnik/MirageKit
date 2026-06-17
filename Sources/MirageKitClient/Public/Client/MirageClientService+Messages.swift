@@ -58,8 +58,6 @@ extension MirageClientService {
                     result: .success(())
                 )
             },
-            .qualityTestResult: .message { [weak self] in self?.handleQualityTestBenchmark($0) },
-            .qualityTestStageComplete: .message { [weak self] in self?.handleQualityTestStageCompletion($0) },
             .audioStreamStarted: .message { [weak self] in self?.handleAudioStreamStarted($0) },
             .audioStreamStopped: .message { [weak self] in self?.handleAudioStreamStopped($0) },
             .hostSoftwareUpdateStatus: .message { [weak self] in self?.handleHostSoftwareUpdateStatus($0) },
@@ -71,6 +69,10 @@ extension MirageClientService {
             .customStreamStarted: .message { [weak self] in await self?.handleCustomStreamStarted($0) },
             .customStreamStopped: .message { [weak self] in await self?.handleCustomStreamStopped($0) },
             .customStreamFailed: .message { [weak self] in self?.handleCustomStreamFailed($0) },
+            .qualityTestRequest: .empty {},
+            .qualityTestResult: .empty {},
+            .qualityTestStageComplete: .empty {},
+            .qualityTestCancel: .empty {},
         ]
     }
 

@@ -53,7 +53,7 @@ extension SharedVirtualDisplayManager {
 
     /// Acquires the shared virtual display for a non-stream purpose.
     ///
-    /// Unlock, desktop streaming, and benchmark consumers share one display instance. The manager creates the display
+    /// Unlock and desktop streaming consumers share one display instance. The manager creates the display
     /// for the first consumer and returns the existing display for later consumers unless `allowActiveUpdate` permits
     /// changing the active display mode.
     /// - Parameters:

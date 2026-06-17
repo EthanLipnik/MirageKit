@@ -19,7 +19,6 @@ struct ClientHeartbeatProbeDecisionTests {
                 hasActiveStreams: false,
                 hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
-                qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
             ) == .sendPing
         )
@@ -34,7 +33,6 @@ struct ClientHeartbeatProbeDecisionTests {
                 hasActiveStreams: false,
                 hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
-                qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
             ) == .waitForInboundActivity
         )
@@ -49,14 +47,13 @@ struct ClientHeartbeatProbeDecisionTests {
                 hasActiveStreams: true,
                 hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
-                qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
             ) == .skipActiveStream
         )
     }
 
-    @Test("Grace periods and quality tests suppress probes")
-    func gracePeriodsAndQualityTestsSuppressProbe() {
+    @Test("Grace periods suppress probes")
+    func gracePeriodsSuppressProbe() {
         #expect(
             clientHeartbeatProbeDecision(
                 inactivityDuration: 30,
@@ -64,20 +61,8 @@ struct ClientHeartbeatProbeDecisionTests {
                 hasActiveStreams: false,
                 hasPendingStreamSetup: false,
                 isWithinGracePeriod: true,
-                qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
             ) == .skipGracePeriod
-        )
-        #expect(
-            clientHeartbeatProbeDecision(
-                inactivityDuration: 30,
-                inactivityThreshold: 10.0,
-                hasActiveStreams: false,
-                hasPendingStreamSetup: false,
-                isWithinGracePeriod: false,
-                qualityTestActive: true,
-                hasInFlightPingOrHostOperation: false
-            ) == .skipQualityTest
         )
     }
 
@@ -90,7 +75,6 @@ struct ClientHeartbeatProbeDecisionTests {
                 hasActiveStreams: false,
                 hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
-                qualityTestActive: false,
                 hasInFlightPingOrHostOperation: true
             ) == .skipOperationInFlight
         )
@@ -105,7 +89,6 @@ struct ClientHeartbeatProbeDecisionTests {
                 hasActiveStreams: false,
                 hasPendingStreamSetup: true,
                 isWithinGracePeriod: false,
-                qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
             ) == .skipOperationInFlight
         )

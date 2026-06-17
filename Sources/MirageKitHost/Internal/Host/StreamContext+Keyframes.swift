@@ -27,7 +27,11 @@ extension StreamContext {
     }
 
     var usesConstrainedKeyframeInFlightWindow: Bool {
-        mediaPathProfile.usesAwdlRadioPolicy || transportPathKind == .cellular
+        mediaPathProfile.usesAwdlRadioPolicy || transportPathKind == .cellular || transportPathKind == .vpn
+    }
+
+    var usesDependencyKeyframeReceiverAcceptanceGate: Bool {
+        mediaPathProfile.usesAwdlRadioPolicy || transportPathKind == .cellular || transportPathKind == .vpn
     }
 
     func markKeyframeInFlight(frameNumber: UInt32? = nil) {
@@ -256,7 +260,7 @@ extension StreamContext {
             )
         }
         if let budgetDecision {
-            await applyFrameBudgetDecision(budgetDecision, now: now)
+            await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
         } else if mediaPathProfile.usesAwdlRadioPolicy, !awdlQualityReductionAllowed {
             realtimePressureState = .pressured
             realtimePressureReason = reason == .staleChain
@@ -581,6 +585,7 @@ extension StreamContext {
         reason: String,
         resetFrameNumber: Bool = false
     ) async {
+        let now = CFAbsoluteTimeGetCurrent()
         let queued = queueKeyframe(
             reason: reason,
             checkInFlight: true,
@@ -590,6 +595,20 @@ extension StreamContext {
         guard queued else {
             MirageLogger.stream("\(reason) skipped (startup keyframe already pending or in flight)")
             return
+        }
+        adaptiveFrameCoordinator.startKeyframeBarrier(
+            kind: .bootstrap,
+            reason: reason,
+            now: now
+        )
+        suppressEncodedNonKeyframesUntilKeyframe = true
+        pendingEmergencyKeyframeQuality = adaptiveFrameCoordinator.keyframeQuality(
+            for: .bootstrapKeyframe,
+            mediaPathProfile: mediaPathProfile,
+            ceiling: keyframeQuality
+        )
+        if usesDependencyKeyframeReceiverAcceptanceGate {
+            pendingReceiverAcceptedKeyframeReason = reason
         }
 
         if resetFrameNumber {
@@ -689,7 +708,9 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
-        if !frameChainSuppressesPFrames {
+        if !frameChainSuppressesPFrames,
+           pendingReceiverAcceptedKeyframeReason == nil,
+           !adaptiveFrameCoordinator.hasActiveKeyframeBarrier {
             suppressEncodedNonKeyframesUntilKeyframe = false
             pendingEmergencyKeyframeQuality = nil
         }

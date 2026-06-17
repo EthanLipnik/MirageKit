@@ -130,113 +130,40 @@ struct ClarityFirstGovernorTests {
 
     // MARK: - Dynamic cadence ladder
 
-    @Test("Pressure at the clarity floor demotes frame rate before quality")
-    func pressureAtClarityFloorDemotesFrameRateBeforeQuality() async {
-        let context = makeContext()
-        await context.configureForDynamicCadenceTest(
-            pressure: .pressured,
-            quality: 0.43,
-            floor: 0.42
-        )
-
-        await context.applyDynamicCadenceIfNeeded(now: 10)
-        #expect(await context.testCurrentFrameRate() == 45)
-
-        // Within the demote cooldown nothing moves even under pressure.
-        await context.configureForDynamicCadenceTest(
-            pressure: .pressured,
-            quality: 0.43,
-            floor: 0.42
-        )
-        await context.applyDynamicCadenceIfNeeded(now: 10.5)
-        #expect(await context.testCurrentFrameRate() == 45)
-
-        // Sustained pressure keeps walking the ladder down to the minimum.
-        await context.applyDynamicCadenceIfNeeded(now: 13)
-        #expect(await context.testCurrentFrameRate() == 30)
-        await context.configureForDynamicCadenceTest(
-            pressure: .severe,
-            quality: 0.43,
-            floor: 0.42
-        )
-        await context.applyDynamicCadenceIfNeeded(now: 16)
-        #expect(await context.testCurrentFrameRate() == 24)
-        await context.applyDynamicCadenceIfNeeded(now: 19)
-        #expect(await context.testCurrentFrameRate() == 24)
-    }
-
-    @Test("Quality above the floor blocks cadence demotion")
-    func qualityAboveFloorBlocksCadenceDemotion() async {
-        let context = makeContext()
-        await context.configureForDynamicCadenceTest(
-            pressure: .pressured,
-            quality: 0.60,
-            floor: 0.42
-        )
-        await context.applyDynamicCadenceIfNeeded(now: 10)
-        #expect(await context.testCurrentFrameRate() == 60)
-    }
-
-    @Test("Transport admission pressure demotes cadence before quality floor")
-    func transportAdmissionPressureDemotesCadenceBeforeQualityFloor() async {
+    @Test("Still transport admission pressure demotes cadence before quality floor")
+    func stillTransportAdmissionPressureDemotesCadenceBeforeQualityFloor() async {
         let context = makeContext()
         await context.configureForDynamicCadenceTest(
             pressure: .observing,
             quality: 0.80,
             floor: 0.42
         )
-        await context.configureSustainedTransportAdmissionPressureForTest(now: 10)
+        await context.configureSustainedTransportAdmissionPressureForTest(
+            now: 10,
+            sourceStill: true
+        )
 
         await context.applySustainedTransportAdmissionPressureIfNeeded(now: 10)
 
         #expect(await context.testCurrentFrameRate() == 45)
     }
 
-    @Test("Recovered quality with headroom promotes cadence back toward base")
-    func recoveredQualityWithHeadroomPromotesCadenceBackTowardBase() async {
+    @Test("Motion transport admission pressure preserves cadence above quality floor")
+    func motionTransportAdmissionPressurePreservesCadenceAboveQualityFloor() async {
         let context = makeContext()
-        await context.configureForDynamicCadenceTest(
-            pressure: .pressured,
-            quality: 0.43,
-            floor: 0.42
-        )
-        await context.applyDynamicCadenceIfNeeded(now: 10)
-        #expect(await context.testCurrentFrameRate() == 45)
-
-        // updateFrameRate resets transient pressure to observing; mark quality
-        // recovered and let the promote cooldown elapse.
         await context.configureForDynamicCadenceTest(
             pressure: .observing,
             quality: 0.80,
             floor: 0.42
         )
-        await context.applyDynamicCadenceIfNeeded(now: 16)
-        #expect(await context.testCurrentFrameRate() == 60)
-
-        // Back at base: the ladder re-anchors and nothing promotes further.
-        await context.applyDynamicCadenceIfNeeded(now: 30)
-        #expect(await context.testCurrentFrameRate() == 60)
-    }
-
-    @Test("AWDL and manual-quality streams never take dynamic cadence steps")
-    func awdlAndManualQualityStreamsNeverTakeDynamicCadenceSteps() async {
-        let awdlContext = makeContext(mediaPathProfile: .awdlRadio)
-        await awdlContext.configureForDynamicCadenceTest(
-            pressure: .severe,
-            quality: 0.20,
-            floor: 0.16
+        await context.configureSustainedTransportAdmissionPressureForTest(
+            now: 10,
+            sourceStill: false
         )
-        await awdlContext.applyDynamicCadenceIfNeeded(now: 10)
-        #expect(await awdlContext.testCurrentFrameRate() == 60)
 
-        let manualContext = makeContext(runtimeQualityAdjustmentEnabled: false)
-        await manualContext.configureForDynamicCadenceTest(
-            pressure: .severe,
-            quality: 0.43,
-            floor: 0.42
-        )
-        await manualContext.applyDynamicCadenceIfNeeded(now: 10)
-        #expect(await manualContext.testCurrentFrameRate() == 60)
+        await context.applySustainedTransportAdmissionPressureIfNeeded(now: 10)
+
+        #expect(await context.testCurrentFrameRate() == 60)
     }
 
     // MARK: - Helpers
@@ -277,26 +204,59 @@ private extension StreamContext {
     ) {
         isRunning = true
         realtimePressureState = pressure
+        realtimePressureReason = pressure == .observing
+            ? nil
+            : HostAdaptivePFrameController.Reason.transportBacklog.rawValue
         activeQuality = quality
         qualityFloor = floor
+        if pressure == .observing {
+            transportAdmissionPressureState = HostTransportAdmissionPressureState()
+            senderFrameBudgetDropHoldUntil = 0
+        } else {
+            transportAdmissionPressureState = HostTransportAdmissionPressureState(
+                mode: pressure == .severe ? .hardThrottle : .softThrottle,
+                reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+                evidence: pressure == .severe ? "hard:transport-backlog" : "soft:transport-backlog",
+                firstSkipTime: 1,
+                lastSkipTime: 9,
+                activeUntil: 10_000,
+                skipBurstCount: 3,
+                lastMinimumFrameIntervalMs: 33.3,
+                lastStructuralStepTime: 0
+            )
+            senderFrameBudgetDropHoldUntil = 10_000
+            lastClientInputTime = 9.9
+            lastNonIdleCapturedFrameTime = 9.9
+        }
     }
 
     func testCurrentFrameRate() -> Int {
         currentFrameRate
     }
 
-    func configureSustainedTransportAdmissionPressureForTest(now: CFAbsoluteTime) {
+    func configureSustainedTransportAdmissionPressureForTest(
+        now: CFAbsoluteTime,
+        sourceStill: Bool = false
+    ) {
         transportAdmissionPressureState = HostTransportAdmissionPressureState(
             mode: .softThrottle,
             reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
             evidence: "soft:transport-backlog",
-            firstSkipTime: now - 0.2,
+            firstSkipTime: now - 2.1,
             lastSkipTime: now,
             activeUntil: now + 1.0,
             skipBurstCount: 3,
             lastMinimumFrameIntervalMs: 33.3,
             lastStructuralStepTime: 0
         )
+        senderFrameBudgetDropHoldUntil = now + 1.0
+        if sourceStill {
+            let policy = activeFrameFreshnessPolicy
+            lastClientInputTime = 0
+            lastNonIdleCapturedFrameTime = now - policy.stillContentWindow - 0.01
+        } else {
+            lastNonIdleCapturedFrameTime = now
+        }
     }
 }
 #endif

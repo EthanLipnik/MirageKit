@@ -106,6 +106,10 @@ extension StreamContext {
         let policy = activeFrameFreshnessPolicy
         let inputActive = inputIsActive(now: now, policy: policy)
         let sourceStill = sourceIsStill(now: now, policy: policy)
+        let pressureSnapshot = adaptiveTransportPressureSnapshot(
+            senderTelemetry: senderTelemetry,
+            now: now
+        )
         let receiverFeedbackAgeMs = lastReceiverFeedbackTime > 0
             ? max(0, (now - lastReceiverFeedbackTime) * 1_000)
             : nil
@@ -115,6 +119,7 @@ extension StreamContext {
             mediaPathProfile: mediaPathProfile,
             pressureState: realtimePressureState,
             pressureReason: realtimePressureReason,
+            transportPressureIsActionable: adaptiveFrameCoordinator.allowsTransportAdmissionThrottle(pressureSnapshot),
             senderTelemetry: senderTelemetry,
             queuePressureBytes: queuePressureBytes,
             maxQueuedBytes: maxQueuedBytes,
@@ -132,6 +137,28 @@ extension StreamContext {
             bypass: false,
             now: now
         )
+
+        if !decision.admitsFrame,
+           !streamQualityGovernor.allowsTransportAdmissionSkip(
+               snapshot: pressureSnapshot,
+               proposedMode: decision.mode,
+               reason: decision.reason,
+               evidenceLabel: decision.evidence,
+               contract: currentStreamQualityContract(),
+               now: now
+           ) {
+            transportAdmissionPressureState.reset()
+            transportFrameAdmissionState.mode = .normal
+            transportFrameAdmissionState.activeUntil = 0
+            transportFrameAdmissionState.lastAdmittedFrameTime = now
+            MirageLogger.metrics(
+                "event=transport_frame_admission stream=\(streamID) action=governor-block " +
+                    "mode=\(decision.mode.rawValue) evidence=\(decision.evidence ?? "none") " +
+                    "reason=\(decision.reason ?? "transport-pressure") " +
+                    "blocked=\(streamQualityGovernor.latestDecision.blockedLeverReason ?? "governor")"
+            )
+            return false
+        }
 
         logTransportFrameAdmissionModeChangeIfNeeded(decision, now: now)
         updateTransportAdmissionPressureState(decision, signal: signal, now: now)
@@ -205,7 +232,8 @@ extension StreamContext {
     private func transportAdmissionSenderIsClean(_ signal: HostTransportFrameAdmissionPolicy.Signal) -> Bool {
         signal.senderQueuedBytes <= signal.queuePressureBytes / 2 &&
             signal.unstartedPFrameCount == 0 &&
-            signal.queuedUnreliableQueuedBytesMax <= signal.queuePressureBytes / 2 &&
+            signal.queuedUnreliableQueuedBytes <= signal.queuePressureBytes / 2 &&
+            signal.queuedUnreliablePendingPackets == 0 &&
             signal.queuedUnreliableDeadlineExpiredDrops == 0 &&
             signal.queuedUnreliableQueueLimitDrops == 0
     }

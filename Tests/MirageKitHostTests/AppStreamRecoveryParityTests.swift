@@ -106,8 +106,8 @@ struct AppStreamRecoveryParityTests {
     }
 
     @MainActor
-    @Test("AWDL interactive feedback scale announces desktop geometry")
-    func awdlInteractiveFeedbackScaleAnnouncesDesktopGeometry() async {
+    @Test("AWDL interactive feedback scale splits cadence and geometry announcements")
+    func awdlInteractiveFeedbackScaleSplitsCadenceAndGeometryAnnouncements() async {
         let context = makeContext(streamID: 82, mediaPathProfile: .awdlRadio)
         await context.configureForDedicatedVirtualDisplayTest(
             baseCaptureSize: CGSize(width: 2_752, height: 2_064),
@@ -115,14 +115,19 @@ struct AppStreamRecoveryParityTests {
             displaySnapshot: makeDisplaySnapshot(),
             visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
         )
-        let recorder = AwdlGeometryUpdateRecorder()
+        let geometryRecorder = AwdlGeometryUpdateRecorder()
+        let cadenceRecorder = AwdlGeometryUpdateRecorder()
         await context.setHostAdaptiveDesktopGeometryUpdateHandler { streamID in
-            recorder.record(streamID)
+            geometryRecorder.record(streamID)
+        }
+        await context.setHostAdaptiveDesktopCadenceUpdateHandler { streamID in
+            cadenceRecorder.record(streamID)
         }
 
         await applyAwdlFeedbackThroughResolutionDemotion(context)
 
-        #expect(recorder.streamIDs == [82, 82, 82])
+        #expect(geometryRecorder.streamIDs == [82])
+        #expect(cadenceRecorder.streamIDs == [82, 82])
         #expect(abs((await context.streamScale) - 0.875) < 0.001)
     }
 
@@ -137,9 +142,13 @@ struct AppStreamRecoveryParityTests {
             visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
         )
         let initialToken = await context.streamStartSnapshot.dimensionToken
-        let recorder = AwdlGeometryUpdateRecorder()
+        let geometryRecorder = AwdlGeometryUpdateRecorder()
+        let cadenceRecorder = AwdlGeometryUpdateRecorder()
         await context.setHostAdaptiveDesktopGeometryUpdateHandler { streamID in
-            recorder.record(streamID)
+            geometryRecorder.record(streamID)
+        }
+        await context.setHostAdaptiveDesktopCadenceUpdateHandler { streamID in
+            cadenceRecorder.record(streamID)
         }
 
         for sequence in 1...2 {
@@ -152,7 +161,8 @@ struct AppStreamRecoveryParityTests {
             )
         }
 
-        #expect(recorder.streamIDs == [83])
+        #expect(geometryRecorder.streamIDs.isEmpty)
+        #expect(cadenceRecorder.streamIDs == [83])
         #expect(context.currentFrameRate == 45)
         #expect(await context.streamStartSnapshot.targetFrameRate == 45)
         #expect(await context.streamStartSnapshot.dimensionToken == initialToken)
@@ -216,11 +226,11 @@ struct AppStreamRecoveryParityTests {
     @Test("AWDL emergency keyframes honor interactive quality floor")
     func awdlEmergencyKeyframesHonorInteractiveQualityFloor() async {
         let context = makeContext(streamID: 79, mediaPathProfile: .awdlRadio)
-        await context.configureEmergencyKeyframeQualityTest(activeQuality: 0.04)
+        await context.configureEmergencyKeyframeActiveQuality(activeQuality: 0.04)
 
         #expect(await context.emergencyKeyframeQuality() >= 0.14)
 
-        await context.configureEmergencyKeyframeQualityTest(activeQuality: 0.50)
+        await context.configureEmergencyKeyframeActiveQuality(activeQuality: 0.50)
 
         let readableRepairQuality = await context.emergencyKeyframeQuality()
         #expect(await !context.currentAwdlQualityReductionAllowed())
@@ -374,7 +384,7 @@ private extension StreamContext {
         requestedStreamScale = 1.0
     }
 
-    func configureEmergencyKeyframeQualityTest(activeQuality: Float) {
+    func configureEmergencyKeyframeActiveQuality(activeQuality: Float) {
         self.activeQuality = activeQuality
         qualityCeiling = resolvedQualityCeiling
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)

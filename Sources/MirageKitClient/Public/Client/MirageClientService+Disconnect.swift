@@ -234,19 +234,6 @@ extension MirageClientService {
         pingTimeoutTask?.cancel()
         pingTimeoutTask = nil
         failActivePingRequests(with: MirageError.protocolError(reason))
-        qualityTestPendingTestID = nil
-        qualityTestBenchmarkTimeoutTask?.cancel()
-        qualityTestBenchmarkTimeoutTask = nil
-        qualityTestStageCompletionTimeoutTask?.cancel()
-        qualityTestStageCompletionTimeoutTask = nil
-        completeQualityTestBenchmarkWaiter(result: nil)
-        completeQualityTestStageCompletionWaiter(result: nil)
-        qualityTestStageCompletionBuffer.removeAll()
-        fastPathState.clearQualityTestAccumulator()
-        for task in qualityTestStreamReceiveTasks.values {
-            task.cancel()
-        }
-        qualityTestStreamReceiveTasks.removeAll()
         if let hostSupportLogArchiveContinuation {
             self.hostSupportLogArchiveContinuation = nil
             hostSupportLogArchiveRequestID = nil

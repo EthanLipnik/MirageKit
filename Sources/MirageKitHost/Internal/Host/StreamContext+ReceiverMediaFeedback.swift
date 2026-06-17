@@ -102,19 +102,98 @@ extension StreamContext {
             await retryPendingAwdlInteractiveFrameRateIfNeeded(now: now)
             await retryPendingAwdlInteractiveScaleIfNeeded(now: now)
         }
+        let receiverBudgetPressureSnapshot = adaptiveTransportPressureSnapshot(
+            senderTelemetry: senderTelemetry,
+            now: now
+        )
         if let frameBudgetDecision {
-            await applyFrameBudgetDecision(frameBudgetDecision, now: now)
+            await applyReceiverFrameBudgetDecisionIfAllowed(
+                frameBudgetDecision,
+                pressureSnapshot: receiverBudgetPressureSnapshot,
+                source: "receiver-feedback",
+                now: now
+            )
         }
         if let ackFrameBudgetDecision {
-            await applyFrameBudgetDecision(ackFrameBudgetDecision, now: now)
+            await applyReceiverFrameBudgetDecisionIfAllowed(
+                ackFrameBudgetDecision,
+                pressureSnapshot: receiverBudgetPressureSnapshot,
+                source: "receiver-ack",
+                now: now
+            )
         }
         if let pFrameTimingDecision = pFrameTimingDecision.frameBudgetDecision {
-            await applyFrameBudgetDecision(pFrameTimingDecision, now: now)
+            await applyReceiverFrameBudgetDecisionIfAllowed(
+                pFrameTimingDecision,
+                pressureSnapshot: receiverBudgetPressureSnapshot,
+                source: "receiver-p-frame-timing",
+                now: now
+            )
         }
-        noteReceiverAcceptedKeyframeIfNeeded(feedback, now: now)
+        noteReceiverAcceptedKeyframeIfNeeded(feedback)
         noteReceiverPresentationRecoveryEvidenceIfNeeded(feedback, now: now)
         await scheduleStillQualityProbeIfNeeded(now: now, reason: "receiver-feedback")
         await scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(feedback, now: now)
+    }
+
+    private func applyReceiverFrameBudgetDecisionIfAllowed(
+        _ decision: HostFrameBudgetDecision,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        source: String,
+        now: CFAbsoluteTime
+    ) async {
+        guard receiverFrameBudgetDecisionIsActionable(decision, pressureSnapshot: pressureSnapshot) else {
+            logReceiverFrameBudgetDecisionObserveOnly(
+                decision,
+                pressureSnapshot: pressureSnapshot,
+                source: source,
+                now: now
+            )
+            return
+        }
+        await applyAdaptiveRuntimeDecision(decision, now: now)
+    }
+
+    private func receiverFrameBudgetDecisionIsActionable(
+        _ decision: HostFrameBudgetDecision,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot
+    ) -> Bool {
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return true
+        }
+        if decision.state == .observing,
+           decision.reason == .healthy {
+            return true
+        }
+        return adaptiveFrameCoordinator.transportPressureIsActionable(pressureSnapshot)
+    }
+
+    private func logReceiverFrameBudgetDecisionObserveOnly(
+        _ decision: HostFrameBudgetDecision,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        source: String,
+        now: CFAbsoluteTime
+    ) {
+        guard now - receiverFrameBudgetObserveOnlyLastLogTime >= 0.5 else { return }
+        receiverFrameBudgetObserveOnlyLastLogTime = now
+        let ackLagText = pressureSnapshot.receiverAckLagMs
+            .map { $0.formatted(.number.precision(.fractionLength(1))) }
+            ?? "none"
+        MirageLogger.metrics(
+            "event=receiver_frame_budget_observe_only stream=\(streamID) " +
+                "source=\(source) state=\(decision.state.rawValue) " +
+                "reason=\(decision.reason.rawValue) " +
+                "target=\(mirageFormattedMegabitRate(decision.targetBitrateBps)) " +
+                "quality=\(formatAwdlMetric(Double(decision.quality))) " +
+                "receiver=\(pressureSnapshot.receiverState.rawValue) " +
+                "quarantine=\(pressureSnapshot.receiverCapacityLearningQuarantineReason ?? "none") " +
+                "ackLagMs=\(ackLagText) " +
+                "reassemblyFrames=\(pressureSnapshot.receiverReassemblyBacklogFrames) " +
+                "decodeFrames=\(pressureSnapshot.receiverDecodeBacklogFrames) " +
+                "presentationFrames=\(pressureSnapshot.receiverPresentationBacklogFrames) " +
+                "senderQueuedBytes=\(pressureSnapshot.senderQueuedBytes) " +
+                "unstartedPFrames=\(pressureSnapshot.unstartedPFrameCount)"
+        )
     }
 
     private func updateReceiverFrameBudgetLossWindow(
@@ -206,9 +285,17 @@ extension StreamContext {
         guard needsKeyframe else { return }
         let hasTransportRecoveryEvidence = receiverFeedbackHasTransportRecoveryEvidence(feedback)
         let hasConfirmedNoProgressFreeze = receiverFeedbackHasConfirmedNoProgressFreeze(feedback)
+        let hasPresentationRecoveryEvidence = receiverFeedbackHasPresentationRecoveryEvidence(feedback)
         if feedback.recoveryCause == .freezeTimeout,
            !hasTransportRecoveryEvidence,
            !hasConfirmedNoProgressFreeze {
+            if hasPresentationRecoveryEvidence {
+                await schedulePresentationOnlyRecoveryKeyframe(
+                    feedback,
+                    now: now
+                )
+                return
+            }
             MirageLogger.stream(
                 "Receiver freeze keyframe recovery ignored for stream \(streamID) without transport evidence"
             )
@@ -294,6 +381,53 @@ extension StreamContext {
             feedback.decodedFPS <= 0.5
     }
 
+    private func receiverFeedbackHasPresentationRecoveryEvidence(_ feedback: ReceiverMediaFeedbackMessage) -> Bool {
+        resolvedReceiverPresentationBacklogFrames(feedback) > 0 ||
+            (feedback.presentationStallCount ?? 0) > 0 ||
+            (feedback.displayTickNoFrameCount ?? 0) > 0 ||
+            (feedback.pendingFrameNotReadyDisplayTickCount ?? 0) > 0 ||
+            (feedback.latestPresentedFrameAgeMs ?? 0) >= 1_000
+    }
+
+    private func schedulePresentationOnlyRecoveryKeyframe(
+        _ feedback: ReceiverMediaFeedbackMessage,
+        now: CFAbsoluteTime
+    ) async {
+        guard feedback.recoveryCause.allowsReceiverFeedbackKeyframeRecovery else {
+            MirageLogger.stream(
+                "Receiver presentation recovery ignored for non-decode cause " +
+                    "\(feedback.recoveryCause.rawValue) on stream \(streamID)"
+            )
+            return
+        }
+        guard pendingKeyframeReason == nil,
+              now >= keyframeSendDeadline,
+              !isKeyframeEncoding,
+              frameChainRepairKeyframeRetryTask == nil else {
+            MirageLogger.stream(
+                "Receiver presentation recovery keyframe deferred for stream \(streamID)"
+            )
+            return
+        }
+        let summary = "presentation-only-freeze"
+        _ = streamQualityGovernor.recordPresentationRecovery(
+            contract: currentStreamQualityContract(),
+            summary: summary,
+            now: now
+        )
+        let queued = await scheduleCoalescedRecoveryKeyframe(
+            reason: "Receiver presentation recovery keyframe",
+            bypassesRecoveryCooldown: true
+        )
+        MirageLogger.stream(
+            "Receiver presentation recovery keyframe for stream \(streamID): " +
+                "queued=\(queued) presentationFrames=\(resolvedReceiverPresentationBacklogFrames(feedback)) " +
+                "stalls=\(feedback.presentationStallCount ?? 0) " +
+                "displayTickMisses=\(feedback.displayTickNoFrameCount ?? 0) " +
+                "pendingNotReady=\(feedback.pendingFrameNotReadyDisplayTickCount ?? 0)"
+        )
+    }
+
     private func applyReceiverFrameAcknowledgements(
         _ ranges: [MediaFeedbackFrameRange],
         now: CFAbsoluteTime
@@ -314,13 +448,12 @@ extension StreamContext {
         if let completion = recentFrameTransportCompletions.last(where: { $0.frameNumber == ackedFrame }) {
             receiverAckLagMs = max(0, (now - completion.completedAt) * 1000)
         }
-        noteReceiverAcceptedKeyframeIfNeeded(in: ranges, now: now)
+        noteReceiverAcceptedKeyframeIfNeeded(in: ranges)
         return nil
     }
 
     private func noteReceiverAcceptedKeyframeIfNeeded(
-        in ranges: [MediaFeedbackFrameRange],
-        now: CFAbsoluteTime
+        in ranges: [MediaFeedbackFrameRange]
     ) {
         guard let pendingReceiverAcceptedKeyframeFrameNumber else { return }
         guard ranges.contains(where: {
@@ -330,14 +463,12 @@ extension StreamContext {
         }
         handleReceiverAcceptedKeyframe(
             frameNumber: pendingReceiverAcceptedKeyframeFrameNumber,
-            evidence: "ack",
-            now: now
+            evidence: "ack"
         )
     }
 
     private func noteReceiverAcceptedKeyframeIfNeeded(
-        _ feedback: ReceiverMediaFeedbackMessage,
-        now: CFAbsoluteTime
+        _ feedback: ReceiverMediaFeedbackMessage
     ) {
         guard let pendingFrameNumber = pendingReceiverAcceptedKeyframeFrameNumber else { return }
         let acceptedFrame = feedback.latestAcceptedFrameNumber
@@ -348,8 +479,7 @@ extension StreamContext {
         }
         handleReceiverAcceptedKeyframe(
             frameNumber: pendingFrameNumber,
-            evidence: "receiver-feedback-latest-frame",
-            now: now
+            evidence: "receiver-feedback-latest-frame"
         )
     }
 
@@ -379,8 +509,7 @@ extension StreamContext {
         }
         handleReceiverAcceptedKeyframe(
             frameNumber: pendingFrameNumber,
-            evidence: "idle-feedback",
-            now: now
+            evidence: "idle-feedback"
         )
     }
 
@@ -584,8 +713,8 @@ extension StreamContext {
         }
         do {
             try await updateFrameRate(clamped, updatesAwdlInteractiveCeiling: false)
-            if let onHostAdaptiveDesktopGeometryUpdate {
-                await onHostAdaptiveDesktopGeometryUpdate(streamID)
+            if let onHostAdaptiveDesktopCadenceUpdate {
+                await onHostAdaptiveDesktopCadenceUpdate(streamID)
             }
             lastAwdlInteractiveFrameRateAdjustmentTime = now
             if clamped > 30 {
@@ -710,206 +839,6 @@ extension StreamContext {
                 "floor=\(formatAwdlMetric(Double(floor))) " +
                 "multiplier=\(formatAwdlMetric(multiplier)) reason=\(reason ?? "policy")"
         )
-    }
-
-    func applyFrameBudgetDecision(
-        _ decision: HostFrameBudgetDecision,
-        now: CFAbsoluteTime
-    ) async {
-        // Adaptive quality off (custom settings): the user owns the tradeoff, so
-        // never reduce bitrate, quality, or fps. Drop frames instead. Freeze/loss
-        // recovery (keyframes, FEC, chain repair) runs via separate paths
-        // (scheduleReceiverFeedbackKeyframeRecoveryIfNeeded, startFrameChainRepair)
-        // and is intentionally left untouched here.
-        realtimePressureState = decision.state
-        realtimePressureReason = decision.reason.rawValue
-        let controllerRuntimeCeilingBps = adaptivePFrameController.runtimeCeilingBps
-        realtimeRuntimeBitrateCeilingBps = controllerRuntimeCeilingBps
-        guard runtimeQualityAdjustmentEnabled else {
-            await applyAwdlManualQualityFrameBudgetSafety(decision)
-            logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
-            return
-        }
-        realtimeRuntimeQualityCeiling = decision.state == .observing ? nil : decision.qualityCeiling
-        let appliesGradualHealthyFrameBudget = decision.state == .observing && decision.reason == .healthy
-        let currentBudgetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? decision.targetBitrateBps
-        let currentEncoderRateHint = realtimeEncoderRateHintBps ?? encoderConfig.bitrate ?? currentBudgetBitrate
-        let currentSenderPacingBitrate = realtimeSenderPacingBitrateBps ?? currentBudgetBitrate
-        let decisionSenderPacingBitrate = realtimeSenderPacingBitrate(for: decision)
-        let appliedTargetBitrate = appliesGradualHealthyFrameBudget
-            ? max(decision.targetBitrateBps, currentBudgetBitrate)
-            : decision.targetBitrateBps
-        let appliedEncoderRateHint = appliesGradualHealthyFrameBudget
-            ? max(decision.targetBitrateBps, currentEncoderRateHint, appliedTargetBitrate)
-            : decision.targetBitrateBps
-        let appliedSenderPacingBitrate = appliesGradualHealthyFrameBudget
-            ? max(decisionSenderPacingBitrate, currentSenderPacingBitrate, appliedTargetBitrate)
-            : decisionSenderPacingBitrate
-        let appliedRuntimeBitrateCeiling: Int?
-        if appliesGradualHealthyFrameBudget {
-            appliedRuntimeBitrateCeiling = max(
-                controllerRuntimeCeilingBps ?? 0,
-                appliedTargetBitrate,
-                appliedEncoderRateHint,
-                appliedSenderPacingBitrate
-            )
-        } else {
-            appliedRuntimeBitrateCeiling = controllerRuntimeCeilingBps
-        }
-        realtimeRuntimeBitrateCeilingBps = appliedRuntimeBitrateCeiling
-        await applyRealtimeBudgetBitrate(
-            appliedTargetBitrate,
-            ceilingBitrateBps: appliedRuntimeBitrateCeiling,
-            encoderRateHintBps: appliedEncoderRateHint,
-            senderPacingBitrateBps: appliedSenderPacingBitrate,
-            reason: decision.reason.rawValue,
-            allowsActiveQualityRaise: appliesGradualHealthyFrameBudget ? false : nil,
-            clearsRuntimeQualityCeiling: appliesGradualHealthyFrameBudget ? true : nil,
-            allowsFrameBudgetRaise: appliesGradualHealthyFrameBudget ? true : nil
-        )
-        let qualityChanged = await applyFrameBudgetQuality(decision)
-        if qualityChanged {
-            queueStillQualityRefreshKeyframeIfNeeded(decision: decision, now: now)
-        }
-
-        logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
-    }
-
-    private func applyAwdlManualQualityFrameBudgetSafety(_ decision: HostFrameBudgetDecision) async {
-        guard mediaPathProfile.usesAwdlRadioPolicy else { return }
-        realtimeRuntimeQualityCeiling = nil
-        let pacingBitrate = realtimeSenderPacingBitrate(for: decision)
-        guard pacingBitrate > 0,
-              pacingBitrate != realtimeSenderPacingBitrateBps else {
-            return
-        }
-        realtimeSenderPacingBitrateBps = pacingBitrate
-        await packetSender?.setTargetBitrateBps(pacingBitrate)
-        MirageLogger.metrics(
-            "AWDL manual-quality frame budget safety for stream \(streamID): " +
-                "senderPacing=\(mirageFormattedMegabitRate(pacingBitrate)) " +
-                "state=\(decision.state.rawValue) reason=\(decision.reason.rawValue)"
-        )
-    }
-
-    private func realtimeSenderPacingBitrate(for decision: HostFrameBudgetDecision) -> Int {
-        guard mediaPathProfile.usesAwdlRadioPolicy else { return decision.targetBitrateBps }
-        switch decision.state {
-        case .observing:
-            return decision.targetBitrateBps
-        case .pressured:
-            return max(8_000_000, Int((Double(decision.targetBitrateBps) * 0.82).rounded(.down)))
-        case .severe,
-             .recovery:
-            return max(6_000_000, Int((Double(decision.targetBitrateBps) * 0.68).rounded(.down)))
-        }
-    }
-
-    private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async -> Bool {
-        let previousQuality = activeQuality
-        let proposedQualityCeiling: Float
-        if decision.state == .observing {
-            proposedQualityCeiling = min(resolvedQualityCeiling, steadyQualityCeiling)
-        } else {
-            proposedQualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling, steadyQualityCeiling)
-        }
-        qualityCeiling = resolvedRuntimeQualityCeiling(for: proposedQualityCeiling)
-        let proposedKeyframeQualityCeiling = min(decision.keyframeQuality, qualityCeiling)
-        let keyframeQualityCeiling = resolvedRuntimeKeyframeQualityCeiling(for: proposedKeyframeQualityCeiling)
-        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
-        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
-            for: keyframeQualityCeiling
-        )
-        let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
-        activeQuality = if decision.state == .observing {
-            max(min(previousQuality, qualityCeiling), decisionQuality)
-        } else {
-            decisionQuality
-        }
-        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return false }
-        await encoder?.updateQuality(activeQuality)
-        MirageLogger.metrics(
-            "Frame budget updated quality for stream \(streamID): " +
-                "active=\(formatAwdlMetric(Double(activeQuality))) " +
-                "ceiling=\(formatAwdlMetric(Double(qualityCeiling))) reason=\(decision.reason.rawValue)"
-        )
-        return true
-    }
-
-    private func queueStillQualityRefreshKeyframeIfNeeded(
-        decision: HostFrameBudgetDecision,
-        now: CFAbsoluteTime
-    ) {
-        guard decision.state == .observing, decision.reason == .healthy else { return }
-        let policy = activeFrameFreshnessPolicy
-        guard sourceIsStill(now: now, policy: policy),
-              !inputIsActive(now: now, policy: policy) else {
-            return
-        }
-        guard now - lastStillQualityRefreshKeyframeTime >= policy.stillQualityKeyframeInterval else { return }
-        let queued = queueKeyframe(
-            reason: "Still quality refresh",
-            checkInFlight: true,
-            countsAgainstRecoveryBudget: false
-        )
-        if queued {
-            lastStillQualityRefreshKeyframeTime = now
-            shouldAdmitIdleQualityProbeFrame = true
-            scheduleProcessingForPendingKeyframe(reason: "Still quality refresh", now: now)
-        }
-    }
-
-    private func logRealtimeBudgetDecisionIfNeeded(
-        now: CFAbsoluteTime,
-        decision: HostFrameBudgetDecision
-    ) {
-        guard realtimeLastLoggedState != decision.state ||
-            realtimeLastLoggedBitrateCeilingBps != realtimeRuntimeBitrateCeilingBps ||
-            now - realtimeLastLogTime >= 2.0 else {
-            return
-        }
-        let stateChanged = realtimeLastLoggedState != decision.state
-        realtimeLastLogTime = now
-        realtimeLastLoggedState = decision.state
-        realtimeLastLoggedBitrateCeilingBps = realtimeRuntimeBitrateCeilingBps
-        if stateChanged {
-            // State transitions go to the stream log so support archives capture
-            // governor behavior; per-tick detail stays on the metrics channel.
-            let transitionBitrateText = (currentTargetBitrateBps ?? encoderConfig.bitrate)
-                .map { mirageFormattedMegabitRate($0) } ?? "auto"
-            MirageLogger.stream(
-                "Realtime budget state=\(decision.state.rawValue) reason=\(decision.reason.rawValue) " +
-                    "stream=\(streamID) target=\(mirageFormattedMegabitRate(decision.targetBitrateBps)) " +
-                    "current=\(transitionBitrateText) " +
-                    "quality=\(formatAwdlMetric(Double(decision.quality)))"
-            )
-        }
-
-        let ceilingText = realtimeRuntimeBitrateCeilingBps
-            .map { mirageFormattedMegabitRate($0) }
-            ?? "unknown"
-        let currentBitrateText = (currentTargetBitrateBps ?? encoderConfig.bitrate)
-            .map { mirageFormattedMegabitRate($0) }
-            ?? "auto"
-        let qualityText = realtimeRuntimeQualityCeiling
-            .map { formatAwdlMetric(Double($0)) }
-            ?? "none"
-        let cleanPFrameText = adaptivePFrameController.recentCleanPFrameBaselineWireBytes
-            .map { "\($0)B" }
-            ?? "none"
-        MirageLogger.metrics(
-            "Frame budget: stream=\(streamID) " +
-                "state=\(decision.state.rawValue) reason=\(decision.reason.rawValue) " +
-                "runtimeCeiling=\(ceilingText) currentBitrate=\(currentBitrateText) " +
-                "qualityCeiling=\(qualityText) " +
-                "frameBytes=\(decision.maxFrameBytes) wireBytes=\(decision.maxWireBytes) " +
-                "packets=\(decision.maxPacketCount) cleanPFrameBaseline=\(cleanPFrameText)"
-        )
-    }
-
-    private func mirageFormattedMegabitRate(_ bitrate: Int) -> String {
-        let mbps = Double(bitrate) / 1_000_000.0
-        return "\(mbps.formatted(.number.precision(.fractionLength(1))))Mbps"
     }
 
     private func logAwdlReceiverFeedbackIfNeeded(

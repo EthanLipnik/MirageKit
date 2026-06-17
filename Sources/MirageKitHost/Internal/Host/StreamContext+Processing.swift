@@ -360,16 +360,26 @@ extension StreamContext {
                 )
             }
 
-            if frameChainSuppressesPFrames, !forceKeyframe {
-                droppedFrameCount += 1
-                await logStreamStatsIfNeeded()
-                continue
-            }
-
             let isIdleFrame = frame.info.isIdleFrame
             let admissionFreshnessPolicy = activeFrameFreshnessPolicy
             let sourceStillAtAdmission = sourceIsStill(now: frameAdmissionTime, policy: admissionFreshnessPolicy)
             let inputActiveAtAdmission = inputIsActive(now: frameAdmissionTime, policy: admissionFreshnessPolicy)
+            releaseStartupBarrierIfReady(now: frameAdmissionTime)
+            if (suppressEncodedNonKeyframesUntilKeyframe || frameChainSuppressesPFrames), !forceKeyframe {
+                _ = evaluateAdaptiveFrameAdmission(
+                    forceKeyframe: false,
+                    isIdleFrame: isIdleFrame,
+                    dirtyPercentage: frame.info.dirtyPercentage,
+                    sourceStill: sourceStillAtAdmission,
+                    inputActive: inputActiveAtAdmission,
+                    admitsStillQualityProbe: false,
+                    senderQueuedBytes: queueBytes,
+                    now: frameAdmissionTime
+                )
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
+            }
             var admitsStillQualityProbe = false
             if isIdleFrame {
                 if forceKeyframe {
@@ -392,10 +402,31 @@ extension StreamContext {
                 lastStillQualityProbeEncodeTime = frameAdmissionTime
                 admitsStillQualityProbe = true
             }
+            let adaptiveDecision = evaluateAdaptiveFrameAdmission(
+                forceKeyframe: forceKeyframe,
+                isIdleFrame: isIdleFrame,
+                dirtyPercentage: frame.info.dirtyPercentage,
+                sourceStill: sourceStillAtAdmission,
+                inputActive: inputActiveAtAdmission,
+                admitsStillQualityProbe: admitsStillQualityProbe,
+                senderQueuedBytes: queueBytes,
+                now: frameAdmissionTime
+            )
+            if adaptiveDecision.action == .skip {
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
+            }
+            if forceKeyframe, let targetQuality = adaptiveDecision.targetQuality {
+                pendingEmergencyKeyframeQuality = targetQuality
+            }
+            pendingAdaptiveFrameIntentsByPresentationTime[frame.presentationTime.value] = adaptiveDecision.intent
+            await applyAdaptiveFrameDecisionQualityIfNeeded(adaptiveDecision)
 
             if !forceKeyframe,
                !admitsStillQualityProbe,
                shouldSkipPFrameBeforeReservationForFreshness(now: frameAdmissionTime) {
+                pendingAdaptiveFrameIntentsByPresentationTime.removeValue(forKey: frame.presentationTime.value)
                 backpressureDropIntervalCount += 1
                 droppedFrameCount += 1
                 await logStreamStatsIfNeeded()
@@ -406,6 +437,7 @@ extension StreamContext {
                 admitsStillQualityProbe: admitsStillQualityProbe,
                 now: frameAdmissionTime
             ) {
+                pendingAdaptiveFrameIntentsByPresentationTime.removeValue(forKey: frame.presentationTime.value)
                 await logStreamStatsIfNeeded()
                 continue
             }
@@ -420,6 +452,7 @@ extension StreamContext {
                 admitsStillQualityProbe: admitsStillQualityProbe,
                 now: frameAdmissionTime
             ) {
+                pendingAdaptiveFrameIntentsByPresentationTime.removeValue(forKey: frame.presentationTime.value)
                 await logStreamStatsIfNeeded()
                 continue
             }
@@ -475,6 +508,7 @@ extension StreamContext {
                     encodedFrameCount += 1
                     if isIdleFrame { idleEncodedCount += 1 }
                 case let .skipped(reason):
+                    pendingAdaptiveFrameIntentsByPresentationTime.removeValue(forKey: frame.presentationTime.value)
                     inFlightCount -= 1
                     encoderInFlightCountSnapshot = inFlightCount
                     if inFlightCount == 0 {
@@ -491,6 +525,7 @@ extension StreamContext {
                     }
                 }
             } catch {
+                pendingAdaptiveFrameIntentsByPresentationTime.removeValue(forKey: frame.presentationTime.value)
                 inFlightCount -= 1
                 encoderInFlightCountSnapshot = inFlightCount
                 if inFlightCount == 0 {
@@ -554,6 +589,13 @@ extension StreamContext {
             inputActive: inputActive,
             sourceStill: sourceStill
         ) else { return false }
+        if mediaPathProfile.usesLocalBulkTransportPolicy {
+            let oldestUnstartedIsStale = snapshot.unstartedPFrameCount >= 2 &&
+                snapshot.oldestUnstartedPFrameAgeMs >= 250
+            guard snapshot.queuedBytes >= maxQueuedBytes || oldestUnstartedIsStale else {
+                return false
+            }
+        }
         if now - senderFreshnessLastLogTime >= 0.5 {
             senderFreshnessLastLogTime = now
             let oldestAge = snapshot.oldestUnstartedPFrameAgeMs.formatted(.number.precision(.fractionLength(1)))

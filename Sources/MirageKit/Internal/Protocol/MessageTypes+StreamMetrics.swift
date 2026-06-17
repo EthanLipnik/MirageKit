@@ -162,6 +162,14 @@ package struct StreamMetricsMessage: Codable {
     package let realtimeRequiredBitrateForQualityBps: Int?
     package let realtimeObservedPFrameWireBytesP95: Int?
     package let realtimeControlRevision: Int?
+    package let adaptiveGovernorRevision: Int?
+    package let adaptiveGovernorDecisionID: UInt64?
+    package let adaptiveGovernorState: String?
+    package let adaptiveGovernorEvidenceClass: String?
+    package let adaptiveGovernorCause: String?
+    package let adaptiveGovernorSelectedLever: String?
+    package let adaptiveGovernorBlockedLeverReason: String?
+    package let adaptiveGovernorEvidenceSummary: String?
     package let awdlPolicyState: String?
     package let awdlPolicyTrigger: String?
     package let awdlSelectedLever: String?
@@ -277,6 +285,14 @@ package struct StreamMetricsMessage: Codable {
         realtimeRequiredBitrateForQualityBps: Int? = nil,
         realtimeObservedPFrameWireBytesP95: Int? = nil,
         realtimeControlRevision: Int? = nil,
+        adaptiveGovernorRevision: Int? = nil,
+        adaptiveGovernorDecisionID: UInt64? = nil,
+        adaptiveGovernorState: String? = nil,
+        adaptiveGovernorEvidenceClass: String? = nil,
+        adaptiveGovernorCause: String? = nil,
+        adaptiveGovernorSelectedLever: String? = nil,
+        adaptiveGovernorBlockedLeverReason: String? = nil,
+        adaptiveGovernorEvidenceSummary: String? = nil,
         awdlPolicyState: String? = nil,
         awdlPolicyTrigger: String? = nil,
         awdlSelectedLever: String? = nil,
@@ -391,6 +407,14 @@ package struct StreamMetricsMessage: Codable {
         self.realtimeRequiredBitrateForQualityBps = realtimeRequiredBitrateForQualityBps
         self.realtimeObservedPFrameWireBytesP95 = realtimeObservedPFrameWireBytesP95
         self.realtimeControlRevision = realtimeControlRevision
+        self.adaptiveGovernorRevision = adaptiveGovernorRevision
+        self.adaptiveGovernorDecisionID = adaptiveGovernorDecisionID
+        self.adaptiveGovernorState = adaptiveGovernorState
+        self.adaptiveGovernorEvidenceClass = adaptiveGovernorEvidenceClass
+        self.adaptiveGovernorCause = adaptiveGovernorCause
+        self.adaptiveGovernorSelectedLever = adaptiveGovernorSelectedLever
+        self.adaptiveGovernorBlockedLeverReason = adaptiveGovernorBlockedLeverReason
+        self.adaptiveGovernorEvidenceSummary = adaptiveGovernorEvidenceSummary
         self.awdlPolicyState = awdlPolicyState
         self.awdlPolicyTrigger = awdlPolicyTrigger
         self.awdlSelectedLever = awdlSelectedLever

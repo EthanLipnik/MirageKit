@@ -51,7 +51,7 @@ extension WindowCaptureEngine {
         case nativeRefresh
     }
 
-    /// Snapshot of effective capture settings exposed to benchmark reporting.
+    /// Snapshot of effective capture settings used for diagnostics and telemetry.
     struct CapturePolicySnapshot: Equatable {
         let effectiveCaptureRate: Int
         let minimumFrameIntervalRate: Int
@@ -60,16 +60,6 @@ extension WindowCaptureEngine {
         let sckQueueDepth: Int
         let usesDisplayRefreshCadence: Bool
         let displayRefreshRate: Int?
-
-        var benchmarkPolicy: MirageHostCaptureBenchmarkCapturePolicy {
-            MirageHostCaptureBenchmarkCapturePolicy(
-                effectiveCaptureRate: effectiveCaptureRate,
-                minimumFrameIntervalRate: minimumFrameIntervalRate,
-                usesNativeRefreshMinimumFrameInterval: usesNativeRefreshMinimumFrameInterval,
-                sckQueueDepth: sckQueueDepth,
-                usesDisplayRefreshCadence: usesDisplayRefreshCadence
-            )
-        }
     }
 
     /// Reason a capture engine requested a replacement keyframe.

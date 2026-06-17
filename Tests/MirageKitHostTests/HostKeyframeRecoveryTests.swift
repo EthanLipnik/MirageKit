@@ -181,6 +181,24 @@ struct HostKeyframeRecoveryTests {
         await context.stop()
     }
 
+    @Test("Idle freeze-timeout keyframe request does not suppress P-frames")
+    func idleFreezeTimeoutKeyframeRequestDoesNotSuppressPFrames() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .proximityWiredLike
+        )
+        await context.recordCaptureIngress(makeIdleFrame())
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+
+        let ack = await context.requestKeyframe(recoveryCause: .freezeTimeout)
+
+        #expect(ack.accepted)
+        #expect(await context.pendingKeyframeReason == "Keyframe request")
+        #expect(await context.pendingKeyframeRequiresFlush == false)
+        #expect(await context.pendingKeyframeRequiresReset == false)
+        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
     @Test("Startup-gated synthetic recovery frame drains after encoding opens")
     func startupGatedSyntheticRecoveryFrameDrainsAfterEncodingOpens() async throws {
         let context = makeContext()
@@ -448,6 +466,72 @@ struct HostKeyframeRecoveryTests {
         #expect(remaining == expectedCoolingFrames)
     }
 
+    @Test("VPN startup keyframe waits for receiver acknowledgement before resuming P-frames")
+    func vpnStartupKeyframeWaitsForReceiverAcknowledgementBeforeResumingPFrames() async throws {
+        let context = makeContext(transportPathKind: .vpn)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.scheduleCoalescedStartupKeyframe(
+            reason: "Startup registration confirmed",
+            resetFrameNumber: false
+        )
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingReceiverAcceptedKeyframeReason == "Startup registration confirmed")
+
+        await context.markKeyframeInFlight(frameNumber: 51)
+        await context.markKeyframeSent()
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+
+        await context.handleFrameTransportCompleted(
+            frameTransportCompletion(frameNumber: 51, isKeyframe: true, didSend: true, now: now)
+        )
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingReceiverAcceptedKeyframeFrameNumber == 51)
+
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                sequence: 2,
+                recoveryState: .idle,
+                recoveryCause: .none,
+                ackRanges: [MediaFeedbackFrameRange(startFrame: 51, endFrame: 51)]
+            )
+        )
+
+        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingReceiverAcceptedKeyframeFrameNumber == nil)
+        #expect(await context.pendingReceiverAcceptedKeyframeReason == nil)
+    }
+
+    @Test("Local Wi-Fi startup keyframe releases P-frame suppression on local send completion")
+    func localWiFiStartupKeyframeReleasesPFrameSuppressionOnLocalSendCompletion() async throws {
+        let context = makeContext(transportPathKind: .wifi, mediaPathProfile: .localWiFi)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.scheduleCoalescedStartupKeyframe(
+            reason: "Startup registration confirmed",
+            resetFrameNumber: false
+        )
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingReceiverAcceptedKeyframeReason == nil)
+
+        await context.markKeyframeInFlight(frameNumber: 52)
+        await context.markKeyframeSent()
+
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+
+        await context.handleFrameTransportCompleted(
+            frameTransportCompletion(frameNumber: 52, isKeyframe: true, didSend: true, now: now)
+        )
+
+        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingReceiverAcceptedKeyframeFrameNumber == nil)
+        #expect(await context.pendingReceiverAcceptedKeyframeReason == nil)
+    }
+
     @Test("Recovery keyframe accepts idle receiver presentation evidence")
     func recoveryKeyframeAcceptsIdleReceiverPresentationEvidence() async throws {
         let context = makeContext()
@@ -709,7 +793,7 @@ struct HostKeyframeRecoveryTests {
         await context.applyDerivedQuality(for: displaySize, logLabel: nil)
 
         let now = CFAbsoluteTimeGetCurrent()
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 8_000_000,
                 maxFrameBytes: 64 * 1024,
@@ -729,6 +813,45 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.qualityFloor >= 0.16)
         #expect(await context.keyframeQualityFloor >= 0.14)
         #expect(await context.activeQuality >= 0.16)
+    }
+
+    @Test("Local bulk client recovery observes without transport pressure")
+    func localBulkClientRecoveryObservesWithoutTransportPressure() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 300_000_000,
+            runtimeQualityAdjustmentEnabled: true,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: true,
+            transportPathKind: .awdl,
+            mediaPathProfile: .proximityWiredLike
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        let startupQuality = await context.activeQuality
+        let startupTarget = context.currentTargetBitrateBps
+        let now = CFAbsoluteTimeGetCurrent()
+        await context.applyAdaptiveRuntimeDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                maxFrameBytes: 64 * 1024,
+                maxWireBytes: 64 * 1024,
+                maxPacketCount: 64,
+                quality: 0.04,
+                qualityCeiling: 0.04,
+                keyframeQuality: 0.04,
+                sendDeadline: now + 1,
+                state: .severe,
+                reason: .clientRecovery
+            ),
+            now: now
+        )
+
+        #expect(await context.activeQuality == startupQuality)
+        #expect(context.currentTargetBitrateBps == startupTarget)
+        #expect(await context.realtimePressureReason == "local-bulk-observe")
     }
 
     @Test("AWDL derived quality keeps startup and retune above readability floor")
@@ -785,7 +908,7 @@ struct HostKeyframeRecoveryTests {
         // A severe receiver-panic budget decision (what client loss/freeze
         // recovery produces). With adaptive quality OFF the host must honor the
         // user's settings and drop frames instead of cutting bitrate/quality.
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 12_000_000,
                 maxFrameBytes: 64 * 1024,
@@ -823,7 +946,7 @@ struct HostKeyframeRecoveryTests {
         let startupBitrate = await context.encoderSettings.bitrate
         let now = CFAbsoluteTimeGetCurrent()
 
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 8_000_000,
                 maxFrameBytes: 64 * 1024,
@@ -1020,7 +1143,7 @@ struct HostKeyframeRecoveryTests {
         let now = CFAbsoluteTimeGetCurrent()
 
         await context.recordCaptureIngress(makeIdleFrame())
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 8_000_000,
                 maxFrameBytes: 16 * 1024,

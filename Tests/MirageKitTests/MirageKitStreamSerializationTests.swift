@@ -140,6 +140,14 @@ struct MirageKitStreamSerializationTests {
             realtimeBitrateCeiling: 16_000_000,
             realtimePressureState: "pressured",
             realtimePressureReason: "p-frame-latency",
+            adaptiveGovernorRevision: 2,
+            adaptiveGovernorDecisionID: 42,
+            adaptiveGovernorState: "pressure",
+            adaptiveGovernorEvidenceClass: "soft",
+            adaptiveGovernorCause: "transport",
+            adaptiveGovernorSelectedLever: "observe",
+            adaptiveGovernorBlockedLeverReason: "soft-local-transport-admission",
+            adaptiveGovernorEvidenceSummary: "soft:transport-backlog",
             awdlPolicyState: "stressed",
             awdlPolicyTrigger: "jitter",
             awdlSelectedLever: "playout",
@@ -208,6 +216,14 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.realtimeBitrateCeiling == 16_000_000)
         #expect(decoded.realtimePressureState == "pressured")
         #expect(decoded.realtimePressureReason == "p-frame-latency")
+        #expect(decoded.adaptiveGovernorRevision == 2)
+        #expect(decoded.adaptiveGovernorDecisionID == 42)
+        #expect(decoded.adaptiveGovernorState == "pressure")
+        #expect(decoded.adaptiveGovernorEvidenceClass == "soft")
+        #expect(decoded.adaptiveGovernorCause == "transport")
+        #expect(decoded.adaptiveGovernorSelectedLever == "observe")
+        #expect(decoded.adaptiveGovernorBlockedLeverReason == "soft-local-transport-admission")
+        #expect(decoded.adaptiveGovernorEvidenceSummary == "soft:transport-backlog")
         #expect(decoded.awdlPolicyState == "stressed")
         #expect(decoded.awdlPolicyTrigger == "jitter")
         #expect(decoded.awdlSelectedLever == "playout")

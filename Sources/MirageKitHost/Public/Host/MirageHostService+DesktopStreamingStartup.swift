@@ -126,6 +126,9 @@ extension MirageHostService {
         await streamContext.setHostAdaptiveDesktopGeometryUpdateHandler { [weak self] streamID in
             await self?.sendStreamScaleUpdate(streamID: streamID)
         }
+        await streamContext.setHostAdaptiveDesktopCadenceUpdateHandler { [weak self] streamID in
+            await self?.sendStreamCadenceUpdate(streamID: streamID)
+        }
         await streamContext.setStartupBaseTime(request.desktopStartTime, label: "desktop stream \(request.streamID)")
         if let captureDisplayP3CoverageStatus = request.captureDisplayP3CoverageStatus {
             await streamContext.setDisplayP3CoverageStatusOverride(captureDisplayP3CoverageStatus)

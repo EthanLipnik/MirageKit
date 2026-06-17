@@ -123,21 +123,53 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.maxWireBytes < frameBytes(for: 60_000_000))
     }
 
-    @Test("Receiver pressure still cuts while capacity learning is paused")
-    func receiverPressureStillCutsWhileCapacityLearningIsPaused() throws {
+    @Test("Non-AWDL quarantined receiver timing is observe-only")
+    func nonAwdlQuarantinedReceiverTimingIsObserveOnly() {
         var controller = HostAdaptivePFrameController()
 
-        let decision = try #require(recordDelivery(
+        let decision = recordDelivery(
             controller: &controller,
             capacityLearningAllowed: false,
             wireBytes: 240 * 1024,
             packetSpanMs: 700,
-            completionGapMs: 700
-        ))
+            completionGapMs: 700,
+            mediaPathProfile: .localWiFi
+        )
 
-        #expect(decision.reason == .pFrameLatency)
-        #expect(decision.state == .severe)
-        #expect(decision.maxWireBytes < frameBytes(for: 60_000_000))
+        #expect(decision == nil)
+    }
+
+    @Test("Receiver unknown is observe-only for pre-encode admission")
+    func receiverUnknownIsObserveOnlyForPreEncodeAdmission() {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = controller.evaluatePreEncodePFrame(
+            dirtyPercentage: 8.2,
+            inputActive: true,
+            sourceStill: false,
+            receiverHealthy: false,
+            receiverPressureActionable: false,
+            senderHealthy: true,
+            queuedBytesAhead: 0,
+            unstartedPFrameCount: 0,
+            receiverReassemblyBacklogFrames: 0,
+            receiverReassemblyBacklogBytes: 0,
+            currentBitrateBps: 53_700_000,
+            requestedTargetBitrateBps: 76_700_000,
+            startupCeilingBps: 300_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.55,
+            qualityFloor: 0.40,
+            steadyQualityCeiling: 0.90,
+            mediaPathProfile: .localWiFi,
+            now: 10
+        )
+
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
+        #expect(decision.reason == nil)
     }
 
     @Test("AWDL timing pressure records structural pressure before cutting quality")
@@ -619,6 +651,37 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.admission == .sendWithQualityDrop)
         #expect(budget.reason == .encodedFrame)
         #expect(budget.quality < 0.60)
+    }
+
+    @Test("Non-actionable encoded oversize sends observe-only")
+    func nonActionableEncodedOversizeSendsObserveOnly() {
+        var controller = HostAdaptivePFrameController()
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: 360 * 1024,
+            wireBytes: 360 * 1024,
+            packetCount: 308,
+            isKeyframe: false,
+            receiverHealthy: false,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            budgetReductionActionable: false,
+            now: 10
+        )
+
+        #expect(decision.admission == .send)
+        #expect(decision.budgetDecision == nil)
     }
 
     @Test("Pre-encode transport stress skips high-motion P-frame with budget drop")
@@ -1731,6 +1794,118 @@ struct HostAdaptivePFrameControllerTests {
         let postStartup = try #require(deadlineDrop(startupProtectionActive: false, now: 16))
         #expect(postStartup.state == .severe)
         #expect(postStartup.targetBitrateBps < first.targetBitrateBps)
+    }
+
+    @Test("Startup protection does not learn tiny warmup P-frame as predictive baseline")
+    func startupProtectionDoesNotLearnTinyWarmupPFrameAsPredictiveBaseline() {
+        var controller = HostAdaptivePFrameController()
+
+        let first = controller.evaluateEncodedFrame(
+            byteCount: 10_537,
+            wireBytes: 10_537,
+            packetCount: 9,
+            isKeyframe: false,
+            receiverHealthy: false,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: 53_700_000,
+            requestedTargetBitrateBps: 76_700_000,
+            startupCeilingBps: 221_500_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.55,
+            qualityFloor: 0.42,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            startupProtectionActive: true,
+            now: 10
+        )
+        let second = controller.evaluateEncodedFrame(
+            byteCount: 58_982,
+            wireBytes: 58_982,
+            packetCount: 48,
+            isKeyframe: false,
+            receiverHealthy: false,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: 53_700_000,
+            requestedTargetBitrateBps: 76_700_000,
+            startupCeilingBps: 221_500_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.55,
+            qualityFloor: 0.42,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            startupProtectionActive: true,
+            now: 10.02
+        )
+
+        #expect(first.budgetDecision == nil)
+        #expect(second.budgetDecision == nil)
+        #expect(controller.lastAdmittedPFrameWireBytes == nil)
+        #expect(controller.recentCleanPFrameBaselineWireBytes == nil)
+    }
+
+    @Test("Size-aware deadlines respect lowered sender pacing after startup")
+    func sizeAwareDeadlinesRespectLoweredSenderPacingAfterStartup() {
+        var controller = HostAdaptivePFrameController()
+
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 14 * 1024,
+            wireBytes: 14 * 1024,
+            packetCount: 12,
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 53_700_000,
+            requestedTargetBitrateBps: 76_700_000,
+            startupCeilingBps: 221_500_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.55,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 10
+        )
+
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: 11_854,
+            wireBytes: 11_854,
+            packetCount: 10,
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 4_757_760,
+            requestedTargetBitrateBps: 76_700_000,
+            startupCeilingBps: 221_500_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.03,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.94,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 11
+        )
+
+        let deadlineMs = (decision.sendDeadline - 11) * 1_000
+        #expect(deadlineMs >= 26)
+        #expect(deadlineMs <= 80)
     }
 
     @Test("Proven capacity lets input samples jump past the per-sample ramp step")

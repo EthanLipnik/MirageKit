@@ -102,7 +102,7 @@ MirageStreamContentView(
 
 ## Configuration
 
-Defaults are tuned for low-latency interactive streaming. When you need to override, `MirageEncoderConfiguration` exposes codec, frame rate, encoder quality, and bit depth, and `MirageEncoderOverrides` lets clients request per-stream tweaks. `MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` with bitrate, packet loss, RTT, and transport headroom data for adaptive UIs.
+Defaults are tuned for low-latency interactive streaming. When you need to override, `MirageEncoderConfiguration` exposes codec, frame rate, encoder quality, and bit depth, and `MirageEncoderOverrides` lets clients request per-stream tweaks.
 
 Streaming modes:
 

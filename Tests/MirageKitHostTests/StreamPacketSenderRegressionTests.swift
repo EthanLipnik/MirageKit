@@ -405,6 +405,46 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Local realtime P-frame data fragments do not expire in Loom after submission")
+    func localRealtimePFrameDataFragmentsDoNotExpireInLoomAfterSubmission() async throws {
+        let sentMetadata = Locked<[StreamPacketSender.TransportPacketMetadata]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacketWithMetadata: { _, metadata, onComplete in
+                sentMetadata.withLock { $0.append(metadata) }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 407,
+                sequenceNumberStart: 4070,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 0.020,
+                fecBlockSize: 16
+            )
+        )
+
+        try await waitForStreamPacketCondition(timeout: .seconds(2)) {
+            !sentMetadata.read { $0.isEmpty }
+        }
+
+        let metadata = try #require(sentMetadata.read { $0.first { !$0.isParity } })
+        #expect(!metadata.isKeyframe)
+        #expect(!metadata.isParity)
+        #expect(metadata.isRecovery)
+        #expect(!metadata.loomQueuedUnreliableSendOptions.dropsWhenExpired)
+        #expect(!metadata.loomQueuedUnreliableSendOptions.dropsWhenQueueFull)
+
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+        await sender.stop()
+    }
+
     @Test("Transport data drop starts dependency repair before sibling fragments complete")
     func transportDataDropStartsDependencyRepairBeforeSiblingFragmentsComplete() async throws {
         let submittedHeaders = Locked<[FrameHeader]>([])
@@ -515,6 +555,7 @@ struct StreamPacketSenderRegressionTests {
 
         let metadata = try #require(sentMetadata.read { $0.first })
         #expect(metadata.sendDeadline == hardSendDeadline)
+        #expect(metadata.loomQueuedUnreliableSendOptions.dropsWhenExpired)
         try await waitForStreamPacketQueuedBytesToDrain(sender)
         await sender.stop()
     }

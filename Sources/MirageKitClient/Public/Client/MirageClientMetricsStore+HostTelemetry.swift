@@ -42,6 +42,14 @@ extension MirageClientMetricsStore {
             snapshot.hostRealtimeBitrateCeiling = metrics.realtimeBitrateCeiling
             snapshot.hostRealtimePressureState = metrics.realtimePressureState
             snapshot.hostRealtimeControlRevision = metrics.realtimeControlRevision
+            snapshot.hostAdaptiveGovernorRevision = metrics.adaptiveGovernorRevision
+            snapshot.hostAdaptiveGovernorDecisionID = metrics.adaptiveGovernorDecisionID
+            snapshot.hostAdaptiveGovernorState = metrics.adaptiveGovernorState
+            snapshot.hostAdaptiveGovernorEvidenceClass = metrics.adaptiveGovernorEvidenceClass
+            snapshot.hostAdaptiveGovernorCause = metrics.adaptiveGovernorCause
+            snapshot.hostAdaptiveGovernorSelectedLever = metrics.adaptiveGovernorSelectedLever
+            snapshot.hostAdaptiveGovernorBlockedLeverReason = metrics.adaptiveGovernorBlockedLeverReason
+            snapshot.hostAdaptiveGovernorEvidenceSummary = metrics.adaptiveGovernorEvidenceSummary
             snapshot.hostRealtimePressureReason = metrics.realtimePressureReason
             snapshot.hostRealtimeDeliveryMode = metrics.realtimeDeliveryMode
             snapshot.hostRealtimeRequiredBitrateForQualityBps = metrics.realtimeRequiredBitrateForQualityBps

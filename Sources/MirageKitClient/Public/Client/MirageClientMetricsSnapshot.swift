@@ -251,6 +251,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     /// Host-side realtime pressure state.
     public var hostRealtimePressureState: String?
     public var hostRealtimeControlRevision: Int?
+    public var hostAdaptiveGovernorRevision: Int?
+    public var hostAdaptiveGovernorDecisionID: UInt64?
+    public var hostAdaptiveGovernorState: String?
+    public var hostAdaptiveGovernorEvidenceClass: String?
+    public var hostAdaptiveGovernorCause: String?
+    public var hostAdaptiveGovernorSelectedLever: String?
+    public var hostAdaptiveGovernorBlockedLeverReason: String?
+    public var hostAdaptiveGovernorEvidenceSummary: String?
     /// Host-side realtime pressure reason.
     public var hostRealtimePressureReason: String?
     /// Host-side frame delivery class for the latest adaptive P-frame decision.
@@ -563,6 +571,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostRealtimeBitrateCeiling: Int? = nil,
         hostRealtimePressureState: String? = nil,
         hostRealtimeControlRevision: Int? = nil,
+        hostAdaptiveGovernorRevision: Int? = nil,
+        hostAdaptiveGovernorDecisionID: UInt64? = nil,
+        hostAdaptiveGovernorState: String? = nil,
+        hostAdaptiveGovernorEvidenceClass: String? = nil,
+        hostAdaptiveGovernorCause: String? = nil,
+        hostAdaptiveGovernorSelectedLever: String? = nil,
+        hostAdaptiveGovernorBlockedLeverReason: String? = nil,
+        hostAdaptiveGovernorEvidenceSummary: String? = nil,
         hostRealtimePressureReason: String? = nil,
         hostRealtimeDeliveryMode: String? = nil,
         hostRealtimeRequiredBitrateForQualityBps: Int? = nil,
@@ -700,6 +716,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostRealtimeBitrateCeiling = hostRealtimeBitrateCeiling
         self.hostRealtimePressureState = hostRealtimePressureState
         self.hostRealtimeControlRevision = hostRealtimeControlRevision
+        self.hostAdaptiveGovernorRevision = hostAdaptiveGovernorRevision
+        self.hostAdaptiveGovernorDecisionID = hostAdaptiveGovernorDecisionID
+        self.hostAdaptiveGovernorState = hostAdaptiveGovernorState
+        self.hostAdaptiveGovernorEvidenceClass = hostAdaptiveGovernorEvidenceClass
+        self.hostAdaptiveGovernorCause = hostAdaptiveGovernorCause
+        self.hostAdaptiveGovernorSelectedLever = hostAdaptiveGovernorSelectedLever
+        self.hostAdaptiveGovernorBlockedLeverReason = hostAdaptiveGovernorBlockedLeverReason
+        self.hostAdaptiveGovernorEvidenceSummary = hostAdaptiveGovernorEvidenceSummary
         self.hostRealtimePressureReason = hostRealtimePressureReason
         self.hostRealtimeDeliveryMode = hostRealtimeDeliveryMode
         self.hostRealtimeRequiredBitrateForQualityBps = hostRealtimeRequiredBitrateForQualityBps
@@ -1056,6 +1080,11 @@ public extension MirageClientMetricsSnapshot {
         default:
             return false
         }
+    }
+
+    var hostOwnsRealtimeAdaptation: Bool {
+        (hostAdaptiveGovernorRevision ?? 0) >= MirageAdaptiveGovernorProtocol.revision ||
+            (hostRealtimeControlRevision ?? 0) >= 1
     }
 
     /// True only when the host is actually producing frames at roughly target

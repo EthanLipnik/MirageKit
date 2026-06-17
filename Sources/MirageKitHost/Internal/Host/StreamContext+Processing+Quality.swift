@@ -97,7 +97,8 @@ extension StreamContext {
 
         switch latencyMode {
         case .lowestLatency:
-            return 0
+            let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+            return max(50.0, min(90.0, frameBudgetMs * 3.0))
         case .balanced:
             return 350
         case .smoothest:
@@ -211,7 +212,6 @@ extension StreamContext {
             encodedFPS: encodeFPS,
             at: now
         )
-        await applyDynamicCadenceIfNeeded(now: now)
         resetPipelineStatsWindow()
         lastPipelineStatsLogTime = now
     }
@@ -395,13 +395,14 @@ extension StreamContext {
             realtimePressureState = .pressured
             realtimePressureReason = "encoder-throughput"
             realtimeLastEncoderThroughputAdjustmentTime = now
-            await applyRealtimeBudgetBitrate(
-                targetBitrate,
-                ceilingBitrateBps: ceilingBitrate,
-                encoderRateHintBps: targetBitrate,
-                senderPacingBitrateBps: targetBitrate,
-                minimumBitrateFloorBps: minimumFloor,
-                reason: "encoder-throughput"
+            await applyAdaptiveRuntimeDecision(
+                encoderThroughputBudgetDecision(
+                    targetBitrateBps: targetBitrate,
+                    state: .pressured,
+                    reason: .encoderLag,
+                    now: now
+                ),
+                now: now
             )
             let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
             let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
@@ -438,8 +439,8 @@ extension StreamContext {
         let sourceStill = sourceIsStill(now: now, policy: policy)
         let inputActive = inputIsActive(now: now, policy: policy)
         let stillQualityRaise = sourceStill && !inputActive
-        let raiseRatio = stillQualityRaise ? 1.35 : 1.22
-        let raiseStep = stillQualityRaise ? 32_000_000 : 12_000_000
+        let raiseRatio = stillQualityRaise ? 1.75 : 1.45
+        let raiseStep = stillQualityRaise ? 48_000_000 : 24_000_000
         let targetBitrate = min(
             ceilingBitrate,
             max(currentBitrate + raiseStep, Int((Double(currentBitrate) * raiseRatio).rounded(.up)))
@@ -449,15 +450,14 @@ extension StreamContext {
         realtimePressureState = .observing
         realtimePressureReason = HostAdaptivePFrameController.Reason.healthy.rawValue
         realtimeLastEncoderThroughputAdjustmentTime = now
-        await applyRealtimeBudgetBitrate(
-            targetBitrate,
-            ceilingBitrateBps: ceilingBitrate,
-            encoderRateHintBps: targetBitrate,
-            senderPacingBitrateBps: targetBitrate,
-            reason: HostAdaptivePFrameController.Reason.healthy.rawValue,
-            allowsActiveQualityRaise: stillQualityRaise,
-            clearsRuntimeQualityCeiling: stillQualityRaise,
-            allowsFrameBudgetRaise: stillQualityRaise
+        await applyAdaptiveRuntimeDecision(
+            encoderThroughputBudgetDecision(
+                targetBitrateBps: targetBitrate,
+                state: .observing,
+                reason: .healthy,
+                now: now
+            ),
+            now: now
         )
         let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
         let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
@@ -465,7 +465,40 @@ extension StreamContext {
             "Encoder throughput budget raised stream \(streamID): " +
                 "encodeAvg=\(avgText)ms budget=\(budgetText)ms " +
                 "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
-                "encodedFPS=\(Self.formattedFPS(encodedFPS))"
+            "encodedFPS=\(Self.formattedFPS(encodedFPS))"
+        )
+    }
+
+    private func encoderThroughputBudgetDecision(
+        targetBitrateBps: Int,
+        state: HostAdaptivePFrameController.PressureState,
+        reason: HostAdaptivePFrameController.Reason,
+        now: CFAbsoluteTime
+    ) -> HostFrameBudgetDecision {
+        let width = Int(max(1, currentEncodedSize.width.rounded()))
+        let height = Int(max(1, currentEncodedSize.height.rounded()))
+        let qualities = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: max(1, targetBitrateBps),
+            width: width,
+            height: height,
+            frameRate: currentFrameRate
+        )
+        let qualityCeiling = min(compressionQualityCeiling, max(qualities.frameQuality, qualityFloor))
+        let targetWireBytes = max(
+            1,
+            Int((Double(max(1, targetBitrateBps)) / 8.0 / Double(max(1, currentFrameRate))).rounded(.down))
+        )
+        return HostFrameBudgetDecision(
+            targetBitrateBps: targetBitrateBps,
+            maxFrameBytes: targetWireBytes,
+            maxWireBytes: targetWireBytes,
+            maxPacketCount: max(1, Int(ceil(Double(targetWireBytes) / Double(max(1, maxPayloadSize))))),
+            quality: min(qualityCeiling, qualities.frameQuality),
+            qualityCeiling: qualityCeiling,
+            keyframeQuality: min(qualityCeiling, max(qualities.keyframeQuality, qualities.frameQuality)),
+            sendDeadline: now + 1.0 / Double(max(1, currentFrameRate)),
+            state: state,
+            reason: reason
         )
     }
 
@@ -504,13 +537,34 @@ extension StreamContext {
             let severeStillPipelineBehind = captureToCallbackMs >= thresholds.pipelinePressureMs * 1.20
             guard severeStillEncodeBehind || severeStillPipelineBehind else { return }
         }
+        let receiverAllowsLocalAdmission = receiverFrameBudgetAllowsLocalAdmission(now: now)
+        let senderIsHealthy = await senderFrameBudgetIsHealthy(now: now)
+        if !mediaPathProfile.usesAwdlRadioPolicy,
+           pipelineBehind,
+           !encodeBehind,
+           receiverAllowsLocalAdmission,
+           senderIsHealthy,
+           worstEncodeStartCaptureAgeMs < thresholds.pipelinePressureMs {
+            return
+        }
+        if isStartupTransportProtectionActive(now: now),
+           !mediaPathProfile.usesAwdlRadioPolicy,
+           receiverAllowsLocalAdmission,
+           senderIsHealthy {
+            let severeStartupEncodeBehind = encodeMs >= thresholds.encodePressureMs * 1.35
+            let severeStartupPipelineBehind = captureToCallbackMs >= max(
+                thresholds.pipelinePressureMs * 3.0,
+                120.0
+            )
+            guard severeStartupEncodeBehind || severeStartupPipelineBehind else { return }
+        }
         if !mediaPathProfile.usesAwdlRadioPolicy,
            encodeBehind,
            !pipelineBehind,
            encodeMs < thresholds.encodePressureMs * 1.08,
            captureToCallbackMs < thresholds.pipelinePressureMs * 0.75,
-           receiverFrameBudgetIsHealthy(now: now),
-           await senderFrameBudgetIsHealthy(now: now) {
+           receiverAllowsLocalAdmission,
+           senderIsHealthy {
             return
         }
 
@@ -558,7 +612,7 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
+            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: sourceStill),
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
@@ -567,7 +621,7 @@ extension StreamContext {
             now: now
         )
         guard let decision else { return }
-        await applyFrameBudgetDecision(decision, now: now)
+        await applyAdaptiveRuntimeDecision(decision, now: now)
         logPerFrameEncoderTimingPressureIfNeeded(
             timing: timing,
             frameBudgetMs: frameBudgetMs,
@@ -645,6 +699,7 @@ extension StreamContext {
         lastMotionFrameEncodeTime = now
         guard runtimeQualityAdjustmentEnabled,
               encoderConfig.codec != .proRes4444,
+              !isStartupTransportProtectionActive(now: now),
               previousMotionTime > 0 else {
             return
         }
@@ -659,7 +714,7 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
+            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: false),
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
@@ -667,7 +722,7 @@ extension StreamContext {
             now: now
         )
         guard let decision else { return }
-        await applyFrameBudgetDecision(decision, now: now)
+        await applyAdaptiveRuntimeDecision(decision, now: now)
         MirageLogger.stream(
             "Motion onset clamped stream \(streamID) budget to "
                 + "\(decision.targetBitrateBps)bps quality=\(decision.quality) "
@@ -740,7 +795,7 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
+            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: false),
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
@@ -749,7 +804,7 @@ extension StreamContext {
             now: now
         )
         guard let decision else { return }
-        await applyFrameBudgetDecision(decision, now: now)
+        await applyAdaptiveRuntimeDecision(decision, now: now)
         logPreEncodeEncoderBacklogPressureIfNeeded(
             droppedFrameCount: droppedFrameCount,
             encoderLag: encoderLag,
@@ -932,13 +987,21 @@ extension StreamContext {
             timing: timing,
             policy: freshnessPolicy
         )
+        let senderTelemetry = await packetSender?.telemetrySnapshot
+        let senderHealthy = await senderFrameBudgetIsHealthy(now: now)
+        let pressureSnapshot = adaptiveTransportPressureSnapshot(
+            senderTelemetry: senderTelemetry,
+            now: now
+        )
+        let encodedFrameBudgetReductionActionable =
+            adaptiveFrameCoordinator.transportPressureIsActionable(pressureSnapshot)
         let decision = adaptivePFrameController.evaluateEncodedFrame(
             byteCount: byteCount,
             wireBytes: wireBytes,
             packetCount: packetCount,
             isKeyframe: isKeyframe,
-            receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
-            senderHealthy: await senderFrameBudgetIsHealthy(now: now),
+            receiverHealthy: receiverFrameBudgetAllowsLocalAdmission(now: now),
+            senderHealthy: senderHealthy,
             inputActive: inputActive,
             sourceStill: sourceStill,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
@@ -948,12 +1011,14 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
+            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: sourceStill),
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
             awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(),
+            budgetReductionActionable: encodedFrameBudgetReductionActionable,
+            contentComplexityReductionActionable: mediaPathProfile.usesLocalBulkTransportPolicy && !sourceStill,
             deliveryMode: deliveryModeForEncodedFrame(
                 now: now,
                 timing: timing,
@@ -971,10 +1036,11 @@ extension StreamContext {
                 at: now
             )
         }
-        if !isKeyframe, let budgetDecision = decision.budgetDecision {
-            await applyFrameBudgetDecision(budgetDecision, now: now)
+        let returnedDecision = decision
+        if !isKeyframe, let budgetDecision = returnedDecision.budgetDecision {
+            await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
         }
-        return decision
+        return returnedDecision
     }
 
     func shouldSkipPFrameForPreEncodeBudgetAdmission(
@@ -994,12 +1060,18 @@ extension StreamContext {
         let inputActive = inputIsActive(now: now, policy: policy)
         let sourceStill = sourceIsStill(now: now, policy: policy)
         let senderTelemetry = await packetSender?.telemetrySnapshot
+        let senderHealthy = await senderFrameBudgetIsHealthy(now: now)
+        let pressureSnapshot = adaptiveTransportPressureSnapshot(
+            senderTelemetry: senderTelemetry,
+            now: now
+        )
         let decision = adaptivePFrameController.evaluatePreEncodePFrame(
             dirtyPercentage: frame.info.dirtyPercentage,
             inputActive: inputActive,
             sourceStill: sourceStill,
-            receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
-            senderHealthy: await senderFrameBudgetIsHealthy(now: now),
+            receiverHealthy: receiverFrameBudgetAllowsLocalAdmission(now: now),
+            receiverPressureActionable: adaptiveFrameCoordinator.receiverPressureIsActionable(pressureSnapshot),
+            senderHealthy: senderHealthy,
             queuedBytesAhead: senderTelemetry?.queuedBytes ?? packetSender?.queuedByteCount ?? 0,
             unstartedPFrameCount: senderTelemetry?.unstartedPFrameCount ?? 0,
             receiverReassemblyBacklogFrames: receiverReassemblyBacklogFrames,
@@ -1011,7 +1083,7 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
+            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: sourceStill),
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,
@@ -1019,25 +1091,49 @@ extension StreamContext {
             awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(),
             now: now
         )
-
-        if let budgetDecision = decision.budgetDecision {
-            await applyFrameBudgetDecision(budgetDecision, now: now)
-        }
+        let allowsBudgetReduction = adaptiveFrameCoordinator.allowsPreEncodeBudgetReduction(pressureSnapshot)
+        let decisionAllowsMotionReduction = HostAdaptiveFrameCoordinator.pressureReasonIsMotionComplexity(
+            decision.reason?.rawValue
+        )
+        let allowsDecisionBudgetReduction = allowsBudgetReduction || decisionAllowsMotionReduction
 
         switch decision.admission {
         case .send:
             return false
         case .sendWithFutureQualityDrop:
+            if let budgetDecision = decision.budgetDecision {
+                await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
+            }
+            guard allowsDecisionBudgetReduction else {
+                logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-observe-only", now: now)
+                return false
+            }
             logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-quality-drop", now: now)
             return false
         case .skipBeforeEncode:
+            if let budgetDecision = decision.budgetDecision {
+                await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
+            }
+            let intervalMs = 1_000.0 / Double(max(1, currentFrameRate)) * 2.0
+            let reason = decision.reason?.rawValue ?? HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+            guard allowsDecisionBudgetReduction,
+                  streamQualityGovernor.allowsTransportAdmissionSkip(
+                      snapshot: pressureSnapshot,
+                      proposedMode: .softThrottle,
+                      reason: reason,
+                      evidenceLabel: "pre-encode:\(decision.reason?.rawValue ?? "budget")",
+                      contract: currentStreamQualityContract(),
+                      now: now
+                  ) else {
+                logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-observe-only", now: now)
+                return false
+            }
             droppedFrameCount += 1
             transportAdmissionSkippedIntervalCount += 1
-            let intervalMs = 1_000.0 / Double(max(1, currentFrameRate)) * 2.0
             let admissionDecision = HostTransportFrameAdmissionPolicy.Decision(
                 admitsFrame: false,
                 mode: .softThrottle,
-                reason: decision.reason?.rawValue ?? HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+                reason: reason,
                 evidence: "pre-encode:\(decision.reason?.rawValue ?? "budget")",
                 minimumFrameIntervalMs: intervalMs,
                 activeHoldMs: 0
@@ -1307,6 +1403,14 @@ extension StreamContext {
         let targetQuality = max(qualityFloor, min(configuredQualityCeiling, qualityCeiling))
         let raisedQuality = targetQuality
         guard raisedQuality > previousQuality + 0.0001 else { return }
+        guard streamQualityGovernor.allowsFrameIntentQualityWrite(
+            targetQuality: raisedQuality,
+            currentQuality: previousQuality,
+            contract: currentStreamQualityContract(),
+            now: now
+        ) else {
+            return
+        }
         activeQuality = raisedQuality
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(
@@ -1356,7 +1460,7 @@ extension StreamContext {
 
     func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
         guard receiverFeedbackIsFresh(now: now) else {
-            return !mediaPathProfile.usesAwdlRadioPolicy
+            return false
         }
         if frameChainState != .normal { return false }
         if realtimePressureState == .recovery { return false }
@@ -1389,7 +1493,7 @@ extension StreamContext {
 
     func receiverFrameBudgetCanRaiseQuality(now: CFAbsoluteTime) -> Bool {
         guard receiverFeedbackIsFresh(now: now) else {
-            return !mediaPathProfile.usesAwdlRadioPolicy
+            return receiverUnknownCanUseLocalCleanProbe(now: now)
         }
         if frameChainState != .normal { return false }
         if realtimePressureState == .recovery { return false }
@@ -1423,6 +1527,27 @@ extension StreamContext {
            lastReceiverAckTime > 0,
            now - lastReceiverAckTime <= 1.0,
            receiverAckLagMs > ackLagBudgetMs {
+            return false
+        }
+        return true
+    }
+
+    private func receiverFrameBudgetAllowsLocalAdmission(now: CFAbsoluteTime) -> Bool {
+        if isStartupTransportProtectionActive(now: now),
+           frameChainState == .normal,
+           realtimePressureState != .recovery,
+           !transportAdmissionPressureState.isActive(now: now) {
+            return true
+        }
+        return receiverFrameBudgetCanRaiseQuality(now: now)
+    }
+
+    private func receiverUnknownCanUseLocalCleanProbe(now: CFAbsoluteTime) -> Bool {
+        guard !mediaPathProfile.usesAwdlRadioPolicy else { return false }
+        guard frameChainState == .normal,
+              realtimePressureState == .observing,
+              !transportAdmissionPressureState.isActive(now: now),
+              (packetSender?.queuedByteCount ?? 0) <= queuePressureBytes / 2 else {
             return false
         }
         return true
@@ -1559,7 +1684,7 @@ extension StreamContext {
             now: now
         )
         guard let decision else { return }
-        await applyFrameBudgetDecision(decision, now: now)
+        await applyAdaptiveRuntimeDecision(decision, now: now)
     }
 
     private func applyPerFrameTransportCompletionPressureIfNeeded(
@@ -1616,6 +1741,22 @@ extension StreamContext {
             sendCompletionMs >= thresholds.severeMs ||
             transportDurationMs >= thresholds.severeMs ||
             drops.deadlineExpired >= deadlineDropSevereThreshold
+        let localBulkHardDropPressure = failedWithoutSparseDeadlineDrop ||
+            queueDropPressure ||
+            otherDropPressure ||
+            drops.deadlineExpired >= deadlineDropPressureThreshold
+        if mediaPathProfile.usesLocalBulkTransportPolicy,
+           completion.didSend,
+           drops.isEmpty {
+            return false
+        }
+        if isStartupTransportProtectionActive(now: now),
+           !mediaPathProfile.usesAwdlRadioPolicy,
+           completion.didSend,
+           drops.isEmpty,
+           !severe {
+            return false
+        }
         if mediaPathProfile.usesAwdlRadioPolicy,
            (!runtimeQualityAdjustmentEnabled || !currentAwdlFrameBudgetReductionAllowed(now: now)) {
             realtimePressureState = severe ? .severe : .pressured
@@ -1655,7 +1796,11 @@ extension StreamContext {
             now: now
         )
         guard let decision else { return false }
-        await applyFrameBudgetDecision(decision, now: now)
+        await applyAdaptiveRuntimeDecision(
+            decision,
+            now: now,
+            allowsLocalBulkReductionOverride: localBulkHardDropPressure
+        )
         logPerFrameTransportCompletionPressureIfNeeded(
             completion,
             frameBudgetMs: frameBudgetMs,

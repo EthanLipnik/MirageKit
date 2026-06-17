@@ -177,7 +177,7 @@ struct RecoveryReasonMappingTests {
             mediaPathProfile: .vpnOrOverlay
         )
         let now = CFAbsoluteTimeGetCurrent()
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 12_000_000,
                 maxFrameBytes: 64 * 1024,

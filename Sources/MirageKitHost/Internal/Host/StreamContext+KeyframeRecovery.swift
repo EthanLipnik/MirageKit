@@ -142,6 +142,12 @@ extension StreamContext {
             MirageLogger.stream(
                 "Idle-refresh keyframe for stream \(streamID): loss mode and FEC skipped"
             )
+            scheduleProcessingForPendingKeyframe(reason: reason, now: now)
+            MirageLogger
+                .stream(
+                    "Recovery keyframe requests=\(softRecoveryCount)"
+                )
+            return
         } else {
             noteLossEvent(reason: reason, enablePFrameFEC: true)
         }

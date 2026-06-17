@@ -20,24 +20,6 @@ struct MirageKitTests {
         #expect(MirageStreamStatistics(processedFrames: .max, droppedFrames: .max).dropRate == 0.5)
     }
 
-    @Test("Host capture capability pixel counts avoid integer overflow")
-    func hostCaptureCapabilityPixelCountsAvoidIntegerOverflow() {
-        let capability = MirageHostCaptureCapability(
-            targetFrameRate: 120,
-            validThresholdFPS: 60,
-            sustainThresholdFPS: 115,
-            highestValidPixelWidth: 3840,
-            highestValidPixelHeight: 2160,
-            highestValidFrameRate: 120,
-            highestSustainedPixelWidth: .max,
-            highestSustainedPixelHeight: 2,
-            highestSustainedFrameRate: 120
-        )
-
-        #expect(capability.highestValidPixelCount == 8_294_400)
-        #expect(capability.highestSustainedPixelCount == nil)
-    }
-
     @Test("AWDL media packet sizing reserves Loom transport overhead")
     func awdlMediaPacketSizingReservesLoomTransportOverhead() {
         #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == mirageDirectProximityMaxPacketSize)
@@ -142,7 +124,11 @@ struct MirageKitTests {
     func controlMessageSerialization() throws {
         let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            clientRequiresMediaEncryption: true
+            clientRequiresMediaEncryption: true,
+            adaptiveGovernorRevision: 2,
+            hostOwnedRuntimeSupport: true,
+            adaptiveFeedbackClassesSupported: ["hard", "soft", "diagnostic"],
+            adaptiveLegacyFallbackMode: "legacy-passive-fallback"
         )
 
         let message = try ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
@@ -156,6 +142,25 @@ struct MirageKitTests {
         #expect(MirageKit.protocolVersion == 260604)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
+        #expect(decodedBootstrap.adaptiveGovernorRevision == 2)
+        #expect(decodedBootstrap.hostOwnedRuntimeSupport == true)
+        #expect(decodedBootstrap.adaptiveFeedbackClassesSupported == ["hard", "soft", "diagnostic"])
+        #expect(decodedBootstrap.adaptiveLegacyFallbackMode == "legacy-passive-fallback")
+    }
+
+    @Test("Legacy quality-test control message IDs remain parseable")
+    func legacyQualityTestControlMessageIDsRemainParseable() throws {
+        for type in [
+            ControlMessageType.qualityTestRequest,
+            .qualityTestResult,
+            .qualityTestStageComplete,
+            .qualityTestCancel
+        ] {
+            let message = ControlMessage(type: type)
+            let (decoded, consumed) = try requireParsedControlMessage(from: message.serialize())
+            #expect(consumed == message.serialize().count)
+            #expect(decoded.type == type)
+        }
     }
 
     @Test("Keyframe recovery ack serializes on control channel")
@@ -250,19 +255,6 @@ struct MirageKitTests {
         default:
             Issue.record("Expected invalidFrame for unknown control message type.")
         }
-    }
-
-    @Test("Quality-test cancel control type is recognized")
-    func qualityTestCancelControlTypeIsRecognized() throws {
-        let payload = QualityTestCancelMessage(testID: UUID())
-        let envelope = try ControlMessage(type: .qualityTestCancel, content: payload)
-
-        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
-        #expect(consumed == envelope.serialize().count)
-        #expect(decodedEnvelope.type == .qualityTestCancel)
-
-        let decodedPayload = try decodedEnvelope.decode(QualityTestCancelMessage.self)
-        #expect(decodedPayload.testID == payload.testID)
     }
 
     @Test("Display-resolution change serializes desktop resize transition metadata")
@@ -506,7 +498,11 @@ struct MirageKitTests {
                 repeating: 0xAB,
                 count: MirageMediaSecurity.registrationTokenLength
             ),
-            remoteAccessAllowed: true
+            remoteAccessAllowed: true,
+            adaptiveGovernorRevision: 2,
+            hostOwnedRuntimeSupport: true,
+            adaptiveFeedbackClassesSupported: ["hard", "soft"],
+            adaptiveLegacyFallbackMode: "legacy-passive-fallback"
         )
 
         let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
@@ -515,6 +511,10 @@ struct MirageKitTests {
 
         #expect(decoded.accepted == true)
         #expect(decoded.remoteAccessAllowed == true)
+        #expect(decoded.adaptiveGovernorRevision == 2)
+        #expect(decoded.hostOwnedRuntimeSupport == true)
+        #expect(decoded.adaptiveFeedbackClassesSupported == ["hard", "soft"])
+        #expect(decoded.adaptiveLegacyFallbackMode == "legacy-passive-fallback")
     }
 
     @Test("Bootstrap response authorization failure metadata serialization")

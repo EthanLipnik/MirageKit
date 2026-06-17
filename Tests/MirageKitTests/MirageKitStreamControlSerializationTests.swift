@@ -468,23 +468,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decodedCustom.resolvedHostBufferingPolicy == .freshestFrame)
     }
 
-    @Test("Quality test and started messages serialize accepted media packet sizing")
-    func qualityTestAndStartedMessagesSerializeMediaPacketSizing() throws {
-        let qualityRequest = QualityTestRequestMessage(
-            testID: UUID(),
-            plan: MirageQualityTestPlan(stages: []),
-            payloadBytes: 1188,
-            mediaMaxPacketSize: 1400,
-            stopAfterFirstBreach: true,
-            transferByteCount: 100_000_000
-        )
-        let qualityEnvelope = try ControlMessage(type: .qualityTestRequest, content: qualityRequest)
-        let (decodedQualityEnvelope, _) = try requireParsedControlMessage(from: qualityEnvelope.serialize())
-        let decodedQualityRequest = try decodedQualityEnvelope.decode(QualityTestRequestMessage.self)
-        #expect(decodedQualityRequest.mediaMaxPacketSize == 1400)
-        #expect(decodedQualityRequest.stopAfterFirstBreach)
-        #expect(decodedQualityRequest.transferByteCount == 100_000_000)
-
+    @Test("Stream started message serializes accepted media packet sizing")
+    func streamStartedMessageSerializesAcceptedMediaPacketSizing() throws {
         let started = StreamStartedMessage(
             streamID: 42,
             windowID: 12,

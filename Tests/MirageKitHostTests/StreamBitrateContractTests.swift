@@ -124,8 +124,8 @@ struct StreamBitrateContractTests {
         #expect(await context.activeQualityForTest() > 0.25)
     }
 
-    @Test("Healthy frame budget decision applies gradual quality raise")
-    func healthyFrameBudgetDecisionAppliesGradualQualityRaise() async {
+    @Test("Healthy frame budget decision raises quality without lowering ceiling")
+    func healthyFrameBudgetDecisionRaisesQualityWithoutLoweringCeiling() async {
         let context = makeContext(bitrate: 60_000_000)
         await context.configureRunningForBitrateContractTest()
         await context.configureRuntimeQualityRefreshTest(
@@ -133,8 +133,9 @@ struct StreamBitrateContractTests {
             activeQuality: 0.42
         )
         let gradualQuality: Float = 0.44
+        let originalCeiling = await context.qualityCeilingForTest()
 
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 221_500_000,
                 maxFrameBytes: 461_459,
@@ -151,8 +152,8 @@ struct StreamBitrateContractTests {
         )
         let activeQuality = await context.activeQualityForTest()
 
-        #expect(abs(activeQuality - gradualQuality) < 0.0001)
-        #expect(await context.qualityCeilingForTest() > gradualQuality)
+        #expect(activeQuality >= gradualQuality)
+        #expect(await context.qualityCeilingForTest() >= originalCeiling)
     }
 
     @Test("Healthy frame budget decision does not lower newer local bitrate raise")
@@ -176,7 +177,7 @@ struct StreamBitrateContractTests {
         let raisedTarget = await context.currentTargetBitrateForTest()
         let raisedQuality = await context.activeQualityForTest()
 
-        await context.applyFrameBudgetDecision(
+        await context.applyAdaptiveRuntimeDecision(
             HostFrameBudgetDecision(
                 targetBitrateBps: 116_200_000,
                 maxFrameBytes: 242_083,
@@ -198,6 +199,34 @@ struct StreamBitrateContractTests {
         #expect(await context.realtimeSenderPacingBitrateForTest() == raisedTarget)
         #expect(runtimeCeiling >= raisedTarget)
         #expect(await context.activeQualityForTest() >= raisedQuality)
+    }
+
+    @Test("Motion onset frame budget decision can lower active quality")
+    func motionOnsetFrameBudgetDecisionCanLowerActiveQuality() async {
+        let context = makeContext(bitrate: 180_000_000)
+        await context.configureRunningForBitrateContractTest()
+        await context.configureRuntimeQualityRefreshTest(
+            size: CGSize(width: 2752, height: 2064),
+            activeQuality: 0.58
+        )
+
+        await context.applyAdaptiveRuntimeDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 96_000_000,
+                maxFrameBytes: 200_000,
+                maxWireBytes: 200_000,
+                maxPacketCount: 167,
+                quality: 0.44,
+                qualityCeiling: 0.90,
+                keyframeQuality: 0.60,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 1,
+                state: .observing,
+                reason: .motionOnset
+            ),
+            now: CFAbsoluteTimeGetCurrent()
+        )
+
+        #expect(abs(await context.activeQualityForTest() - 0.44) < 0.0001)
     }
 
     @Test("Bitrate update clears stale runtime pressure ceilings before deriving quality")

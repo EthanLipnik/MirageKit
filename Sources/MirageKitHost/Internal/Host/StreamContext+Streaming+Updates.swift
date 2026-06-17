@@ -288,21 +288,36 @@ extension StreamContext {
 
     func updateFrameRate(_ fps: Int, updatesAwdlInteractiveCeiling: Bool = true) async throws {
         noteExternalFrameRateChange()
-        let clamped = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+        let requestedFrameRate = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
             requestedFrameRate: fps,
             mediaPathProfile: mediaPathProfile
         )
         let previousFrameRate = currentFrameRate
-        captureFrameRateOverride = clamped
-        let desiredCaptureRate = resolvedCaptureFrameRate(for: clamped)
-        currentFrameRate = clamped
-        if updatesAwdlInteractiveCeiling {
-            awdlInteractiveFrameRateCeiling = clamped
+        captureFrameRateOverride = requestedFrameRate
+        var effectiveFrameRate = requestedFrameRate
+        if isRunning, let captureEngine, await captureEngine.isCapturing {
+            if requestedFrameRate != captureFrameRate {
+                try await captureEngine.updateFrameRate(requestedFrameRate)
+            }
+            await refreshCaptureCadence()
+            effectiveFrameRate = min(requestedFrameRate, max(1, captureFrameRate))
+            if effectiveFrameRate != requestedFrameRate {
+                captureFrameRateOverride = effectiveFrameRate
+                try await captureEngine.updateFrameRate(effectiveFrameRate)
+                await refreshCaptureCadence()
+                effectiveFrameRate = min(effectiveFrameRate, max(1, captureFrameRate))
+            }
+        } else {
+            captureFrameRate = effectiveFrameRate
         }
-        encoderConfig = encoderConfig.withTargetFrameRate(clamped)
+        currentFrameRate = effectiveFrameRate
+        if updatesAwdlInteractiveCeiling {
+            awdlInteractiveFrameRateCeiling = effectiveFrameRate
+        }
+        encoderConfig = encoderConfig.withTargetFrameRate(effectiveFrameRate)
         adaptivePFrameController.retuneForFrameRateChange(
             from: previousFrameRate,
-            to: clamped,
+            to: effectiveFrameRate,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -310,22 +325,21 @@ extension StreamContext {
             maxPayloadSize: maxPayloadSize,
             mediaPathProfile: mediaPathProfile
         )
-        if isRunning, let captureEngine {
-            if desiredCaptureRate != captureFrameRate {
-                try await captureEngine.updateFrameRate(desiredCaptureRate)
-            }
-            await refreshCaptureCadence()
-        } else {
-            captureFrameRate = desiredCaptureRate
-        }
-        await encoder?.updateFrameRate(clamped)
+        await encoder?.updateFrameRate(effectiveFrameRate)
         clearTransientRuntimePressureForReconfiguration()
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Frame rate update")
         }
         updateKeyframeCadence()
         updateQueueLimits()
-        MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps (capture \(captureFrameRate) fps)")
+        if effectiveFrameRate != requestedFrameRate {
+            MirageLogger.stream(
+                "Stream \(streamID) frame rate bounded to \(effectiveFrameRate) fps " +
+                    "(requested \(requestedFrameRate) fps, capture \(captureFrameRate) fps)"
+            )
+        } else {
+            MirageLogger.stream("Stream \(streamID) frame rate updated to \(effectiveFrameRate) fps (capture \(captureFrameRate) fps)")
+        }
     }
 
     func updateCaptureShowsCursor(_ showsCursor: Bool) async throws {

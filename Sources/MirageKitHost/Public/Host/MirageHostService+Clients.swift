@@ -141,8 +141,6 @@ extension MirageHostService {
         removePendingLockedAppStreamIntents(clientID: client.id)
         clearPendingAppWindowCloseAlertTokens(forClientID: client.id)
 
-        await cancelQualityTest(for: client.id, reason: "client disconnected")
-
         controlQueuesByClientID.withLock { queues in
             queues[client.id] = nil
         }

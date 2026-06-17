@@ -90,7 +90,6 @@ actor SharedVirtualDisplayManager {
     enum DisplayConsumer: Hashable, Sendable {
         case desktopStream
         case appStream
-        case benchmark
     }
 
     enum DisplayCreationPolicy: Sendable, Equatable {

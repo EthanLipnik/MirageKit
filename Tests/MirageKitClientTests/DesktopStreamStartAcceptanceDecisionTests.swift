@@ -65,6 +65,49 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
+    @Test("Same-token desktop cadence update does not reset active controller")
+    func sameTokenDesktopCadenceUpdateDoesNotResetActiveController() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 51
+        let sessionID = UUID()
+        let resolution = CGSize(width: 2752, height: 2064)
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopStreamID = streamID
+        service.desktopSessionID = sessionID
+        service.desktopStreamResolution = resolution
+        service.desktopDimensionTokenByStream[streamID] = 7
+        service.controllersByStream[streamID] = controller
+        service.refreshRateOverridesByStream[streamID] = 60
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: sessionID,
+            width: Int(resolution.width),
+            height: Int(resolution.height),
+            frameRate: 45,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 7,
+            acceptedMediaMaxPacketSize: 1200
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.refreshRateOverridesByStream[streamID] == 45)
+        #expect(service.controllersByStream[streamID].map { ObjectIdentifier($0) } == ObjectIdentifier(controller))
+        #expect(service.desktopStreamResolution == resolution)
+        #expect(service.desktopDimensionTokenByStream[streamID] == 7)
+        #expect(callbackCount == 0)
+
+        await controller.stop()
+    }
+
+    @MainActor
     @Test("Stale desktop resize commit does not mutate active transition state")
     func staleDesktopResizeCommitDoesNotMutateActiveTransitionState() async throws {
         let service = MirageClientService()

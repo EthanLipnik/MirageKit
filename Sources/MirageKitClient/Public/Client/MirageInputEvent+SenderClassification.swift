@@ -24,7 +24,7 @@ extension MirageInputEvent {
         return .scrollWheel(mergedEvent)
     }
 
-    /// Whether this event counts as user activity for automatic quality-test probe gating.
+    /// Whether this event counts as user activity for automatic stream probe gating.
     var shouldGateAutomaticProbe: Bool {
         switch self {
         case .keyDown,

@@ -33,10 +33,6 @@ public extension MirageClientService {
     )
     async throws -> ClientStreamSession {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-        await cancelActiveQualityTest(
-            reason: "interactive app stream startup",
-            notifyHost: true
-        )
         _ = await refreshCurrentControlPathKind()
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.

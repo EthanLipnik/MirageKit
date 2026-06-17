@@ -82,6 +82,8 @@ extension StreamContext {
         )
 
         adaptivePFrameController = HostAdaptivePFrameController()
+        adaptiveFrameCoordinator.reset()
+        pendingAdaptiveFrameIntentsByPresentationTime.removeAll()
         realtimeRuntimeQualityCeiling = nil
         realtimeRuntimeBitrateCeilingBps = nil
         realtimeEncoderRateHintBps = nil
@@ -219,6 +221,8 @@ extension StreamContext {
         dependencyRecoveryKeyframeRetryTask = nil
         frameChainRepairKeyframeRetryTask?.cancel()
         frameChainRepairKeyframeRetryTask = nil
+        receiverKeyframeAcceptanceFallbackTask?.cancel()
+        receiverKeyframeAcceptanceFallbackTask = nil
 
         if useVirtualDisplay {
             let expectedOwner: WindowSpaceManager.WindowBindingOwner?
