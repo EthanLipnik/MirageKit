@@ -399,6 +399,7 @@ struct HostStreamQualityGovernorTests {
             proposedMode: .softThrottle,
             reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
             evidenceLabel: "soft:transport-backlog",
+            inputActive: true,
             contract: makeContract(mediaPathProfile: .proximityWiredLike),
             now: 30
         )
@@ -407,8 +408,8 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.blockedLeverReason == "soft-local-transport-admission")
     }
 
-    @Test("Proximity motion at floor can start admission skips")
-    func proximityMotionAtFloorCanStartAdmissionSkips() {
+    @Test("Proximity input motion at floor protects admission skips")
+    func proximityInputMotionAtFloorProtectsAdmissionSkips() {
         var governor = HostStreamQualityGovernor()
         let contract = makeContract(mediaPathProfile: .proximityWiredLike)
         _ = governor.evaluateRuntimeDecision(
@@ -434,6 +435,45 @@ struct HostStreamQualityGovernorTests {
             proposedMode: .softThrottle,
             reason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
             evidenceLabel: "pre-encode:encoded-frame",
+            inputActive: true,
+            contract: contract,
+            now: 30.1
+        )
+
+        #expect(allowed == false)
+        #expect(governor.latestDecision.selectedLever == .observe)
+        #expect(governor.latestDecision.blockedLeverReason == "input-cadence-protected")
+        #expect(governor.latestDecision.cause == .motion)
+    }
+
+    @Test("Proximity passive motion at floor can start admission skips")
+    func proximityPassiveMotionAtFloorCanStartAdmissionSkips() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        _ = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                quality: 0.20,
+                state: .pressured,
+                reason: .encodedFrame
+            ),
+            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 30
+        )
+
+        let allowed = governor.allowsTransportAdmissionSkip(
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                realtimePressureState: .pressured,
+                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
+            ),
+            proposedMode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
+            evidenceLabel: "pre-encode:encoded-frame",
+            inputActive: false,
             contract: contract,
             now: 30.1
         )
@@ -443,8 +483,8 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.cause == .motion)
     }
 
-    @Test("Proximity motion pressure allows transport-named admission at floor")
-    func proximityMotionPressureAllowsTransportNamedAdmissionAtFloor() {
+    @Test("Proximity input motion pressure blocks transport-named admission at floor")
+    func proximityInputMotionPressureBlocksTransportNamedAdmissionAtFloor() {
         var governor = HostStreamQualityGovernor()
         let contract = makeContract(mediaPathProfile: .proximityWiredLike)
         _ = governor.evaluateRuntimeDecision(
@@ -470,17 +510,68 @@ struct HostStreamQualityGovernorTests {
             proposedMode: .softThrottle,
             reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
             evidenceLabel: "soft:transport-backlog",
+            inputActive: true,
             contract: contract,
             now: 30.1
         )
 
-        #expect(allowed == true)
-        #expect(governor.latestDecision.selectedLever == .admissionSkip)
+        #expect(allowed == false)
+        #expect(governor.latestDecision.selectedLever == .observe)
+        #expect(governor.latestDecision.blockedLeverReason == "input-cadence-protected")
         #expect(governor.latestDecision.cause == .motion)
     }
 
-    @Test("Proximity motion at floor can demote cadence")
-    func proximityMotionAtFloorCanDemoteCadence() {
+    @Test("Proximity hard transport pressure can skip during input")
+    func proximityHardTransportPressureCanSkipDuringInput() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+
+        let allowed = governor.allowsTransportAdmissionSkip(
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                senderDropHoldActive: true,
+                realtimePressureState: .severe,
+                realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+            ),
+            proposedMode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidenceLabel: "hard:sender-drop",
+            inputActive: true,
+            contract: contract,
+            now: 35
+        )
+
+        #expect(allowed)
+        #expect(governor.latestDecision.selectedLever == .admissionSkip)
+        #expect(governor.latestDecision.cause == .transport)
+    }
+
+    @Test("Proximity proposed hard throttle can skip during input")
+    func proximityProposedHardThrottleCanSkipDuringInput() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+
+        let allowed = governor.allowsTransportAdmissionSkip(
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                realtimePressureState: .severe,
+                realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+            ),
+            proposedMode: .hardThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidenceLabel: "hard:transport-backlog",
+            inputActive: true,
+            contract: contract,
+            now: 36
+        )
+
+        #expect(allowed)
+        #expect(governor.latestDecision.selectedLever == .admissionSkip)
+        #expect(governor.latestDecision.cause == .transport)
+    }
+
+    @Test("Proximity input motion at floor protects cadence")
+    func proximityInputMotionAtFloorProtectsCadence() {
         var governor = HostStreamQualityGovernor()
         let contract = makeContract(mediaPathProfile: .proximityWiredLike)
         _ = governor.evaluateRuntimeDecision(
@@ -503,6 +594,42 @@ struct HostStreamQualityGovernorTests {
                 realtimePressureState: .pressured,
                 realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
             ),
+            inputActive: true,
+            contract: contract,
+            now: 40.2
+        )
+
+        #expect(allowed == false)
+        #expect(governor.latestDecision.selectedLever == .observe)
+        #expect(governor.latestDecision.blockedLeverReason == "input-cadence-protected")
+        #expect(governor.latestDecision.cause == .motion)
+    }
+
+    @Test("Proximity passive motion at floor can demote cadence")
+    func proximityPassiveMotionAtFloorCanDemoteCadence() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        _ = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                quality: 0.20,
+                state: .pressured,
+                reason: .encodedFrame
+            ),
+            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 40
+        )
+
+        let allowed = governor.allowsDynamicCadenceDemotion(
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                realtimePressureState: .pressured,
+                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
+            ),
+            inputActive: false,
             contract: contract,
             now: 40.2
         )
@@ -510,6 +637,35 @@ struct HostStreamQualityGovernorTests {
         #expect(allowed == true)
         #expect(governor.latestDecision.selectedLever == .reduceCadence)
         #expect(governor.latestDecision.cause == .motion)
+    }
+
+    @Test("Proximity sustained hard transport pressure can demote cadence during input")
+    func proximitySustainedHardTransportPressureCanDemoteCadenceDuringInput() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        let snapshot = makeSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            senderDropHoldActive: true,
+            realtimePressureState: .severe,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+        )
+
+        _ = governor.allowsDynamicCadenceDemotion(
+            snapshot: snapshot,
+            inputActive: true,
+            contract: contract,
+            now: 50
+        )
+        let allowed = governor.allowsDynamicCadenceDemotion(
+            snapshot: snapshot,
+            inputActive: true,
+            contract: contract,
+            now: 51.1
+        )
+
+        #expect(allowed)
+        #expect(governor.latestDecision.selectedLever == .reduceCadence)
+        #expect(governor.latestDecision.cause == .transport)
     }
 
     @Test("Presentation-only freeze records recovery diagnostics without bitrate starvation")

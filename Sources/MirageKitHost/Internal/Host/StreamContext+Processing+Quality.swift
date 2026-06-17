@@ -1122,6 +1122,8 @@ extension StreamContext {
               encoderConfig.codec != .proRes4444 else {
             return
         }
+        let policy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: now, policy: policy)
         let intervalMs = 1_000.0 / Double(max(1, currentFrameRate)) * 2.0
         let admissionDecision = HostTransportFrameAdmissionPolicy.Decision(
             admitsFrame: true,
@@ -1131,23 +1133,29 @@ extension StreamContext {
             minimumFrameIntervalMs: intervalMs,
             activeHoldMs: 650
         )
-        transportAdmissionPressureState.noteCadencePressure(
-            admissionDecision,
-            holdSeconds: 0.65,
-            now: now
-        )
+        if !inputActive {
+            transportAdmissionPressureState.noteCadencePressure(
+                admissionDecision,
+                holdSeconds: 0.65,
+                now: now
+            )
+        }
         streamQualityGovernor.recordMotionFloorSaturation(
             contract: currentStreamQualityContract(),
             summary: "wireBytes=\(wireBytes) packets=\(packetCount)",
+            inputActive: inputActive,
             now: now
         )
         MirageLogger.metrics(
             "event=motion_floor_saturated stream=\(streamID) " +
                 "wireBytes=\(wireBytes) packets=\(packetCount) " +
                 "quality=\(activeQuality.formatted(.number.precision(.fractionLength(2)))) " +
-                "target=\(currentTargetBitrateBps ?? encoderConfig.bitrate ?? 0)"
+                "target=\(currentTargetBitrateBps ?? encoderConfig.bitrate ?? 0) " +
+                "inputActive=\(inputActive) cadencePressureArmed=\(!inputActive)"
         )
-        await applySustainedTransportAdmissionPressureIfNeeded(now: now)
+        if !inputActive {
+            await applySustainedTransportAdmissionPressureIfNeeded(now: now)
+        }
     }
 
     func shouldSkipPFrameForPreEncodeBudgetAdmission(
@@ -1226,6 +1234,7 @@ extension StreamContext {
                       proposedMode: .softThrottle,
                       reason: reason,
                       evidenceLabel: "pre-encode:\(decision.reason?.rawValue ?? "budget")",
+                      inputActive: inputActive,
                       contract: currentStreamQualityContract(),
                       now: now
                   ) else {

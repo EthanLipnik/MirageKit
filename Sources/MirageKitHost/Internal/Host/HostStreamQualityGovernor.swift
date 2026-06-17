@@ -331,6 +331,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         proposedMode: HostTransportFrameAdmissionPolicy.Mode,
         reason: String?,
         evidenceLabel: String?,
+        inputActive: Bool,
         contract: StreamQualityContract,
         now: CFAbsoluteTime
     ) -> Bool {
@@ -356,24 +357,32 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             return true
         }
         let localMotionCadenceAllowed = snapshot.mediaPathProfile.usesLocalBulkTransportPolicy &&
+            !inputActive &&
             evidence.cause == .motion &&
             motionCadenceReliefAllowed(contract: contract, now: now)
+        let proposedHardThrottle = proposedMode == .hardThrottle
         if snapshot.mediaPathProfile.usesLocalBulkTransportPolicy &&
             !evidence.hardTransport &&
+            !proposedHardThrottle &&
             !localMotionCadenceAllowed {
+            let blockedReason = if inputActive && evidence.cause == .motion {
+                "input-cadence-protected"
+            } else {
+                "soft-local-transport-admission"
+            }
             recordAdmissionDecision(
                 evidence: evidence,
                 contract: contract,
                 mode: proposedMode,
                 reason: reason,
                 evidenceLabel: evidenceLabel,
-                blockedReason: "soft-local-transport-admission",
+                blockedReason: blockedReason,
                 now: now
             )
             return false
         }
         let allowed = evidence.evidenceClass == .hard ||
-            proposedMode == .hardThrottle ||
+            proposedHardThrottle ||
             localMotionCadenceAllowed
         recordAdmissionDecision(
             evidence: evidence,
@@ -389,6 +398,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
 
     mutating func allowsDynamicCadenceDemotion(
         snapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        inputActive: Bool,
         contract: StreamQualityContract,
         now: CFAbsoluteTime
     ) -> Bool {
@@ -396,15 +406,23 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         guard !snapshot.mediaPathProfile.usesAwdlRadioPolicy else { return true }
         let evidence = classify(snapshot: snapshot, decision: nil, contract: contract, now: now)
         if snapshot.mediaPathProfile.usesLocalBulkTransportPolicy {
+            let hardTransportAllowed = evidence.hardTransport && hardEvidenceDuration(now: now) >= 1.0
             let motionAllowed = evidence.cause == .motion &&
+                !inputActive &&
                 motionCadenceReliefAllowed(contract: contract, now: now)
-            let allowed = (evidence.hardTransport && hardEvidenceDuration(now: now) >= 1.0) ||
-                motionAllowed
+            let allowed = hardTransportAllowed || motionAllowed
+            let blockedReason: String? = if allowed {
+                nil
+            } else if inputActive {
+                "input-cadence-protected"
+            } else {
+                "cadence-demotion-requires-hard-or-motion-floor"
+            }
             recordStructuralDecision(
                 evidence: evidence,
                 contract: contract,
                 lever: .reduceCadence,
-                blockedReason: allowed ? nil : "cadence-demotion-requires-hard-or-motion-floor",
+                blockedReason: blockedReason,
                 now: now
             )
             return allowed
@@ -415,6 +433,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
     mutating func recordMotionFloorSaturation(
         contract: StreamQualityContract,
         summary: String,
+        inputActive: Bool,
         now: CFAbsoluteTime
     ) {
         configureIfNeeded(contract: contract, now: now)
@@ -424,11 +443,11 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             state: .pressure,
             evidenceClass: .soft,
             cause: .motion,
-            selectedLever: .reduceCadence,
-            blockedLeverReason: nil,
+            selectedLever: .observe,
+            blockedLeverReason: inputActive ? "input-cadence-protected" : nil,
             targetBitrateBps: contract.targetBitrateBps,
             qualityTarget: contract.localMotionQualityFloor,
-            frameAdmissionMode: HostTransportFrameAdmissionPolicy.Mode.softThrottle.rawValue,
+            frameAdmissionMode: nil,
             targetFrameRate: contract.targetFrameRate,
             streamScale: contract.streamScale,
             evidenceSummary: summary
@@ -775,14 +794,19 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             snapshot.queuedUnreliablePendingPackets >= 8 ||
             snapshot.queuedUnreliableQueueDwellP99Ms >= 120 ||
             decision?.reason == .transportBacklog ||
-            decision?.reason == .senderDeadline
+            decision?.reason == .senderDeadline ||
+            reason == HostAdaptivePFrameController.Reason.transportBacklog.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.senderDeadline.rawValue
         let softReceiver = (snapshot.receiverAckLagMs ?? 0) >= 120 ||
             snapshot.receiverDecodeBacklogFrames > 0 ||
             snapshot.receiverReassemblyBacklogFrames > 0 ||
             snapshot.receiverReassemblyBacklogBytes > 0 ||
             decision?.reason == .pFrameLatency ||
             decision?.reason == .receiverFreshness ||
-            decision?.reason == .receiverBacklog
+            decision?.reason == .receiverBacklog ||
+            reason == HostAdaptivePFrameController.Reason.pFrameLatency.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.receiverFreshness.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.receiverBacklog.rawValue
         let softPresentation = snapshot.receiverPresentationBacklogFrames > 0
         if softSenderTransport || softReceiver || softPresentation || explicitMotionComplexity {
             if explicitMotionComplexity {

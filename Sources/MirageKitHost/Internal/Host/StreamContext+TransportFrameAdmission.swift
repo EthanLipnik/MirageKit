@@ -160,6 +160,7 @@ extension StreamContext {
                proposedMode: decision.mode,
                reason: decision.reason,
                evidenceLabel: decision.evidence,
+               inputActive: inputActive,
                contract: currentStreamQualityContract(),
                now: now
            ) {

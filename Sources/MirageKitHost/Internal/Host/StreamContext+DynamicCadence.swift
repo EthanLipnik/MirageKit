@@ -103,8 +103,10 @@ extension StreamContext {
             now: now
         )
         let contract = currentStreamQualityContract()
+        let inputActive = inputIsActive(now: now, policy: policy)
         guard streamQualityGovernor.allowsDynamicCadenceDemotion(
             snapshot: pressureSnapshot,
+            inputActive: inputActive,
             contract: contract,
             now: now
         ) else {
@@ -136,7 +138,7 @@ extension StreamContext {
             activeQuality: activeQuality,
             qualityFloor: cadenceQualityFloor,
             sourceStill: sourceIsStill(now: now, policy: policy),
-            inputActive: inputIsActive(now: now, policy: policy),
+            inputActive: inputActive,
             receiverState: adaptiveReceiverEvidenceState(now: now),
             transportPressureActionable: transportPressureActionable,
             transportAdmissionActiveDuration: transportAdmissionPressureState.activeDuration(now: now)
