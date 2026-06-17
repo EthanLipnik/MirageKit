@@ -140,6 +140,36 @@ struct RuntimeWorkloadSafetyTests {
     }
 
     @MainActor
+    @Test("Host-owned realtime adaptation observes workload caps without client writes")
+    func hostOwnedRealtimeAdaptationObservesWorkloadCapsWithoutClientWrites() async {
+        let service = MirageClientService()
+        let streamID: StreamID = 7
+        service.connectionState = .connected(host: "Loopback Host")
+        service.desktopStreamID = streamID
+        service.refreshRateOverridesByStream[streamID] = 60
+        service.metricsStore.updateHostMetrics(StreamMetricsMessage(
+            streamID: streamID,
+            encodedFPS: 60,
+            idleEncodedFPS: 0,
+            droppedFrames: 0,
+            activeQuality: 0.66,
+            targetFrameRate: 60,
+            realtimeControlRevision: 1
+        ))
+
+        await service.applyRuntimeWorkloadSafetyCap(
+            targetFrameRate: 30,
+            reason: .memoryPressure,
+            triggerStreamID: streamID
+        )
+
+        #expect(service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] == nil)
+        #expect(service.runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] == nil)
+        #expect(service.runtimeWorkloadSafetyLastFallbackReason == nil)
+        #expect(service.refreshRateOverridesByStream[streamID] == 60)
+    }
+
+    @MainActor
     @Test("Runtime workload cap stores the 60fps restore target")
     func runtimeCapStoresRestoreFrameRateTarget() async throws {
         let pair = try await makeLoopbackControlPair()

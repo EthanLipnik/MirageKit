@@ -58,6 +58,22 @@ struct HostTransportAdmissionPressureState: Sendable, Equatable {
         }
     }
 
+    mutating func noteCadencePressure(
+        _ decision: HostTransportFrameAdmissionPolicy.Decision,
+        holdSeconds: CFAbsoluteTime,
+        now: CFAbsoluteTime
+    ) {
+        if firstSkipTime <= 0 || now - lastSkipTime > 1.0 {
+            firstSkipTime = now
+        }
+        lastSkipTime = now
+        mode = decision.mode
+        reason = decision.reason
+        evidence = decision.evidence
+        lastMinimumFrameIntervalMs = decision.minimumFrameIntervalMs
+        activeUntil = max(activeUntil, now + max(0.1, holdSeconds))
+    }
+
     mutating func noteAdmission(
         _ decision: HostTransportFrameAdmissionPolicy.Decision,
         senderClean: Bool,

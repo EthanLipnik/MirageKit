@@ -292,7 +292,8 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         let adjusted = adjustedReductionDecision(
             decision,
             evidence: evidence,
-            contract: contract
+            contract: contract,
+            currentBitrateBps: currentBitrateBps
         )
         if adjusted.targetBitrateBps < (currentBitrateBps ?? adjusted.targetBitrateBps) ||
             adjusted.quality < contract.qualityCeiling ||
@@ -404,6 +405,29 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             return allowed
         }
         return evidence.evidenceClass == .hard || evidence.evidenceClass == .soft
+    }
+
+    mutating func recordMotionFloorSaturation(
+        contract: StreamQualityContract,
+        summary: String,
+        now: CFAbsoluteTime
+    ) {
+        configureIfNeeded(contract: contract, now: now)
+        noteMotionPressure(now: now)
+        latestMotionQualityTarget = contract.localMotionQualityFloor
+        latestDecision = makeDecision(
+            state: .pressure,
+            evidenceClass: .soft,
+            cause: .motion,
+            selectedLever: .reduceCadence,
+            blockedLeverReason: nil,
+            targetBitrateBps: contract.targetBitrateBps,
+            qualityTarget: contract.localMotionQualityFloor,
+            frameAdmissionMode: HostTransportFrameAdmissionPolicy.Mode.softThrottle.rawValue,
+            targetFrameRate: contract.targetFrameRate,
+            streamScale: contract.streamScale,
+            evidenceSummary: summary
+        )
     }
 
     mutating func allowsStructuralScaleDemotion(
@@ -561,7 +585,8 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
     private func adjustedReductionDecision(
         _ decision: HostFrameBudgetDecision,
         evidence: Evidence,
-        contract: StreamQualityContract
+        contract: StreamQualityContract,
+        currentBitrateBps: Int?
     ) -> HostFrameBudgetDecision {
         guard contract.mediaPathProfile.usesLocalBulkTransportPolicy else {
             return decision
@@ -569,7 +594,16 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         let floorQuality = localQualityFloor(evidence: evidence, contract: contract)
         guard floorQuality > 0 else { return decision }
         let floorBitrate = localFloorBitrateBps(evidence: evidence, contract: contract)
-        let targetBitrateBps = max(decision.targetBitrateBps, floorBitrate ?? decision.targetBitrateBps)
+        let targetBitrateBps = if evidence.cause == .motion,
+                                  evidence.softOnly,
+                                  !evidence.hardTransport,
+                                  !evidence.hardReceiver,
+                                  !evidence.hardEncoder,
+                                  let currentBitrateBps {
+            max(currentBitrateBps, floorBitrate ?? currentBitrateBps)
+        } else {
+            max(decision.targetBitrateBps, floorBitrate ?? decision.targetBitrateBps)
+        }
         let effectiveSteadyCeiling = max(contract.steadyQualityCeiling, floorQuality)
         let adjustedQuality = min(
             effectiveSteadyCeiling,
@@ -680,7 +714,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
                 evidenceClass: .hard,
                 cause: hardEncoder ? .encoder : .receiver,
                 summary: hardEncoder ? "hard-encoder" : "hard-receiver",
-                hardTransport: hardReceiver,
+                hardTransport: false,
                 hardReceiver: hardReceiver,
                 hardEncoder: hardEncoder,
                 softOnly: false
@@ -710,27 +744,39 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             )
         }
 
-        let softTransport = snapshot.unstartedPFrameCount >= 2 ||
+        let softSenderTransport = snapshot.unstartedPFrameCount >= 2 ||
             snapshot.oldestUnstartedPFrameAgeMs >= 1_000.0 / Double(max(1, snapshot.currentFrameRate)) * 2.0 ||
             snapshot.queuedUnreliablePendingPackets >= 8 ||
             snapshot.queuedUnreliableQueueDwellP99Ms >= 120 ||
-            (snapshot.receiverAckLagMs ?? 0) >= 120 ||
-            snapshot.receiverDecodeBacklogFrames > 0 ||
-            snapshot.receiverPresentationBacklogFrames > 0 ||
             decision?.reason == .transportBacklog ||
-            decision?.reason == .encodedFrame ||
+            decision?.reason == .senderDeadline
+        let softReceiver = (snapshot.receiverAckLagMs ?? 0) >= 120 ||
+            snapshot.receiverDecodeBacklogFrames > 0 ||
+            snapshot.receiverReassemblyBacklogFrames > 0 ||
+            snapshot.receiverReassemblyBacklogBytes > 0 ||
             decision?.reason == .pFrameLatency ||
             decision?.reason == .receiverFreshness ||
-            decision?.reason == .motionOnset ||
-            explicitMotionComplexity
-        if softTransport {
+            decision?.reason == .receiverBacklog
+        let softPresentation = snapshot.receiverPresentationBacklogFrames > 0
+        if softSenderTransport || softReceiver || softPresentation || explicitMotionComplexity {
             if explicitMotionComplexity {
                 noteMotionPressure(now: now)
             } else {
                 noteSoftOrHealthy(now: now)
             }
-            let cause: StreamQualityDecision.Cause = explicitMotionComplexity ? .motion : .transport
-            let summaryReason = decision?.reason.rawValue ?? reason ?? snapshot.realtimePressureReason ?? "transport"
+            let cause: StreamQualityDecision.Cause = if explicitMotionComplexity {
+                .motion
+            } else if softReceiver {
+                .receiver
+            } else if softPresentation {
+                .presentation
+            } else {
+                .transport
+            }
+            let summaryReason = decision?.reason.rawValue ??
+                reason ??
+                snapshot.realtimePressureReason ??
+                cause.rawValue
             return Evidence(
                 evidenceClass: .soft,
                 cause: cause,

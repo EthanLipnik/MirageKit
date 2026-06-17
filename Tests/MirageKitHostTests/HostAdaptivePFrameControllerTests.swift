@@ -1597,6 +1597,37 @@ struct HostAdaptivePFrameControllerTests {
         #expect(admission.budgetDecision == nil)
     }
 
+    @Test("Local near-floor motion oversize signals cadence relief without quality reset")
+    func localNearFloorMotionOversizeSignalsCadenceReliefWithoutQualityReset() {
+        var controller = HostAdaptivePFrameController()
+        let admission = controller.evaluateEncodedFrame(
+            byteCount: 16 * 1024,
+            wireBytes: 16 * 1024,
+            packetCount: 14,
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 4_800_000,
+            requestedTargetBitrateBps: 76_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 4_800_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.35,
+            qualityFloor: 0.35,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .proximityWiredLike,
+            now: 10
+        )
+
+        #expect(admission.admission == .send)
+        #expect(admission.budgetDecision == nil)
+        #expect(admission.motionFloorSaturated)
+    }
+
     @Test("Near-floor completion gaps do not force latency cuts")
     func nearFloorCompletionGapsDoNotForceLatencyCuts() {
         var controller = HostAdaptivePFrameController()

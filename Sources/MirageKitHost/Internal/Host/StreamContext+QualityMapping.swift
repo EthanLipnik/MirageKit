@@ -140,6 +140,25 @@ extension StreamContext {
         return minimum
     }
 
+    private func localRuntimeQualityFloor(for reason: String) -> Float {
+        guard runtimeQualityAdjustmentEnabled,
+              mediaPathProfile.usesLocalBulkTransportPolicy,
+              encoderConfig.codec != .proRes4444 else {
+            return 0
+        }
+        let contract = currentStreamQualityContract()
+        if HostAdaptiveFrameCoordinator.pressureReasonIsMotionComplexity(reason) {
+            return contract.localMotionQualityFloor
+        }
+        switch reason {
+        case HostAdaptivePFrameController.Reason.healthy.rawValue,
+             HostAdaptivePFrameController.Reason.startup.rawValue:
+            return 0
+        default:
+            return contract.localReadabilityQualityFloor
+        }
+    }
+
     /// Returns the runtime keyframe quality floor for the active bitrate policy.
     func resolvedRuntimeKeyframeQualityFloor(for qualityCeiling: Float) -> Float {
         let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
@@ -362,6 +381,7 @@ extension StreamContext {
         let refreshedKeyframeQuality = shouldClearRuntimeQualityCeiling
             ? max(previousKeyframeQuality, targets.keyframeQuality)
             : targets.keyframeQuality
+        let localFloor = localRuntimeQualityFloor(for: reason)
         let shouldRefreshConfiguredQualityCeiling = refreshedFrameQuality > configuredQualityCeiling ||
             reason == HostAdaptivePFrameController.Reason.startup.rawValue
         if shouldClearRuntimeQualityCeiling {
@@ -379,8 +399,11 @@ extension StreamContext {
         } else {
             refreshedFrameQuality
         }
-        qualityCeiling = min(resolvedQualityCeiling, proposedRuntimeQualityCeiling)
-        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        qualityCeiling = min(resolvedQualityCeiling, max(proposedRuntimeQualityCeiling, localFloor))
+        qualityFloor = min(
+            qualityCeiling,
+            max(resolvedRuntimeQualityFloor(for: qualityCeiling), localFloor)
+        )
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
             for: min(targets.keyframeQuality, qualityCeiling)
         )

@@ -83,6 +83,7 @@ struct HostEncodedFrameAdmissionDecision: Sendable, Equatable {
     let packetRatio: Double
     let deliveryMode: HostFrameDeliveryMode
     let requiredBitrateBps: Int?
+    let motionFloorSaturated: Bool
 
     init(
         admission: HostEncodedFrameAdmission,
@@ -92,7 +93,8 @@ struct HostEncodedFrameAdmissionDecision: Sendable, Equatable {
         wireRatio: Double,
         packetRatio: Double,
         deliveryMode: HostFrameDeliveryMode = .realtime,
-        requiredBitrateBps: Int? = nil
+        requiredBitrateBps: Int? = nil,
+        motionFloorSaturated: Bool = false
     ) {
         self.admission = admission
         self.budgetDecision = budgetDecision
@@ -102,6 +104,7 @@ struct HostEncodedFrameAdmissionDecision: Sendable, Equatable {
         self.packetRatio = packetRatio
         self.deliveryMode = deliveryMode
         self.requiredBitrateBps = requiredBitrateBps
+        self.motionFloorSaturated = motionFloorSaturated
     }
 
     var isOverBudget: Bool {
@@ -970,6 +973,11 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             awdlQualityReductionAllowed: awdlQualityReductionAllowed
         )
+        let nearFloorFrameSaturated = nearFloorFrameTolerated &&
+            canReduceFrameBudget &&
+            !sourceStill &&
+            currentQuality <= qualityFloor + 0.04 &&
+            (wireRatio > 1.0 || packetRatio > 1.0)
         let canApplyTransportFrameBudgetReduction = canReduceFrameBudget &&
             (budgetReductionActionable || mediaPathProfile.usesAwdlRadioPolicy)
         let canApplyFrameBudgetReduction = canApplyTransportFrameBudgetReduction ||
@@ -1010,7 +1018,8 @@ struct HostAdaptivePFrameController: Equatable {
                     wireRatio: wireRatio,
                     packetRatio: packetRatio,
                     deliveryMode: effectiveDeliveryMode,
-                    requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+                    requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps,
+                    motionFloorSaturated: nearFloorFrameSaturated
                 )
             }
             if canApplyFrameBudgetReduction,
@@ -1050,7 +1059,8 @@ struct HostAdaptivePFrameController: Equatable {
                     wireRatio: wireRatio,
                     packetRatio: packetRatio,
                     deliveryMode: effectiveDeliveryMode,
-                    requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+                    requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps,
+                    motionFloorSaturated: nearFloorFrameSaturated
                 )
             }
             recordAdmittedPFrame(
@@ -1070,7 +1080,8 @@ struct HostAdaptivePFrameController: Equatable {
                 wireRatio: wireRatio,
                 packetRatio: packetRatio,
                 deliveryMode: effectiveDeliveryMode,
-                requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+                requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps,
+                motionFloorSaturated: nearFloorFrameSaturated
             )
         }
 

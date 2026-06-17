@@ -76,6 +76,13 @@ extension MirageClientService {
         }
     }
 
+    private func hostOwnsRuntimeAdaptation(for streamID: StreamID) -> Bool {
+        let streamIDs = Set([streamID, runtimeQualityMediaStreamID(for: streamID)].compactMap(\.self))
+        return streamIDs.contains { streamID in
+            metricsStore.snapshot(for: streamID)?.hostOwnsRealtimeAdaptation == true
+        }
+    }
+
     /// Applies runtime safety backoff after the app receives a memory-pressure signal.
     public func handleMemoryPressure() async {
         await handleRuntimeWorkloadSafetyMemoryPressure()
@@ -169,6 +176,13 @@ extension MirageClientService {
         var appliedCount = 0
         var failedCount = 0
         for streamID in streamIDs {
+            guard !hostOwnsRuntimeAdaptation(for: streamID) else {
+                MirageLogger.client(
+                    "Runtime workload safety observed pressure for host-owned stream \(streamID); " +
+                        "leaving host cadence unchanged"
+                )
+                continue
+            }
             let existingCap = runtimeWorkloadSafetyFrameRateCap(for: streamID)
             let effectiveCap = min(existingCap ?? normalizedTarget, normalizedTarget)
             let currentFrameRate = runtimeWorkloadSafetyCurrentFrameRate(for: streamID)
@@ -235,6 +249,13 @@ extension MirageClientService {
         var downshiftedCount = 0
         let scalableStreamIDs = Set(activeRuntimeScalableStreamIDs)
         for streamID in streamIDs {
+            guard !hostOwnsRuntimeAdaptation(for: streamID) else {
+                MirageLogger.client(
+                    "Runtime workload safety observed scale pressure for host-owned stream \(streamID); " +
+                        "leaving host scale unchanged"
+                )
+                continue
+            }
             guard scalableStreamIDs.contains(streamID) else {
                 MirageLogger.client(
                     "Skipping runtime workload scale downshift for non-scalable media stream \(streamID)"
@@ -336,6 +357,7 @@ extension MirageClientService {
             return
         }
         guard activeRuntimeQualityMediaStreamIDs.contains(streamID) else { return }
+        guard !hostOwnsRuntimeAdaptation(for: streamID) else { return }
         if let cap {
             guard restoreFrameRate > cap.frameRate else { return }
         }

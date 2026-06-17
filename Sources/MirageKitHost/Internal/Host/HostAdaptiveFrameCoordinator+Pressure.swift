@@ -297,8 +297,8 @@ extension HostAdaptiveFrameCoordinator {
 
     private func hasHardReceiverPressure(_ snapshot: TransportPressureSnapshot) -> Bool {
         if snapshot.receiverLossHoldActive { return true }
-        if snapshot.receiverReassemblyBacklogFrames > 0 ||
-            snapshot.receiverReassemblyBacklogBytes > 0 {
+        if snapshot.receiverReassemblyBacklogFrames >= 4 ||
+            snapshot.receiverReassemblyBacklogBytes >= 2_000_000 {
             return true
         }
         if snapshot.receiverDecodeBacklogFrames >= 4 ||

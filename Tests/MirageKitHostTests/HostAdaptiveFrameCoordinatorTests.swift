@@ -410,6 +410,30 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(!coordinator.frameBudgetDecisionIsActionable(decision, snapshot: snapshot))
     }
 
+    @Test("Local bulk receiver reassembly backlog needs hard threshold")
+    func localBulkReceiverReassemblyBacklogNeedsHardThreshold() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let softSnapshot = makePressureSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            receiverReassemblyBacklogFrames: 1,
+            receiverReassemblyBacklogBytes: 64 * 1024
+        )
+        let hardSnapshot = makePressureSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            receiverReassemblyBacklogFrames: 4,
+            receiverReassemblyBacklogBytes: 64 * 1024
+        )
+        let decision = makeBudgetDecision(
+            state: .severe,
+            reason: .receiverBacklog
+        )
+
+        #expect(!coordinator.receiverPressureIsActionable(softSnapshot))
+        #expect(!coordinator.frameBudgetDecisionIsActionable(decision, snapshot: softSnapshot))
+        #expect(coordinator.receiverPressureIsActionable(hardSnapshot))
+        #expect(coordinator.frameBudgetDecisionIsActionable(decision, snapshot: hardSnapshot))
+    }
+
     @Test("Local bulk sender saturation makes frame budget actionable")
     func localBulkSenderSaturationMakesFrameBudgetActionable() {
         let coordinator = HostAdaptiveFrameCoordinator()

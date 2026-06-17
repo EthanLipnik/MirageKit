@@ -1040,7 +1040,55 @@ extension StreamContext {
         if !isKeyframe, let budgetDecision = returnedDecision.budgetDecision {
             await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
         }
+        if !isKeyframe {
+            await noteMotionFloorSaturationIfNeeded(
+                returnedDecision,
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                now: now
+            )
+        }
         return returnedDecision
+    }
+
+    private func noteMotionFloorSaturationIfNeeded(
+        _ decision: HostEncodedFrameAdmissionDecision,
+        wireBytes: Int,
+        packetCount: Int,
+        now: CFAbsoluteTime
+    ) async {
+        guard decision.motionFloorSaturated,
+              runtimeQualityAdjustmentEnabled,
+              mediaPathProfile.usesLocalBulkTransportPolicy,
+              encoderConfig.codec != .proRes4444 else {
+            return
+        }
+        let intervalMs = 1_000.0 / Double(max(1, currentFrameRate)) * 2.0
+        let admissionDecision = HostTransportFrameAdmissionPolicy.Decision(
+            admitsFrame: true,
+            mode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
+            evidence: "encoded-frame:motion-floor-saturated",
+            minimumFrameIntervalMs: intervalMs,
+            activeHoldMs: 650
+        )
+        transportAdmissionPressureState.noteCadencePressure(
+            admissionDecision,
+            holdSeconds: 0.65,
+            now: now
+        )
+        streamQualityGovernor.recordMotionFloorSaturation(
+            contract: currentStreamQualityContract(),
+            summary: "wireBytes=\(wireBytes) packets=\(packetCount)",
+            now: now
+        )
+        MirageLogger.metrics(
+            "event=motion_floor_saturated stream=\(streamID) " +
+                "wireBytes=\(wireBytes) packets=\(packetCount) " +
+                "quality=\(activeQuality.formatted(.number.precision(.fractionLength(2)))) " +
+                "target=\(currentTargetBitrateBps ?? encoderConfig.bitrate ?? 0)"
+        )
+        await applySustainedTransportAdmissionPressureIfNeeded(now: now)
     }
 
     func shouldSkipPFrameForPreEncodeBudgetAdmission(
@@ -1101,19 +1149,16 @@ extension StreamContext {
         case .send:
             return false
         case .sendWithFutureQualityDrop:
-            if let budgetDecision = decision.budgetDecision {
-                await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
-            }
             guard allowsDecisionBudgetReduction else {
                 logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-observe-only", now: now)
                 return false
             }
-            logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-quality-drop", now: now)
-            return false
-        case .skipBeforeEncode:
             if let budgetDecision = decision.budgetDecision {
                 await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
             }
+            logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-quality-drop", now: now)
+            return false
+        case .skipBeforeEncode:
             let intervalMs = 1_000.0 / Double(max(1, currentFrameRate)) * 2.0
             let reason = decision.reason?.rawValue ?? HostAdaptivePFrameController.Reason.transportBacklog.rawValue
             guard allowsDecisionBudgetReduction,
@@ -1127,6 +1172,9 @@ extension StreamContext {
                   ) else {
                 logPreEncodePFrameAdmissionIfNeeded(decision, action: "send-observe-only", now: now)
                 return false
+            }
+            if let budgetDecision = decision.budgetDecision {
+                await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
             }
             droppedFrameCount += 1
             transportAdmissionSkippedIntervalCount += 1

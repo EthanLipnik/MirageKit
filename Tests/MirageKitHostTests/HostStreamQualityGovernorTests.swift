@@ -34,6 +34,7 @@ struct HostStreamQualityGovernorTests {
         )
 
         #expect(result.shouldApply == false)
+        #expect(result.streamDecision.cause == .receiver)
         #expect(result.streamDecision.blockedLeverReason == "soft-local-transport-backlog")
     }
 
@@ -59,7 +60,8 @@ struct HostStreamQualityGovernorTests {
 
         let decision = try #require(result.decision)
         #expect(decision.targetBitrateBps >= motionFloor)
-        #expect(decision.targetBitrateBps < readabilityFloor)
+        #expect(decision.targetBitrateBps == 75_000_000)
+        #expect(decision.targetBitrateBps > readabilityFloor)
         #expect(abs(decision.quality - contract.localMotionQualityFloor) < 0.0001)
         #expect(result.streamDecision.cause == .motion)
         #expect(result.streamDecision.blockedLeverReason == "motion-floor")

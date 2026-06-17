@@ -408,6 +408,11 @@ struct HostAdaptiveFrameCoordinator: Sendable, Equatable {
         if pressureState == .severe, transportAdmissionActiveDuration >= 1.0 {
             return true
         }
+        if !sourceStill,
+           activeQuality <= qualityFloor + 0.04,
+           transportAdmissionActiveDuration >= 0.5 {
+            return true
+        }
         if sourceStill, !inputActive, transportAdmissionActiveDuration >= 2.0 {
             return true
         }
