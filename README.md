@@ -123,7 +123,7 @@ Both ends need local network access for Bonjour. Add this to your app's Info.pli
 ```xml
 <key>NSBonjourServices</key>
 <array>
-    <string>_mirage._tcp</string>
+    <string>_miragekit._tcp</string>
 </array>
 
 <key>NSLocalNetworkUsageDescription</key>

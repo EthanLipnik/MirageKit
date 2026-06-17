@@ -113,6 +113,7 @@ extension StreamContext {
         pendingKeyframeRequiresReset = false
         protectedGeometryRecoveryKeyframeReason = nil
         pendingEmergencyKeyframeQuality = nil
+        senderDeadlineRecoveryQualityCeiling = nil
         suppressEncodedNonKeyframesUntilKeyframe = false
         pendingReceiverAcceptedKeyframeFrameNumber = nil
         pendingReceiverAcceptedKeyframeReason = nil

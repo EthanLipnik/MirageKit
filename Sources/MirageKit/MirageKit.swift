@@ -28,20 +28,41 @@ public enum MirageKit {
     /// Current Mirage wire protocol version required by both hosts and clients, encoded as YYMMDD.
     public static let protocolVersion: UInt32 = mirageProtocolVersion
 
-    /// Bonjour service type used for peer discovery on the local network.
-    public static let serviceType = "_mirage._tcp"
+    /// MirageKit default Bonjour service type used for peer discovery on the local network.
+    public static let serviceType = "_miragekit._tcp"
 
-    /// TCP port used for overlay reachability probes.
-    public static let overlayProbePort: UInt16 = 9852
+    /// MirageKit default bootstrap control port.
+    public static let bootstrapControlPort: Int = 38551
 
-    /// Preferred TCP listener port used for direct Mirage sessions.
-    public static let directTCPPort: UInt16 = 9853
+    /// MirageKit default TCP port used for overlay reachability probes.
+    public static let overlayProbePort: UInt16 = 38552
 
-    /// Preferred UDP listener port used for direct Mirage sessions.
-    public static let directUDPPort: UInt16 = 9854
+    /// MirageKit default TCP listener port used for direct sessions.
+    public static let directTCPPort: UInt16 = 38553
 
-    /// Preferred QUIC listener port used for direct Mirage sessions.
-    public static let directQUICPort: UInt16 = 9855
+    /// MirageKit default UDP listener port used for direct sessions.
+    public static let directUDPPort: UInt16 = 38554
+
+    /// MirageKit default QUIC listener port used for direct sessions.
+    public static let directQUICPort: UInt16 = 38555
+
+    /// Bonjour service type used by the Mirage app for production peer discovery.
+    public static let mirageAppServiceType = "_mirage._tcp"
+
+    /// Bootstrap control port used by the Mirage app.
+    public static let mirageAppBootstrapControlPort: Int = 9851
+
+    /// Overlay probe port used by the Mirage app.
+    public static let mirageAppOverlayProbePort: UInt16 = 9852
+
+    /// Direct TCP listener port used by the Mirage app.
+    public static let mirageAppDirectTCPPort: UInt16 = 9853
+
+    /// Direct UDP listener port used by the Mirage app.
+    public static let mirageAppDirectUDPPort: UInt16 = 9854
+
+    /// Direct QUIC listener port used by the Mirage app.
+    public static let mirageAppDirectQUICPort: UInt16 = 9855
 
     /// Stable user-visible substring emitted when bounded first-frame recovery is exhausted.
     public static let firstFramePresentationFailureTerminalMessage =

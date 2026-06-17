@@ -50,6 +50,26 @@ extension StreamContext {
         }
     }
 
+    func enterSenderDeadlineRecoveryModeIfNeeded(
+        reason: StreamPacketSender.DependencyFrameDropReason,
+        now: CFAbsoluteTime
+    ) {
+        guard reason == .transportDrop,
+              mediaPathProfile.usesLocalBulkTransportPolicy,
+              encoderConfig.codec != .proRes4444 else {
+            return
+        }
+        let recoveryCeiling = currentStreamQualityContract().localMotionQualityFloor
+        guard recoveryCeiling > 0 else { return }
+        let previous = senderDeadlineRecoveryQualityCeiling
+        senderDeadlineRecoveryQualityCeiling = min(previous ?? recoveryCeiling, recoveryCeiling)
+        guard previous == nil || abs(Double((previous ?? 0) - recoveryCeiling)) > 0.0001 else { return }
+        MirageLogger.metrics(
+            "Sender-deadline recovery quality ceiling armed for stream \(streamID): " +
+                "quality=\(recoveryCeiling.formatted(.number.precision(.fractionLength(2))))"
+        )
+    }
+
     @discardableResult
     func scheduleEmergencyChainRepairKeyframe(
         reason: String,
@@ -124,16 +144,25 @@ extension StreamContext {
     }
 
     func noteEmergencyKeyframePrepared(using decision: HostFrameBudgetDecision?) async {
-        let decisionQuality = decision?.keyframeQuality ?? emergencyKeyframeQuality()
+        var decisionQuality = decision?.keyframeQuality ?? emergencyKeyframeQuality()
+        if let senderDeadlineRecoveryQualityCeiling {
+            decisionQuality = min(decisionQuality, senderDeadlineRecoveryQualityCeiling)
+        }
         let floor = emergencyKeyframeQualityFloor()
         let emergencyCeiling = max(floor, min(keyframeQuality, resolvedQualityCeiling))
+        let effectiveEmergencyCeiling = senderDeadlineRecoveryQualityCeiling.map {
+            max(floor, min($0, emergencyCeiling))
+        } ?? emergencyCeiling
         if decision != nil {
             pendingEmergencyKeyframeQuality = max(
                 floor,
-                min(decisionQuality, emergencyCeiling, resolvedQualityCeiling)
+                min(decisionQuality, effectiveEmergencyCeiling, resolvedQualityCeiling)
             )
         } else {
-            pendingEmergencyKeyframeQuality = max(floor, min(decisionQuality, emergencyKeyframeQuality()))
+            pendingEmergencyKeyframeQuality = max(
+                floor,
+                min(decisionQuality, effectiveEmergencyCeiling, emergencyKeyframeQuality())
+            )
         }
         if let pendingEmergencyKeyframeQuality {
             await encoder?.prepareForKeyframe(quality: pendingEmergencyKeyframeQuality)
@@ -325,6 +354,7 @@ extension StreamContext {
         suppressEncodedNonKeyframesUntilKeyframe = false
         latestReceiverRecoveryCause = .none
         pendingEmergencyKeyframeQuality = nil
+        senderDeadlineRecoveryQualityCeiling = nil
         receiverKeyframeAcceptanceFallbackTask?.cancel()
         receiverKeyframeAcceptanceFallbackTask = nil
         cancelPacketSenderDependencyRecoveryKeyframeRetry()
@@ -349,14 +379,25 @@ extension StreamContext {
         if let gateReason = pendingReceiverAcceptedKeyframeReason {
             pendingReceiverAcceptedKeyframeFrameNumber = nil
             pendingReceiverAcceptedKeyframeReason = nil
-            suppressEncodedNonKeyframesUntilKeyframe = false
             receiverKeyframeAcceptanceFallbackTask?.cancel()
             receiverKeyframeAcceptanceFallbackTask = nil
+            let repairStillActive = switch frameChainState {
+            case .chainBroken,
+                 .emergencyKeyframePending:
+                true
+            case .normal,
+                 .postKeyframeCooling:
+                false
+            }
+            suppressEncodedNonKeyframesUntilKeyframe = repairStillActive
             MirageLogger.stream(
                 "Dependency keyframe transport failed for stream \(streamID): " +
-                    "frame=\(frameNumber) reason=\(gateReason); releasing receiver acceptance gate"
+                    "frame=\(frameNumber) reason=\(gateReason); " +
+                    "\(repairStillActive ? "repair remains active" : "releasing receiver acceptance gate")"
             )
-            scheduleProcessingIfNeeded()
+            if !repairStillActive {
+                scheduleProcessingIfNeeded()
+            }
         }
         if pendingReceiverAcceptedKeyframeFrameNumber == frameNumber {
             pendingReceiverAcceptedKeyframeFrameNumber = nil
@@ -391,6 +432,7 @@ extension StreamContext {
             if nextRemaining == 0 {
                 frameChainState = .normal
                 cancelPacketSenderDependencyRecoveryKeyframeRetry()
+                senderDeadlineRecoveryQualityCeiling = nil
                 MirageLogger.metrics(
                     "Post-keyframe chain cooling complete for stream \(streamID) at frame \(frameNumber)"
                 )

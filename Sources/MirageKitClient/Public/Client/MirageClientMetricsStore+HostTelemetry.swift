@@ -16,6 +16,11 @@ extension MirageClientMetricsStore {
             snapshot.hostIdleFPS = metrics.idleEncodedFPS
             snapshot.hostDroppedFrames = metrics.droppedFrames
             snapshot.hostActiveQuality = Double(metrics.activeQuality)
+            snapshot.hostLatestAppliedFrameQuality = metrics.latestAppliedFrameQuality.map(Double.init)
+            snapshot.hostLatestAppliedFrameBitrateTargetBps = metrics.latestAppliedFrameBitrateTargetBps
+            snapshot.hostLatestAppliedFrameSenderPacingBps = metrics.latestAppliedFrameSenderPacingBps
+            snapshot.hostLatestAppliedFrameIntent = metrics.latestAppliedFrameIntent
+            snapshot.hostLatestAppliedFrameRate = metrics.latestAppliedFrameRate
             snapshot.hostTargetFrameRate = metrics.targetFrameRate
             snapshot.hostEnteredBitrate = metrics.enteredBitrate
             snapshot.hostCurrentBitrate = metrics.currentBitrate
@@ -54,6 +59,8 @@ extension MirageClientMetricsStore {
             snapshot.hostRealtimeDeliveryMode = metrics.realtimeDeliveryMode
             snapshot.hostRealtimeRequiredBitrateForQualityBps = metrics.realtimeRequiredBitrateForQualityBps
             snapshot.hostRealtimeObservedPFrameWireBytesP95 = metrics.realtimeObservedPFrameWireBytesP95
+            snapshot.hostRealtimeFrameBudgetBytes = metrics.realtimeFrameBudgetBytes
+            snapshot.hostRealtimeFrameBudgetBitrateBps = metrics.realtimeFrameBudgetBitrateBps
             snapshot.hostAwdlPolicyState = metrics.awdlPolicyState
             snapshot.hostAwdlPolicyTrigger = metrics.awdlPolicyTrigger
             snapshot.hostAwdlSelectedLever = metrics.awdlSelectedLever

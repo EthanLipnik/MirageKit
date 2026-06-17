@@ -11,9 +11,31 @@ import MirageKit
 
 #if os(macOS)
 extension HostAdaptiveFrameCoordinator {
+    enum CaptureCadenceState: String, Sendable, Equatable {
+        case unknown
+        case active
+        case dynamicIdle = "dynamic-idle"
+        case captureStarved = "capture-starved"
+        case virtualTimingSuspect = "virtual-timing-suspect"
+
+        var blocksSoftTransportPressure: Bool {
+            switch self {
+            case .dynamicIdle,
+                 .captureStarved,
+                 .virtualTimingSuspect:
+                true
+            case .unknown,
+                 .active:
+                false
+            }
+        }
+    }
+
     struct TransportPressureSnapshot: Sendable, Equatable {
         let mediaPathProfile: MirageMediaPathProfile
         let currentFrameRate: Int
+        let captureCadenceState: CaptureCadenceState
+        let captureCadenceSummary: String?
         let receiverState: ReceiverEvidenceState
         let receiverCapacityLearningQuarantineReason: String?
         let receiverReassemblyBacklogFrames: Int
@@ -45,6 +67,8 @@ extension HostAdaptiveFrameCoordinator {
         init(
             mediaPathProfile: MirageMediaPathProfile,
             currentFrameRate: Int,
+            captureCadenceState: CaptureCadenceState = .unknown,
+            captureCadenceSummary: String? = nil,
             receiverState: ReceiverEvidenceState,
             receiverCapacityLearningQuarantineReason: String?,
             receiverReassemblyBacklogFrames: Int,
@@ -75,6 +99,8 @@ extension HostAdaptiveFrameCoordinator {
         ) {
             self.mediaPathProfile = mediaPathProfile
             self.currentFrameRate = max(1, currentFrameRate)
+            self.captureCadenceState = captureCadenceState
+            self.captureCadenceSummary = captureCadenceSummary
             self.receiverState = receiverState
             self.receiverCapacityLearningQuarantineReason = receiverCapacityLearningQuarantineReason
             self.receiverReassemblyBacklogFrames = max(0, receiverReassemblyBacklogFrames)
@@ -106,6 +132,11 @@ extension HostAdaptiveFrameCoordinator {
     }
 
     func transportPressureIsActionable(_ snapshot: TransportPressureSnapshot) -> Bool {
+        if snapshot.captureCadenceState.blocksSoftTransportPressure,
+           !hasHardSenderPressure(snapshot),
+           !hasHardReceiverPressure(snapshot) {
+            return false
+        }
         if snapshot.mediaPathProfile.usesAwdlRadioPolicy {
             return true
         }
@@ -139,6 +170,10 @@ extension HostAdaptiveFrameCoordinator {
     }
 
     func receiverPressureIsActionable(_ snapshot: TransportPressureSnapshot) -> Bool {
+        if snapshot.captureCadenceState.blocksSoftTransportPressure,
+           !hasHardReceiverPressure(snapshot) {
+            return false
+        }
         if snapshot.mediaPathProfile.usesAwdlRadioPolicy {
             return snapshot.receiverState != .unknown
         }
@@ -183,7 +218,9 @@ extension HostAdaptiveFrameCoordinator {
             return true
         }
         if snapshot.mediaPathProfile.usesLocalBulkTransportPolicy {
-            return hasHardSenderPressure(snapshot) || hasHardReceiverPressure(snapshot)
+            return hasHardSenderPressure(snapshot) ||
+                hasHardReceiverPressure(snapshot) ||
+                Self.pressureReasonIsMotionComplexity(snapshot.realtimePressureReason)
         }
         return transportPressureIsActionable(snapshot)
     }
@@ -212,6 +249,14 @@ extension HostAdaptiveFrameCoordinator {
     ) -> Bool {
         if decision.state == .observing {
             return true
+        }
+        if snapshot.captureCadenceState.blocksSoftTransportPressure,
+           !hasHardSenderPressure(snapshot),
+           !hasHardReceiverPressure(snapshot),
+           decision.reason != .encodedFrame,
+           decision.reason != .motionOnset,
+           decision.reason != .encoderLag {
+            return false
         }
         if snapshot.mediaPathProfile.usesAwdlRadioPolicy {
             return true
@@ -342,6 +387,93 @@ extension HostAdaptiveFrameCoordinator {
             reason == HostAdaptivePFrameController.Reason.motionOnset.rawValue ||
             reason.contains("encoded-frame") ||
             reason.contains("motion-onset")
+    }
+
+    static func classifyCaptureCadence(
+        _ cadence: StreamCaptureCadenceMetrics?,
+        targetFrameRate: Int
+    ) -> (state: CaptureCadenceState, summary: String?) {
+        guard let cadence else {
+            return (.unknown, nil)
+        }
+        let targetFPS = Double(max(1, targetFrameRate))
+        let rawFPS = cadence.rawScreenCallbackFPS ?? cadence.completeFrameFPS ?? cadence.observedSCKFPS
+        let observedFPS = cadence.observedSCKFPS ?? cadence.renderableFrameFPS ?? cadence.completeFrameFPS
+        let renderableFPS = cadence.renderableFrameFPS ?? observedFPS
+        let idleFrames = cadence.idleFrameCount ?? 0
+        let wallGapP99 = cadence.wallClockGapP99Ms
+        let timingSuspect = cadence.virtualDisplayTimingSuspect == true
+
+        let activeRawThreshold = max(6.0, min(15.0, targetFPS * 0.25))
+        let idleObservedThreshold = max(2.5, targetFPS * 0.12)
+        let rawIsActive = (rawFPS ?? 0) >= activeRawThreshold
+        let observedIsLow = (observedFPS ?? renderableFPS ?? 0) <= idleObservedThreshold
+        if rawIsActive, observedIsLow, idleFrames >= 3 {
+            return (
+                .dynamicIdle,
+                captureCadenceSummary(
+                    state: .dynamicIdle,
+                    rawFPS: rawFPS,
+                    observedFPS: observedFPS,
+                    idleFrames: idleFrames,
+                    wallGapP99: wallGapP99
+                )
+            )
+        }
+
+        let starvationRawThreshold = max(1.0, targetFPS * 0.15)
+        let rawIsStarved = (rawFPS ?? 0) <= starvationRawThreshold
+        let hasLongWallGap = wallGapP99 >= 500 || cadence.longFrameGapCount > 0
+        if rawIsStarved, hasLongWallGap {
+            return (
+                .captureStarved,
+                captureCadenceSummary(
+                    state: .captureStarved,
+                    rawFPS: rawFPS,
+                    observedFPS: observedFPS,
+                    idleFrames: idleFrames,
+                    wallGapP99: wallGapP99
+                )
+            )
+        }
+
+        if timingSuspect,
+           wallGapP99 >= 500 || cadence.displayTimeDriftCount > 0 {
+            return (
+                .virtualTimingSuspect,
+                captureCadenceSummary(
+                    state: .virtualTimingSuspect,
+                    rawFPS: rawFPS,
+                    observedFPS: observedFPS,
+                    idleFrames: idleFrames,
+                    wallGapP99: wallGapP99
+                )
+            )
+        }
+
+        return (
+            .active,
+            captureCadenceSummary(
+                state: .active,
+                rawFPS: rawFPS,
+                observedFPS: observedFPS,
+                idleFrames: idleFrames,
+                wallGapP99: wallGapP99
+            )
+        )
+    }
+
+    private static func captureCadenceSummary(
+        state: CaptureCadenceState,
+        rawFPS: Double?,
+        observedFPS: Double?,
+        idleFrames: UInt64,
+        wallGapP99: Double
+    ) -> String {
+        let rawText = rawFPS.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "nil"
+        let observedText = observedFPS.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "nil"
+        let gapText = wallGapP99.formatted(.number.precision(.fractionLength(1)))
+        return "\(state.rawValue):raw=\(rawText),observed=\(observedText),idle=\(idleFrames),gapP99=\(gapText)ms"
     }
 }
 #endif

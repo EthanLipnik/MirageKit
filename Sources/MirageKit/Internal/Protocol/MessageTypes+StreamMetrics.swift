@@ -132,6 +132,11 @@ package struct StreamMetricsMessage: Codable {
     package let idleEncodedFPS: Double
     package let droppedFrames: UInt64
     package let activeQuality: Float
+    package let latestAppliedFrameQuality: Float?
+    package let latestAppliedFrameBitrateTargetBps: Int?
+    package let latestAppliedFrameSenderPacingBps: Int?
+    package let latestAppliedFrameIntent: String?
+    package let latestAppliedFrameRate: Int?
     package let targetFrameRate: Int
     package let enteredBitrate: Int?
     package let currentBitrate: Int?
@@ -161,6 +166,8 @@ package struct StreamMetricsMessage: Codable {
     package let realtimeDeliveryMode: String?
     package let realtimeRequiredBitrateForQualityBps: Int?
     package let realtimeObservedPFrameWireBytesP95: Int?
+    package let realtimeFrameBudgetBytes: Int?
+    package let realtimeFrameBudgetBitrateBps: Int?
     package let realtimeControlRevision: Int?
     package let adaptiveGovernorRevision: Int?
     package let adaptiveGovernorDecisionID: UInt64?
@@ -255,6 +262,11 @@ package struct StreamMetricsMessage: Codable {
         idleEncodedFPS: Double,
         droppedFrames: UInt64,
         activeQuality: Float,
+        latestAppliedFrameQuality: Float? = nil,
+        latestAppliedFrameBitrateTargetBps: Int? = nil,
+        latestAppliedFrameSenderPacingBps: Int? = nil,
+        latestAppliedFrameIntent: String? = nil,
+        latestAppliedFrameRate: Int? = nil,
         targetFrameRate: Int,
         enteredBitrate: Int? = nil,
         currentBitrate: Int? = nil,
@@ -284,6 +296,8 @@ package struct StreamMetricsMessage: Codable {
         realtimeDeliveryMode: String? = nil,
         realtimeRequiredBitrateForQualityBps: Int? = nil,
         realtimeObservedPFrameWireBytesP95: Int? = nil,
+        realtimeFrameBudgetBytes: Int? = nil,
+        realtimeFrameBudgetBitrateBps: Int? = nil,
         realtimeControlRevision: Int? = nil,
         adaptiveGovernorRevision: Int? = nil,
         adaptiveGovernorDecisionID: UInt64? = nil,
@@ -377,6 +391,11 @@ package struct StreamMetricsMessage: Codable {
         self.idleEncodedFPS = idleEncodedFPS
         self.droppedFrames = droppedFrames
         self.activeQuality = activeQuality
+        self.latestAppliedFrameQuality = latestAppliedFrameQuality
+        self.latestAppliedFrameBitrateTargetBps = latestAppliedFrameBitrateTargetBps
+        self.latestAppliedFrameSenderPacingBps = latestAppliedFrameSenderPacingBps
+        self.latestAppliedFrameIntent = latestAppliedFrameIntent
+        self.latestAppliedFrameRate = latestAppliedFrameRate
         self.targetFrameRate = targetFrameRate
         self.enteredBitrate = enteredBitrate
         self.currentBitrate = currentBitrate
@@ -406,6 +425,8 @@ package struct StreamMetricsMessage: Codable {
         self.realtimeDeliveryMode = realtimeDeliveryMode
         self.realtimeRequiredBitrateForQualityBps = realtimeRequiredBitrateForQualityBps
         self.realtimeObservedPFrameWireBytesP95 = realtimeObservedPFrameWireBytesP95
+        self.realtimeFrameBudgetBytes = realtimeFrameBudgetBytes
+        self.realtimeFrameBudgetBitrateBps = realtimeFrameBudgetBitrateBps
         self.realtimeControlRevision = realtimeControlRevision
         self.adaptiveGovernorRevision = adaptiveGovernorRevision
         self.adaptiveGovernorDecisionID = adaptiveGovernorDecisionID

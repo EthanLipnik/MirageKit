@@ -146,7 +146,7 @@ struct ClientNetworkPathStatusTests {
         )
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
-        #expect(snapshot.kind == .awdl)
+        #expect(snapshot.kind == .wired)
         #expect(snapshot.mediaProfile == .proximityWiredLike)
         #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(status.usesProximityWiredLikePolicy)
@@ -173,7 +173,7 @@ struct ClientNetworkPathStatusTests {
         )
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
-        #expect(snapshot.kind == .awdl)
+        #expect(snapshot.kind == .wired)
         #expect(snapshot.mediaProfile == .proximityWiredLike)
         #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(status.usesProximityWiredLikePolicy)
@@ -199,7 +199,7 @@ struct ClientNetworkPathStatusTests {
         )
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
-        #expect(snapshot.kind == .awdl)
+        #expect(snapshot.kind == .wired)
         #expect(snapshot.mediaProfile == .wired)
         #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(!status.usesProximityWiredLikePolicy)
@@ -225,7 +225,7 @@ struct ClientNetworkPathStatusTests {
         )
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
-        #expect(snapshot.kind == .awdl)
+        #expect(snapshot.kind == .wifi)
         #expect(snapshot.mediaProfile == .localWiFi)
         #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(!status.usesProximityWiredLikePolicy)
@@ -418,7 +418,7 @@ struct ClientNetworkPathStatusTests {
             usesOther: false
         )
 
-        #expect(kind == .awdl)
+        #expect(kind == .wifi)
     }
 
     @Test("Local default route treats USB-C proximity as wired-like")

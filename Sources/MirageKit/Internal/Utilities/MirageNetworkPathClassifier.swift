@@ -73,12 +73,19 @@ package enum MirageNetworkPathClassifier {
         if interfaces.hasApplePrivateNCM || interfaces.hasBridge {
             return .wired
         }
-        if (interfaces.hasAWDL || interfaces.hasLowLatencyWireless) &&
+        if interfaces.hasAWDL &&
             !usesWired &&
             !usesCellular &&
             !usesLoopback &&
             !interfaces.hasNonProximityRouteInterface {
             return .awdl
+        }
+        if interfaces.hasLowLatencyWireless &&
+            !usesWired &&
+            !usesCellular &&
+            !usesLoopback &&
+            !interfaces.hasNonProximityRouteInterface {
+            return .wifi
         }
         if interfaces.hasOverlay && !interfaces.hasNonProximityRouteInterface {
             return .vpn
@@ -135,30 +142,38 @@ package enum MirageNetworkPathClassifier {
             kind = .vpn
         } else if interfaces.hasOverlay && usesOverlayEndpointAddress {
             kind = .vpn
+        } else if endpointRouteInterfaces.hasApplePrivateNCM {
+            kind = .wired
         } else if endpointRouteInterfaces.hasBridge {
             kind = .wired
-        } else if endpointRouteInterfaces.hasProximity {
+        } else if endpointRouteInterfaces.hasAWDL {
             kind = .awdl
+        } else if endpointRouteInterfaces.hasLowLatencyWireless {
+            kind = .wifi
         } else if interfaces.hasOverlay && !interfaces.hasNonProximityRouteInterface {
             kind = .vpn
         } else if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             kind = .wifi
         } else if usesWired {
             kind = .wired
-        } else if (interfaces.hasAWDL || interfaces.hasLowLatencyWireless) &&
+        } else if interfaces.hasApplePrivateNCM || interfaces.hasBridge {
+            kind = .wired
+        } else if interfaces.hasAWDL &&
                     !usesCellular &&
                     !usesLoopback &&
                     !interfaces.hasApplePrivateNCM &&
                     !interfaces.hasBridge {
             kind = .awdl
+        } else if interfaces.hasLowLatencyWireless &&
+                    !usesCellular &&
+                    !usesLoopback &&
+                    !interfaces.hasApplePrivateNCM &&
+                    !interfaces.hasBridge {
+            kind = .wifi
         } else if usesCellular {
             kind = .cellular
         } else if usesLoopback {
             kind = .loopback
-        } else if interfaces.hasProximity {
-            kind = .awdl
-        } else if interfaces.hasBridge {
-            kind = .wired
         } else if interfaces.hasOverlay {
             kind = .vpn
         } else if usesOther {

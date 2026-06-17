@@ -174,6 +174,11 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         mediaProfile.usesAwdlRadioPolicy
     }
 
+    /// Raw media policy profile used for diagnostics.
+    public var mediaProfileName: String {
+        mediaProfile.rawValue
+    }
+
     /// Whether the active path uses a proximity transport that should behave like local wired media.
     public var usesProximityWiredLikePolicy: Bool {
         mediaProfile == .proximityWiredLike
@@ -204,22 +209,21 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
     }
 
     package init(snapshot: MirageNetworkPathSnapshot) {
-        self.init(
-            kind: snapshot.kind,
-            status: snapshot.status,
-            interfaceNames: snapshot.interfaceNames,
-            isExpensive: snapshot.isExpensive,
-            isConstrained: snapshot.isConstrained,
-            supportsIPv4: snapshot.supportsIPv4,
-            supportsIPv6: snapshot.supportsIPv6,
-            usesWiFi: snapshot.usesWiFi,
-            usesWired: snapshot.usesWired,
-            usesCellular: snapshot.usesCellular,
-            usesLoopback: snapshot.usesLoopback,
-            usesOther: snapshot.usesOther,
-            localEndpointDescription: snapshot.localEndpointDescription,
-            remoteEndpointDescription: snapshot.remoteEndpointDescription
-        )
+        kind = snapshot.kind
+        mediaProfile = snapshot.mediaProfile
+        status = snapshot.status
+        interfaceNames = snapshot.interfaceNames
+        isExpensive = snapshot.isExpensive
+        isConstrained = snapshot.isConstrained
+        supportsIPv4 = snapshot.supportsIPv4
+        supportsIPv6 = snapshot.supportsIPv6
+        usesWiFi = snapshot.usesWiFi
+        usesWired = snapshot.usesWired
+        usesCellular = snapshot.usesCellular
+        usesLoopback = snapshot.usesLoopback
+        usesOther = snapshot.usesOther
+        localEndpointDescription = snapshot.localEndpointDescription
+        remoteEndpointDescription = snapshot.remoteEndpointDescription
     }
 
     /// Interface names can be more specific than `NWPath` interface categories.

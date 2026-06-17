@@ -9,6 +9,7 @@
 
 import Foundation
 import Loom
+import MirageKit
 
 #if os(macOS)
 
@@ -39,7 +40,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         userEndpointHost: String = "",
         userEndpointPort: Int = 22,
         sshPort: Int = 22,
-        controlPort: Int = 9851,
+        controlPort: Int = MirageKit.bootstrapControlPort,
         controlAuthSecret: String = Self.makeDefaultControlAuthSecret(),
         autoEndpoints: [LoomBootstrapEndpoint] = [],
         sshHostKeyFingerprints: [String] = [],
@@ -98,7 +99,8 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         userEndpointHost = try container.decodeIfPresent(String.self, forKey: .userEndpointHost) ?? ""
         userEndpointPort = try container.decodeIfPresent(Int.self, forKey: .userEndpointPort) ?? 22
         sshPort = try container.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
-        controlPort = try container.decodeIfPresent(Int.self, forKey: .controlPort) ?? 9851
+        controlPort = try container.decodeIfPresent(Int.self, forKey: .controlPort) ??
+            MirageKit.mirageAppBootstrapControlPort
         controlAuthSecret = try container.decodeIfPresent(String.self, forKey: .controlAuthSecret) ??
             Self.makeDefaultControlAuthSecret()
         autoEndpoints = try container.decodeIfPresent([LoomBootstrapEndpoint].self, forKey: .autoEndpoints) ?? []

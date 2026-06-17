@@ -312,6 +312,7 @@ struct HostAdaptiveFrameCoordinator: Sendable, Equatable {
             return releaseBarrier(evidence: "local-send-completion", now: now)
         }
         if !didSend {
+            guard barrier.kind == .bootstrap else { return nil }
             return releaseBarrier(evidence: "transport-failed", now: now)
         }
         keyframeBarrier?.frameNumber = frameNumber

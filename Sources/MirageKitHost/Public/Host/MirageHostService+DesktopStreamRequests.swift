@@ -28,11 +28,10 @@ func shouldAcceptStopDesktopStreamRequest(
 
 func shouldRejectAwdlDesktopStartupWithoutGeometryContract(
     usesHostResolution: Bool,
-    transportPathKind: MirageNetworkPathKind,
     mediaPathProfile: MirageMediaPathProfile,
     desktopGeometryContractID: UUID?
 ) -> Bool {
-    let hasAwdlEvidence = transportPathKind == .awdl || mediaPathProfile.usesAwdlRadioPolicy
+    let hasAwdlEvidence = mediaPathProfile.usesAwdlRadioPolicy
     return !usesHostResolution &&
         hasAwdlEvidence &&
         desktopGeometryContractID == nil
@@ -98,7 +97,6 @@ extension MirageHostService {
             }
             if shouldRejectAwdlDesktopStartupWithoutGeometryContract(
                 usesHostResolution: usesHostResolution,
-                transportPathKind: mediaPathPolicy.transportPathKind,
                 mediaPathProfile: mediaPathPolicy.mediaPathProfile,
                 desktopGeometryContractID: request.desktopGeometryContractID
             ) {

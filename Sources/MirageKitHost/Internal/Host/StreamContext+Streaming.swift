@@ -288,6 +288,11 @@ extension StreamContext {
             quality: activeQuality,
             now: now
         )
+        latestAppliedFrameQuality = activeQuality
+        latestAppliedFrameBitrateTargetBps = currentTargetBitrateBps ?? encoderConfig.bitrate
+        latestAppliedFrameSenderPacingBps = realtimeSenderPacingBitrateBps
+        latestAppliedFrameIntent = adaptiveIntent.rawValue
+        latestAppliedFrameRate = currentFrameRate
         let workItem = StreamPacketSender.WorkItem(
             encodedData: encodedData,
             frameByteCount: frameByteCount,

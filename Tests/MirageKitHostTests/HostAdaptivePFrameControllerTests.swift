@@ -640,7 +640,7 @@ struct HostAdaptivePFrameControllerTests {
             currentFrameRate: 60,
             maxPayloadSize: 1_200,
             currentQuality: 0.60,
-            qualityFloor: 0.03,
+            qualityFloor: 0.35,
             steadyQualityCeiling: 0.90,
             latencyMode: .lowestLatency,
             mediaPathProfile: .localWiFi,
@@ -651,6 +651,72 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.admission == .sendWithQualityDrop)
         #expect(budget.reason == .encodedFrame)
         #expect(budget.quality < 0.60)
+    }
+
+    @Test("Local content oversize lowers quality without shrinking frame budget")
+    func localContentOversizeLowersQualityWithoutShrinkingFrameBudget() throws {
+        var controller = HostAdaptivePFrameController()
+        let currentBitrate = 60_000_000
+        let decision = controller.evaluateEncodedFrame(
+            byteCount: 360 * 1024,
+            wireBytes: 360 * 1024,
+            packetCount: packetCount(forWireBytes: 360 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.35,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            budgetReductionActionable: false,
+            contentComplexityReductionActionable: true,
+            now: 10
+        )
+        let budget = try #require(decision.budgetDecision)
+
+        #expect(decision.admission == .sendWithQualityDrop)
+        #expect(budget.reason == .encodedFrame)
+        #expect(budget.targetBitrateBps == currentBitrate)
+        #expect(budget.maxWireBytes == frameBytes(for: currentBitrate))
+        #expect(budget.quality < 0.60)
+        #expect(budget.quality >= 0.35)
+    }
+
+    @Test("Local encoder lag lowers quality without shrinking frame budget")
+    func localEncoderLagLowersQualityWithoutShrinkingFrameBudget() throws {
+        var controller = HostAdaptivePFrameController()
+        let currentBitrate = 60_000_000
+        let maybeDecision = controller.recordEncoderTimingPressure(
+            severe: false,
+            cutScale: 0.70,
+            currentBitrateBps: currentBitrate,
+            requestedTargetBitrateBps: currentBitrate,
+            startupCeilingBps: currentBitrate,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.60,
+            qualityFloor: 0.35,
+            steadyQualityCeiling: 0.90,
+            mediaPathProfile: .proximityWiredLike,
+            now: 10
+        )
+        let decision = try #require(maybeDecision)
+
+        #expect(decision.reason == .encoderLag)
+        #expect(decision.targetBitrateBps == currentBitrate)
+        #expect(decision.maxWireBytes == frameBytes(for: currentBitrate))
+        #expect(decision.quality < 0.60)
+        #expect(decision.quality >= 0.35)
     }
 
     @Test("Non-actionable encoded oversize sends observe-only")
@@ -684,8 +750,8 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.budgetDecision == nil)
     }
 
-    @Test("Pre-encode transport stress skips high-motion P-frame with budget drop")
-    func preEncodeTransportStressSkipsHighMotionPFrameWithBudgetDrop() throws {
+    @Test("Pre-encode local motion stress lowers quality before skipping")
+    func preEncodeLocalMotionStressLowersQualityBeforeSkipping() throws {
         var controller = HostAdaptivePFrameController()
         _ = controller.evaluateEncodedFrame(
             byteCount: 120 * 1024,
@@ -703,7 +769,7 @@ struct HostAdaptivePFrameControllerTests {
             currentFrameRate: 60,
             maxPayloadSize: 1_200,
             currentQuality: 0.60,
-            qualityFloor: 0.03,
+            qualityFloor: 0.35,
             steadyQualityCeiling: 0.90,
             latencyMode: .lowestLatency,
             mediaPathProfile: .localWiFi,
@@ -727,7 +793,65 @@ struct HostAdaptivePFrameControllerTests {
             currentFrameRate: 60,
             maxPayloadSize: 1_200,
             currentQuality: 0.60,
-            qualityFloor: 0.03,
+            qualityFloor: 0.35,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 10
+        )
+        let budget = try #require(decision.budgetDecision)
+
+        #expect(decision.admission == .sendWithFutureQualityDrop)
+        #expect(budget.reason == .encodedFrame)
+        #expect(budget.targetBitrateBps == 60_000_000)
+        #expect(budget.quality < 0.60)
+        #expect(budget.quality >= 0.35)
+    }
+
+    @Test("Pre-encode local motion stress skips after motion floor")
+    func preEncodeLocalMotionStressSkipsAfterMotionFloor() throws {
+        var controller = HostAdaptivePFrameController()
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 120 * 1024,
+            wireBytes: 120 * 1024,
+            packetCount: packetCount(forWireBytes: 120 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.35,
+            qualityFloor: 0.35,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            mediaPathProfile: .localWiFi,
+            now: 9.9
+        )
+
+        let decision = controller.evaluatePreEncodePFrame(
+            dirtyPercentage: 100,
+            inputActive: true,
+            sourceStill: false,
+            receiverHealthy: true,
+            senderHealthy: false,
+            queuedBytesAhead: 300 * 1024,
+            unstartedPFrameCount: 2,
+            receiverReassemblyBacklogFrames: 0,
+            receiverReassemblyBacklogBytes: 0,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.35,
+            qualityFloor: 0.35,
             steadyQualityCeiling: 0.90,
             latencyMode: .lowestLatency,
             mediaPathProfile: .localWiFi,
@@ -736,7 +860,7 @@ struct HostAdaptivePFrameControllerTests {
         let budget = try #require(decision.budgetDecision)
 
         #expect(decision.admission == .skipBeforeEncode)
-        #expect(budget.reason == .transportBacklog)
+        #expect(budget.reason == .encodedFrame)
         #expect(budget.quality < 0.60)
     }
 

@@ -62,6 +62,10 @@ extension StreamContext {
             await applyUltraValidationDowngradeIfNeeded(encoderValidation)
             let currentBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate
             let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+            let realtimeFrameBudgetBytes = adaptivePFrameController.operatingTargetWireBytes
+            let realtimeFrameBudgetBitrate = realtimeFrameBudgetBytes.map {
+                max(1, Int((Double(max(1, $0)) * Double(max(1, currentFrameRate)) * 8.0).rounded(.up)))
+            }
             let encodedWidth = Int(currentEncodedSize.width)
             let encodedHeight = Int(currentEncodedSize.height)
             let captureCadenceMetrics = streamCaptureCadenceMetrics(
@@ -76,6 +80,11 @@ extension StreamContext {
                 idleEncodedFPS: idleEncodedFPS,
                 droppedFrames: droppedFrameCount,
                 activeQuality: activeQuality,
+                latestAppliedFrameQuality: latestAppliedFrameQuality,
+                latestAppliedFrameBitrateTargetBps: latestAppliedFrameBitrateTargetBps,
+                latestAppliedFrameSenderPacingBps: latestAppliedFrameSenderPacingBps,
+                latestAppliedFrameIntent: latestAppliedFrameIntent,
+                latestAppliedFrameRate: latestAppliedFrameRate,
                 targetFrameRate: currentFrameRate,
                 enteredBitrate: enteredTargetBitrate,
                 currentBitrate: currentBitrate,
@@ -105,6 +114,8 @@ extension StreamContext {
                 realtimeDeliveryMode: adaptivePFrameController.latestDeliveryMode.rawValue,
                 realtimeRequiredBitrateForQualityBps: adaptivePFrameController.latestRequiredBitrateForCurrentQualityBps,
                 realtimeObservedPFrameWireBytesP95: adaptivePFrameController.latestObservedPFrameWireBytesP95,
+                realtimeFrameBudgetBytes: realtimeFrameBudgetBytes,
+                realtimeFrameBudgetBitrateBps: realtimeFrameBudgetBitrate,
                 realtimeControlRevision: Self.realtimeControlRevision,
                 adaptiveGovernorRevision: MirageAdaptiveGovernorProtocol.revision,
                 adaptiveGovernorDecisionID: streamQualityDecision.id,

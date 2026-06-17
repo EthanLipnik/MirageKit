@@ -122,6 +122,7 @@ struct StreamQualityDecision: Sendable, Equatable {
         case receiver
         case encoder
         case presentation
+        case capture
         case motion
         case unknown
     }
@@ -314,7 +315,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
                 ? .reduceBitrate
                 : .reduceQuality,
             blockedLeverReason: adjusted.targetBitrateBps > decision.targetBitrateBps
-                ? (evidence.cause == .motion ? "motion-floor" : "readability-floor")
+                ? localFloorBlockedReason(evidence: evidence)
                 : nil,
             targetBitrateBps: adjusted.targetBitrateBps,
             qualityTarget: adjusted.quality,
@@ -643,7 +644,9 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         if decision.state == .observing { return false }
         if allowsLocalBulkReductionOverride { return false }
         if contract.codec == .proRes4444 { return false }
-        if contract.startupWarmupActive(now: now) && evidence.evidenceClass != .hard {
+        if contract.startupWarmupActive(now: now),
+           evidence.evidenceClass != .hard,
+           evidence.cause != .motion {
             return true
         }
         guard contract.mediaPathProfile.usesLocalBulkTransportPolicy else {
@@ -730,7 +733,23 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
 
         let explicitMotionComplexity = decision?.reason == .encodedFrame ||
             decision?.reason == .motionOnset ||
-            reasonIndicatesMotionComplexity(reason ?? snapshot.realtimePressureReason)
+            reasonIndicatesMotionComplexity(reason) ||
+            reasonIndicatesMotionComplexity(snapshot.realtimePressureReason)
+
+        if snapshot.captureCadenceState.blocksSoftTransportPressure,
+           !explicitMotionComplexity {
+            noteSoftOrHealthy(now: now)
+            return Evidence(
+                evidenceClass: .diagnostic,
+                cause: .capture,
+                summary: snapshot.captureCadenceSummary ?? snapshot.captureCadenceState.rawValue,
+                hardTransport: false,
+                hardReceiver: false,
+                hardEncoder: false,
+                softOnly: true
+            )
+        }
+
         let presentationOnly = !explicitMotionComplexity &&
             snapshot.receiverPresentationBacklogFrames > 0 &&
             snapshot.receiverReassemblyBacklogFrames == 0 &&
@@ -819,18 +838,27 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         evidence: Evidence,
         contract: StreamQualityContract
     ) -> Float {
-        evidence.cause == .motion
-            ? contract.localMotionQualityFloor
-            : contract.localReadabilityQualityFloor
+        if evidence.cause == .motion || evidence.hardTransport {
+            return contract.localMotionQualityFloor
+        }
+        return contract.localReadabilityQualityFloor
     }
 
     private func localFloorBitrateBps(
         evidence: Evidence,
         contract: StreamQualityContract
     ) -> Int? {
-        evidence.cause == .motion
-            ? contract.motionFloorBitrateBps()
-            : contract.readabilityFloorBitrateBps()
+        if evidence.cause == .motion || evidence.hardTransport {
+            return contract.motionFloorBitrateBps()
+        }
+        return contract.readabilityFloorBitrateBps()
+    }
+
+    private func localFloorBlockedReason(evidence: Evidence) -> String {
+        if evidence.cause == .motion || evidence.hardTransport {
+            return "motion-floor"
+        }
+        return "readability-floor"
     }
 
     private func motionCadenceReliefAllowed(

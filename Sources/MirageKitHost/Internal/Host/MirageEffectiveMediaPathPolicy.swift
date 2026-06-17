@@ -188,6 +188,9 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         if resolvedProfile.usesAwdlRadioPolicy {
             return .awdl
         }
+        if resolvedProfile == .proximityWiredLike || resolvedProfile == .wired {
+            return .wired
+        }
         if resolvedProfile == .localWiFi, clientKind == .awdl {
             return .wifi
         }

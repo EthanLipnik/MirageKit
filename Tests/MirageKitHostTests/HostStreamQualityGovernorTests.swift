@@ -125,6 +125,95 @@ struct HostStreamQualityGovernorTests {
         #expect(result.streamDecision.blockedLeverReason == "readability-floor")
     }
 
+    @Test("Proximity sender deadline uses motion floor for recovery")
+    func proximitySenderDeadlineUsesMotionFloorForRecovery() throws {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        let floor = try #require(contract.motionFloorBitrateBps())
+        let result = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                quality: 0.24,
+                state: .severe,
+                reason: .senderDeadline
+            ),
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                senderDropHoldActive: true
+            ),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: true,
+            now: 10
+        )
+
+        let decision = try #require(result.decision)
+        #expect(decision.targetBitrateBps >= floor)
+        #expect(abs(decision.quality - contract.localMotionQualityFloor) < 0.0001)
+        #expect(result.streamDecision.evidenceClass == .hard)
+        #expect(result.streamDecision.cause == .transport)
+        #expect(result.streamDecision.blockedLeverReason == "motion-floor")
+    }
+
+    @Test("Dynamic SCK idle records capture diagnostic without bitrate starvation")
+    func dynamicSCKIdleRecordsCaptureDiagnosticWithoutBitrateStarvation() {
+        var governor = HostStreamQualityGovernor()
+        let result = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                quality: 0.32,
+                state: .pressured,
+                reason: .clientRecovery
+            ),
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                captureCadenceState: .dynamicIdle,
+                captureCadenceSummary: "dynamic-idle:raw=20.0,observed=2.0,idle=45,gapP99=500.0ms",
+                receiverState: .severe,
+                receiverAckLagMs: 900
+            ),
+            contract: makeContract(mediaPathProfile: .proximityWiredLike),
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 10
+        )
+
+        #expect(result.shouldApply == false)
+        #expect(result.streamDecision.evidenceClass == .diagnostic)
+        #expect(result.streamDecision.cause == .capture)
+        #expect(result.streamDecision.blockedLeverReason == "soft-local-client-recovery")
+    }
+
+    @Test("Dynamic SCK idle does not block explicit motion complexity cut")
+    func dynamicSCKIdleDoesNotBlockExplicitMotionComplexityCut() throws {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        let result = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 16_000_000,
+                quality: 0.30,
+                state: .pressured,
+                reason: .encodedFrame
+            ),
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                captureCadenceState: .dynamicIdle,
+                captureCadenceSummary: "dynamic-idle:raw=20.0,observed=2.0,idle=45,gapP99=500.0ms",
+                receiverState: .severe,
+                receiverAckLagMs: 900
+            ),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 10
+        )
+
+        let decision = try #require(result.decision)
+        #expect(decision.targetBitrateBps == 75_000_000)
+        #expect(abs(decision.quality - contract.localMotionQualityFloor) < 0.0001)
+        #expect(result.streamDecision.cause == .motion)
+    }
+
     @Test("Startup warmup blocks soft pressure cuts")
     func startupWarmupBlocksSoftPressureCuts() {
         var governor = HostStreamQualityGovernor()
@@ -151,6 +240,34 @@ struct HostStreamQualityGovernorTests {
 
         #expect(result.shouldApply == false)
         #expect(result.streamDecision.blockedLeverReason == "startup-warmup")
+    }
+
+    @Test("Startup warmup allows explicit motion quality cuts")
+    func startupWarmupAllowsExplicitMotionQualityCuts() throws {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(
+            mediaPathProfile: .proximityWiredLike,
+            startupBaseTime: 100,
+            encodedFrameCount: 10
+        )
+        let result = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 16_000_000,
+                quality: 0.30,
+                state: .pressured,
+                reason: .encodedFrame
+            ),
+            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 101
+        )
+
+        let decision = try #require(result.decision)
+        #expect(decision.targetBitrateBps == 75_000_000)
+        #expect(abs(decision.quality - contract.localMotionQualityFloor) < 0.0001)
+        #expect(result.streamDecision.cause == .motion)
     }
 
     @Test("Passive healthy promotion is capped to 25 percent every two seconds")
@@ -326,6 +443,42 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.cause == .motion)
     }
 
+    @Test("Proximity motion pressure allows transport-named admission at floor")
+    func proximityMotionPressureAllowsTransportNamedAdmissionAtFloor() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        _ = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                quality: 0.20,
+                state: .pressured,
+                reason: .encodedFrame
+            ),
+            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 30
+        )
+
+        let allowed = governor.allowsTransportAdmissionSkip(
+            snapshot: makeSnapshot(
+                mediaPathProfile: .proximityWiredLike,
+                realtimePressureState: .pressured,
+                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
+            ),
+            proposedMode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidenceLabel: "soft:transport-backlog",
+            contract: contract,
+            now: 30.1
+        )
+
+        #expect(allowed == true)
+        #expect(governor.latestDecision.selectedLever == .admissionSkip)
+        #expect(governor.latestDecision.cause == .motion)
+    }
+
     @Test("Proximity motion at floor can demote cadence")
     func proximityMotionAtFloorCanDemoteCadence() {
         var governor = HostStreamQualityGovernor()
@@ -449,6 +602,8 @@ struct HostStreamQualityGovernorTests {
 
     private func makeSnapshot(
         mediaPathProfile: MirageMediaPathProfile,
+        captureCadenceState: HostAdaptiveFrameCoordinator.CaptureCadenceState = .unknown,
+        captureCadenceSummary: String? = nil,
         receiverState: HostAdaptiveFrameCoordinator.ReceiverEvidenceState = .healthy,
         receiverReassemblyBacklogFrames: Int = 0,
         receiverReassemblyBacklogBytes: Int = 0,
@@ -468,6 +623,8 @@ struct HostStreamQualityGovernorTests {
         HostAdaptiveFrameCoordinator.TransportPressureSnapshot(
             mediaPathProfile: mediaPathProfile,
             currentFrameRate: 60,
+            captureCadenceState: captureCadenceState,
+            captureCadenceSummary: captureCadenceSummary,
             receiverState: receiverState,
             receiverCapacityLearningQuarantineReason: nil,
             receiverReassemblyBacklogFrames: receiverReassemblyBacklogFrames,

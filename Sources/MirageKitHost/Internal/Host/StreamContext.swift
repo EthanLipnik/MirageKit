@@ -155,6 +155,7 @@ actor StreamContext {
     var pendingReceiverAcceptedKeyframeFrameNumber: UInt32?
     var pendingReceiverAcceptedKeyframeReason: String?
     var receiverKeyframeAcceptanceFallbackTask: Task<Void, Never>?
+    var senderDeadlineRecoveryQualityCeiling: Float?
     var emergencyRecoveryBaseStreamScale: CGFloat?
     var emergencyRecoveryScaleIndex: Int = 0
     var emergencyRecoveryCleanPFrames: Int = 0
@@ -284,6 +285,11 @@ actor StreamContext {
     var realtimeRuntimeBitrateCeilingBps: Int?
     var realtimeEncoderRateHintBps: Int?
     var realtimeSenderPacingBitrateBps: Int?
+    var latestAppliedFrameQuality: Float?
+    var latestAppliedFrameBitrateTargetBps: Int?
+    var latestAppliedFrameSenderPacingBps: Int?
+    var latestAppliedFrameIntent: String?
+    var latestAppliedFrameRate: Int?
     var realtimeLastEncoderRateRaiseTime: CFAbsoluteTime = 0
     var realtimeLastEncoderThroughputAdjustmentTime: CFAbsoluteTime = 0
     var realtimePressureState: HostAdaptivePFrameController.PressureState = .observing

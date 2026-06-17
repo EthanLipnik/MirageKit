@@ -220,6 +220,7 @@ extension StreamContext {
         )
         noteLossEvent(reason: label, enablePFrameFEC: false)
         let now = CFAbsoluteTimeGetCurrent()
+        enterSenderDeadlineRecoveryModeIfNeeded(reason: reason, now: now)
         let awdlQualityReductionAllowed = currentAwdlFrameBudgetReductionAllowed(now: now)
         let startupProtectionActive = isStartupTransportProtectionActive(now: now)
         let budgetDecision = if reason == .staleChain {
@@ -260,7 +261,11 @@ extension StreamContext {
             )
         }
         if let budgetDecision {
-            await applyAdaptiveRuntimeDecision(budgetDecision, now: now)
+            await applyAdaptiveRuntimeDecision(
+                budgetDecision,
+                now: now,
+                allowsLocalBulkReductionOverride: reason == .transportDrop
+            )
         } else if mediaPathProfile.usesAwdlRadioPolicy, !awdlQualityReductionAllowed {
             realtimePressureState = .pressured
             realtimePressureReason = reason == .staleChain

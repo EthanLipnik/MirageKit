@@ -739,12 +739,63 @@ struct HostAdaptivePFrameController: Equatable {
             return baseDecision
         }
 
-        let reason: Reason = transportStressed ? .transportBacklog : .encodedFrame
+        let localMotionPressure = mediaPathProfile.usesLocalBulkTransportPolicy &&
+            !sourceStill &&
+            (inputActive || dirtyPercentage > Self.preEncodeLowMotionDirtyPercentage || motionRisk)
+        let reason: Reason = localMotionPressure ? .encodedFrame : (transportStressed ? .transportBacklog : .encodedFrame)
         let pressureRatio = max(wireRatio, packetRatio, 1.0)
         let cutScale = max(
             Self.preEncodeSkipMinimumCutScale,
             min(Self.preEncodeSkipMaximumCutScale, Self.safeDeliveryUtilization / pressureRatio)
         )
+        if localMotionPressure, currentQuality > qualityFloor + 0.03 {
+            let decision = makeQualityOnlyDecision(
+                scale: cutScale,
+                state: .pressured,
+                reason: reason,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: currentQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+            return HostPreEncodePFrameAdmissionDecision(
+                admission: .sendWithFutureQualityDrop,
+                budgetDecision: decision,
+                reason: reason,
+                predictedWireBytes: predictedWireBytes,
+                targetWireBytes: targetBytes
+            )
+        }
+        if mediaPathProfile.usesLocalBulkTransportPolicy && !transportStressed {
+            let decision = makeQualityOnlyDecision(
+                scale: cutScale,
+                state: .pressured,
+                reason: reason,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: currentQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+            return HostPreEncodePFrameAdmissionDecision(
+                admission: .sendWithFutureQualityDrop,
+                budgetDecision: decision,
+                reason: reason,
+                predictedWireBytes: predictedWireBytes,
+                targetWireBytes: targetBytes
+            )
+        }
         let safeBytes = safeFrameWireBytes(
             targetClearMs: ModePolicy.policy(
                 for: latencyMode,
@@ -980,6 +1031,11 @@ struct HostAdaptivePFrameController: Equatable {
             (wireRatio > 1.0 || packetRatio > 1.0)
         let canApplyTransportFrameBudgetReduction = canReduceFrameBudget &&
             (budgetReductionActionable || mediaPathProfile.usesAwdlRadioPolicy)
+        let appliesContentComplexityOnly =
+            !canApplyTransportFrameBudgetReduction &&
+            canReduceFrameBudget &&
+            contentComplexityReductionActionable &&
+            mediaPathProfile.usesLocalBulkTransportPolicy
         let canApplyFrameBudgetReduction = canApplyTransportFrameBudgetReduction ||
             (canReduceFrameBudget && contentComplexityReductionActionable)
         let startupWarmupAdmission = startupProtectionActive &&
@@ -1040,6 +1096,7 @@ struct HostAdaptivePFrameController: Equatable {
                    steadyQualityCeiling: steadyQualityCeiling,
                    latencyMode: latencyMode,
                    mediaPathProfile: mediaPathProfile,
+                   allowsBudgetWrite: canApplyTransportFrameBudgetReduction,
                    now: now
                ) {
                 recordAdmittedPFrame(
@@ -1206,6 +1263,46 @@ struct HostAdaptivePFrameController: Equatable {
         )
         if canApplyFrameBudgetReduction,
            let motionRepairTargetBytes {
+            if appliesContentComplexityOnly {
+                let qualityScale = oversizeCutScale(
+                    targetClearMs: targetClearMs,
+                    predictedDeliveryMs: predictedDeliveryMs
+                )
+                let decision = makeQualityOnlyDecision(
+                    scale: qualityScale,
+                    state: .pressured,
+                    reason: .encodedFrame,
+                    input: input,
+                    currentFrameRate: currentFrameRate,
+                    maxPayloadSize: maxPayloadSize,
+                    currentQuality: currentQuality,
+                    qualityFloor: qualityFloor,
+                    steadyQualityCeiling: steadyQualityCeiling,
+                    latencyMode: latencyMode,
+                    mediaPathProfile: mediaPathProfile,
+                    now: now
+                )
+                qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.25)
+                recordAdmittedPFrame(
+                    wireBytes: wireBytes,
+                    packetCount: packetCount,
+                    quality: currentQuality,
+                    receiverHealthy: receiverHealthy,
+                    senderHealthy: senderHealthy,
+                    updatesPredictionBaseline: !startupProtectionActive,
+                    updatesCleanBaseline: false
+                )
+                return HostEncodedFrameAdmissionDecision(
+                    admission: .sendWithQualityDrop,
+                    budgetDecision: decision,
+                    sendDeadline: effectiveSendDeadline,
+                    byteRatio: byteRatio,
+                    wireRatio: wireRatio,
+                    packetRatio: packetRatio,
+                    deliveryMode: effectiveDeliveryMode,
+                    requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+                )
+            }
             recordPressureCeiling(
                 failedTarget: max(targetBytes, wireBytes),
                 safeTarget: motionRepairTargetBytes,
@@ -1280,6 +1377,45 @@ struct HostAdaptivePFrameController: Equatable {
         }
 
         let cutScale = oversizeCutScale(targetClearMs: targetClearMs, predictedDeliveryMs: predictedDeliveryMs)
+        if appliesContentComplexityOnly {
+            let decision = makeQualityOnlyDecision(
+                scale: cutScale,
+                state: .pressured,
+                reason: .encodedFrame,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: currentQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+
+            recordAdmittedPFrame(
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                quality: currentQuality,
+                receiverHealthy: receiverHealthy,
+                senderHealthy: senderHealthy,
+                updatesPredictionBaseline: !startupProtectionActive,
+                updatesCleanBaseline: false
+            )
+
+            return HostEncodedFrameAdmissionDecision(
+                admission: .sendWithQualityDrop,
+                budgetDecision: decision,
+                sendDeadline: effectiveSendDeadline,
+                byteRatio: byteRatio,
+                wireRatio: wireRatio,
+                packetRatio: packetRatio,
+                deliveryMode: effectiveDeliveryMode,
+                requiredBitrateBps: viabilitySnapshot?.requiredBitrateBps
+            )
+        }
+
         let nextBudget = min(
             targetBytes,
             Int((Double(targetBytes) * cutScale).rounded(.down)),
@@ -1907,6 +2043,7 @@ struct HostAdaptivePFrameController: Equatable {
     mutating func recordEncoderTimingPressure(
         severe: Bool,
         cutScale: Double,
+        reason: Reason = .encoderLag,
         currentBitrateBps: Int?,
         requestedTargetBitrateBps: Int?,
         startupCeilingBps: Int?,
@@ -1945,10 +2082,26 @@ struct HostAdaptivePFrameController: Equatable {
             mediaPathProfile: mediaPathProfile,
             receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs
         )
+        if mediaPathProfile.usesLocalBulkTransportPolicy {
+            return makeQualityOnlyDecision(
+                scale: cutScale,
+                state: severe ? .severe : .pressured,
+                reason: reason,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: currentQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+        }
         return cutBudget(
             scale: cutScale,
             state: severe ? .severe : .pressured,
-            reason: .encoderLag,
+            reason: reason,
             input: input,
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
@@ -2226,6 +2379,59 @@ struct HostAdaptivePFrameController: Equatable {
         let decisionQuality = max(
             qualityFloor,
             min(steadyQualityCeiling, currentQuality * appliedScale)
+        )
+        qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+        return makeDecision(
+            state: state,
+            reason: reason,
+            quality: decisionQuality,
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            steadyQualityCeiling: steadyQualityCeiling,
+            latencyMode: latencyMode,
+            mediaPathProfile: mediaPathProfile,
+            now: now
+        )
+    }
+
+    private mutating func makeQualityOnlyDecision(
+        scale: Double,
+        state: PressureState,
+        reason: Reason,
+        input: BudgetInput,
+        currentFrameRate: Int,
+        maxPayloadSize: Int,
+        currentQuality: Float,
+        qualityFloor: Float,
+        steadyQualityCeiling: Float,
+        latencyMode: MirageStreamLatencyMode,
+        mediaPathProfile: MirageMediaPathProfile,
+        now: CFAbsoluteTime
+    ) -> HostFrameBudgetDecision {
+        let nominalTarget = clampFrameWireBytes(
+            wireBytes(forBitrate: input.currentBitrate, currentFrameRate: currentFrameRate),
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        let currentTarget = currentTargetFrameWireBytes(
+            input: input,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize
+        )
+        if currentTarget < nominalTarget {
+            setTargetFrameWireBytes(
+                nominalTarget,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize
+            )
+        }
+        let boundedScale = max(0.10, min(0.98, scale))
+        let decisionQuality = max(
+            qualityFloor,
+            min(steadyQualityCeiling, currentQuality * Float(boundedScale))
         )
         qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
         return makeDecision(
@@ -2820,6 +3026,7 @@ struct HostAdaptivePFrameController: Equatable {
         steadyQualityCeiling: Float,
         latencyMode: MirageStreamLatencyMode,
         mediaPathProfile: MirageMediaPathProfile,
+        allowsBudgetWrite: Bool,
         now: CFAbsoluteTime
     ) -> HostFrameBudgetDecision? {
         guard let lastWireBytes = lastAdmittedPFrameWireBytes,
@@ -2862,6 +3069,23 @@ struct HostAdaptivePFrameController: Equatable {
             minimumCutScale,
             min(maximumCutScale, Self.safeDeliveryUtilization / max(1.0, pressureRatio))
         )
+        if mediaPathProfile.usesLocalBulkTransportPolicy && !allowsBudgetWrite {
+            qualityRaiseSuppressedUntil = max(qualityRaiseSuppressedUntil, now + 0.10)
+            return makeQualityOnlyDecision(
+                scale: cutScale,
+                state: .pressured,
+                reason: .encodedFrame,
+                input: input,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: currentQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                latencyMode: latencyMode,
+                mediaPathProfile: mediaPathProfile,
+                now: now
+            )
+        }
         let nextBudget = Int((Double(targetBytes) * cutScale).rounded(.down))
         recordPressureCeiling(
             failedTarget: max(targetBytes, predictedWireBytes),

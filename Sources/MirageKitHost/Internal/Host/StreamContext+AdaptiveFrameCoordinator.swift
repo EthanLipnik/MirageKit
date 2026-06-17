@@ -79,9 +79,15 @@ extension StreamContext {
         senderTelemetry: StreamPacketSender.TelemetrySnapshot?,
         now: CFAbsoluteTime
     ) -> HostAdaptiveFrameCoordinator.TransportPressureSnapshot {
-        HostAdaptiveFrameCoordinator.TransportPressureSnapshot(
+        let captureCadence = HostAdaptiveFrameCoordinator.classifyCaptureCadence(
+            lastCaptureCadenceMetrics,
+            targetFrameRate: currentFrameRate
+        )
+        return HostAdaptiveFrameCoordinator.TransportPressureSnapshot(
             mediaPathProfile: mediaPathProfile,
             currentFrameRate: currentFrameRate,
+            captureCadenceState: captureCadence.state,
+            captureCadenceSummary: captureCadence.summary,
             receiverState: adaptiveReceiverEvidenceState(now: now),
             receiverCapacityLearningQuarantineReason: receiverFrameBudgetCapacityLearningQuarantineReason(now: now),
             receiverReassemblyBacklogFrames: receiverReassemblyBacklogFrames,
@@ -233,12 +239,14 @@ extension StreamContext {
             senderTelemetry: senderTelemetry,
             now: now
         )
+        let localMotionReductionOverride = allowsLocalBulkReductionOverride ||
+            allowsLocalMotionRuntimeReductionOverride(for: decision.reason)
         let governedDecision = streamQualityGovernor.evaluateRuntimeDecision(
             decision,
             snapshot: pressureSnapshot,
             contract: currentStreamQualityContract(),
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
-            allowsLocalBulkReductionOverride: allowsLocalBulkReductionOverride,
+            allowsLocalBulkReductionOverride: localMotionReductionOverride,
             now: now
         )
 
@@ -303,25 +311,6 @@ extension StreamContext {
         }
 
         logAdaptiveRuntimeDecisionIfNeeded(now: now, decision: decision)
-    }
-
-    private func shouldObserveOnlyAdaptiveRuntimeDecision(
-        _ decision: HostFrameBudgetDecision,
-        now: CFAbsoluteTime
-    ) async -> Bool {
-        guard mediaPathProfile.usesLocalBulkTransportPolicy,
-              decision.state != .observing else {
-            return false
-        }
-        let senderTelemetry = await packetSender?.telemetrySnapshot
-        let pressureSnapshot = adaptiveTransportPressureSnapshot(
-            senderTelemetry: senderTelemetry,
-            now: now
-        )
-        return !adaptiveFrameCoordinator.frameBudgetDecisionIsActionable(
-            decision,
-            snapshot: pressureSnapshot
-        )
     }
 
     private func logAdaptiveRuntimeDecisionObserveOnly(
@@ -520,6 +509,7 @@ extension StreamContext {
     ) {
         suppressEncodedNonKeyframesUntilKeyframe = false
         pendingEmergencyKeyframeQuality = nil
+        senderDeadlineRecoveryQualityCeiling = nil
         if release.kind == .bootstrap {
             pendingReceiverAcceptedKeyframeReason = nil
             pendingReceiverAcceptedKeyframeFrameNumber = nil

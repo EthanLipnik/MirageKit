@@ -188,6 +188,24 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(!coordinator.hasActiveKeyframeBarrier)
     }
 
+    @Test("Recovery barrier survives failed keyframe transport")
+    func recoveryBarrierSurvivesFailedKeyframeTransport() {
+        var coordinator = HostAdaptiveFrameCoordinator()
+        coordinator.startKeyframeBarrier(kind: .recovery, reason: "sender-dependency-drop", now: 45)
+        coordinator.bindKeyframeFrameNumber(9, now: 45.01)
+
+        let release = coordinator.noteKeyframeTransportCompletion(
+            frameNumber: 9,
+            didSend: false,
+            allowsStartupLocalRelease: true,
+            now: 45.02
+        )
+
+        #expect(release == nil)
+        #expect(coordinator.hasActiveKeyframeBarrier)
+        #expect(coordinator.activeKeyframeBarrierKind == .recovery)
+    }
+
     @Test("Recovery barrier ends bootstrap probe window")
     func recoveryBarrierEndsBootstrapProbeWindow() throws {
         var coordinator = HostAdaptiveFrameCoordinator()
@@ -420,6 +438,78 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
     }
 
+    @Test("Dynamic SCK idle blocks soft transport pressure")
+    func dynamicSCKIdleBlocksSoftTransportPressure() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let cadence = HostAdaptiveFrameCoordinator.classifyCaptureCadence(
+            StreamCaptureCadenceMetrics(
+                sampleDurationSeconds: 2,
+                rawScreenCallbackCount: 40,
+                renderableFrameCount: 4,
+                idleFrameCount: 45,
+                rawScreenCallbackFPS: 20,
+                renderableFrameFPS: 2,
+                observedSCKFPS: 2,
+                wallClockGapP99Ms: 500,
+                virtualDisplayTimingSuspect: true
+            ),
+            targetFrameRate: 30
+        )
+        let snapshot = makePressureSnapshot(
+            captureCadenceState: cadence.state,
+            captureCadenceSummary: cadence.summary,
+            receiverState: .severe,
+            receiverAckLagMs: 900,
+            realtimePressureState: .severe,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            transportAdmissionActiveDuration: 3
+        )
+
+        #expect(cadence.state == .dynamicIdle)
+        #expect(!coordinator.transportPressureIsActionable(snapshot))
+        #expect(!coordinator.receiverPressureIsActionable(snapshot))
+        #expect(!coordinator.allowsPreEncodeBudgetReduction(snapshot))
+        #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
+    }
+
+    @Test("Capture starvation is diagnostic until hard pressure appears")
+    func captureStarvationIsDiagnosticUntilHardPressureAppears() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let cadence = HostAdaptiveFrameCoordinator.classifyCaptureCadence(
+            StreamCaptureCadenceMetrics(
+                sampleDurationSeconds: 2,
+                rawScreenCallbackCount: 4,
+                renderableFrameCount: 4,
+                idleFrameCount: 0,
+                rawScreenCallbackFPS: 2,
+                renderableFrameFPS: 2,
+                observedSCKFPS: 2,
+                wallClockGapP99Ms: 1_500,
+                longFrameGapCount: 2,
+                virtualDisplayTimingSuspect: true
+            ),
+            targetFrameRate: 30
+        )
+        let diagnosticSnapshot = makePressureSnapshot(
+            captureCadenceState: cadence.state,
+            captureCadenceSummary: cadence.summary,
+            realtimePressureState: .severe,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+        )
+        let hardSnapshot = makePressureSnapshot(
+            captureCadenceState: cadence.state,
+            captureCadenceSummary: cadence.summary,
+            senderQueuedBytes: 2_200_000,
+            maxQueuedBytes: 2_000_000,
+            realtimePressureState: .severe,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+        )
+
+        #expect(cadence.state == .captureStarved)
+        #expect(!coordinator.transportPressureIsActionable(diagnosticSnapshot))
+        #expect(coordinator.transportPressureIsActionable(hardSnapshot))
+    }
+
     @Test("Local bulk frame budget applies motion-size cuts")
     func localBulkFrameBudgetAppliesMotionSizeCuts() {
         let coordinator = HostAdaptiveFrameCoordinator()
@@ -430,6 +520,24 @@ struct HostAdaptiveFrameCoordinatorTests {
         )
 
         #expect(coordinator.frameBudgetDecisionIsActionable(decision, snapshot: snapshot))
+    }
+
+    @Test("Local bulk admission throttle allows motion pressure")
+    func localBulkAdmissionThrottleAllowsMotionPressure() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let transportSnapshot = makePressureSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            realtimePressureState: .pressured,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+        )
+        let motionSnapshot = makePressureSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            realtimePressureState: .pressured,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
+        )
+
+        #expect(!coordinator.allowsTransportAdmissionThrottle(transportSnapshot))
+        #expect(coordinator.allowsTransportAdmissionThrottle(motionSnapshot))
     }
 
     @Test("Local bulk client recovery observes without hard pressure")
@@ -567,6 +675,8 @@ struct HostAdaptiveFrameCoordinatorTests {
 
     private func makePressureSnapshot(
         mediaPathProfile: MirageMediaPathProfile = .localWiFi,
+        captureCadenceState: HostAdaptiveFrameCoordinator.CaptureCadenceState = .unknown,
+        captureCadenceSummary: String? = nil,
         receiverState: HostAdaptiveFrameCoordinator.ReceiverEvidenceState = .healthy,
         receiverCapacityLearningQuarantineReason: String? = nil,
         receiverReassemblyBacklogFrames: Int = 0,
@@ -598,6 +708,8 @@ struct HostAdaptiveFrameCoordinatorTests {
         HostAdaptiveFrameCoordinator.TransportPressureSnapshot(
             mediaPathProfile: mediaPathProfile,
             currentFrameRate: 60,
+            captureCadenceState: captureCadenceState,
+            captureCadenceSummary: captureCadenceSummary,
             receiverState: receiverState,
             receiverCapacityLearningQuarantineReason: receiverCapacityLearningQuarantineReason,
             receiverReassemblyBacklogFrames: receiverReassemblyBacklogFrames,

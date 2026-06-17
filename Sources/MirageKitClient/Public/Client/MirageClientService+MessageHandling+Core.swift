@@ -60,7 +60,7 @@ extension MirageClientService {
                 ?? controlRemoteEndpoint
                 ?? .service(
                     name: resolvedHostName,
-                    type: MirageKit.serviceType,
+                    type: networkConfig.serviceType,
                     domain: "",
                     interface: nil
                 )

@@ -200,6 +200,16 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostDroppedFrames: UInt64
     /// Active host encoder quality value.
     public var hostActiveQuality: Double
+    /// Latest quality value attached to a frame reserved for encoding/sending.
+    public var hostLatestAppliedFrameQuality: Double?
+    /// Latest bitrate target attached to a frame reserved for encoding/sending.
+    public var hostLatestAppliedFrameBitrateTargetBps: Int?
+    /// Latest sender pacing target attached to a frame reserved for encoding/sending.
+    public var hostLatestAppliedFrameSenderPacingBps: Int?
+    /// Latest adaptive frame intent attached to a frame reserved for encoding/sending.
+    public var hostLatestAppliedFrameIntent: String?
+    /// Latest frame-rate target attached to a frame reserved for encoding/sending.
+    public var hostLatestAppliedFrameRate: Int?
     /// Host target frame rate for the active stream.
     public var hostTargetFrameRate: Int
     /// User-entered host bitrate, in bits per second.
@@ -267,6 +277,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostRealtimeRequiredBitrateForQualityBps: Int?
     /// Host-observed 95th percentile P-frame wire size for the current quality bucket, in bytes.
     public var hostRealtimeObservedPFrameWireBytesP95: Int?
+    /// Host-side effective P-frame wire budget, in bytes per frame.
+    public var hostRealtimeFrameBudgetBytes: Int?
+    /// Host-side effective P-frame wire budget expressed as bitrate, in bits per second.
+    public var hostRealtimeFrameBudgetBitrateBps: Int?
     /// Host-side AWDL media controller state.
     public var hostAwdlPolicyState: String?
     /// Host-side AWDL media controller trigger.
@@ -545,6 +559,11 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
         hostActiveQuality: Double = 0,
+        hostLatestAppliedFrameQuality: Double? = nil,
+        hostLatestAppliedFrameBitrateTargetBps: Int? = nil,
+        hostLatestAppliedFrameSenderPacingBps: Int? = nil,
+        hostLatestAppliedFrameIntent: String? = nil,
+        hostLatestAppliedFrameRate: Int? = nil,
         hostTargetFrameRate: Int = 0,
         hostEnteredBitrate: Int? = nil,
         hostCurrentBitrate: Int? = nil,
@@ -583,6 +602,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostRealtimeDeliveryMode: String? = nil,
         hostRealtimeRequiredBitrateForQualityBps: Int? = nil,
         hostRealtimeObservedPFrameWireBytesP95: Int? = nil,
+        hostRealtimeFrameBudgetBytes: Int? = nil,
+        hostRealtimeFrameBudgetBitrateBps: Int? = nil,
         hostAwdlPolicyState: String? = nil,
         hostAwdlPolicyTrigger: String? = nil,
         hostAwdlSelectedLever: String? = nil,
@@ -690,6 +711,11 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostIdleFPS = hostIdleFPS
         self.hostDroppedFrames = hostDroppedFrames
         self.hostActiveQuality = hostActiveQuality
+        self.hostLatestAppliedFrameQuality = hostLatestAppliedFrameQuality
+        self.hostLatestAppliedFrameBitrateTargetBps = hostLatestAppliedFrameBitrateTargetBps
+        self.hostLatestAppliedFrameSenderPacingBps = hostLatestAppliedFrameSenderPacingBps
+        self.hostLatestAppliedFrameIntent = hostLatestAppliedFrameIntent
+        self.hostLatestAppliedFrameRate = hostLatestAppliedFrameRate
         self.hostTargetFrameRate = hostTargetFrameRate
         self.hostEnteredBitrate = hostEnteredBitrate
         self.hostCurrentBitrate = hostCurrentBitrate
@@ -728,6 +754,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostRealtimeDeliveryMode = hostRealtimeDeliveryMode
         self.hostRealtimeRequiredBitrateForQualityBps = hostRealtimeRequiredBitrateForQualityBps
         self.hostRealtimeObservedPFrameWireBytesP95 = hostRealtimeObservedPFrameWireBytesP95
+        self.hostRealtimeFrameBudgetBytes = hostRealtimeFrameBudgetBytes
+        self.hostRealtimeFrameBudgetBitrateBps = hostRealtimeFrameBudgetBitrateBps
         self.hostAwdlPolicyState = hostAwdlPolicyState
         self.hostAwdlPolicyTrigger = hostAwdlPolicyTrigger
         self.hostAwdlSelectedLever = hostAwdlSelectedLever
@@ -855,6 +883,11 @@ public extension MirageClientMetricsSnapshot {
         decodeHealthy: Bool = true,
         hostEncodedFPS: Double = 0,
         hostActiveQuality: Double = 0,
+        hostLatestAppliedFrameQuality: Double? = nil,
+        hostLatestAppliedFrameBitrateTargetBps: Int? = nil,
+        hostLatestAppliedFrameSenderPacingBps: Int? = nil,
+        hostLatestAppliedFrameIntent: String? = nil,
+        hostLatestAppliedFrameRate: Int? = nil,
         hostTargetFrameRate: Int = 0,
         hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
@@ -875,6 +908,11 @@ public extension MirageClientMetricsSnapshot {
             decodeHealthy: decodeHealthy,
             hostEncodedFPS: hostEncodedFPS,
             hostActiveQuality: hostActiveQuality,
+            hostLatestAppliedFrameQuality: hostLatestAppliedFrameQuality,
+            hostLatestAppliedFrameBitrateTargetBps: hostLatestAppliedFrameBitrateTargetBps,
+            hostLatestAppliedFrameSenderPacingBps: hostLatestAppliedFrameSenderPacingBps,
+            hostLatestAppliedFrameIntent: hostLatestAppliedFrameIntent,
+            hostLatestAppliedFrameRate: hostLatestAppliedFrameRate,
             hostTargetFrameRate: hostTargetFrameRate,
             hostFrameBudgetMs: hostFrameBudgetMs,
             hostAverageEncodeMs: hostAverageEncodeMs,

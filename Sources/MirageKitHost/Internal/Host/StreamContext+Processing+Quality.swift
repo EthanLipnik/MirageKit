@@ -208,6 +208,7 @@ extension StreamContext {
         )
         await applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: encodeAvgMs,
+            captureFPS: captureFPS,
             encodeAttemptFPS: encodeAttemptFPS,
             encodedFPS: encodeFPS,
             at: now
@@ -294,6 +295,7 @@ extension StreamContext {
 
     func applyEncoderThroughputBudgetIfNeeded(
         averageEncodeMs: Double,
+        captureFPS: Double,
         encodeAttemptFPS: Double,
         encodedFPS: Double,
         at now: CFAbsoluteTime
@@ -340,6 +342,7 @@ extension StreamContext {
         guard currentBitrate > 0, ceilingBitrate > 0 else { return }
 
         let encoderBacklogMs = worstEncodeStartCaptureAgeMs
+        let pendingCount = frameInbox.pendingCount
         let encoderBaselineMs = refreshEncoderThroughputBaselineIfClean(
             averageEncodeMs: averageEncodeMs,
             encodeAttemptFPS: encodeAttemptFPS,
@@ -354,10 +357,27 @@ extension StreamContext {
             } ?? cadencePressureThresholdMs
         }
 
-        if averageEncodeMs >= encodePressureThresholdMs {
+        let captureCadenceActive = captureFPS >= max(12.0, Double(currentFrameRate) * 0.45)
+        let encodeCadenceFPS = min(
+            encodeAttemptFPS > 0 ? encodeAttemptFPS : encodedFPS,
+            encodedFPS > 0 ? encodedFPS : encodeAttemptFPS
+        )
+        let cadenceRatio = captureFPS > 0 ? encodeCadenceFPS / max(1.0, captureFPS) : 1.0
+        let cadenceBacklogConfirmsPressure =
+            encoderBacklogMs >= max(frameBudgetMs * 1.5, frameBudgetMs + 10.0) ||
+            pendingCount > 1 ||
+            averageEncodeMs >= frameBudgetMs * 0.95
+        let hostCadenceBehind =
+            mediaPathProfile.usesLocalBulkTransportPolicy &&
+            captureCadenceActive &&
+            encodeCadenceFPS > 0 &&
+            encodeCadenceFPS < captureFPS * 0.86 &&
+            cadenceBacklogConfirmsPressure
+
+        if averageEncodeMs >= encodePressureThresholdMs || hostCadenceBehind {
             guard encoderCatchUpQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else { return }
             let backlogThresholdMs = encoderCatchUpBacklogThresholdMs()
-            guard backlogThresholdMs <= 0 || encoderBacklogMs >= backlogThresholdMs else { return }
+            guard hostCadenceBehind || backlogThresholdMs <= 0 || encoderBacklogMs >= backlogThresholdMs else { return }
             guard now - realtimeLastEncoderThroughputAdjustmentTime >= 0.45 else { return }
             if mediaPathProfile.usesAwdlRadioPolicy,
                (!runtimeQualityAdjustmentEnabled || !currentAwdlFrameBudgetReductionAllowed()) {
@@ -383,8 +403,11 @@ extension StreamContext {
                 }
                 return
             }
-            let budgetRatio = max(0.01, frameBudgetMs / averageEncodeMs)
-            let reductionRatio = min(0.92, max(minimumReductionRatio, budgetRatio * 1.05))
+            let budgetRatio = max(0.01, frameBudgetMs / max(1.0, averageEncodeMs))
+            let cadenceScale = hostCadenceBehind
+                ? max(minimumReductionRatio, min(0.92, cadenceRatio * 1.10))
+                : 0.92
+            let reductionRatio = min(0.92, max(minimumReductionRatio, min(budgetRatio * 1.05, cadenceScale)))
             let minimumFloor = max(1, encoderThroughputMinimumBitrateFloorBps)
             let targetBitrate = max(
                 minimumFloor,
@@ -395,15 +418,44 @@ extension StreamContext {
             realtimePressureState = .pressured
             realtimePressureReason = "encoder-throughput"
             realtimeLastEncoderThroughputAdjustmentTime = now
-            await applyAdaptiveRuntimeDecision(
-                encoderThroughputBudgetDecision(
-                    targetBitrateBps: targetBitrate,
-                    state: .pressured,
-                    reason: .encoderLag,
+            if mediaPathProfile.usesLocalBulkTransportPolicy {
+                let policy = activeFrameFreshnessPolicy
+                let sourceStill = sourceIsStill(now: now, policy: policy)
+                let severe = encoderBacklogMs >= frameBudgetMs * 4.0 ||
+                    averageEncodeMs >= frameBudgetMs * 1.75 ||
+                    (captureFPS > 0 && encodedFPS < captureFPS * 0.55)
+                if let decision = adaptivePFrameController.recordEncoderTimingPressure(
+                    severe: severe,
+                    cutScale: reductionRatio,
+                    reason: mediaPathProfile.usesLocalBulkTransportPolicy && !sourceStill ? .encodedFrame : .encoderLag,
+                    currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+                    requestedTargetBitrateBps: requestedTargetBitrate,
+                    startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+                    minimumBitrateFloorBps: encoderThroughputMinimumBitrateFloorBps,
+                    currentFrameRate: currentFrameRate,
+                    maxPayloadSize: maxPayloadSize,
+                    currentQuality: activeQuality,
+                    qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: sourceStill),
+                    steadyQualityCeiling: configuredQualityCeiling,
+                    latencyMode: latencyMode,
+                    mediaPathProfile: mediaPathProfile,
+                    receiverPlayoutDelayTargetMs: receiverPlayoutDelayTargetMs,
+                    awdlQualityReductionAllowed: currentAwdlQualityReductionAllowed(now: now),
                     now: now
-                ),
-                now: now
-            )
+                ) {
+                    await applyAdaptiveRuntimeDecision(decision, now: now)
+                }
+            } else {
+                await applyAdaptiveRuntimeDecision(
+                    encoderThroughputBudgetDecision(
+                        targetBitrateBps: targetBitrate,
+                        state: .pressured,
+                        reason: .encoderLag,
+                        now: now
+                    ),
+                    now: now
+                )
+            }
             let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
             let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
             let backlogText = encoderBacklogMs.formatted(.number.precision(.fractionLength(1)))
@@ -415,12 +467,15 @@ extension StreamContext {
             }
             let pressureThresholdText = encodePressureThresholdMs
                 .formatted(.number.precision(.fractionLength(1)))
+            let actionText = mediaPathProfile.usesLocalBulkTransportPolicy ? "quality cut" : "budget cut"
+            let appliedTargetBitrate = mediaPathProfile.usesLocalBulkTransportPolicy ? currentBitrate : targetBitrate
             MirageLogger.metrics(
-                "Encoder throughput budget cut stream \(streamID): " +
+                "Encoder throughput \(actionText) stream \(streamID): " +
                     "encodeAvg=\(avgText)ms baseline=\(baselineText) budget=\(budgetText)ms " +
                     "pressureThreshold=\(pressureThresholdText)ms backlog=\(backlogText)ms " +
                     "backlogThreshold=\(thresholdText)ms " +
-                    "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
+                    "target=\(currentBitrate)->\(appliedTargetBitrate) captureFPS=\(Self.formattedFPS(captureFPS)) " +
+                    "attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
                     "encodedFPS=\(Self.formattedFPS(encodedFPS))"
             )
             return
@@ -605,6 +660,7 @@ extension StreamContext {
         let decision = adaptivePFrameController.recordEncoderTimingPressure(
             severe: severe,
             cutScale: cutScale,
+            reason: mediaPathProfile.usesLocalBulkTransportPolicy && !sourceStill ? .encodedFrame : .encoderLag,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -785,9 +841,12 @@ extension StreamContext {
         let severe = droppedFrameCount > 1 ||
             backlogMs >= frameBudgetMs * 3 ||
             encoderLag.averageEncodeMs >= frameBudgetMs * 1.75
+        let policy = activeFrameFreshnessPolicy
+        let sourceStill = sourceIsStill(now: now, policy: policy)
         let decision = adaptivePFrameController.recordEncoderTimingPressure(
             severe: severe,
             cutScale: cutScale,
+            reason: mediaPathProfile.usesLocalBulkTransportPolicy && !sourceStill ? .encodedFrame : .encoderLag,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -795,7 +854,7 @@ extension StreamContext {
             currentFrameRate: currentFrameRate,
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
-            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: false),
+            qualityFloor: adaptiveMotionBudgetQualityFloor(sourceStill: sourceStill),
             steadyQualityCeiling: configuredQualityCeiling,
             latencyMode: latencyMode,
             mediaPathProfile: mediaPathProfile,

@@ -7,12 +7,23 @@
 //  Coverage for bootstrap configuration defaults and Loom metadata projection.
 //
 
+import Foundation
 import Loom
+import MirageKit
 import MirageHostBootstrapRuntime
 import Testing
 
 @Suite("Bootstrap Configuration")
 struct MirageHostBootstrapConfigurationTests {
+    @Test("Decoded missing control port preserves Mirage app port")
+    func decodedMissingControlPortPreservesMirageAppPort() throws {
+        let data = Data(#"{"enabled":true}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(MirageHostBootstrapConfiguration.self, from: data)
+
+        #expect(decoded.controlPort == MirageKit.mirageAppBootstrapControlPort)
+    }
+
     @Test("JSON round-trip preserves configured values")
     func jsonRoundTrip() throws {
         let original = MirageHostBootstrapConfiguration(

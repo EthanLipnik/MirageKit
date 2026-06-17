@@ -40,6 +40,15 @@ extension StreamContext {
         streamQualityGovernor.latestDecision
     }
 
+    func allowsLocalMotionRuntimeReductionOverride(for reason: HostAdaptivePFrameController.Reason?) -> Bool {
+        guard mediaPathProfile.usesLocalBulkTransportPolicy,
+              encoderConfig.codec != .proRes4444,
+              HostAdaptiveFrameCoordinator.pressureReasonIsMotionComplexity(reason?.rawValue) else {
+            return false
+        }
+        return true
+    }
+
     func adaptiveFrameDecisionQualityFloor(
         sourceStill: Bool,
         admitsStillQualityProbe: Bool
@@ -73,9 +82,13 @@ extension StreamContext {
             return 0
         }
         let contract = currentStreamQualityContract()
+        if senderDeadlineRecoveryQualityCeiling != nil {
+            return contract.localMotionQualityFloor
+        }
         switch decision.reason {
         case .encodedFrame,
-             .motionOnset:
+             .motionOnset,
+             .senderDeadline:
             return contract.localMotionQualityFloor
         case .startup,
              .healthy,
@@ -85,7 +98,6 @@ extension StreamContext {
              .receiverBacklog,
              .receiverLoss,
              .clientRecovery,
-             .senderDeadline,
              .encoderLag,
              .adaptiveRepair:
             return contract.localReadabilityQualityFloor

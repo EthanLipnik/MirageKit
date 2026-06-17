@@ -328,6 +328,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.setEncodeBacklogForCatchUpTest(500)
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 33,
+            captureFPS: 60,
             encodeAttemptFPS: 20,
             encodedFPS: 20,
             at: 10
@@ -336,11 +337,11 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         let settings = await context.encoderSettings
         #expect(settings.bitrate == 180_000_000)
         #expect(context.currentTargetBitrateBps == 180_000_000)
-        #expect(await context.realtimeEncoderRateHintBps == nil)
+        #expect(await context.realtimeEncoderRateHintBps == 180_000_000)
     }
 
-    @Test("Encoder throughput can cut below manual readability floor after backlog grace")
-    func encoderThroughputCanCutBelowManualReadabilityFloorAfterBacklogGrace() async {
+    @Test("Encoder throughput lowers local quality after backlog grace without shrinking budget")
+    func encoderThroughputLowersLocalQualityAfterBacklogGraceWithoutShrinkingBudget() async {
         let context = makeContext(
             bitrate: 300_000_000,
             enteredBitrate: 300_000_000,
@@ -354,18 +355,21 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.configureRunningForRealtimeBudgetTest()
         await context.updateCaptureSizesIfNeeded(outputSize)
         await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        let originalQuality = await context.activeQuality
         await context.setEncodeBacklogForCatchUpTest(1_200)
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 33,
+            captureFPS: 60,
             encodeAttemptFPS: 20,
             encodedFPS: 20,
             at: 10
         )
 
         let settings = await context.encoderSettings
-        #expect((settings.bitrate ?? 0) < 180_000_000)
-        #expect((context.currentTargetBitrateBps ?? 0) < 180_000_000)
-        #expect(await context.realtimeEncoderRateHintBps == settings.bitrate)
+        #expect(settings.bitrate == 180_000_000)
+        #expect(context.currentTargetBitrateBps == 180_000_000)
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimeEncoderRateHintBps == 180_000_000)
     }
 
     @Test("Non-still clean encoder throughput raises active quality within ceiling")
@@ -388,6 +392,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 10,
+            captureFPS: 60,
             encodeAttemptFPS: 60,
             encodedFPS: 60,
             at: 10.05
@@ -395,7 +400,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         let finalQuality = await context.activeQuality
         let finalConfiguredCeiling = await context.configuredQualityCeiling
 
-        #expect((context.currentTargetBitrateBps ?? 0) > originalTarget)
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
         #expect(finalQuality > originalQuality)
         #expect(finalQuality <= finalConfiguredCeiling)
     }
@@ -451,9 +456,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             now: 10
         )
 
-        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
         #expect(await context.activeQuality < originalQuality)
-        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encodedFrame.rawValue)
     }
 
     @Test("Startup local-clean encoder threshold wobble does not cut automatic quality")
@@ -620,9 +625,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             now: 10
         )
 
-        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
         #expect(await context.activeQuality < originalQuality)
-        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encodedFrame.rawValue)
     }
 
     @Test("Per-frame transport completion pressure cuts automatic quality before receiver feedback")
@@ -638,6 +643,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.configureRunningForRealtimeBudgetTest()
         await context.updateCaptureSizesIfNeeded(outputSize)
         await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.markStartupWarmupCompleteForRealtimeBudgetTest(startedAt: 7.0, encodedFrames: 120)
         await raiseAboveReadabilityFloorForPressureTest(context)
         let originalTarget = context.currentTargetBitrateBps ?? 0
         let originalQuality = await context.activeQuality
@@ -912,9 +918,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             now: 10
         )
 
-        #expect((context.currentTargetBitrateBps ?? 0) < originalTarget)
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
         #expect(await context.activeQuality < originalQuality)
-        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encodedFrame.rawValue)
     }
 
     @Test("Queue-limit P-frame transport cuts automatic quality immediately")
@@ -975,6 +981,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.setEncodeBacklogForCatchUpTest(1_200)
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 33,
+            captureFPS: 60,
             encodeAttemptFPS: 20,
             encodedFPS: 20,
             at: 10
@@ -1002,6 +1009,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 60,
+            captureFPS: 60,
             encodeAttemptFPS: 60,
             encodedFPS: 30,
             at: 10
@@ -1027,6 +1035,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 60,
+            captureFPS: 60,
             encodeAttemptFPS: 60,
             encodedFPS: 30,
             at: 10
@@ -1037,6 +1046,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 60,
+            captureFPS: 45,
             encodeAttemptFPS: 45,
             encodedFPS: 24,
             at: 11.2
@@ -1047,6 +1057,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 70,
+            captureFPS: 30,
             encodeAttemptFPS: 30,
             encodedFPS: 18,
             at: 12.4
@@ -1057,6 +1068,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 70,
+            captureFPS: 30,
             encodeAttemptFPS: 30,
             encodedFPS: 15,
             at: 16.6
@@ -1119,8 +1131,10 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(decision.admission == .send)
-        #expect(decision.budgetDecision == nil)
+        #expect(decision.admission == .sendWithQualityDrop)
+        #expect(decision.budgetDecision?.targetBitrateBps == 60_000_000)
+        #expect(decision.budgetDecision?.maxWireBytes == 125_000)
+        #expect((decision.budgetDecision?.quality ?? 1) < 0.5)
         #expect(decision.byteRatio > 1.0)
     }
 
@@ -1680,6 +1694,14 @@ private extension StreamContext {
     func setEncodeBacklogForCatchUpTest(_ milliseconds: Double) {
         latestEncodeStartCaptureAgeMs = milliseconds
         worstEncodeStartCaptureAgeMs = milliseconds
+    }
+
+    func markStartupWarmupCompleteForRealtimeBudgetTest(
+        startedAt: CFAbsoluteTime,
+        encodedFrames: UInt64
+    ) {
+        startupBaseTime = startedAt
+        encodedFrameCount = encodedFrames
     }
 
     func markClientInputActiveForTimingTest() {

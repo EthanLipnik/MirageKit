@@ -168,7 +168,7 @@ struct MirageEffectiveMediaPathPolicyTests {
             supportsIPv6: true
         )
 
-        #expect(hostSnapshot.kind == .awdl)
+        #expect(hostSnapshot.kind == .wifi)
         #expect(hostSnapshot.mediaProfile == .localWiFi)
 
         let policy = MirageEffectiveMediaPathPolicy.resolve(
@@ -218,7 +218,7 @@ struct MirageEffectiveMediaPathPolicyTests {
             clientPathSignature: "status=satisfied|kind=awdl|media=proximityWiredLike|if=anpi0"
         )
 
-        #expect(policy.transportPathKind == .awdl)
+        #expect(policy.transportPathKind == .wired)
         #expect(policy.mediaPathProfile == .proximityWiredLike)
     }
 

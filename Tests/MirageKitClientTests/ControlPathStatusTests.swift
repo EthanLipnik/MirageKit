@@ -53,7 +53,7 @@ struct ControlPathStatusTests {
         service.handleControlPathUpdate(snapshot)
 
         let status = try #require(service.currentControlPathStatus)
-        #expect(service.currentControlPathKind == .awdl)
+        #expect(service.currentControlPathKind == .wired)
         #expect(status.usesUSBProximityInterface)
         #expect(status.usesProximityWiredLikePolicy)
     }
@@ -98,7 +98,7 @@ struct ControlPathStatusTests {
 
         service.handleControlPathUpdate(snapshot)
 
-        #expect(service.currentControlPathKind == .awdl)
+        #expect(service.currentControlPathKind == .wifi)
         #expect(!service.currentMediaPathUsesAwdlRadioPolicy)
         #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .lowestLatency)
         #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .freshestFrame)
