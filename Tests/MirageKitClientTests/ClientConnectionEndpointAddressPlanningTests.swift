@@ -153,7 +153,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
 
-        // No awdl0-scoped literal was resolved, so AWDL UDP/QUIC must not be
+        // No awdl0-scoped literal was resolved, so AWDL UDP must not be
         // attempted. The TCP Bonjour service endpoint is still a real service
         // path, so Network.framework can resolve the peer-to-peer route without
         // Mirage inventing an address.
@@ -242,7 +242,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let attempts = service.controlSessionAttempts(for: host)
         let awdlAttempts = attempts.filter { $0.routeTier == .awdl }
 
-        #expect(awdlAttempts.map(\.transportKind) == [.udp, .quic])
+        #expect(awdlAttempts.map(\.transportKind) == [.udp])
         #expect(awdlAttempts.allSatisfy { $0.isPeerToPeerPreferred })
         #expect(!attempts.contains { $0.transportKind == .tcp })
     }
@@ -302,34 +302,34 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        #expect(attempts.count == 17)
+        #expect(attempts.count == 11)
         #expect(attempts.map { $0.proximityInterfaceNames.first ?? "" } == [
-            "anpi0", "anpi0", "anpi0",
-            "bridge100", "bridge100", "bridge100",
-            "en3", "en3", "en3",
-            "llw0", "llw0", "llw0",
-            "", "", "",
-            "awdl0", "awdl0",
+            "anpi0", "anpi0",
+            "bridge100", "bridge100",
+            "en3", "en3",
+            "llw0", "llw0",
+            "", "",
+            "awdl0",
         ])
         #expect(attempts.map(\.routeTier) == [
-            .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
-            .bridge, .bridge, .bridge,
-            .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
-            .wifiLAN, .wifiLAN, .wifiLAN,
-            .awdl, .awdl,
+            .applePrivateNCM, .applePrivateNCM,
+            .bridge, .bridge,
+            .sameWiredEthernet, .sameWiredEthernet,
+            .lowLatencyWireless, .lowLatencyWireless,
+            .wifiLAN, .wifiLAN,
+            .awdl,
         ])
         #expect(attempts.map(\.transportKind) == [
-            .udp, .quic, .tcp,
-            .udp, .quic, .tcp,
-            .udp, .quic, .tcp,
-            .udp, .quic, .tcp,
-            .udp, .quic, .tcp,
-            .udp, .quic,
+            .udp, .tcp,
+            .udp, .tcp,
+            .udp, .tcp,
+            .udp, .tcp,
+            .udp, .tcp,
+            .udp,
         ])
-        #expect(attempts[0..<12].allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts[12..<15].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts[15..<17].allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[0..<8].allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[8..<10].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts[10..<11].allSatisfy { $0.isPeerToPeerPreferred })
     }
 
     @MainActor
@@ -372,7 +372,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        let firstSixAttempts = Array(attempts.prefix(6))
+        let firstFourAttempts = Array(attempts.prefix(4))
         let apniSnapshot = MirageNetworkPathClassifier.classify(
             interfaceNames: ["apni0"],
             usesWiFi: false,
@@ -387,16 +387,16 @@ struct ClientConnectionEndpointAddressPlanningTests {
             supportsIPv6: true
         )
 
-        #expect(firstSixAttempts.map { $0.proximityInterfaceNames.first ?? "" } == [
-            "apni0", "apni0", "apni0",
-            "en3", "en3", "en3",
+        #expect(firstFourAttempts.map { $0.proximityInterfaceNames.first ?? "" } == [
+            "apni0", "apni0",
+            "en3", "en3",
         ])
-        #expect(firstSixAttempts.map(\.routeTier) == [
-            .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
-            .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
+        #expect(firstFourAttempts.map(\.routeTier) == [
+            .applePrivateNCM, .applePrivateNCM,
+            .sameWiredEthernet, .sameWiredEthernet,
         ])
-        #expect(firstSixAttempts.prefix(3).allSatisfy { $0.proximityInterfaceKind == .applePrivateNCM })
-        #expect(firstSixAttempts.prefix(3).allSatisfy { $0.acceptsProximityPath(apniSnapshot) })
+        #expect(firstFourAttempts.prefix(2).allSatisfy { $0.proximityInterfaceKind == .applePrivateNCM })
+        #expect(firstFourAttempts.prefix(2).allSatisfy { $0.acceptsProximityPath(apniSnapshot) })
     }
 
     @MainActor
@@ -481,15 +481,15 @@ struct ClientConnectionEndpointAddressPlanningTests {
         )
 
         #expect(attempts.map(\.routeTier) == [
-            .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
-            .bridge, .bridge, .bridge,
-            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
-            .wifiLAN, .wifiLAN, .wifiLAN,
-            .awdl, .awdl,
+            .applePrivateNCM, .applePrivateNCM,
+            .bridge, .bridge,
+            .lowLatencyWireless, .lowLatencyWireless,
+            .wifiLAN, .wifiLAN,
+            .awdl,
         ])
-        #expect(attempts.prefix(9).allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts[9..<12].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts.suffix(2).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.prefix(6).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[6..<8].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(1).allSatisfy { $0.isPeerToPeerPreferred })
     }
 
     @MainActor
@@ -540,8 +540,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         #expect(attempts[0].endpoint.debugDescription == expectedWiFiEndpoint.debugDescription)
         #expect(attempts[0].routeTier == .wifiLAN)
-        #expect(attempts[0..<3].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts.suffix(2).allSatisfy { $0.routeTier == .awdl })
+        #expect(attempts[0..<2].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(1).allSatisfy { $0.routeTier == .awdl })
     }
 
     @MainActor
@@ -594,8 +594,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         #expect(attempts[0].endpoint.debugDescription == expectedRememberedEndpoint.debugDescription)
         #expect(attempts[0].routeTier == .wifiLAN)
-        #expect(attempts[0..<3].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts.suffix(2).allSatisfy { $0.routeTier == .awdl })
+        #expect(attempts[0..<2].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(1).allSatisfy { $0.routeTier == .awdl })
     }
 
     @MainActor
@@ -646,10 +646,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let proximityAttempts = attempts.filter(\.isPeerToPeerPreferred)
 
         #expect(proximityAttempts.map(\.routeTier) == [
-            .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .awdl, .awdl,
+            .sameWiredEthernet, .sameWiredEthernet,
+            .awdl,
         ])
-        #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
+        #expect(proximityAttempts.prefix(2).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
     }
 
     @MainActor
@@ -701,13 +701,13 @@ struct ClientConnectionEndpointAddressPlanningTests {
         )
 
         #expect(attempts.map(\.routeTier) == [
-            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
-            .mixedEthernetSameLAN, .mixedEthernetSameLAN, .mixedEthernetSameLAN,
-            .awdl, .awdl,
+            .lowLatencyWireless, .lowLatencyWireless,
+            .mixedEthernetSameLAN, .mixedEthernetSameLAN,
+            .awdl,
         ])
-        #expect(attempts.prefix(3).allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts[3..<6].allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts.suffix(2).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.prefix(2).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[2..<4].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(1).allSatisfy { $0.isPeerToPeerPreferred })
     }
 
     @MainActor
@@ -758,12 +758,12 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let proximityAttempts = attempts.filter(\.isPeerToPeerPreferred)
 
         #expect(proximityAttempts.map(\.routeTier) == [
-            .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .awdl, .awdl,
+            .sameWiredEthernet, .sameWiredEthernet,
+            .awdl,
         ])
-        #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
-        #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceKind == .wiredEthernet })
-        #expect(proximityAttempts.prefix(3).allSatisfy { $0.requiredInterfaceType == .wiredEthernet })
+        #expect(proximityAttempts.prefix(2).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
+        #expect(proximityAttempts.prefix(2).allSatisfy { $0.proximityInterfaceKind == .wiredEthernet })
+        #expect(proximityAttempts.prefix(2).allSatisfy { $0.requiredInterfaceType == .wiredEthernet })
     }
 
     @MainActor
@@ -810,7 +810,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(!attempts.contains { $0.routeTier == .sameWiredEthernet })
         #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.map(\.routeTier) == [
-            .wifiLAN, .wifiLAN, .wifiLAN,
+            .wifiLAN, .wifiLAN,
         ])
     }
 
@@ -860,11 +860,11 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
-        #expect(attempts.map(\.candidateKind) == [.overlay, .overlay, .overlay])
-        #expect(attempts.map(\.routeTier) == [.vpn, .vpn, .vpn])
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.map(\.candidateKind) == [.overlay, .overlay])
+        #expect(attempts.map(\.routeTier) == [.vpn, .vpn])
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
         #expect(service.controlSessionInitialConnectTimeout(for: attempts[0]) == .seconds(5))
         #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(45))
     }
@@ -914,12 +914,12 @@ struct ClientConnectionEndpointAddressPlanningTests {
             port: udpPort
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
         #expect(attempts.allSatisfy { $0.routeTier == .vpn })
         #expect(attempts[0].endpoint.debugDescription == expectedOverlayEndpoint.debugDescription)
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
     }
 
     @MainActor
@@ -970,35 +970,23 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv6(awdlAddress),
             port: udpPort
         )
-        let expectedAwdlQUICEndpoint: NWEndpoint = .hostPort(
-            host: .ipv6(awdlAddress),
-            port: quicPort
-        )
         let expectedFallbackUDPEndpoint: NWEndpoint = try .hostPort(
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
-        )
-        let expectedFallbackQUICEndpoint: NWEndpoint = try .hostPort(
-            host: .ipv4(#require(IPv4Address("192.168.1.50"))),
-            port: quicPort
         )
         let expectedFallbackTCPEndpoint: NWEndpoint = try .hostPort(
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: tcpPort
         )
 
-        #expect(attempts.count == 5)
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp, .udp, .quic])
+        #expect(attempts.count == 3)
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp, .udp])
         #expect(!attempts[0].isPeerToPeerPreferred)
         #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
         #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(attempts[1].endpoint.debugDescription == expectedFallbackQUICEndpoint.debugDescription)
-        #expect(!attempts[2].isPeerToPeerPreferred)
-        #expect(attempts[2].endpoint.debugDescription == expectedFallbackTCPEndpoint.debugDescription)
-        #expect(attempts[3].isPeerToPeerPreferred)
-        #expect(attempts[3].endpoint.debugDescription == expectedAwdlUDPEndpoint.debugDescription)
-        #expect(attempts[4].isPeerToPeerPreferred)
-        #expect(attempts[4].endpoint.debugDescription == expectedAwdlQUICEndpoint.debugDescription)
+        #expect(attempts[1].endpoint.debugDescription == expectedFallbackTCPEndpoint.debugDescription)
+        #expect(attempts[2].isPeerToPeerPreferred)
+        #expect(attempts[2].endpoint.debugDescription == expectedAwdlUDPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -1056,10 +1044,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
             port: udpPort
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(!attempts.contains { $0.routeTier == .awdl })
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
         #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
     }
 
@@ -1177,9 +1165,9 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
         #expect(attempts.contains { $0.routeTier == .lowLatencyWireless })
-        #expect(attempts.prefix(3).allSatisfy { $0.routeTier == .lowLatencyWireless })
-        #expect(attempts.prefix(3).allSatisfy { $0.isPeerToPeerPreferred })
-        #expect(attempts.prefix(3).map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.prefix(2).allSatisfy { $0.routeTier == .lowLatencyWireless })
+        #expect(attempts.prefix(2).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts.prefix(2).map(\.transportKind) == [.udp, .tcp])
     }
 
     @MainActor

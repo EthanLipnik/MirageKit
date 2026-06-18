@@ -39,6 +39,17 @@ extension MirageClientService {
             isPeerToPeerPreferred
         }
 
+        var cooldownKey: ControlSessionAttemptCooldownKey {
+            ControlSessionAttemptCooldownKey(
+                hostName: hostName,
+                transport: transportKind.rawValue,
+                endpoint: endpoint.debugDescription,
+                routeTier: routeTier.rawValue,
+                endpointSource: endpointSource,
+                interfaceDescription: interfaceDescription
+            )
+        }
+
         var proximityDescription: String {
             let names = proximityInterfaceNames
                 .filter { !$0.isEmpty }
@@ -243,6 +254,15 @@ extension MirageClientService {
     struct AwdlProximityRouteSuppressionKey: Hashable {
         let deviceID: UUID
         let interfaceName: String
+    }
+
+    struct ControlSessionAttemptCooldownKey: Hashable, Sendable {
+        let hostName: String
+        let transport: String
+        let endpoint: String
+        let routeTier: String
+        let endpointSource: String
+        let interfaceDescription: String
     }
 
     enum ControlSessionFailureClassification: String, Sendable {

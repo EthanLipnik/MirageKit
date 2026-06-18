@@ -21,6 +21,8 @@ extension MirageClientService {
         MirageEnvironmentValue.isTruthy(environment[experimentalSystemProximityRoutingEnvironmentKey])
     }
 
+    public nonisolated static let controlSessionAttemptCooldownSeconds: TimeInterval = 8
+
     func controlSessionAttempts(
         for host: LoomPeer,
         localNetwork: ControlSessionNetworkDiagnostics? = nil,
@@ -133,12 +135,19 @@ extension MirageClientService {
     }
 
     func orderedControlSessionAttempts(_ attempts: [ControlSessionAttempt]) -> [ControlSessionAttempt] {
-        attempts.enumerated()
+        let now = CFAbsoluteTimeGetCurrent()
+        pruneExpiredControlSessionAttemptCooldowns(now: now)
+        return attempts.enumerated()
             .sorted { lhs, rhs in
                 let leftSystemProximity = lhs.element.endpointSource == experimentalSystemProximityEndpointSource
                 let rightSystemProximity = rhs.element.endpointSource == experimentalSystemProximityEndpointSource
                 if leftSystemProximity != rightSystemProximity {
                     return leftSystemProximity
+                }
+                let leftOnCooldown = controlSessionAttemptIsOnCooldown(lhs.element, now: now)
+                let rightOnCooldown = controlSessionAttemptIsOnCooldown(rhs.element, now: now)
+                if leftOnCooldown != rightOnCooldown {
+                    return !leftOnCooldown
                 }
                 let leftRouteRank = controlSessionRouteRank(for: lhs.element.routeTier)
                 let rightRouteRank = controlSessionRouteRank(for: rhs.element.routeTier)
@@ -157,6 +166,48 @@ extension MirageClientService {
                 return lhs.offset < rhs.offset
             }
             .map(\.element)
+    }
+
+    func coolDownControlSessionAttempt(
+        _ attempt: ControlSessionAttempt,
+        duration: TimeInterval = controlSessionAttemptCooldownSeconds,
+        reason: String
+    ) {
+        let expiry = CFAbsoluteTimeGetCurrent() + max(1, duration)
+        controlSessionAttemptCooldownExpirations[attempt.cooldownKey] = expiry
+        MirageLogger.client(
+            "Cooling down control route for \(attempt.hostName) " +
+                "transport=\(attempt.transportKind.rawValue) route=\(attempt.routeTier.rawValue) " +
+                "endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription) " +
+                "duration=\(Int(duration))s reason=\(reason)"
+        )
+    }
+
+    public func coolDownCurrentControlSessionRoute(
+        duration: TimeInterval = controlSessionAttemptCooldownSeconds,
+        reason: String
+    ) {
+        guard let currentControlSessionAttemptCooldownKey else { return }
+        let expiry = CFAbsoluteTimeGetCurrent() + max(1, duration)
+        controlSessionAttemptCooldownExpirations[currentControlSessionAttemptCooldownKey] = expiry
+        MirageLogger.client(
+            "Cooling down current control route duration=\(Int(duration))s reason=\(reason)"
+        )
+    }
+
+    func controlSessionAttemptIsOnCooldown(
+        _ attempt: ControlSessionAttempt,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        guard debugRouteOverride == nil else { return false }
+        guard let expiry = controlSessionAttemptCooldownExpirations[attempt.cooldownKey] else { return false }
+        return expiry > now
+    }
+
+    func pruneExpiredControlSessionAttemptCooldowns(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        for (key, expiry) in controlSessionAttemptCooldownExpirations where expiry <= now {
+            controlSessionAttemptCooldownExpirations.removeValue(forKey: key)
+        }
     }
 
     func controlSessionRouteRank(for routeTier: ControlSessionRouteTier) -> Int {
@@ -192,15 +243,15 @@ extension MirageClientService {
     ) -> Int {
         let transportOrder: [LoomTransportKind] = switch candidateKind {
         case .overlay:
-            [.udp, .quic, .tcp]
+            MirageKit.mirageAppPreferredDirectTransportOrder
         case .local, .publicIPv6, .stun, .portMapped:
-            [.udp, .quic, .tcp]
+            MirageKit.mirageAppPreferredDirectTransportOrder
         }
         return transportOrder.firstIndex(of: transportKind) ?? transportOrder.count
     }
 
     func controlSessionTransportOrder() -> [LoomTransportKind] {
-        [.udp, .quic, .tcp]
+        MirageKit.mirageAppPreferredDirectTransportOrder
     }
 
     func systemPreferredControlSessionAttempts(for host: LoomPeer) -> [ControlSessionAttempt] {
@@ -287,7 +338,7 @@ extension MirageClientService {
                 ?? interfaceScopedHost(selectedHost, interface: discoveredInterface.networkInterface)
 
             // AWDL data paths require an awdl0-scoped link-local literal. The
-            // hostname-plus-interface form is kept out of UDP/QUIC attempt
+            // hostname-plus-interface form is kept out of UDP attempts
             // planning, but the Bonjour TCP service endpoint is a real resolved
             // service path and lets Network.framework choose the peer-to-peer
             // data path without inventing an address.

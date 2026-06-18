@@ -98,20 +98,12 @@ struct ClientControlSessionFailureClassificationTests {
     @Test("Client retries later direct transports for retryable failures")
     func retryPolicyContinuesThroughLaterAdvertisedTransports() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61010))
-        let quicPort = try #require(NWEndpoint.Port(rawValue: 61011))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61012))
         let attempts = [
             MirageClientService.ControlSessionAttempt(
                 hostName: "Altair",
                 endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: udpPort),
                 transportKind: .udp,
-                candidateKind: .local,
-                requiredInterfaceType: nil
-            ),
-            MirageClientService.ControlSessionAttempt(
-                hostName: "Altair",
-                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: quicPort),
-                transportKind: .quic,
                 candidateKind: .local,
                 requiredInterfaceType: nil
             ),
@@ -132,17 +124,10 @@ struct ClientControlSessionFailureClassificationTests {
             )
         )
         #expect(
-            MirageClientService.shouldRetryLaterControlSessionAttempt(
-                classification: .timeout,
-                attempts: attempts,
-                currentAttemptIndex: 1
-            )
-        )
-        #expect(
             !MirageClientService.shouldRetryLaterControlSessionAttempt(
                 classification: .addressUnavailable,
                 attempts: attempts,
-                currentAttemptIndex: 2
+                currentAttemptIndex: 1
             )
         )
         #expect(

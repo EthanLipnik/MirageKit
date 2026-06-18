@@ -137,7 +137,7 @@ public final class MirageHostService {
     /// Input controller for injecting remote input.
     public nonisolated let inputController = MirageHostInputController()
 
-    /// Whether direct remote QUIC control transport is enabled.
+    /// Whether direct remote control transport is enabled.
     public var remoteTransportEnabled: Bool = false {
         didSet {
             Task { @MainActor [weak self] in
@@ -146,10 +146,10 @@ public final class MirageHostService {
         }
     }
 
-    /// Bound local port for the remote QUIC control listener.
+    /// Bound local port for the remote control listener.
     public internal(set) var remoteControlPort: UInt16?
 
-    /// Whether the remote QUIC control listener is currently ready to accept connections.
+    /// Whether the remote control listener is currently ready to accept connections.
     public internal(set) var remoteControlListenerReady = false
 
     /// Whether the host can currently accept a new client session.
@@ -170,7 +170,7 @@ public final class MirageHostService {
     /// Callback fired when the CloudKit-only local endpoint hint changes.
     @ObservationIgnored @_spi(HostApp) public var onCloudKitLocalEndpointHintChanged: (@MainActor @Sendable () -> Void)?
 
-    /// STUN keepalive that refreshes the NAT mapping for the QUIC listener port.
+    /// STUN keepalive that refreshes the NAT mapping for the remote control port.
     var stunKeepalive: LoomSTUNKeepalive?
 
     /// NAT-PMP / PCP port mapping that provides a stable external port.
@@ -189,7 +189,7 @@ public final class MirageHostService {
     var lastCloudKitLocalEndpointHintFingerprint: String?
     /// Debounced task that republishes updated host advertisement metadata.
     var advertisementRefreshTask: Task<Void, Never>?
-    /// QUIC/TCP control listener used for direct remote clients.
+    /// Control listener used for direct remote clients.
     var remoteControlListener: NWListener?
     /// Encoder configuration applied to newly created stream contexts.
     let encoderConfig: MirageEncoderConfiguration
@@ -611,7 +611,9 @@ public final class MirageHostService {
         if resolvedConfiguration.serviceType == Loom.serviceType {
             resolvedConfiguration.serviceType = MirageKit.serviceType
         }
-        resolvedConfiguration.quicALPN = ["mirage-v2"]
+        resolvedConfiguration.enabledDirectTransports = MirageKit.mirageAppDirectTransports
+        resolvedConfiguration.quicPort = 0
+        resolvedConfiguration.quicALPN = []
 
         let name = hostName ?? Host.current().localizedName ?? "Mac"
         let identityKeyID = Self.identityKeyID(for: MirageKit.identityManager)

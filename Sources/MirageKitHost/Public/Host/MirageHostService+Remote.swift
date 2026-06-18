@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/10/26.
 //
-//  Remote QUIC listener keepalive helpers.
+//  Remote control listener keepalive helpers.
 //
 
 import Loom

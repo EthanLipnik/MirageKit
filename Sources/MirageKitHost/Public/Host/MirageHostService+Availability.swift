@@ -186,7 +186,7 @@ extension MirageHostService {
                 result[transport.transportKind] = pathKind
             }
         }
-        let directTransports = LoomTransportKind.allCases.compactMap {
+        let directTransports = MirageKit.mirageAppPreferredDirectTransportOrder.compactMap {
             transportKind -> LoomDirectTransportAdvertisement? in
             guard let port = ports[transportKind], port > 0 else {
                 return nil

@@ -104,9 +104,6 @@ extension MirageHostService {
             streamSetupLifecycleBySessionID.removeValue(forKey: removedSessionID)
         }
         connectedClients.removeAll { $0.id == client.id }
-        if removedSessionID != nil {
-            disconnectingClientIDs.remove(client.id)
-        }
 
         if let removedClientContext {
             await closeClientControlSession(

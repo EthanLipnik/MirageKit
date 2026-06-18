@@ -54,8 +54,94 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Overlay control sessions prefer UDP before QUIC and TCP")
-    func overlayControlSessionAttemptsPreferUDPBeforeQUIC() throws {
+    @Test("Client demotes recently failed endpoint among equivalent UDP candidates")
+    func controlSessionAttemptCooldownDemotesEquivalentUDPCandidate() throws {
+        let firstPort = try #require(NWEndpoint.Port(rawValue: 61003))
+        let secondPort = try #require(NWEndpoint.Port(rawValue: 61004))
+        let firstAttempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: NWEndpoint.Host("192.168.1.50"), port: firstPort),
+            transportKind: .udp,
+            candidateKind: .local,
+            routeTier: .wifiLAN,
+            endpointSource: "resolved-local-address",
+            requiredInterfaceType: nil
+        )
+        let secondAttempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: NWEndpoint.Host("192.168.1.51"), port: secondPort),
+            transportKind: .udp,
+            candidateKind: .local,
+            routeTier: .wifiLAN,
+            endpointSource: "resolved-local-address",
+            requiredInterfaceType: nil
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.coolDownControlSessionAttempt(firstAttempt, reason: "timeout")
+        let orderedAttempts = service.orderedControlSessionAttempts([
+            firstAttempt,
+            secondAttempt,
+        ])
+
+        #expect(orderedAttempts.map(\.endpoint.debugDescription) == [
+            secondAttempt.endpoint.debugDescription,
+            firstAttempt.endpoint.debugDescription,
+        ])
+    }
+
+    @MainActor
+    @Test("Client demotes cooled route before route and transport priority")
+    func controlSessionAttemptCooldownOverridesRouteAndTransportPriority() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61005))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61006))
+        let fallbackPort = try #require(NWEndpoint.Port(rawValue: 61007))
+        let cooledUDPAttempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: NWEndpoint.Host("192.168.1.50"), port: udpPort),
+            transportKind: .udp,
+            candidateKind: .local,
+            routeTier: .wifiLAN,
+            endpointSource: "resolved-local-address",
+            requiredInterfaceType: nil
+        )
+        let sameRouteTCPAttempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: NWEndpoint.Host("192.168.1.50"), port: tcpPort),
+            transportKind: .tcp,
+            candidateKind: .local,
+            routeTier: .wifiLAN,
+            endpointSource: "resolved-local-address",
+            requiredInterfaceType: nil
+        )
+        let lowerRouteUDPAttempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: NWEndpoint.Host("203.0.113.10"), port: fallbackPort),
+            transportKind: .udp,
+            candidateKind: .local,
+            routeTier: .other,
+            endpointSource: "public-address",
+            requiredInterfaceType: nil
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.coolDownControlSessionAttempt(cooledUDPAttempt, reason: "manual connection restart")
+        let orderedAttempts = service.orderedControlSessionAttempts([
+            cooledUDPAttempt,
+            sameRouteTCPAttempt,
+            lowerRouteUDPAttempt,
+        ])
+
+        #expect(orderedAttempts.map(\.endpoint.debugDescription) == [
+            sameRouteTCPAttempt.endpoint.debugDescription,
+            lowerRouteUDPAttempt.endpoint.debugDescription,
+            cooledUDPAttempt.endpoint.debugDescription,
+        ])
+    }
+
+    @MainActor
+    @Test("Overlay control sessions prefer UDP before TCP")
+    func overlayControlSessionAttemptsPreferUDPBeforeTCP() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61011))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61012))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61013))
@@ -81,7 +167,7 @@ struct ClientConnectionEndpointPlanningTests {
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
 
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
         #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
         #expect(attempts.allSatisfy { $0.requiredInterface == nil })
         #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
@@ -165,6 +251,7 @@ struct ClientConnectionEndpointPlanningTests {
     func controlSessionAttemptsPreferOverlayEndpointHostAndPorts() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 65139))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 57210))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 57211))
         let host = LoomPeer(
             id: UUID(),
             name: "Vega",
@@ -177,6 +264,7 @@ struct ClientConnectionEndpointPlanningTests {
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
                     LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
                 ]
             )
         )
@@ -187,9 +275,9 @@ struct ClientConnectionEndpointPlanningTests {
             host: NWEndpoint.Host("100.65.199.51"),
             port: udpPort
         )
-        let expectedQUICEndpoint: NWEndpoint = .hostPort(
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(
             host: NWEndpoint.Host("100.65.199.51"),
-            port: quicPort
+            port: tcpPort
         )
 
         #expect(attempts.count == 2)
@@ -197,8 +285,8 @@ struct ClientConnectionEndpointPlanningTests {
         #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[0].candidateKind == .overlay)
         #expect(attempts[0].requiredInterfaceType == nil)
-        #expect(attempts[1].transportKind == .quic)
-        #expect(attempts[1].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
         #expect(attempts[1].candidateKind == .overlay)
         #expect(attempts[1].requiredInterfaceType == nil)
     }
@@ -364,8 +452,8 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client uses local resolved addresses for TCP and QUIC before overlay endpoint")
-    func controlSessionAttemptsPreferLocalResolvedAddressesForReliableTransports() throws {
+    @Test("Client uses local resolved addresses for TCP before overlay endpoint")
+    func controlSessionAttemptsPreferLocalResolvedAddressesForReliableTransport() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61022))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61023))
@@ -399,16 +487,13 @@ struct ClientConnectionEndpointPlanningTests {
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
         let tcpAttempt = try #require(attempts.first { $0.transportKind == .tcp })
-        let quicAttempt = try #require(attempts.first { $0.transportKind == .quic })
         let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
 
         let expectedTCPEndpoint: NWEndpoint = .hostPort(host: .ipv4(localAddress), port: tcpPort)
-        let expectedQUICEndpoint: NWEndpoint = .hostPort(host: .ipv4(localAddress), port: quicPort)
         let expectedUDPEndpoint: NWEndpoint = .hostPort(host: .ipv4(localAddress), port: udpPort)
 
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
         #expect(tcpAttempt.endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-        #expect(quicAttempt.endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
         #expect(udpAttempt.endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
     }
 

@@ -56,9 +56,8 @@ struct HostSingleClientTests {
         #expect(updatedAdvertisement.hostName == baseAdvertisement.hostName)
         #expect(updatedAdvertisement.metadata == baseAdvertisement.metadata)
         #expect(updatedAdvertisement.directTransports == [
-            LoomDirectTransportAdvertisement(transportKind: .tcp, port: 53812),
-            LoomDirectTransportAdvertisement(transportKind: .quic, port: 64995),
             LoomDirectTransportAdvertisement(transportKind: .udp, port: 53812, pathKind: .wifi),
+            LoomDirectTransportAdvertisement(transportKind: .tcp, port: 53812),
         ])
     }
 

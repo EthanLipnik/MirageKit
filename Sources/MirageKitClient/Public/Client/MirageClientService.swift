@@ -380,6 +380,10 @@ public final class MirageClientService {
 
     /// Recent control-session routing attempts included in support diagnostics.
     public internal(set) var recentControlSessionAttemptSummaries: [MirageClientControlSessionAttemptSummary] = []
+    /// Short-lived suppressions for exact control-session candidates that just failed.
+    @ObservationIgnored var controlSessionAttemptCooldownExpirations: [ControlSessionAttemptCooldownKey: CFAbsoluteTime] = [:]
+    /// Exact control-session candidate currently backing the connected host session.
+    @ObservationIgnored var currentControlSessionAttemptCooldownKey: ControlSessionAttemptCooldownKey?
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
     /// App-selected policy path kind used for stream budgeting when route intent should override raw path observation.

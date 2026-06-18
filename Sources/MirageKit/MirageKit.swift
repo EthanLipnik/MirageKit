@@ -43,7 +43,7 @@ public enum MirageKit {
     /// MirageKit default UDP listener port used for direct sessions.
     public static let directUDPPort: UInt16 = 38554
 
-    /// MirageKit default QUIC listener port used for direct sessions.
+    /// MirageKit QUIC port constant kept for packages that still reference the public API.
     public static let directQUICPort: UInt16 = 38555
 
     /// Bonjour service type used by the Mirage app for production peer discovery.
@@ -61,8 +61,14 @@ public enum MirageKit {
     /// Direct UDP listener port used by the Mirage app.
     public static let mirageAppDirectUDPPort: UInt16 = 9854
 
-    /// Direct QUIC listener port used by the Mirage app.
+    /// Mirage app QUIC port constant kept for packages that still reference the public API.
     public static let mirageAppDirectQUICPort: UInt16 = 9855
+
+    /// Direct transports enabled by the Mirage app.
+    public static let mirageAppDirectTransports: Set<LoomTransportKind> = [.tcp, .udp]
+
+    /// Preferred direct transport order used by the Mirage app.
+    public static let mirageAppPreferredDirectTransportOrder: [LoomTransportKind] = [.udp, .tcp]
 
     /// Stable user-visible substring emitted when bounded first-frame recovery is exhausted.
     public static let firstFramePresentationFailureTerminalMessage =

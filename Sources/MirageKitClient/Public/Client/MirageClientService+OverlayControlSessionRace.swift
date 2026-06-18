@@ -33,8 +33,7 @@ enum OverlayControlSessionLaunchDecision: Equatable, Sendable {
 
 struct OverlayControlSessionRacePolicy {
     static let udpPrimaryDelay: Duration = .milliseconds(0)
-    static let quicHedgeDelay: Duration = .seconds(3)
-    static let tcpHedgeDelay: Duration = .seconds(8)
+    static let tcpHedgeDelay: Duration = .seconds(3)
     static let groupBudget: Duration = .seconds(45)
     static let preTransportReadyTimeout: Duration = .seconds(6)
     static let preRemoteHelloIdleTimeout: Duration = .seconds(12)
@@ -42,7 +41,7 @@ struct OverlayControlSessionRacePolicy {
     static func launchDelay(for transportKind: LoomTransportKind) -> Duration {
         switch transportKind {
         case .quic:
-            quicHedgeDelay
+            tcpHedgeDelay
         case .udp:
             udpPrimaryDelay
         case .tcp:
@@ -58,7 +57,6 @@ actor OverlayControlSessionRaceState {
     }
 
     private var candidates: [LoomTransportKind: CandidateState] = [:]
-    private var failedTransports: Set<LoomTransportKind> = []
     private var winner: LoomTransportKind?
 
     func recordLaunched(
@@ -74,10 +72,6 @@ actor OverlayControlSessionRaceState {
         at now: ContinuousClock.Instant = ContinuousClock.now
     ) {
         candidates[transportKind] = CandidateState(phase: progress.phase, updatedAt: now)
-    }
-
-    func recordFailed(_ transportKind: LoomTransportKind) {
-        failedTransports.insert(transportKind)
     }
 
     func shouldLaunch(_ transportKind: LoomTransportKind) -> Bool {
@@ -99,13 +93,7 @@ actor OverlayControlSessionRaceState {
         }
         switch transportKind {
         case .quic:
-            if now < earliestLaunch {
-                return .wait(reason: "waiting for UDP primary window before QUIC hedge")
-            }
-            if candidates[.udp]?.phase.hasReachedRemoteHelloOrLater == true {
-                return .suppress(reason: "overlay QUIC suppressed; UDP reached remote hello or trust")
-            }
-            return .launch
+            return .suppress(reason: "overlay QUIC suppressed; transport disabled")
         case .udp:
             return udpLaunchDecision(now: now, earliestLaunch: earliestLaunch)
         case .tcp:
@@ -124,20 +112,7 @@ actor OverlayControlSessionRaceState {
         earliestLaunch: ContinuousClock.Instant
     ) -> OverlayControlSessionLaunchDecision {
         if now < earliestLaunch {
-            return .wait(reason: "waiting for QUIC progress deadline before UDP fallback")
-        }
-        if failedTransports.contains(.quic) {
-            return .launch
-        }
-        guard let quicState = candidates[.quic] else {
-            return .launch
-        }
-        if quicState.phase.hasReachedRemoteHelloOrLater {
-            return .suppress(reason: "overlay UDP suppressed; QUIC reached remote hello or trust")
-        }
-        if quicState.phase.hasPreRemoteHelloProgress,
-           quicState.updatedAt.duration(to: now) < OverlayControlSessionRacePolicy.preRemoteHelloIdleTimeout {
-            return .wait(reason: "waiting for progressing QUIC candidate before UDP fallback")
+            return .wait(reason: "waiting for UDP primary window")
         }
         return .launch
     }
@@ -147,19 +122,10 @@ actor OverlayControlSessionRaceState {
         earliestLaunch: ContinuousClock.Instant
     ) -> OverlayControlSessionLaunchDecision {
         if now < earliestLaunch {
-            return .wait(reason: "waiting for QUIC/UDP progress deadline before TCP fallback")
+            return .wait(reason: "waiting for UDP primary window before TCP fallback")
         }
         if candidates.values.contains(where: { $0.phase.hasReachedRemoteHelloOrLater }) {
             return .suppress(reason: "overlay TCP suppressed; another candidate reached remote hello or trust")
-        }
-        if failedTransports.contains(.quic), failedTransports.contains(.udp) {
-            return .launch
-        }
-        if candidates.values.contains(where: {
-            $0.phase.hasPreRemoteHelloProgress &&
-                $0.updatedAt.duration(to: now) < OverlayControlSessionRacePolicy.preRemoteHelloIdleTimeout
-        }) {
-            return .wait(reason: "waiting for progressing overlay candidate before TCP fallback")
         }
         return .launch
     }

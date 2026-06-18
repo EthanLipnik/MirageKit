@@ -90,6 +90,7 @@ extension MirageClientService {
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
                 recordControlSessionAttemptSucceeded(activeAttempt)
+                currentControlSessionAttemptCooldownKey = activeAttempt.cooldownKey
                 return BootstrappedControlSession(session: session, controlChannel: controlChannel)
             } catch {
                 if let openedChannel {
@@ -119,6 +120,12 @@ extension MirageClientService {
                 )
                 lastFailureReason = failureReason
                 recordControlSessionAttemptFailed(activeAttempt, reason: failureReason)
+                if classification.shouldRetryLaterDirectAttempt {
+                    coolDownControlSessionAttempt(
+                        activeAttempt,
+                        reason: classification.rawValue
+                    )
+                }
 
                 let failureAttemptIndex = activeAttemptIndex
                 if Self.shouldRetryCurrentBootstrappedControlSessionAttempt(
@@ -277,7 +284,6 @@ extension MirageClientService {
                     } catch is CancellationError {
                         return .cancelled(index: index, attempt: attempt)
                     } catch {
-                        await raceState.recordFailed(attempt.transportKind)
                         let classification = Self.classifyControlSessionFailure(error)
                         return .failed(
                             index: index,
@@ -316,6 +322,12 @@ extension MirageClientService {
                         attempt,
                         reason: reason
                     )
+                    if classification.shouldRetryLaterDirectAttempt {
+                        coolDownControlSessionAttempt(
+                            attempt,
+                            reason: classification.rawValue
+                        )
+                    }
                 case let .suppressed(_, attempt, reason):
                     recordControlSessionAttemptSuppressed(attempt, reason: reason)
                 case let .cancelled(_, attempt):

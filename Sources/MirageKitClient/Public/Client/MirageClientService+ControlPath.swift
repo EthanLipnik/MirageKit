@@ -214,6 +214,7 @@ extension MirageClientService {
         controlPathSnapshot = nil
         currentControlPathKind = nil
         currentControlPathStatus = nil
+        currentControlSessionAttemptCooldownKey = nil
         streamingPolicyPathKindOverride = nil
         streamingPolicyMediaPathProfileOverride = nil
         resetControlPathHistory()

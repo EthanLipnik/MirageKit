@@ -107,7 +107,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         Task.detached(priority: .high) { [weak self, session, pathSnapshot] in
             guard let self else { return }
             let transportKind = await session.context?.transportKind
-            guard transportKind == .udp || transportKind == .quic else { return }
+            guard transportKind == .udp else { return }
             guard ClientContext.isPeerToPeerConnection(
                 remoteEndpoint: await session.remoteEndpoint,
                 pathSnapshot: pathSnapshot

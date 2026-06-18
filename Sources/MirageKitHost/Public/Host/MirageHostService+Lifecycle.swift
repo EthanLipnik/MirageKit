@@ -146,10 +146,10 @@ public extension MirageHostService {
                 withDirectTransportPorts: ports
             )
             let controlPort = ports[.udp] ?? 0
-            let directQUICPort = ports[.quic]
-            remoteControlPort = directQUICPort
-            remoteControlListenerReady = directQUICPort != nil
-            MirageLogger.host("Loom authenticated listeners ready udp=\(controlPort) quic=\(directQUICPort ?? 0)")
+            remoteControlPort = ports[.udp]
+            remoteControlListenerReady = remoteControlPort != nil
+            let directTCPPort = ports[.tcp] ?? 0
+            MirageLogger.host("Loom authenticated listeners ready udp=\(controlPort) tcp=\(directTCPPort)")
             MirageLogger.host("Host network diagnostics: \(networkDiagnosticsSummaryLines.joined(separator: " | "))")
 
             state = .advertising(controlPort: controlPort)
@@ -183,25 +183,39 @@ public extension MirageHostService {
         do {
             return try await startAuthenticatedAdvertisingUsingCurrentConfiguration()
         } catch where Self.isRetryableListenerStartError(error) && hasRequestedDirectListenerPorts {
+            let requestedDirectPorts = currentRequestedDirectListenerPorts()
             MirageLogger.host(
                 "Configured direct listener ports unavailable; retrying with system-assigned ports: \(error)"
             )
             await loomNode.stopAdvertising()
             clearRequestedDirectListenerPorts()
+            defer {
+                restoreRequestedDirectListenerPorts(requestedDirectPorts)
+            }
             return try await startAuthenticatedAdvertisingUsingCurrentConfiguration()
         }
     }
 
     private var hasRequestedDirectListenerPorts: Bool {
         loomNode.configuration.controlPort > 0 ||
-            loomNode.configuration.udpPort > 0 ||
-            loomNode.configuration.quicPort > 0
+            loomNode.configuration.udpPort > 0
     }
 
     private func clearRequestedDirectListenerPorts() {
         loomNode.configuration.controlPort = 0
         loomNode.configuration.udpPort = 0
-        loomNode.configuration.quicPort = 0
+    }
+
+    private func currentRequestedDirectListenerPorts() -> RequestedDirectListenerPorts {
+        RequestedDirectListenerPorts(
+            controlPort: loomNode.configuration.controlPort,
+            udpPort: loomNode.configuration.udpPort
+        )
+    }
+
+    private func restoreRequestedDirectListenerPorts(_ ports: RequestedDirectListenerPorts) {
+        loomNode.configuration.controlPort = ports.controlPort
+        loomNode.configuration.udpPort = ports.udpPort
     }
 
     private func startAuthenticatedAdvertisingUsingCurrentConfiguration() async throws -> [LoomTransportKind: UInt16] {
@@ -317,5 +331,10 @@ public extension MirageHostService {
 
         availableWindows = filteredWindows.sorted { ($0.application?.name ?? "") < ($1.application?.name ?? "") }
     }
+}
+
+private struct RequestedDirectListenerPorts {
+    let controlPort: UInt16
+    let udpPort: UInt16
 }
 #endif

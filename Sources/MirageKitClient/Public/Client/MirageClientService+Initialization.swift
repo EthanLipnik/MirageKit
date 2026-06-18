@@ -19,7 +19,9 @@ extension MirageClientService {
         if resolvedConfiguration.serviceType == Loom.serviceType {
             resolvedConfiguration.serviceType = MirageKit.serviceType
         }
-        resolvedConfiguration.quicALPN = ["mirage-v2"]
+        resolvedConfiguration.enabledDirectTransports = MirageKit.mirageAppDirectTransports
+        resolvedConfiguration.quicPort = 0
+        resolvedConfiguration.quicALPN = []
         return resolvedConfiguration
     }
 

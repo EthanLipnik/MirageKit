@@ -15,13 +15,13 @@ struct OverlayControlSessionRaceTests {
     @Test("Overlay remote route budgets allow slow handshakes")
     func overlayRemoteRouteBudgetsAllowSlowHandshakes() {
         #expect(OverlayControlSessionRacePolicy.udpPrimaryDelay == .milliseconds(0))
-        #expect(OverlayControlSessionRacePolicy.quicHedgeDelay == .seconds(3))
+        #expect(OverlayControlSessionRacePolicy.tcpHedgeDelay == .seconds(3))
         #expect(OverlayControlSessionRacePolicy.groupBudget == .seconds(45))
         #expect(OverlayControlSessionRacePolicy.preRemoteHelloIdleTimeout == .seconds(12))
     }
 
-    @Test("UDP overlay candidate launches before QUIC")
-    func udpOverlayCandidateLaunchesBeforeQUIC() async {
+    @Test("UDP overlay candidate launches before TCP")
+    func udpOverlayCandidateLaunchesBeforeTCP() async {
         let state = OverlayControlSessionRaceState()
         let now = ContinuousClock.now
 
@@ -31,20 +31,15 @@ struct OverlayControlSessionRaceTests {
             earliestLaunch: now
         ) == .launch)
         #expect(await state.launchDecision(
-            for: .quic,
+            for: .tcp,
             now: now,
-            earliestLaunch: now + OverlayControlSessionRacePolicy.quicHedgeDelay
+            earliestLaunch: now + OverlayControlSessionRacePolicy.tcpHedgeDelay
         ) != .launch)
     }
 
-    @Test("QUIC hedge is suppressed once UDP reaches remote hello")
-    func quicHedgeSuppressesWhenUDPReachesRemoteHello() async {
+    @Test("Legacy QUIC overlay candidates are suppressed")
+    func legacyQUICOverlayCandidatesAreSuppressed() async {
         let state = OverlayControlSessionRaceState()
-        await state.recordLaunched(.udp)
-        await state.recordProgress(
-            LoomAuthenticatedSessionBootstrapProgress(phase: .remoteHelloReceived),
-            transportKind: .udp
-        )
 
         #expect(await state.launchDecision(
             for: .quic,
@@ -53,22 +48,37 @@ struct OverlayControlSessionRaceTests {
         ) != .launch)
     }
 
-    @Test("UDP hedge is suppressed once QUIC reaches remote hello")
-    func udpHedgeSuppressesWhenQUICReachesRemoteHello() async {
+    @Test("TCP hedge is suppressed once UDP reaches remote hello")
+    func tcpHedgeSuppressesWhenUDPReachesRemoteHello() async {
         let state = OverlayControlSessionRaceState()
-        await state.recordLaunched(.quic)
+        await state.recordLaunched(.udp)
         await state.recordProgress(
             LoomAuthenticatedSessionBootstrapProgress(phase: .remoteHelloReceived),
-            transportKind: .quic
+            transportKind: .udp
         )
 
-        #expect(!(await state.shouldLaunch(.udp)))
+        #expect(await state.launchDecision(
+            for: .tcp,
+            now: ContinuousClock.now,
+            earliestLaunch: ContinuousClock.now
+        ) != .launch)
+    }
+
+    @Test("UDP primary is not blocked by TCP pre-remote-hello progress")
+    func udpPrimaryIsNotBlockedByTCPPreRemoteHelloProgress() async {
+        let state = OverlayControlSessionRaceState()
+        await state.recordLaunched(.tcp)
+        await state.recordProgress(
+            LoomAuthenticatedSessionBootstrapProgress(phase: .localHelloSent),
+            transportKind: .tcp
+        )
+
+        #expect(await state.shouldLaunch(.udp))
     }
 
     @Test("TCP hedge launches only while no overlay candidate has remote hello")
     func tcpHedgeLaunchesOnlyBeforeRemoteHello() async {
         let state = OverlayControlSessionRaceState()
-        await state.recordLaunched(.quic)
         await state.recordLaunched(.udp)
 
         #expect(await state.shouldLaunch(.tcp))
@@ -79,32 +89,6 @@ struct OverlayControlSessionRaceTests {
         )
 
         #expect(!(await state.shouldLaunch(.tcp)))
-    }
-
-    @Test("Pre-remote-hello progress waits for the lenient idle window")
-    func preRemoteHelloProgressWaitsForLenientIdleWindow() async {
-        let state = OverlayControlSessionRaceState()
-        let base = ContinuousClock.now
-        await state.recordLaunched(.quic, at: base)
-        await state.recordProgress(
-            LoomAuthenticatedSessionBootstrapProgress(phase: .localHelloSent),
-            transportKind: .quic,
-            at: base
-        )
-
-        let beforeDeadline = await state.launchDecision(
-            for: .udp,
-            now: base + .seconds(11),
-            earliestLaunch: base
-        )
-        let afterDeadline = await state.launchDecision(
-            for: .udp,
-            now: base + .seconds(12),
-            earliestLaunch: base
-        )
-
-        #expect(beforeDeadline != .launch)
-        #expect(afterDeadline == .launch)
     }
 
     @MainActor

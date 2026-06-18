@@ -343,7 +343,7 @@ extension MirageClientService {
                 throw MirageError.protocolError("Control channel unavailable")
             }
             if deliveryMode == .droppableRealtime,
-               transportKind == .udp || transportKind == .quic {
+               transportKind == .udp {
                 try await controlChannel.sendSerializedUnreliable(data)
                 return
             }
@@ -377,7 +377,7 @@ extension MirageClientService {
             return false
         }
         let transportKind = await controlChannel.session.context?.transportKind
-        guard transportKind == .udp || transportKind == .quic else {
+        guard transportKind == .udp else {
             return false
         }
         // Keep priority input on local/proximity paths until remote congestion
