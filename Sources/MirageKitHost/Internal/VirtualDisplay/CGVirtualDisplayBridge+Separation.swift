@@ -89,6 +89,30 @@ func displayMirroringTargetStabilityDecision(
     return .stable
 }
 
+func displayMirroringObservedTargetPixelResolution(
+    modePixelResolution: CGSize?,
+    displayPixelDimensions: CGSize,
+    displayBoundsSize: CGSize
+) -> CGSize? {
+    if let modePixelResolution,
+       modePixelResolution.width > 0,
+       modePixelResolution.height > 0 {
+        return modePixelResolution
+    }
+
+    if displayPixelDimensions.width > 0,
+       displayPixelDimensions.height > 0 {
+        return displayPixelDimensions
+    }
+
+    if displayBoundsSize.width > 0,
+       displayBoundsSize.height > 0 {
+        return displayBoundsSize
+    }
+
+    return nil
+}
+
 func displaySeparationAnchorDisplayID(
     displays: [CGDirectDisplayID],
     virtualDisplayID: CGDirectDisplayID,

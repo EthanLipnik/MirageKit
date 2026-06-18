@@ -82,7 +82,7 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
 
     if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
         switch sharedDisplayError {
-        case .creationFailed:
+        case .creationFailed, .retinaCollapsedToOneX:
             return .virtualDisplayCreationFailed
         case .apiNotAvailable, .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
             return .virtualDisplayUnavailable

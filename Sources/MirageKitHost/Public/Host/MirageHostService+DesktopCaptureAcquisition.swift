@@ -49,7 +49,6 @@ extension MirageHostService {
     async throws -> DesktopCaptureContext {
         var acquiredCaptureContext: DesktopCaptureContext?
         var lastVirtualDisplayError: Error?
-        let startupBudget = DesktopVirtualDisplayStartupBudget(maxDuration: 10.0)
 
         if request.usesHostResolution {
             return try await acquireMainDisplayDesktopCaptureContext(
@@ -67,6 +66,7 @@ extension MirageHostService {
             reason: "desktop_stream_start"
         )
 
+        let startupBudget = DesktopVirtualDisplayStartupBudget(maxDuration: 10.0)
         var attemptIndex = 0
         acquisitionLoop: while attemptIndex < request.startupAttempts.count {
             let attempt = request.startupAttempts[attemptIndex]

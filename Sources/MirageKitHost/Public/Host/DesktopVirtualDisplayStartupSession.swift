@@ -67,6 +67,9 @@ enum DesktopVirtualDisplayStartupFailureClass: Equatable {
     /// Display creation or mode activation failed, so descriptor fallback may help.
     case activation
 
+    /// The system exposed a requested Retina mode as a 1x display, so retry directly at 1x.
+    case retinaCollapsedToOneX
+
     /// The display exists but ScreenCaptureKit or active-display discovery is not ready.
     case readiness
 
@@ -96,6 +99,8 @@ struct DesktopVirtualDisplayStartupSession {
         let failureClass = Self.classify(error)
         switch failureClass {
         case .activation:
+            activationFailureCount += 1
+        case .retinaCollapsedToOneX:
             activationFailureCount += 1
         case .readiness:
             readinessFailureCount += 1
@@ -143,6 +148,8 @@ struct DesktopVirtualDisplayStartupSession {
             switch sharedDisplayError {
             case .creationFailed:
                 return .activation
+            case .retinaCollapsedToOneX:
+                return .retinaCollapsedToOneX
             case .spaceNotFound:
                 return .spaceAssignment
             case .noActiveDisplay, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound, .streamDisplayNotFound:

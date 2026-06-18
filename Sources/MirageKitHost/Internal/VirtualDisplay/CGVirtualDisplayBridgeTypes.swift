@@ -19,18 +19,27 @@ extension CGVirtualDisplayBridge {
         let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
     }
 
-    enum P3D65Primaries {
-        static let red = CGPoint(x: 0.680, y: 0.320)
-        static let green = CGPoint(x: 0.265, y: 0.690)
-        static let blue = CGPoint(x: 0.150, y: 0.060)
-        static let whitePoint = CGPoint(x: 0.3127, y: 0.3290)
+    struct VirtualDisplayCreationResult {
+        let context: VirtualDisplayContext?
+        let modeActivationResult: VirtualDisplayModeActivationResult?
+
+        var failedBecauseRetinaCollapsedToOneX: Bool {
+            modeActivationResult == .retinaCollapsedToOneX
+        }
     }
 
-    enum SRGBPrimaries {
-        static let red = CGPoint(x: 0.640, y: 0.330)
-        static let green = CGPoint(x: 0.300, y: 0.600)
-        static let blue = CGPoint(x: 0.150, y: 0.060)
-        static let whitePoint = CGPoint(x: 0.3127, y: 0.3290)
+    enum VirtualDisplayModeActivationResult: Equatable {
+        case succeeded
+        case failed
+        case retinaCollapsedToOneX
+
+        var succeeded: Bool {
+            self == .succeeded
+        }
+
+        var isUsableForCreation: Bool {
+            self == .succeeded || self == .retinaCollapsedToOneX
+        }
     }
 }
 

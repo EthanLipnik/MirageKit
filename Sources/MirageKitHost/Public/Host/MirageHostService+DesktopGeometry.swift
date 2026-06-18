@@ -19,6 +19,15 @@ extension MirageHostService {
     /// Delay before one final cursor recenter and power-assertion release after setup settles.
     private static let virtualDisplaySetupGuardCompletionDelay: Duration = .milliseconds(250)
 
+    /// Poll interval for waiting until physical displays settle after wake.
+    private static let virtualDisplaySetupDisplayStablePollInterval: Duration = .milliseconds(120)
+
+    /// Maximum time spent waiting for physical display hotplug/mode restore before virtual-display creation.
+    private static let virtualDisplaySetupDisplayStableTimeout: Duration = .milliseconds(1200)
+
+    /// Number of matching topology samples required before creating a virtual display.
+    private static let virtualDisplaySetupRequiredStableTopologySamples = 3
+
     /// Resolve input bounds for desktop streaming based on physical display size.
     /// When mirroring a virtual display with a different aspect ratio, the mirrored
     /// content is aspect-fit within the physical display and input should target
@@ -178,6 +187,55 @@ extension MirageHostService {
         )
     }
 
+    /// Waits briefly for the physical display topology to settle after wake.
+    ///
+    /// Creating a private virtual display while WindowServer is still processing
+    /// physical hotplug and mode restoration can force both mode-list paths to
+    /// run in one display transaction. Waiting for a stable physical topology
+    /// keeps virtual-display mode application out of that hotplug window.
+    func waitForVirtualDisplaySetupDisplayStability(
+        reason: String,
+        cursorAnchorPoint: CGPoint?
+    ) async {
+        let started = ContinuousClock.now
+        let deadline = started + Self.virtualDisplaySetupDisplayStableTimeout
+        var lastSignature = currentPhysicalDisplayTopologySignature()
+        var stableSamples = 0
+
+        while ContinuousClock.now < deadline {
+            wakeAndCenterVirtualDisplaySetupCursor(
+                reason: reason,
+                cursorAnchorPoint: cursorAnchorPoint
+            )
+
+            do {
+                try await Task.sleep(for: Self.virtualDisplaySetupDisplayStablePollInterval)
+            } catch {
+                return
+            }
+
+            let signature = currentPhysicalDisplayTopologySignature()
+            if let signature, signature == lastSignature {
+                stableSamples += 1
+            } else {
+                lastSignature = signature
+                stableSamples = signature == nil ? 0 : 1
+            }
+
+            if stableSamples >= Self.virtualDisplaySetupRequiredStableTopologySamples {
+                let elapsed = started.duration(to: ContinuousClock.now)
+                MirageLogger.host(
+                    "Virtual display setup display topology stable reason=\(reason) elapsed=\(elapsed)"
+                )
+                return
+            }
+        }
+
+        MirageLogger.host(
+            "Virtual display setup display topology stability wait timed out reason=\(reason) signature=\(lastSignature ?? "none")"
+        )
+    }
+
     /// Starts a temporary guard that keeps the display awake and cursor positioned during setup.
     func beginVirtualDisplaySetupGuard(reason: String) async -> UUID {
         if let existing = activeVirtualDisplaySetupGuard {
@@ -210,6 +268,10 @@ extension MirageHostService {
             cursorAnchorPoint: cursorAnchorPoint
         )
         MirageLogger.host("Virtual display setup guard started reason=\(reason) token=\(token.uuidString)")
+        await waitForVirtualDisplaySetupDisplayStability(
+            reason: "\(reason):stabilize",
+            cursorAnchorPoint: cursorAnchorPoint
+        )
         return token
     }
 

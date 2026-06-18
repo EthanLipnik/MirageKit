@@ -14,6 +14,34 @@ import Testing
 
 @Suite("CGVirtualDisplayBridge Diagnostics", .serialized)
 struct CGVirtualDisplayBridgeDiagnosticsTests {
+    @Test("Descriptor configuration leaves colorimetry to WindowServer")
+    func descriptorConfigurationLeavesColorimetryToWindowServer() {
+        let descriptor = RecordingDescriptor()
+        let attempt = CGVirtualDisplayBridge.DescriptorAttempt(
+            profile: .persistentGlobalQueue,
+            serial: 42,
+            queue: .global(qos: .userInteractive),
+            label: "persistent-global-queue"
+        )
+
+        CGVirtualDisplayBridge.configureDescriptor(
+            descriptor,
+            name: "Mirage Test Display",
+            width: 2752,
+            height: 2064,
+            ppi: 220,
+            profile: attempt
+        )
+
+        #expect(descriptor.recordedKeys.contains("name"))
+        #expect(descriptor.recordedKeys.contains("serialNum"))
+        #expect(descriptor.recordedKeys.contains("queue"))
+        #expect(!descriptor.recordedKeys.contains("redPrimary"))
+        #expect(!descriptor.recordedKeys.contains("greenPrimary"))
+        #expect(!descriptor.recordedKeys.contains("bluePrimary"))
+        #expect(!descriptor.recordedKeys.contains("whitePoint"))
+    }
+
     @Test("Cached descriptor profile is evicted immediately after failure")
     func cachedDescriptorProfileEvictionDecision() {
         let failedAttempt = CGVirtualDisplayBridge.DescriptorAttempt(
@@ -56,7 +84,7 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
         }
 
         CGVirtualDisplayBridge.storePreferredDescriptorProfile(
-            .serial0GlobalQueue,
+            .persistentMainQueue,
             for: .displayP3,
             width: 6016,
             height: 3376,
@@ -74,13 +102,14 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
             cachedHint: nil
         )
 
-        #expect(attempts.first?.profile == .serial0GlobalQueue)
+        #expect(attempts.first?.profile == .persistentMainQueue)
+        #expect(attempts.first?.serial == 99)
     }
 
     @Test("Invalidating all persistent serials rotates serials and clears cached descriptor profiles")
     func invalidatingAllPersistentSerialsRotatesSerialsAndClearsCachedProfiles() {
         CGVirtualDisplayBridge.storePreferredDescriptorProfile(
-            .serial0GlobalQueue,
+            .persistentMainQueue,
             for: .displayP3,
             width: 5120,
             height: 2880,
@@ -114,7 +143,63 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
             refreshRate: 60,
             cachedHint: nil
         )
-        #expect(attempts.first?.profile != .serial0GlobalQueue)
+        #expect(attempts.allSatisfy { $0.serial != 0 })
+    }
+
+    @Test("Descriptor attempts ignore zero serial cached hints")
+    func descriptorAttemptsIgnoreZeroSerialCachedHints() {
+        let attempts = CGVirtualDisplayBridge.descriptorAttempts(
+            persistentSerial: 123,
+            hiDPI: true,
+            colorSpace: .sRGB,
+            width: 2752,
+            height: 2064,
+            refreshRate: 60,
+            cachedHint: CGVirtualDisplayBridge.CachedValidationHint(
+                profile: .persistentGlobalQueue,
+                serial: 0
+            )
+        )
+
+        #expect(!attempts.isEmpty)
+        #expect(attempts.allSatisfy { $0.serial == 123 })
+    }
+
+    @Test("Stale persistent serial rotates before descriptor attempts")
+    func stalePersistentSerialRotatesBeforeDescriptorAttempts() {
+        let originalSerial = CGVirtualDisplayBridge.persistentSerialNumber(for: .sRGB)
+        defer {
+            if CGVirtualDisplayBridge.persistentSerialNumber(for: .sRGB) != originalSerial {
+                CGVirtualDisplayBridge.invalidatePersistentSerial(for: .sRGB)
+            }
+        }
+
+        let attempts = CGVirtualDisplayBridge.descriptorAttempts(
+            persistentSerial: originalSerial,
+            hiDPI: true,
+            colorSpace: .sRGB,
+            width: 2752,
+            height: 2064,
+            refreshRate: 60,
+            cachedHint: CGVirtualDisplayBridge.CachedValidationHint(
+                profile: .persistentGlobalQueue,
+                serial: originalSerial
+            ),
+            isSerialOnline: { $0 == originalSerial }
+        )
+
+        #expect(!attempts.isEmpty)
+        #expect(attempts.allSatisfy { $0.serial != 0 })
+        #expect(attempts.allSatisfy { $0.serial != originalSerial })
+        #expect(attempts.first?.profile == .persistentGlobalQueue)
+    }
+}
+
+private final class RecordingDescriptor: NSObject {
+    private(set) var recordedKeys = Set<String>()
+
+    override func setValue(_ value: Any?, forUndefinedKey key: String) {
+        recordedKeys.insert(key)
     }
 }
 #endif

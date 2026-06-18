@@ -7,11 +7,31 @@
 
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import Testing
 
 #if os(macOS)
 @Suite("Shared Virtual Display Validation")
 struct SharedVirtualDisplayValidationTests {
+    @Test("Retina 1x fallback acceptance is gated to macOS 27")
+    func retinaOneXFallbackAcceptanceIsGatedToMacOS27() {
+        #expect(
+            CGVirtualDisplayBridge.allowsRetinaOneXFallback(
+                on: OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)
+            )
+        )
+        #expect(
+            !CGVirtualDisplayBridge.allowsRetinaOneXFallback(
+                on: OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0)
+            )
+        )
+        #expect(
+            !CGVirtualDisplayBridge.allowsRetinaOneXFallback(
+                on: OperatingSystemVersion(majorVersion: 28, minorVersion: 0, patchVersion: 0)
+            )
+        )
+    }
+
     @Test("Display validation accepts exact 1x display when CoreGraphics refresh is unavailable")
     func displayValidationAcceptsExactOneXDisplayWhenCoreGraphicsRefreshIsUnavailable() {
         let expected = CGSize(width: 1280, height: 640)
@@ -129,6 +149,36 @@ struct SharedVirtualDisplayValidationTests {
                 observedPixel: CGSize(width: 1920, height: 1080),
                 observedBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080),
                 observedPixelDimensions: CGSize(width: 1920, height: 1080),
+                isOnline: true
+            )
+        )
+    }
+
+    @Test("Retina collapse detector recognizes logical-sized 1x activation")
+    func retinaCollapseDetectorRecognizesLogicalSizedOneXActivation() {
+        #expect(
+            CGVirtualDisplayBridge.isCollapsedOneXModeForRetinaRequest(
+                requestedLogical: CGSize(width: 1600, height: 1200),
+                requestedPixel: CGSize(width: 3200, height: 2400),
+                observedLogical: CGSize(width: 1600, height: 1200),
+                observedPixel: CGSize(width: 1600, height: 1200),
+                observedBounds: CGRect(x: 0, y: 0, width: 1600, height: 1200),
+                observedPixelDimensions: CGSize(width: 1600, height: 1200),
+                isOnline: true
+            )
+        )
+    }
+
+    @Test("Retina collapse detector works when CoreGraphics mode is unavailable")
+    func retinaCollapseDetectorWorksWhenCoreGraphicsModeIsUnavailable() {
+        #expect(
+            CGVirtualDisplayBridge.isCollapsedOneXModeForRetinaRequest(
+                requestedLogical: CGSize(width: 1600, height: 1200),
+                requestedPixel: CGSize(width: 3200, height: 2400),
+                observedLogical: .zero,
+                observedPixel: .zero,
+                observedBounds: CGRect(x: 0, y: 0, width: 1600, height: 1200),
+                observedPixelDimensions: CGSize(width: 1600, height: 1200),
                 isOnline: true
             )
         )

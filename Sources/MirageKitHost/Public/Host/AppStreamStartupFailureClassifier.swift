@@ -35,7 +35,7 @@ enum AppStreamStartupFailureClassifier {
 
         if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
             switch sharedDisplayError {
-            case .creationFailed, .apiNotAvailable:
+            case .creationFailed, .retinaCollapsedToOneX, .apiNotAvailable:
                 return false
             case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
                 return true
@@ -73,7 +73,7 @@ enum AppStreamStartupFailureClassifier {
 
         if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
             switch sharedDisplayError {
-            case .creationFailed, .apiNotAvailable:
+            case .creationFailed, .retinaCollapsedToOneX, .apiNotAvailable:
                 return true
             case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
                 return false

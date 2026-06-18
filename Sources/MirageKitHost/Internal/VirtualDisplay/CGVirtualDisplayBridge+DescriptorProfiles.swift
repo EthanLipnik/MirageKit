@@ -23,7 +23,6 @@ extension CGVirtualDisplayBridge {
     enum DescriptorProfile: String, CaseIterable, Codable {
         case persistentMainQueue = "persistent-main-queue"
         case persistentGlobalQueue = "persistent-global-queue"
-        case serial0GlobalQueue = "serial0-global-queue"
     }
 
     struct CachedValidationHint: Codable {
@@ -35,6 +34,19 @@ extension CGVirtualDisplayBridge {
         let context: VirtualDisplayContext?
         let failedDisplayID: CGDirectDisplayID?
         let sawColorValidationFailure: Bool
+        let modeActivationResult: VirtualDisplayModeActivationResult?
+    }
+
+    static var allowsRetinaOneXFallbackOnCurrentOS: Bool {
+        allowsRetinaOneXFallback(
+            on: ProcessInfo.processInfo.operatingSystemVersion
+        )
+    }
+
+    static func allowsRetinaOneXFallback(on version: OperatingSystemVersion) -> Bool {
+        // TODO: Re-verify on post-macOS 27 builds and remove this gate or fallback once
+        // WindowServer no longer collapses Retina virtual-display requests during startup.
+        version.majorVersion == 27
     }
 
     static func isGrossRetinaModeMismatch(
@@ -65,6 +77,35 @@ extension CGVirtualDisplayBridge {
             logicalHeightRatio <= grossRetinaMismatchScaleThreshold ||
             pixelWidthRatio <= grossRetinaMismatchScaleThreshold ||
             pixelHeightRatio <= grossRetinaMismatchScaleThreshold
+    }
+
+    static func isCollapsedOneXModeForRetinaRequest(
+        requestedLogical: CGSize,
+        requestedPixel: CGSize,
+        observedLogical: CGSize,
+        observedPixel: CGSize,
+        observedBounds: CGRect,
+        observedPixelDimensions: CGSize,
+        isOnline: Bool
+    ) -> Bool {
+        guard isOnline else { return false }
+        let requestedScale = requestedLogical.width > 0 ? requestedPixel.width / requestedLogical.width : 0
+        guard requestedScale > 1.5 else { return false }
+
+        let logicalMatchesRequestedLogical = approximatelyMatches(observedLogical, expected: requestedLogical) ||
+            approximatelyMatches(observedBounds.size, expected: requestedLogical)
+        let pixelMatchesRequestedLogical = approximatelyMatches(observedPixel, expected: requestedLogical) ||
+            approximatelyMatches(observedPixelDimensions, expected: requestedLogical)
+        guard logicalMatchesRequestedLogical, pixelMatchesRequestedLogical else { return false }
+
+        let observedScale: CGFloat = if observedLogical.width > 0 {
+            observedPixel.width / observedLogical.width
+        } else if observedBounds.width > 0 {
+            observedPixelDimensions.width / observedBounds.width
+        } else {
+            0
+        }
+        return abs(observedScale - 1.0) <= retinaQuantizedScaleTolerance
     }
 
     static func shouldEvictCachedDescriptorProfile(
@@ -290,20 +331,8 @@ extension CGVirtualDisplayBridge {
         switch profile {
         case .persistentMainQueue:
             .main
-        case .persistentGlobalQueue, .serial0GlobalQueue:
+        case .persistentGlobalQueue:
             .global(qos: .userInteractive)
-        }
-    }
-
-    private static func descriptorSerial(
-        for profile: DescriptorProfile,
-        persistentSerial: UInt32
-    ) -> UInt32 {
-        switch profile {
-        case .serial0GlobalQueue:
-            0
-        case .persistentMainQueue, .persistentGlobalQueue:
-            persistentSerial
         }
     }
 
@@ -314,25 +343,27 @@ extension CGVirtualDisplayBridge {
         width: Int,
         height: Int,
         refreshRate: Double,
-        cachedHint: CachedValidationHint?
+        cachedHint: CachedValidationHint?,
+        isSerialOnline: (UInt32) -> Bool = isMirageSerialOnline
     )
     -> [DescriptorAttempt] {
-        let serialIsStale = isMirageSerialOnline(persistentSerial)
+        let serialIsStale = isSerialOnline(persistentSerial)
         let defaults: [DescriptorProfile]
+        let activePersistentSerial: UInt32
         if serialIsStale {
             MirageLogger.host(
-                "Persistent serial \(persistentSerial) maps to online orphaned display; rotating serial and using fallback profiles"
+                "Persistent serial \(persistentSerial) maps to online orphaned display; rotating serial before descriptor attempts"
             )
             invalidatePersistentSerial(for: colorSpace)
-            defaults = [.persistentGlobalQueue, .serial0GlobalQueue]
+            activePersistentSerial = persistentSerialNumber(for: colorSpace)
+            defaults = [.persistentGlobalQueue, .persistentMainQueue]
         } else {
-            defaults = hiDPI
-                ? [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
-                : [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
+            activePersistentSerial = persistentSerial
+            defaults = [.persistentGlobalQueue, .persistentMainQueue]
         }
         var orderedProfiles: [DescriptorProfile] = []
 
-        if let cachedHint, !(serialIsStale && cachedHint.serial == persistentSerial) {
+        if let cachedHint, cachedHint.serial != 0, !(serialIsStale && cachedHint.serial == persistentSerial) {
             orderedProfiles.append(cachedHint.profile)
         }
 
@@ -353,7 +384,7 @@ extension CGVirtualDisplayBridge {
         var attempts: [DescriptorAttempt] = []
         var seen = Set<String>()
 
-        if let cachedHint, !(serialIsStale && cachedHint.serial == persistentSerial) {
+        if let cachedHint, cachedHint.serial != 0, !(serialIsStale && cachedHint.serial == persistentSerial) {
             let key = "\(cachedHint.profile.rawValue)-\(cachedHint.serial)"
             if seen.insert(key).inserted {
                 attempts.append(
@@ -368,7 +399,7 @@ extension CGVirtualDisplayBridge {
         }
 
         for profile in orderedProfiles {
-            let serial = descriptorSerial(for: profile, persistentSerial: persistentSerial)
+            let serial = activePersistentSerial
             let key = "\(profile.rawValue)-\(serial)"
             guard seen.insert(key).inserted else { continue }
             attempts.append(

@@ -62,6 +62,28 @@ struct DesktopVirtualDisplayStartupSessionTests {
         #expect(plan.attempts[nextIndex ?? 0].fallbackKind == .conservative)
     }
 
+    @Test("Retina collapse skips descriptor fallback and goes straight to conservative retry")
+    func retinaCollapseSkipsDescriptorFallback() {
+        let plan = makePlan()
+        var session = DesktopVirtualDisplayStartupSession(plan: plan)
+
+        let failureClass = session.recordFailure(
+            SharedVirtualDisplayManager.SharedDisplayError.retinaCollapsedToOneX(
+                CGSize(width: 6016, height: 3376)
+            )
+        )
+
+        let nextIndex = session.nextRetryIndex(
+            after: failureClass,
+            attempts: plan.attempts,
+            currentIndex: 0
+        )
+
+        #expect(failureClass == .retinaCollapsedToOneX)
+        #expect(nextIndex == 2)
+        #expect(plan.attempts[nextIndex ?? 0].fallbackKind == .conservative)
+    }
+
     @Test("Space failures skip descriptor fallback and go straight to conservative retry")
     func spaceFailuresSkipDescriptorFallback() {
         let plan = makePlan()

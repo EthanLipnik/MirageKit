@@ -30,7 +30,7 @@ extension CGVirtualDisplayBridge {
         serial: UInt32?,
         startupBudget: DesktopVirtualDisplayStartupBudget?
     )
-    -> Bool {
+    -> VirtualDisplayModeActivationResult {
         let requestedLogical = CGSize(
             width: hiDPI ? pixelWidth / 2 : pixelWidth,
             height: hiDPI ? pixelHeight / 2 : pixelHeight
@@ -40,7 +40,7 @@ extension CGVirtualDisplayBridge {
         let transferFunctionCandidates = transferFunctionAttempts()
         for attempt in modeActivationAttempts(pixelWidth: pixelWidth, pixelHeight: pixelHeight, hiDPI: hiDPI) {
             for transferFunction in transferFunctionCandidates {
-                if startupBudget?.isExpired == true { return false }
+                if startupBudget?.isExpired == true { return .failed }
                 guard let displayMode = createDisplayMode(
                     modeClass: modeClass,
                     width: attempt.modeWidth,
@@ -70,23 +70,26 @@ extension CGVirtualDisplayBridge {
                     continue
                 }
 
-                if validateModeActivation(
+                let validationResult = validateModeActivation(
                     displayID: displayID,
                     requestedLogical: requestedLogical,
                     requestedPixel: requestedPixel,
                     hiDPISetting: attempt.hiDPISetting,
                     serial: serial,
                     startupBudget: startupBudget
-                ) {
+                )
+                if validationResult.succeeded {
                     MirageLogger.host(
                         "Virtual display mode activation succeeded with attempt \(attempt.label) and transferFunction=\(transferFunction.label)"
                     )
-                    return true
+                    return .succeeded
+                } else if validationResult == .retinaCollapsedToOneX {
+                    return .retinaCollapsedToOneX
                 }
             }
         }
 
-        return false
+        return .failed
     }
 
     static func teardownFailedDisplay(displayID: CGDirectDisplayID, profileLabel: String) -> Bool {
@@ -185,8 +188,8 @@ extension CGVirtualDisplayBridge {
         serial: UInt32?,
         startupBudget: DesktopVirtualDisplayStartupBudget?
     )
-    -> Bool {
-        guard startupBudget?.isExpired != true else { return false }
+    -> VirtualDisplayModeActivationResult {
+        guard startupBudget?.isExpired != true else { return .failed }
         let validationTimeout = startupBudget?.boundedTimeout(1.6) ?? 1.6
         let deadline = Date().addingTimeInterval(validationTimeout)
         var lastObserved: DisplayModeSizes?
@@ -195,6 +198,9 @@ extension CGVirtualDisplayBridge {
         var sawOnline = false
         var grossMismatchPollCount = 0
         var grossMismatchFirstObservedAt: CFAbsoluteTime = 0
+        var collapsedOneXPollCount = 0
+        var collapsedOneXFirstObservedAt: CFAbsoluteTime = 0
+        let allowRetinaOneXFallback = allowsRetinaOneXFallbackOnCurrentOS
 
         while Date() < deadline {
             if startupBudget?.isExpired == true { break }
@@ -233,7 +239,7 @@ extension CGVirtualDisplayBridge {
                     MirageLogger.host(
                         "Virtual display mode active: logical=\(observed.logical), pixel=\(observed.pixel), scale=\(scaleText)x"
                     )
-                    return true
+                    return .succeeded
                 }
 
                 if isGrossRetinaModeMismatch(
@@ -279,10 +285,11 @@ extension CGVirtualDisplayBridge {
                         MirageLogger.host(
                             "Virtual display mode accepted with quantized Retina validation: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observed.logical), observedPixel=\(observed.pixel), observedScale=\(observedScaleText)x"
                         )
-                        return true
+                        return .succeeded
                     }
 
-                    if isAcceptableOneXFallbackForRetinaRequest(
+                    if allowRetinaOneXFallback,
+                       isAcceptableOneXFallbackForRetinaRequest(
                         requestedLogical: requestedLogical,
                         requestedPixel: requestedPixel,
                         observedLogical: observed.logical,
@@ -297,13 +304,43 @@ extension CGVirtualDisplayBridge {
                         MirageLogger.host(
                             "Virtual display mode accepted with stable 1x fallback for Retina request: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observed.logical), observedPixel=\(observed.pixel), observedScale=\(observedScaleText)x"
                         )
-                        return true
+                        return .succeeded
                     }
                 }
             } else {
                 lastObserved = nil
                 grossMismatchPollCount = 0
                 grossMismatchFirstObservedAt = 0
+            }
+
+            if hiDPISetting == hiDPIEnabledSetting, allowRetinaOneXFallback {
+                let observedLogical = lastObserved?.logical ?? .zero
+                let observedPixel = lastObserved?.pixel ?? .zero
+                if isCollapsedOneXModeForRetinaRequest(
+                    requestedLogical: requestedLogical,
+                    requestedPixel: requestedPixel,
+                    observedLogical: observedLogical,
+                    observedPixel: observedPixel,
+                    observedBounds: bounds,
+                    observedPixelDimensions: pixelDimensions,
+                    isOnline: isOnline
+                ) {
+                    collapsedOneXPollCount += 1
+                    if collapsedOneXFirstObservedAt == 0 {
+                        collapsedOneXFirstObservedAt = pollNow
+                    }
+                    let collapsedOneXDuration = pollNow - collapsedOneXFirstObservedAt
+                    if collapsedOneXPollCount >= grossRetinaMismatchPollThreshold ||
+                        collapsedOneXDuration >= grossRetinaMismatchAbortSeconds {
+                        MirageLogger.host(
+                            "Virtual display Retina request collapsed to stable 1x mode: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observedLogical), observedPixel=\(observedPixel), observedBounds=\(bounds.size), observedPixelDimensions=\(pixelDimensions), polls=\(collapsedOneXPollCount)"
+                        )
+                        return .retinaCollapsedToOneX
+                    }
+                } else {
+                    collapsedOneXPollCount = 0
+                    collapsedOneXFirstObservedAt = 0
+                }
             }
 
             // Some hosts keep CGDisplayCopyDisplayMode unset during 1x fallback bring-up.
@@ -320,7 +357,7 @@ extension CGVirtualDisplayBridge {
                     MirageLogger.host(
                         "Virtual display mode accepted with lenient 1x validation: bounds=\(bounds.size), pixelDimensions=\(pixelDimensions), requested=\(requestedPixel)"
                     )
-                    return true
+                    return .succeeded
                 }
             }
 
@@ -340,7 +377,7 @@ extension CGVirtualDisplayBridge {
                 sawOnline: sawOnline
             )
         )
-        return false
+        return .failed
     }
 }
 

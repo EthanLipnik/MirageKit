@@ -32,10 +32,21 @@ extension SharedVirtualDisplayManager {
         var attempts: [DisplayCreationAttempt] = []
         var seenAttemptKeys = Set<String>()
 
+        let sourcePixelBudget = VirtualDisplaySourcePixelBudget.current()
+
         func appendAttempt(_ attempt: DisplayCreationAttempt) {
-            let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")-\(attempt.colorSpace.rawValue)"
+            let budgetedAttempt = Self.resourceBudgetedCreationAttempt(attempt, budget: sourcePixelBudget)
+            let key = "\(Int(budgetedAttempt.resolution.width))x\(Int(budgetedAttempt.resolution.height))-\(budgetedAttempt.hiDPI ? "retina" : "1x")-\(budgetedAttempt.colorSpace.rawValue)"
             if seenAttemptKeys.insert(key).inserted {
-                attempts.append(attempt)
+                if budgetedAttempt != attempt {
+                    MirageLogger.host(
+                        "Virtual display resource budget adjusted creation attempt \(attempt.label): " +
+                            "requested=\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height)) " +
+                            "resolved=\(Int(budgetedAttempt.resolution.width))x\(Int(budgetedAttempt.resolution.height)) " +
+                            "hiDPI=\(budgetedAttempt.hiDPI) budget=\(sourcePixelBudget?.summary ?? "unavailable")"
+                    )
+                }
+                attempts.append(budgetedAttempt)
             }
         }
 
@@ -218,6 +229,7 @@ extension SharedVirtualDisplayManager {
 
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
         var lastValidationOutcome: DisplayValidationOutcome?
+        var retinaCollapseRequiresOneXRetry = false
         let dedupedAttempts = creationAttempts(
             resolution: normalizedRequested,
             colorSpace: colorSpace,
@@ -226,9 +238,15 @@ extension SharedVirtualDisplayManager {
 
         for attempt in dedupedAttempts {
             try startupBudget?.checkAvailable()
+            if retinaCollapseRequiresOneXRetry, attempt.hiDPI {
+                MirageLogger.host(
+                    "Skipping Retina virtual-display retry \(attempt.label) because the previous Retina request collapsed to 1x"
+                )
+                continue
+            }
             let requestedResolution = attempt.resolution
 
-            let createdDisplayContext = await withDisplayMutation(kind: .virtualDisplayCreate) {
+            let creationResult = await withDisplayMutation(kind: .virtualDisplayCreate) {
                 CGVirtualDisplayBridge.createVirtualDisplay(
                     name: displayName,
                     width: Int(requestedResolution.width),
@@ -239,21 +257,64 @@ extension SharedVirtualDisplayManager {
                     startupBudget: startupBudget
                 )
             }
-            guard let displayContext = createdDisplayContext else {
+            guard let displayContext = creationResult.context else {
+                if creationResult.failedBecauseRetinaCollapsedToOneX, attempt.hiDPI {
+                    retinaCollapseRequiresOneXRetry = true
+                    MirageLogger.host(
+                        "Retina virtual-display request collapsed to 1x for \(attempt.label); trying the next 1x creation rung"
+                    )
+                    continue
+                }
                 MirageLogger.host(
                     "Virtual display create failed for \(attempt.label) at \(Int(requestedResolution.width))x\(Int(requestedResolution.height)), color=\(attempt.colorSpace.displayName)"
                 )
                 continue
             }
 
+            let acceptedCollapsedOneX = creationResult.modeActivationResult == .retinaCollapsedToOneX
             let modeSizesAtCreate = CGVirtualDisplayBridge.currentDisplayModeSizes(displayContext.displayID)
+            let observedPixelDimensionsAtCreate = CGSize(
+                width: CGFloat(CGDisplayPixelsWide(displayContext.displayID)),
+                height: CGFloat(CGDisplayPixelsHigh(displayContext.displayID))
+            )
+            let observedBoundsAtCreate = CGDisplayBounds(displayContext.displayID).size
+            let collapsedOneXPixel: CGSize? = if acceptedCollapsedOneX {
+                if observedPixelDimensionsAtCreate.width > 0, observedPixelDimensionsAtCreate.height > 0 {
+                    Self.normalizedPixelResolution(observedPixelDimensionsAtCreate)
+                } else if observedBoundsAtCreate.width > 0, observedBoundsAtCreate.height > 0 {
+                    Self.normalizedPixelResolution(observedBoundsAtCreate)
+                } else {
+                    Self.fallbackResolution(for: requestedResolution)
+                }
+            } else {
+                nil
+            }
+            let collapsedModeSizesAtCreate: CGVirtualDisplayBridge.DisplayModeSizes? = if acceptedCollapsedOneX,
+                                                                                          let modeSizesAtCreate,
+                                                                                          let collapsedOneXPixel,
+                                                                                          Self.resolutionsMatch(modeSizesAtCreate.pixel, collapsedOneXPixel),
+                                                                                          Self.resolutionsMatch(modeSizesAtCreate.logical, collapsedOneXPixel) {
+                modeSizesAtCreate
+            } else {
+                nil
+            }
             let effectiveScaleHint: CGFloat = if let modeSizesAtCreate,
+                                                 !acceptedCollapsedOneX,
                                                  modeSizesAtCreate.logical.width > 0 {
                 max(1.0, modeSizesAtCreate.pixel.width / modeSizesAtCreate.logical.width)
+            } else if let collapsedModeSizesAtCreate,
+                      collapsedModeSizesAtCreate.logical.width > 0 {
+                max(1.0, collapsedModeSizesAtCreate.pixel.width / collapsedModeSizesAtCreate.logical.width)
+            } else if acceptedCollapsedOneX {
+                1.0
             } else {
                 attempt.hiDPI ? 2.0 : 1.0
             }
-            let effectivePixel = modeSizesAtCreate?.pixel ?? requestedResolution
+            let effectivePixel = if acceptedCollapsedOneX {
+                collapsedModeSizesAtCreate?.pixel ?? collapsedOneXPixel ?? requestedResolution
+            } else {
+                modeSizesAtCreate?.pixel ?? requestedResolution
+            }
             let effectiveLogical = SharedVirtualDisplayManager.logicalResolution(
                 for: effectivePixel,
                 scaleFactor: effectiveScaleHint
@@ -270,7 +331,11 @@ extension SharedVirtualDisplayManager {
             }
 
             let observedModeAfterReady = observedDisplayMode(displayID: displayContext.displayID)
-            if Self.needsPostReadyModeEnforcement(
+            if acceptedCollapsedOneX {
+                MirageLogger.host(
+                    "Skipping post-ready virtual display mode enforcement for \(displayContext.displayID); Retina request already settled as stable 1x \(Int(effectivePixel.width))x\(Int(effectivePixel.height))"
+                )
+            } else if Self.needsPostReadyModeEnforcement(
                 observedMode: observedModeAfterReady,
                 expectedPixelResolution: effectivePixel,
                 expectedRefreshRate: Double(refreshRate)
@@ -356,20 +421,24 @@ extension SharedVirtualDisplayManager {
                 createdAt: Date(),
                 displayRef: UncheckedSendableBox(displayContext.display)
             )
-            if !attempt.hiDPI {
+            if acceptedCollapsedOneX {
+                MirageLogger.host(
+                    "Created shared virtual display using collapsed Retina 1x fallback at \(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)) px, color=\(managedContext.colorSpace.displayName)"
+                )
+            } else if !attempt.hiDPI {
                 MirageLogger.host(
                     "Created shared virtual display using non-Retina fallback at \(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)) px, color=\(attempt.colorSpace.displayName)"
                 )
             }
 
-            if attempt.colorSpace != colorSpace {
-                if colorSpace == .displayP3, attempt.colorSpace == .sRGB {
+            if managedContext.colorSpace != colorSpace {
+                if colorSpace == .displayP3, managedContext.colorSpace == .sRGB {
                     MirageLogger.host(
                         "Virtual display color fallback engaged: requested Display P3, effectiveColor=sRGB, coverage=\(managedContext.displayP3CoverageStatus.rawValue)"
                     )
                 } else {
                     MirageLogger.host(
-                        "Virtual display color fallback engaged: requested \(colorSpace.displayName), using \(attempt.colorSpace.displayName)"
+                        "Virtual display color fallback engaged: requested \(colorSpace.displayName), using \(managedContext.colorSpace.displayName)"
                     )
                 }
             }
@@ -394,6 +463,10 @@ extension SharedVirtualDisplayManager {
 
         if case let .screenCaptureKitVisibilityDelayed(displayID) = lastValidationOutcome {
             throw SharedDisplayError.screenCaptureKitVisibilityDelayed(displayID)
+        }
+
+        if retinaCollapseRequiresOneXRetry {
+            throw SharedDisplayError.retinaCollapsedToOneX(normalizedRequested)
         }
 
         let attemptSummary = dedupedAttempts.map(\.label).joined(separator: ", ")

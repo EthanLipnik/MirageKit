@@ -20,7 +20,6 @@ extension CGVirtualDisplayBridge {
         width: Int,
         height: Int,
         ppi: Double,
-        colorSpace: MirageColorSpace,
         profile: DescriptorAttempt
     ) {
         descriptor.setValue(name, forKey: "name")
@@ -33,19 +32,6 @@ extension CGVirtualDisplayBridge {
             CGSize(width: 25.4 * Double(width) / ppi, height: 25.4 * Double(height) / ppi),
             forKey: "sizeInMillimeters"
         )
-
-        switch colorSpace {
-        case .displayP3:
-            descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
-            descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
-            descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
-            descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
-        case .sRGB:
-            descriptor.setValue(SRGBPrimaries.red, forKey: "redPrimary")
-            descriptor.setValue(SRGBPrimaries.green, forKey: "greenPrimary")
-            descriptor.setValue(SRGBPrimaries.blue, forKey: "bluePrimary")
-            descriptor.setValue(SRGBPrimaries.whitePoint, forKey: "whitePoint")
-        }
 
         descriptor.setValue(profile.queue, forKey: "queue")
     }

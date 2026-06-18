@@ -555,5 +555,27 @@ struct DesktopResizeTransactionTests {
             )
         )
     }
+
+    @Test("Display mirroring target resolution falls back to display pixels")
+    func displayMirroringTargetResolutionFallsBackToDisplayPixels() {
+        let observed = displayMirroringObservedTargetPixelResolution(
+            modePixelResolution: nil,
+            displayPixelDimensions: CGSize(width: 1600, height: 1200),
+            displayBoundsSize: CGSize(width: 800, height: 600)
+        )
+
+        #expect(observed == CGSize(width: 1600, height: 1200))
+    }
+
+    @Test("Display mirroring target resolution falls back to bounds")
+    func displayMirroringTargetResolutionFallsBackToBounds() {
+        let observed = displayMirroringObservedTargetPixelResolution(
+            modePixelResolution: nil,
+            displayPixelDimensions: .zero,
+            displayBoundsSize: CGSize(width: 1600, height: 1200)
+        )
+
+        #expect(observed == CGSize(width: 1600, height: 1200))
+    }
 }
 #endif

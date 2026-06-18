@@ -101,6 +101,7 @@ actor SharedVirtualDisplayManager {
     enum SharedDisplayError: Error, LocalizedError {
         case apiNotAvailable
         case creationFailed(String)
+        case retinaCollapsedToOneX(CGSize)
         case noActiveDisplay
         case streamDisplayNotFound(StreamID)
         case spaceNotFound(CGDirectDisplayID)
@@ -113,6 +114,8 @@ actor SharedVirtualDisplayManager {
                 "CGVirtualDisplay APIs are not available"
             case let .creationFailed(reason):
                 "Failed to create virtual display: \(reason)"
+            case let .retinaCollapsedToOneX(resolution):
+                "Retina virtual display request collapsed to 1x at \(Int(resolution.width))x\(Int(resolution.height))"
             case .noActiveDisplay:
                 "No active shared virtual display"
             case let .streamDisplayNotFound(streamID):

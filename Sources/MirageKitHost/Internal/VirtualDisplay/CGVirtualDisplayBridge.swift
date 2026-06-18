@@ -104,14 +104,16 @@ extension CGVirtualDisplayBridge {
         colorSpace: MirageColorSpace,
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
-    -> VirtualDisplayContext? {
-        guard loadPrivateAPIs() else { return nil }
+    -> VirtualDisplayCreationResult {
+        guard loadPrivateAPIs() else {
+            return VirtualDisplayCreationResult(context: nil, modeActivationResult: nil)
+        }
 
         guard let descriptorClass = cgVirtualDisplayDescriptorClass as? NSObject.Type,
               let settingsClass = cgVirtualDisplaySettingsClass as? NSObject.Type,
               let modeClass = cgVirtualDisplayModeClass as? NSObject.Type,
               let displayClass = cgVirtualDisplayClass as? NSObject.Type else {
-            return nil
+            return VirtualDisplayCreationResult(context: nil, modeActivationResult: nil)
         }
 
         // Log existing displays before creation
@@ -128,7 +130,7 @@ extension CGVirtualDisplayBridge {
         while true {
             if startupBudget?.isExpired == true {
                 MirageLogger.host("Virtual display creation stopped because startup budget expired")
-                return nil
+                return VirtualDisplayCreationResult(context: nil, modeActivationResult: .failed)
             }
             let persistentSerial = persistentSerialNumber(for: colorSpace)
             var validationHint = cachedValidationHint(
@@ -159,7 +161,7 @@ extension CGVirtualDisplayBridge {
             for profile in descriptorProfiles {
                 if startupBudget?.isExpired == true {
                     MirageLogger.host("Virtual display descriptor attempts stopped because startup budget expired")
-                    return nil
+                    return VirtualDisplayCreationResult(context: nil, modeActivationResult: .failed)
                 }
                 let profileResult = createVirtualDisplay(
                     name: name,
@@ -182,26 +184,41 @@ extension CGVirtualDisplayBridge {
                 }
 
                 if let creationResult = profileResult.context {
-                    storePreferredDescriptorProfile(
-                        profile.profile,
-                        for: colorSpace,
-                        width: width,
-                        height: height,
-                        refreshRate: refreshRate,
-                        hiDPI: hiDPI
+                    if creationResult.colorSpace == colorSpace {
+                        storePreferredDescriptorProfile(
+                            profile.profile,
+                            for: colorSpace,
+                            width: width,
+                            height: height,
+                            refreshRate: refreshRate,
+                            hiDPI: hiDPI
+                        )
+                        storeValidationHint(
+                            CachedValidationHint(
+                                profile: profile.profile,
+                                serial: profile.serial
+                            ),
+                            for: colorSpace,
+                            width: width,
+                            height: height,
+                            refreshRate: refreshRate,
+                            hiDPI: hiDPI
+                        )
+                    }
+                    return VirtualDisplayCreationResult(
+                        context: creationResult,
+                        modeActivationResult: profileResult.modeActivationResult ?? .succeeded
                     )
-                    storeValidationHint(
-                        CachedValidationHint(
-                            profile: profile.profile,
-                            serial: profile.serial
-                        ),
-                        for: colorSpace,
-                        width: width,
-                        height: height,
-                        refreshRate: refreshRate,
-                        hiDPI: hiDPI
+                }
+
+                if profileResult.modeActivationResult == .retinaCollapsedToOneX {
+                    MirageLogger.host(
+                        "Virtual display Retina activation collapsed to 1x; skipping descriptor profile retries"
                     )
-                    return creationResult
+                    return VirtualDisplayCreationResult(
+                        context: nil,
+                        modeActivationResult: .retinaCollapsedToOneX
+                    )
                 }
 
                 if shouldEvictCachedDescriptorProfile(
@@ -232,7 +249,10 @@ extension CGVirtualDisplayBridge {
 
                 if let failedDisplayID = profileResult.failedDisplayID,
                    !teardownFailedDisplay(displayID: failedDisplayID, profileLabel: profile.label) {
-                    return nil
+                    return VirtualDisplayCreationResult(
+                        context: nil,
+                        modeActivationResult: profileResult.modeActivationResult
+                    )
                 }
             }
 
@@ -255,7 +275,7 @@ extension CGVirtualDisplayBridge {
         } else {
             MirageLogger.host("Virtual display failed 1x activation for all descriptor profiles")
         }
-        return nil
+        return VirtualDisplayCreationResult(context: nil, modeActivationResult: .failed)
     }
 
     private static func createVirtualDisplay(
@@ -277,6 +297,7 @@ extension CGVirtualDisplayBridge {
         var failedDisplayID: CGDirectDisplayID?
         var creationResult: VirtualDisplayContext?
         var sawColorValidationFailure = false
+        var modeActivationResult: VirtualDisplayModeActivationResult?
 
         autoreleasepool {
             let descriptor = descriptorClass.init()
@@ -286,7 +307,6 @@ extension CGVirtualDisplayBridge {
                 width: width,
                 height: height,
                 ppi: ppi,
-                colorSpace: colorSpace,
                 profile: profile
             )
 
@@ -301,7 +321,7 @@ extension CGVirtualDisplayBridge {
             let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID
             failedDisplayID = displayID
 
-            guard activateAndValidateMode(
+            let activationResult = activateAndValidateMode(
                 display: display as AnyObject,
                 settingsClass: settingsClass,
                 modeClass: modeClass,
@@ -311,13 +331,20 @@ extension CGVirtualDisplayBridge {
                 hiDPI: hiDPI,
                 serial: profile.serial,
                 startupBudget: startupBudget
-            ) else {
+            )
+            modeActivationResult = activationResult
+            guard activationResult.isUsableForCreation else {
                 let modeLabel = hiDPI ? "Retina" : "1x"
                 MirageLogger.host(
                     "Virtual display \(modeLabel) activation failed for profile \(profile.label)"
                 )
                 invalidateVirtualDisplay(display)
                 return
+            }
+            if activationResult == .retinaCollapsedToOneX {
+                MirageLogger.host(
+                    "Virtual display Retina activation accepted as degraded 1x mode for profile \(profile.label)"
+                )
             }
 
             guard let displayID else {
@@ -333,6 +360,9 @@ extension CGVirtualDisplayBridge {
                 displayID: displayID,
                 expectedColorSpace: colorSpace
             )
+            let acceptsCollapsedSRGBFallback = activationResult == .retinaCollapsedToOneX &&
+                colorSpace == .displayP3 &&
+                colorValidation.coverageStatus == .sRGBFallback
             guard acceptValidatedVirtualDisplayColor(
                 colorValidation,
                 colorSpace: colorSpace,
@@ -340,12 +370,14 @@ extension CGVirtualDisplayBridge {
                 height: height,
                 refreshRate: refreshRate,
                 hiDPI: hiDPI,
-                profile: profile
+                profile: profile,
+                allowDisplayP3SRGBFallback: acceptsCollapsedSRGBFallback
             ) else {
                 sawColorValidationFailure = colorSpace == .displayP3
                 invalidateVirtualDisplay(display)
                 return
             }
+            let effectiveColorSpace: MirageColorSpace = acceptsCollapsedSRGBFallback ? .sRGB : colorSpace
 
             MirageLogger.host("Created virtual display with ID: \(displayID)")
             configureDisplaySeparation(
@@ -356,7 +388,7 @@ extension CGVirtualDisplayBridge {
                 display: display as AnyObject,
                 displayID: displayID,
                 refreshRate: refreshRate,
-                colorSpace: colorSpace,
+                colorSpace: effectiveColorSpace,
                 displayP3CoverageStatus: colorValidation.coverageStatus
             )
         }
@@ -364,7 +396,8 @@ extension CGVirtualDisplayBridge {
         return VirtualDisplayProfileCreationResult(
             context: creationResult,
             failedDisplayID: failedDisplayID,
-            sawColorValidationFailure: sawColorValidationFailure
+            sawColorValidationFailure: sawColorValidationFailure,
+            modeActivationResult: modeActivationResult
         )
     }
 
@@ -398,7 +431,7 @@ extension CGVirtualDisplayBridge {
             return false
         }
 
-        let success = activateAndValidateMode(
+        let activationResult = activateAndValidateMode(
             display: display,
             settingsClass: settingsClass,
             modeClass: modeClass,
@@ -410,7 +443,7 @@ extension CGVirtualDisplayBridge {
             startupBudget: nil
         )
 
-        if success {
+        if activationResult.succeeded {
             MirageLogger.host(
                 "Updated virtual display resolution to \(width)x\(height) @\(refreshRate)Hz, hiDPI=\(hiDPI)"
             )
@@ -421,7 +454,7 @@ extension CGVirtualDisplayBridge {
             )
         }
 
-        return success
+        return activationResult.succeeded
     }
 }
 

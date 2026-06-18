@@ -76,7 +76,8 @@ extension CGVirtualDisplayBridge {
         height: Int,
         refreshRate: Double,
         hiDPI: Bool,
-        profile: DescriptorAttempt
+        profile: DescriptorAttempt,
+        allowDisplayP3SRGBFallback: Bool = false
     ) -> Bool {
         let observedColorName = colorValidation.observedName ?? "unknown"
         let coverageStatus = colorValidation.coverageStatus
@@ -98,6 +99,21 @@ extension CGVirtualDisplayBridge {
             }
             return true
         case .sRGBFallback, .unresolved:
+            if colorSpace == .displayP3,
+               coverageStatus == .sRGBFallback,
+               allowDisplayP3SRGBFallback {
+                clearValidationHint(
+                    for: colorSpace,
+                    width: width,
+                    height: height,
+                    refreshRate: refreshRate,
+                    hiDPI: hiDPI
+                )
+                MirageLogger.host(
+                    "Virtual display color fallback accepted (requested \(colorSpace.displayName), effective=sRGB, coverage=\(coverageStatus.rawValue), observed \(observedColorName), profile \(profile.label), serial \(profile.serial))"
+                )
+                return true
+            }
             if colorSpace == .displayP3 {
                 clearValidationHint(
                     for: colorSpace,

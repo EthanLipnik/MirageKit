@@ -27,7 +27,14 @@ extension MirageHostService {
 
         while true {
             let onlineDisplayIDs = currentOnlineDisplayIDsForMirroringStability()
-            let observedResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(targetDisplayID)?.pixel
+            let observedResolution = displayMirroringObservedTargetPixelResolution(
+                modePixelResolution: CGVirtualDisplayBridge.currentDisplayModeSizes(targetDisplayID)?.pixel,
+                displayPixelDimensions: CGSize(
+                    width: CGFloat(CGDisplayPixelsWide(targetDisplayID)),
+                    height: CGFloat(CGDisplayPixelsHigh(targetDisplayID))
+                ),
+                displayBoundsSize: CGDisplayBounds(targetDisplayID).size
+            )
             let decision = displayMirroringTargetStabilityDecision(
                 targetDisplayID: targetDisplayID,
                 onlineDisplayIDs: onlineDisplayIDs,
