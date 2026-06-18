@@ -620,13 +620,49 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
     }
 
-    @Test("Active input blocks pressured cadence demotion at quality floor")
-    func activeInputBlocksPressuredCadenceDemotionAtQualityFloor() {
+    @Test("Active input blocks early pressured cadence demotion at quality floor")
+    func activeInputBlocksEarlyPressuredCadenceDemotionAtQualityFloor() {
         let coordinator = HostAdaptiveFrameCoordinator()
 
         let allowed = coordinator.allowsDynamicCadenceDemotion(
             pressureState: .pressured,
             activeQuality: 0.35,
+            qualityFloor: 0.35,
+            sourceStill: false,
+            inputActive: true,
+            receiverState: .healthy,
+            transportPressureActionable: true,
+            transportAdmissionActiveDuration: 0.5
+        )
+
+        #expect(!allowed)
+    }
+
+    @Test("Active input allows sustained pressured cadence demotion at quality floor")
+    func activeInputAllowsSustainedPressuredCadenceDemotionAtQualityFloor() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+
+        let allowed = coordinator.allowsDynamicCadenceDemotion(
+            pressureState: .pressured,
+            activeQuality: 0.35,
+            qualityFloor: 0.35,
+            sourceStill: false,
+            inputActive: true,
+            receiverState: .healthy,
+            transportPressureActionable: true,
+            transportAdmissionActiveDuration: 1.0
+        )
+
+        #expect(allowed)
+    }
+
+    @Test("Active input blocks pressured cadence demotion above quality floor")
+    func activeInputBlocksPressuredCadenceDemotionAboveQualityFloor() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+
+        let allowed = coordinator.allowsDynamicCadenceDemotion(
+            pressureState: .pressured,
+            activeQuality: 0.55,
             qualityFloor: 0.35,
             sourceStill: false,
             inputActive: true,

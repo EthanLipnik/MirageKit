@@ -410,7 +410,8 @@ struct HostAdaptiveFrameCoordinator: Sendable, Equatable {
             return true
         }
         if inputActive {
-            return false
+            return activeQuality <= qualityFloor + 0.04 &&
+                transportAdmissionActiveDuration >= 1.0
         }
         if !sourceStill,
            activeQuality <= qualityFloor + 0.04,

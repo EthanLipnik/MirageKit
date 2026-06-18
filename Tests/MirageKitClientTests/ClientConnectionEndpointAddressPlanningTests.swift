@@ -14,9 +14,109 @@ import Testing
 
 @Suite("Client Connection Endpoint Address Planning")
 struct ClientConnectionEndpointAddressPlanningTests {
+    @Test("Experimental system proximity routing parses environment flag")
+    func experimentalSystemProximityRoutingParsesEnvironmentFlag() {
+        #expect(MirageClientService.experimentalSystemProximityRoutingEnabled(environment: [
+            "MIRAGE_EXPERIMENTAL_SYSTEM_PROXIMITY_ROUTING": "1",
+        ]))
+        #expect(MirageClientService.experimentalSystemProximityRoutingEnabled(environment: [
+            "MIRAGE_EXPERIMENTAL_SYSTEM_PROXIMITY_ROUTING": "true;debug",
+        ]))
+        #expect(!MirageClientService.experimentalSystemProximityRoutingEnabled(environment: [
+            "MIRAGE_EXPERIMENTAL_SYSTEM_PROXIMITY_ROUTING": "0",
+        ]))
+        #expect(!MirageClientService.experimentalSystemProximityRoutingEnabled(environment: [:]))
+    }
+
     @MainActor
-    @Test("Client treats AWDL scoped address as a last resort without hostname fallback")
-    func controlSessionAttemptsSkipAwdlWithoutScopedLiteral() throws {
+    @Test("Experimental system proximity routing plans unpinned Bonjour service first")
+    func experimentalSystemProximityRoutingPlansUnpinnedBonjourServiceFirst() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61150))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61151))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "en0", type: .wifi, index: 8),
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            ),
+            experimentalSystemProximityRoutingEnabled: true
+        )
+        let systemAttempt = try #require(attempts.first)
+
+        #expect(systemAttempt.endpointSource == "bonjour-system-proximity-service")
+        #expect(systemAttempt.transportKind == .tcp)
+        #expect(systemAttempt.routeTier == .lowLatencyWireless)
+        #expect(systemAttempt.requiredInterface == nil)
+        #expect(systemAttempt.requiredInterfaceType == nil)
+        #expect(systemAttempt.interfaceDescription == "proximity")
+        #expect(systemAttempt.endpoint == .service(
+            name: "Altair",
+            type: "_mirage._tcp",
+            domain: "local",
+            interface: nil
+        ))
+
+        let llwSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["llw0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let wifiSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+
+        #expect(systemAttempt.acceptsProximityPath(llwSnapshot))
+        #expect(!systemAttempt.acceptsProximityPath(wifiSnapshot))
+        #expect(attempts.contains { $0.endpointSource == "bonjour-proximity-service" })
+    }
+
+    @MainActor
+    @Test("Client uses Bonjour service TCP for AWDL when scoped address is unresolved")
+    func controlSessionAttemptsUseBonjourServiceTCPWhenAwdlScopedLiteralIsUnresolved() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61050))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61051))
@@ -53,14 +153,24 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
 
-        // No awdl0-scoped literal was resolved, so AWDL must not be attempted:
-        // the .local%awdl0 hostname form cannot bring up AWDL. Since plain AWDL
-        // is a last-resort route, a viable LAN fallback should not stall while
-        // waiting for fresher AWDL address evidence.
-        #expect(attempts.allSatisfy { $0.routeTier != .awdl })
+        // No awdl0-scoped literal was resolved, so AWDL UDP/QUIC must not be
+        // attempted. The TCP Bonjour service endpoint is still a real service
+        // path, so Network.framework can resolve the peer-to-peer route without
+        // Mirage inventing an address.
+        let awdlAttempts = attempts.filter { $0.routeTier == .awdl }
+        #expect(awdlAttempts.count == 1)
+        #expect(awdlAttempts[0].transportKind == .tcp)
+        #expect(awdlAttempts[0].endpointSource == "bonjour-proximity-service")
+        #expect(awdlAttempts[0].endpoint == .service(
+            name: "Altair",
+            type: "_mirage._tcp",
+            domain: "local",
+            interface: nil
+        ))
         #expect(service.hasPendingAwdlScopedAddressResolution(for: host))
         #expect(!service.shouldWaitForPendingAwdlScopedAddress(host: host, attempts: attempts))
-        // LAN fallback is still planned so the connection still succeeds.
+        // LAN fallback is still planned so the connection can avoid waiting for
+        // fresher AWDL address evidence when Wi-Fi is viable.
         #expect(!attempts.isEmpty)
 
         let scopedAwdlAddress = try #require(IPv6Address("fe80::2%awdl0"))
@@ -427,17 +537,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
         let expectedWiFiEndpoint: NWEndpoint = .hostPort(host: .ipv4(wifiAddress), port: udpPort)
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[1].endpoint.debugDescription == expectedWiFiEndpoint.debugDescription)
-        #expect(attempts[1].routeTier == .wifiLAN)
-        #expect(attempts[1..<4].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts[0].endpoint.debugDescription == expectedWiFiEndpoint.debugDescription)
+        #expect(attempts[0].routeTier == .wifiLAN)
+        #expect(attempts[0..<3].allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.suffix(2).allSatisfy { $0.routeTier == .awdl })
     }
 
@@ -488,17 +591,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
         let expectedRememberedEndpoint: NWEndpoint = .hostPort(host: .ipv4(rememberedAddress), port: udpPort)
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[1].endpoint.debugDescription == expectedRememberedEndpoint.debugDescription)
-        #expect(attempts[1].routeTier == .wifiLAN)
-        #expect(attempts[1..<4].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts[0].endpoint.debugDescription == expectedRememberedEndpoint.debugDescription)
+        #expect(attempts[0].routeTier == .wifiLAN)
+        #expect(attempts[0..<3].allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.suffix(2).allSatisfy { $0.routeTier == .awdl })
     }
 
@@ -551,12 +647,9 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         #expect(proximityAttempts.map(\.routeTier) == [
             .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .lowLatencyWireless,
             .awdl, .awdl,
         ])
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
-        #expect(proximityAttempts[3].isOptimisticProximityProbe)
-        #expect(proximityAttempts[3].proximityInterfaceKind == .lowLatencyWireless)
     }
 
     @MainActor
@@ -666,14 +759,11 @@ struct ClientConnectionEndpointAddressPlanningTests {
 
         #expect(proximityAttempts.map(\.routeTier) == [
             .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
-            .lowLatencyWireless,
             .awdl, .awdl,
         ])
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceKind == .wiredEthernet })
         #expect(proximityAttempts.prefix(3).allSatisfy { $0.requiredInterfaceType == .wiredEthernet })
-        #expect(proximityAttempts[3].isOptimisticProximityProbe)
-        #expect(proximityAttempts[3].proximityInterfaceKind == .lowLatencyWireless)
     }
 
     @MainActor
@@ -718,11 +808,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
         )
 
         #expect(!attempts.contains { $0.routeTier == .sameWiredEthernet })
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[1..<4].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.map(\.routeTier) == [
-            .lowLatencyWireless,
             .wifiLAN, .wifiLAN, .wifiLAN,
         ])
     }
@@ -783,8 +870,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Bonjour-visible VPN route still attempts optimistic LLW before overlay fallback")
-    func bonjourVisibleVPNRouteAttemptsOptimisticLLWBeforeOverlayFallback() throws {
+    @Test("Bonjour-visible VPN route uses overlay fallback without synthetic LLW")
+    func bonjourVisibleVPNRouteUsesOverlayFallbackWithoutSyntheticLLW() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61052))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61053))
@@ -822,24 +909,17 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        let expectedOptimisticEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
         let expectedOverlayEndpoint: NWEndpoint = .hostPort(
             host: .ipv4(overlayAddress),
             port: udpPort
         )
 
-        #expect(attempts.count == 4)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].candidateKind == .local)
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticEndpoint.debugDescription)
-        #expect(attempts[1].candidateKind == .overlay)
-        #expect(attempts[1].routeTier == .vpn)
-        #expect(attempts[1].endpoint.debugDescription == expectedOverlayEndpoint.debugDescription)
-        #expect(attempts[1..<4].map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.count == 3)
+        #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
+        #expect(attempts.allSatisfy { $0.routeTier == .vpn })
+        #expect(attempts[0].endpoint.debugDescription == expectedOverlayEndpoint.debugDescription)
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
     }
 
     @MainActor
@@ -906,26 +986,19 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: tcpPort
         )
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts.count == 6)
-        #expect(attempts.map(\.transportKind) == [.udp, .udp, .quic, .tcp, .udp, .quic])
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
+        #expect(attempts.count == 5)
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp, .udp, .quic])
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
         #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(attempts[1].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
+        #expect(attempts[1].endpoint.debugDescription == expectedFallbackQUICEndpoint.debugDescription)
         #expect(!attempts[2].isPeerToPeerPreferred)
-        #expect(attempts[2].endpoint.debugDescription == expectedFallbackQUICEndpoint.debugDescription)
-        #expect(!attempts[3].isPeerToPeerPreferred)
-        #expect(attempts[3].endpoint.debugDescription == expectedFallbackTCPEndpoint.debugDescription)
+        #expect(attempts[2].endpoint.debugDescription == expectedFallbackTCPEndpoint.debugDescription)
+        #expect(attempts[3].isPeerToPeerPreferred)
+        #expect(attempts[3].endpoint.debugDescription == expectedAwdlUDPEndpoint.debugDescription)
         #expect(attempts[4].isPeerToPeerPreferred)
-        #expect(attempts[4].endpoint.debugDescription == expectedAwdlUDPEndpoint.debugDescription)
-        #expect(attempts[5].isPeerToPeerPreferred)
-        #expect(attempts[5].endpoint.debugDescription == expectedAwdlQUICEndpoint.debugDescription)
+        #expect(attempts[4].endpoint.debugDescription == expectedAwdlQUICEndpoint.debugDescription)
     }
 
     @MainActor
@@ -982,19 +1055,12 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts.count == 4)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(attempts[1..<4].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.count == 3)
+        #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(!attempts.contains { $0.routeTier == .awdl })
-        #expect(attempts.map(\.transportKind) == [.udp, .udp, .quic, .tcp])
-        #expect(attempts[1].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -1334,25 +1400,18 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let attempts = service.controlSessionAttempts(for: host)
         let proximityAttempts = attempts.filter { $0.isPeerToPeerPreferred && $0.transportKind == .udp }
         let expectedAnpiEndpoint: NWEndpoint = .hostPort(host: .ipv6(anpiAddress), port: udpPort)
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
         let expectedAwdlEndpoint: NWEndpoint = .hostPort(host: .ipv6(awdlAddress), port: udpPort)
 
-        #expect(proximityAttempts.count == 3)
+        #expect(proximityAttempts.count == 2)
         #expect(proximityAttempts[0].endpoint.debugDescription == expectedAnpiEndpoint.debugDescription)
         #expect(proximityAttempts[0].proximityInterfaceNames == ["anpi0"])
-        #expect(proximityAttempts[1].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(proximityAttempts[1].isOptimisticProximityProbe)
-        #expect(proximityAttempts[1].proximityInterfaceKind == .lowLatencyWireless)
-        #expect(proximityAttempts[2].endpoint.debugDescription == expectedAwdlEndpoint.debugDescription)
-        #expect(proximityAttempts[2].proximityInterfaceNames == ["awdl0"])
+        #expect(proximityAttempts[1].endpoint.debugDescription == expectedAwdlEndpoint.debugDescription)
+        #expect(proximityAttempts[1].proximityInterfaceNames == ["awdl0"])
     }
 
     @MainActor
-    @Test("Client orders optimistic scoped proximity addresses by interface priority")
-    func optimisticControlSessionAttemptsOrderScopedProximityAddressesByInterfacePriority() throws {
+    @Test("Client orders scoped proximity addresses by interface priority")
+    func controlSessionAttemptsOrderScopedProximityAddressesByInterfacePriority() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61035))
         let anpiAddress = try #require(IPv6Address("fe80::3%anpi0"))
@@ -1380,20 +1439,13 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let attempts = service.controlSessionAttempts(for: host)
         let proximityAttempts = attempts.filter { $0.isPeerToPeerPreferred && $0.transportKind == .udp }
         let expectedAnpiEndpoint: NWEndpoint = .hostPort(host: .ipv6(anpiAddress), port: udpPort)
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
         let expectedAwdlEndpoint: NWEndpoint = .hostPort(host: .ipv6(awdlAddress), port: udpPort)
 
-        #expect(proximityAttempts.count == 3)
+        #expect(proximityAttempts.count == 2)
         #expect(proximityAttempts[0].endpoint.debugDescription == expectedAnpiEndpoint.debugDescription)
         #expect(proximityAttempts[0].proximityInterfaceNames == ["anpi0"])
-        #expect(proximityAttempts[1].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(proximityAttempts[1].isOptimisticProximityProbe)
-        #expect(proximityAttempts[1].proximityInterfaceKind == .lowLatencyWireless)
-        #expect(proximityAttempts[2].endpoint.debugDescription == expectedAwdlEndpoint.debugDescription)
-        #expect(proximityAttempts[2].proximityInterfaceNames == ["awdl0"])
+        #expect(proximityAttempts[1].endpoint.debugDescription == expectedAwdlEndpoint.debugDescription)
+        #expect(proximityAttempts[1].proximityInterfaceNames == ["awdl0"])
     }
 
     @MainActor
@@ -1480,25 +1532,21 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
 
-        #expect(attempts.count == 4)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(service.controlSessionConnectTimeout(for: attempts[0]) == .milliseconds(750))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .milliseconds(1500))
+        #expect(attempts.count == 3)
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(service.controlSessionConnectTimeout(for: attempts[0]) == .seconds(5))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(20))
         #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(service.controlSessionConnectTimeout(for: attempts[1]) == .seconds(5))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[1]) == .seconds(20))
-        #expect(!attempts[2].isPeerToPeerPreferred)
-        #expect(service.controlSessionConnectTimeout(for: attempts[2]) == .seconds(30))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[2]) == .seconds(30))
-        #expect(attempts[3].isPeerToPeerPreferred)
-        #expect(service.controlSessionConnectTimeout(for: attempts[3]) == .seconds(2))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[3]) == .seconds(6))
+        #expect(service.controlSessionConnectTimeout(for: attempts[1]) == .seconds(30))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[1]) == .seconds(30))
+        #expect(attempts[2].isPeerToPeerPreferred)
+        #expect(service.controlSessionConnectTimeout(for: attempts[2]) == .seconds(2))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[2]) == .seconds(6))
     }
 
     @MainActor
-    @Test("Client adds optimistic LLW probe for Bonjour host without proximity evidence")
-    func controlSessionAttemptsAddOptimisticLLWProbeWithoutProximityEvidence() throws {
+    @Test("Client skips LLW probe for Bonjour host without proximity evidence")
+    func controlSessionAttemptsSkipLLWProbeWithoutProximityEvidence() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61025))
         let host = try LoomPeer(
@@ -1535,20 +1583,12 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
-        #expect(attempts[2].transportKind == .tcp)
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
@@ -1592,25 +1632,18 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: NWEndpoint.Host("altair.local"),
             port: udpPort
         )
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
         let expectedTCPEndpoint: NWEndpoint = .hostPort(
             host: NWEndpoint.Host("altair.local"),
             port: tcpPort
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
         #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(attempts[2].transportKind == .tcp)
-        #expect(!attempts[2].isPeerToPeerPreferred)
-        #expect(attempts[2].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -1694,18 +1727,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv4(#require(IPv4Address("100.65.199.51"))),
             port: udpPort
         )
-        let expectedOptimisticLLWEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts.count == 2)
+        #expect(attempts.count == 1)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isOptimisticProximityProbe)
-        #expect(attempts[0].routeTier == .lowLatencyWireless)
-        #expect(attempts[0].endpoint.debugDescription == expectedOptimisticLLWEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(!attempts[1].isPeerToPeerPreferred)
+        #expect(!attempts[0].isPeerToPeerPreferred)
         #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
@@ -1814,8 +1839,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(!attempt.acceptsProximityPath(wifiSnapshot))
     }
 
-    @Test("Optimistic proximity validation accepts only proximity-like paths")
-    func optimisticProximityPathValidationRequiresProximityPath() {
+    @Test("Generic proximity validation accepts only proximity-like paths")
+    func genericProximityPathValidationRequiresProximityPath() {
         let attempt = MirageClientService.ControlSessionAttempt(
             hostName: "Altair",
             endpoint: .hostPort(host: "altair.local", port: 61040),

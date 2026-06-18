@@ -113,10 +113,9 @@ extension StreamContext {
             return false
         }
         let governorDecision = latestStreamQualityDecision()
-        let governorAllowsMotionCadence = governorDecision.cause == .motion &&
-            governorDecision.selectedLever == .reduceCadence
+        let governorAllowsCadence = governorDecision.selectedLever == .reduceCadence
         if mediaPathProfile.usesLocalBulkTransportPolicy,
-           !governorAllowsMotionCadence,
+           !governorAllowsCadence,
            !adaptiveFrameCoordinator.allowsTransportAdmissionStructuralStep(pressureSnapshot) {
             return false
         }
@@ -129,8 +128,8 @@ extension StreamContext {
             realtimePressureState
         }
         let transportPressureActionable = adaptiveFrameCoordinator.transportPressureIsActionable(pressureSnapshot) ||
-            governorAllowsMotionCadence
-        let cadenceQualityFloor = governorAllowsMotionCadence
+            governorAllowsCadence
+        let cadenceQualityFloor = governorAllowsCadence && mediaPathProfile.usesLocalBulkTransportPolicy
             ? contract.localMotionQualityFloor
             : qualityFloor
         guard adaptiveFrameCoordinator.allowsDynamicCadenceDemotion(

@@ -201,6 +201,8 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
     private var senderOverLimitSampleCount = 0
     private var motionPressureStartedAt: CFAbsoluteTime = 0
     private var lastMotionPressureTime: CFAbsoluteTime = 0
+    private var localTransportPressureStartedAt: CFAbsoluteTime = 0
+    private var lastLocalTransportPressureTime: CFAbsoluteTime = 0
     private var latestMotionQualityTarget: Float?
     private var lastPassivePromotionTime: CFAbsoluteTime = 0
     private var lastRuntimeReductionTime: CFAbsoluteTime = 0
@@ -360,11 +362,18 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             !inputActive &&
             evidence.cause == .motion &&
             motionCadenceReliefAllowed(contract: contract, now: now)
+        let localSustainedTransportAdmissionAllowed = localSustainedTransportReliefAllowed(
+            snapshot: snapshot,
+            evidence: evidence,
+            minimumActiveDuration: inputActive ? 0.75 : 0.5,
+            now: now
+        )
         let proposedHardThrottle = proposedMode == .hardThrottle
         if snapshot.mediaPathProfile.usesLocalBulkTransportPolicy &&
             !evidence.hardTransport &&
             !proposedHardThrottle &&
-            !localMotionCadenceAllowed {
+            !localMotionCadenceAllowed &&
+            !localSustainedTransportAdmissionAllowed {
             let blockedReason = if inputActive && evidence.cause == .motion {
                 "input-cadence-protected"
             } else {
@@ -383,7 +392,8 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         }
         let allowed = evidence.evidenceClass == .hard ||
             proposedHardThrottle ||
-            localMotionCadenceAllowed
+            localMotionCadenceAllowed ||
+            localSustainedTransportAdmissionAllowed
         recordAdmissionDecision(
             evidence: evidence,
             contract: contract,
@@ -410,11 +420,19 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             let motionAllowed = evidence.cause == .motion &&
                 !inputActive &&
                 motionCadenceReliefAllowed(contract: contract, now: now)
-            let allowed = hardTransportAllowed || motionAllowed
+            let sustainedTransportAllowed = localSustainedTransportReliefAllowed(
+                snapshot: snapshot,
+                evidence: evidence,
+                minimumActiveDuration: inputActive ? 1.0 : 0.75,
+                now: now
+            )
+            let allowed = hardTransportAllowed || motionAllowed || sustainedTransportAllowed
             let blockedReason: String? = if allowed {
                 nil
-            } else if inputActive {
+            } else if inputActive && evidence.cause == .motion {
                 "input-cadence-protected"
+            } else if inputActive {
+                "input-cadence-requires-sustained-transport"
             } else {
                 "cadence-demotion-requires-hard-or-motion-floor"
             }
@@ -896,6 +914,52 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         }
         let latestQuality = latestMotionQualityTarget ?? latestDecision.qualityTarget ?? contract.qualityCeiling
         return latestQuality <= contract.localMotionQualityFloor + 0.03
+    }
+
+    private mutating func localSustainedTransportReliefAllowed(
+        snapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        evidence: Evidence,
+        minimumActiveDuration: CFAbsoluteTime,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        guard snapshot.mediaPathProfile.usesLocalBulkTransportPolicy,
+              evidence.evidenceClass == .soft else {
+            if lastLocalTransportPressureTime > 0,
+               now - lastLocalTransportPressureTime > 2.0 {
+                localTransportPressureStartedAt = 0
+                lastLocalTransportPressureTime = 0
+            }
+            return false
+        }
+        let qualifies = switch evidence.cause {
+        case .transport:
+            true
+        case .receiver:
+            snapshot.receiverReassemblyBacklogFrames > 0 ||
+                snapshot.receiverReassemblyBacklogBytes > 0 ||
+                (snapshot.receiverAckLagMs ?? 0) >= 250
+        default:
+            false
+        }
+        guard qualifies else {
+            if lastLocalTransportPressureTime > 0,
+               now - lastLocalTransportPressureTime > 2.0 {
+                localTransportPressureStartedAt = 0
+                lastLocalTransportPressureTime = 0
+            }
+            return false
+        }
+
+        if localTransportPressureStartedAt <= 0 ||
+            now - lastLocalTransportPressureTime > 2.0 {
+            localTransportPressureStartedAt = now
+        }
+        lastLocalTransportPressureTime = now
+        let observedDuration = max(
+            snapshot.transportAdmissionActiveDuration,
+            now - localTransportPressureStartedAt
+        )
+        return observedDuration >= minimumActiveDuration
     }
 
     private func reasonIndicatesMotionComplexity(_ reason: String?) -> Bool {

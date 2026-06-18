@@ -22,7 +22,6 @@ extension MirageClientService {
         let requiredInterface: NWInterface?
         let requiredInterfaceType: NWInterface.InterfaceType?
         let isPeerToPeerPreferred: Bool
-        let isOptimisticProximityProbe: Bool
         let proximityInterfaceKind: LoomDiscoveredInterfaceKind?
         let proximityInterfaceNames: [String]
 
@@ -63,7 +62,6 @@ extension MirageClientService {
             requiredInterface: NWInterface? = nil,
             requiredInterfaceType: NWInterface.InterfaceType? = nil,
             isPeerToPeerPreferred: Bool = false,
-            isOptimisticProximityProbe: Bool = false,
             proximityInterfaceKind: LoomDiscoveredInterfaceKind? = nil,
             proximityInterfaceNames: [String] = []
         ) {
@@ -76,7 +74,6 @@ extension MirageClientService {
             self.requiredInterface = requiredInterface
             self.requiredInterfaceType = requiredInterfaceType
             self.isPeerToPeerPreferred = isPeerToPeerPreferred
-            self.isOptimisticProximityProbe = isOptimisticProximityProbe
             self.proximityInterfaceKind = proximityInterfaceKind
             self.proximityInterfaceNames = proximityInterfaceNames
         }
@@ -194,11 +191,11 @@ extension MirageClientService {
                 4
             case .wifiLAN:
                 5
-            case .vpn:
-                6
-            case .other:
-                7
             case .awdl:
+                6
+            case .vpn:
+                7
+            case .other:
                 8
             }
         }

@@ -516,9 +516,6 @@ extension MirageClientService {
     }
 
     func controlSessionInitialConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
-        if attempt.isOptimisticProximityProbe {
-            return .milliseconds(750)
-        }
         if attempt.isPeerToPeerPreferred {
             return .seconds(2)
         }
@@ -537,9 +534,6 @@ extension MirageClientService {
     }
 
     func controlSessionActivePhaseIdleTimeout(for attempt: ControlSessionAttempt) -> Duration {
-        if attempt.isOptimisticProximityProbe {
-            return .milliseconds(750)
-        }
         if attempt.isPeerToPeerPreferred {
             return .seconds(2)
         }
@@ -558,9 +552,6 @@ extension MirageClientService {
     }
 
     func absoluteControlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
-        if attempt.isOptimisticProximityProbe {
-            return .milliseconds(1500)
-        }
         if attempt.isPeerToPeerPreferred {
             return .seconds(6)
         }

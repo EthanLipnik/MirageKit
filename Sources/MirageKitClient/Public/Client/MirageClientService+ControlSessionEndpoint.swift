@@ -10,12 +10,24 @@ import Loom
 import Network
 import MirageKit
 
+private let experimentalSystemProximityRoutingEnvironmentKey = "MIRAGE_EXPERIMENTAL_SYSTEM_PROXIMITY_ROUTING"
+private let experimentalSystemProximityEndpointSource = "bonjour-system-proximity-service"
+
 @MainActor
 extension MirageClientService {
+    nonisolated static func experimentalSystemProximityRoutingEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        MirageEnvironmentValue.isTruthy(environment[experimentalSystemProximityRoutingEnvironmentKey])
+    }
+
     func controlSessionAttempts(
         for host: LoomPeer,
-        localNetwork: ControlSessionNetworkDiagnostics? = nil
+        localNetwork: ControlSessionNetworkDiagnostics? = nil,
+        experimentalSystemProximityRoutingEnabled: Bool? = nil
     ) -> [ControlSessionAttempt] {
+        let usesExperimentalSystemProximityRouting = experimentalSystemProximityRoutingEnabled ??
+            Self.experimentalSystemProximityRoutingEnabled()
         let resolvedLocalNetwork = localNetwork ?? ControlSessionNetworkDiagnostics(
             snapshot: localNetworkMonitor.snapshot
         )
@@ -23,16 +35,13 @@ extension MirageClientService {
         var attempts: [ControlSessionAttempt] = []
         let transportOrder = controlSessionTransportOrder()
 
+        if usesExperimentalSystemProximityRouting {
+            attempts.append(contentsOf: systemPreferredControlSessionAttempts(for: host))
+        }
         attempts.append(
             contentsOf: proximityPreferredControlSessionAttempts(
                 for: host,
                 localNetwork: resolvedLocalNetwork,
-                transportOrder: transportOrder
-            )
-        )
-        attempts.append(
-            contentsOf: optimisticLowLatencyWirelessControlSessionAttempts(
-                for: host,
                 transportOrder: transportOrder
             )
         )
@@ -126,6 +135,11 @@ extension MirageClientService {
     func orderedControlSessionAttempts(_ attempts: [ControlSessionAttempt]) -> [ControlSessionAttempt] {
         attempts.enumerated()
             .sorted { lhs, rhs in
+                let leftSystemProximity = lhs.element.endpointSource == experimentalSystemProximityEndpointSource
+                let rightSystemProximity = rhs.element.endpointSource == experimentalSystemProximityEndpointSource
+                if leftSystemProximity != rightSystemProximity {
+                    return leftSystemProximity
+                }
                 let leftRouteRank = controlSessionRouteRank(for: lhs.element.routeTier)
                 let rightRouteRank = controlSessionRouteRank(for: rhs.element.routeTier)
                 if leftRouteRank != rightRouteRank {
@@ -189,6 +203,31 @@ extension MirageClientService {
         [.udp, .quic, .tcp]
     }
 
+    func systemPreferredControlSessionAttempts(for host: LoomPeer) -> [ControlSessionAttempt] {
+        guard networkConfig.enablePeerToPeer,
+              isBonjourDiscoveredHost(host),
+              !isExplicitVPNConnection(host),
+              let endpoint = bonjourServiceControlEndpoint(for: host, interface: nil) else {
+            return []
+        }
+
+        MirageLogger.client(
+            "Adding experimental system-selected proximity control attempt to \(host.name): " +
+                "endpoint=\(endpoint)"
+        )
+        return [
+            ControlSessionAttempt(
+                hostName: host.name,
+                endpoint: endpoint,
+                transportKind: .tcp,
+                candidateKind: .local,
+                routeTier: .lowLatencyWireless,
+                endpointSource: experimentalSystemProximityEndpointSource,
+                isPeerToPeerPreferred: true
+            ),
+        ]
+    }
+
     func peerToPeerPreferredControlSessionAttempts(
         for host: LoomPeer,
         transportOrder: [LoomTransportKind]
@@ -248,14 +287,27 @@ extension MirageClientService {
                 ?? interfaceScopedHost(selectedHost, interface: discoveredInterface.networkInterface)
 
             // AWDL data paths require an awdl0-scoped link-local literal. The
-            // hostname-plus-interface form is kept out of the actual attempt
-            // list; connection bootstrap can briefly wait for a fresher Bonjour
-            // snapshot that carries the scoped address.
+            // hostname-plus-interface form is kept out of UDP/QUIC attempt
+            // planning, but the Bonjour TCP service endpoint is a real resolved
+            // service path and lets Network.framework choose the peer-to-peer
+            // data path without inventing an address.
             if routeTier == .awdl, scopedHost == nil {
-                MirageLogger.client(
-                    "Skipping AWDL control attempts for \(host.name): no awdl0-scoped " +
-                        "address resolved yet"
-                )
+                if let serviceAttempt = bonjourServiceControlSessionAttempt(
+                    for: host,
+                    discoveredInterface: discoveredInterface,
+                    routeTier: routeTier
+                ) {
+                    attempts.append(serviceAttempt)
+                    MirageLogger.client(
+                        "Using Bonjour TCP service endpoint for AWDL control attempt " +
+                            "to \(host.name): no awdl0-scoped address resolved yet"
+                    )
+                } else {
+                    MirageLogger.client(
+                        "Skipping AWDL control attempts for \(host.name): no awdl0-scoped " +
+                            "address resolved yet"
+                    )
+                }
                 continue
             }
 
@@ -317,52 +369,52 @@ extension MirageClientService {
         return attempts
     }
 
-    func optimisticLowLatencyWirelessControlSessionAttempts(
+    func bonjourServiceControlSessionAttempt(
         for host: LoomPeer,
-        transportOrder: [LoomTransportKind]
-    ) -> [ControlSessionAttempt] {
-        guard shouldAttemptOptimisticLowLatencyWireless(for: host) else {
-            return []
-        }
-        guard let selectedHost = optimisticLowLatencyWirelessControlHost(for: host) else {
-            return []
-        }
-
-        let optimisticTransportOrder = transportOrder.filter { $0 == .udp }
-        guard !optimisticTransportOrder.isEmpty else { return [] }
-        MirageLogger.client(
-            "Adding optimistic LLW control probe for \(host.name): " +
-                "host=\(selectedHost)"
-        )
-        return proximityPreferredControlSessionAttempts(
+        discoveredInterface: LoomDiscoveredInterface,
+        routeTier: ControlSessionRouteTier
+    ) -> ControlSessionAttempt? {
+        guard let endpoint = bonjourServiceControlEndpoint(
             for: host,
-            transportOrder: optimisticTransportOrder,
-            selectedHost: selectedHost,
-            discoveredInterface: nil,
-            routeTier: .lowLatencyWireless,
-            isOptimisticProximityProbe: true,
-            proximityInterfaceKind: .lowLatencyWireless,
-            endpointSource: "bonjour-optimistic-llw"
+            interface: discoveredInterface.networkInterface
+        ) else {
+            return nil
+        }
+
+        let proximityInterfaceKind = proximityInterfaceKind(
+            for: discoveredInterface,
+            routeTier: routeTier
+        )
+        return ControlSessionAttempt(
+            hostName: host.name,
+            endpoint: endpoint,
+            transportKind: .tcp,
+            candidateKind: .local,
+            routeTier: routeTier,
+            endpointSource: "bonjour-proximity-service",
+            requiredInterface: discoveredInterface.networkInterface,
+            isPeerToPeerPreferred: true,
+            proximityInterfaceKind: proximityInterfaceKind,
+            proximityInterfaceNames: [discoveredInterface.name]
         )
     }
 
-    func shouldAttemptOptimisticLowLatencyWireless(for host: LoomPeer) -> Bool {
-        guard networkConfig.enablePeerToPeer else { return false }
-        guard isBonjourDiscoveredHost(host) else { return false }
-        return !hasLowLatencyWirelessRouteEvidence(for: host)
-    }
-
-    func hasLowLatencyWirelessRouteEvidence(for host: LoomPeer) -> Bool {
-        if host.discoveredInterfaces.contains(where: { $0.kind == .lowLatencyWireless }) {
-            return true
+    func bonjourServiceControlEndpoint(
+        for host: LoomPeer,
+        interface: NWInterface?
+    ) -> NWEndpoint? {
+        guard case let .service(name, type, domain, _) = host.endpoint else {
+            return nil
         }
-        return scopedProximityResolvedHosts(for: host).contains { scopedHost in
-            Self.proximityRouteTier(forEndpointHost: scopedHost) == .lowLatencyWireless
-        }
-    }
-
-    func optimisticLowLatencyWirelessControlHost(for host: LoomPeer) -> NWEndpoint.Host? {
-        bonjourServiceControlHost(for: host)
+        let serviceName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serviceType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !serviceName.isEmpty, !serviceType.isEmpty else { return nil }
+        return .service(
+            name: serviceName,
+            type: serviceType,
+            domain: domain,
+            interface: interface
+        )
     }
 
     func interfaceScopedHost(
@@ -469,7 +521,6 @@ extension MirageClientService {
         selectedHost: NWEndpoint.Host,
         discoveredInterface: LoomDiscoveredInterface?,
         routeTier: ControlSessionRouteTier,
-        isOptimisticProximityProbe: Bool = false,
         proximityInterfaceKind: LoomDiscoveredInterfaceKind? = nil,
         proximityInterfaceNames: [String] = [],
         endpointSource: String
@@ -519,7 +570,6 @@ extension MirageClientService {
                 requiredInterface: requiredInterface,
                 requiredInterfaceType: requiredInterfaceType,
                 isPeerToPeerPreferred: true,
-                isOptimisticProximityProbe: isOptimisticProximityProbe,
                 proximityInterfaceKind: resolvedProximityInterfaceKind,
                 proximityInterfaceNames: discoveredInterface.map { [$0.name] } ?? proximityInterfaceNames
             )

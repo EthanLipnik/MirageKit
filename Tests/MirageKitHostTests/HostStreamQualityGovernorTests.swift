@@ -408,6 +408,43 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.blockedLeverReason == "soft-local-transport-admission")
     }
 
+    @Test("Proximity sustained soft transport can skip during input")
+    func proximitySustainedSoftTransportCanSkipDuringInput() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        let snapshot = makeSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            unstartedPFrameCount: 3,
+            oldestUnstartedPFrameAgeMs: 120,
+            realtimePressureState: .pressured,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+        )
+
+        let early = governor.allowsTransportAdmissionSkip(
+            snapshot: snapshot,
+            proposedMode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidenceLabel: "soft:transport-backlog",
+            inputActive: true,
+            contract: contract,
+            now: 30
+        )
+        let allowed = governor.allowsTransportAdmissionSkip(
+            snapshot: snapshot,
+            proposedMode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidenceLabel: "soft:transport-backlog",
+            inputActive: true,
+            contract: contract,
+            now: 30.8
+        )
+
+        #expect(early == false)
+        #expect(allowed)
+        #expect(governor.latestDecision.selectedLever == .admissionSkip)
+        #expect(governor.latestDecision.cause == .transport)
+    }
+
     @Test("Proximity input motion at floor protects admission skips")
     func proximityInputMotionAtFloorProtectsAdmissionSkips() {
         var governor = HostStreamQualityGovernor()
@@ -505,7 +542,8 @@ struct HostStreamQualityGovernorTests {
             snapshot: makeSnapshot(
                 mediaPathProfile: .proximityWiredLike,
                 realtimePressureState: .pressured,
-                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
+                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
+                transportAdmissionActiveDuration: 2.0
             ),
             proposedMode: .softThrottle,
             reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
@@ -592,7 +630,8 @@ struct HostStreamQualityGovernorTests {
             snapshot: makeSnapshot(
                 mediaPathProfile: .proximityWiredLike,
                 realtimePressureState: .pressured,
-                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
+                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
+                transportAdmissionActiveDuration: 2.0
             ),
             inputActive: true,
             contract: contract,
@@ -603,6 +642,37 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.selectedLever == .observe)
         #expect(governor.latestDecision.blockedLeverReason == "input-cadence-protected")
         #expect(governor.latestDecision.cause == .motion)
+    }
+
+    @Test("Proximity sustained soft transport can demote cadence during input")
+    func proximitySustainedSoftTransportCanDemoteCadenceDuringInput() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
+        let snapshot = makeSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            unstartedPFrameCount: 3,
+            oldestUnstartedPFrameAgeMs: 120,
+            realtimePressureState: .pressured,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
+        )
+
+        let early = governor.allowsDynamicCadenceDemotion(
+            snapshot: snapshot,
+            inputActive: true,
+            contract: contract,
+            now: 42
+        )
+        let allowed = governor.allowsDynamicCadenceDemotion(
+            snapshot: snapshot,
+            inputActive: true,
+            contract: contract,
+            now: 43.1
+        )
+
+        #expect(early == false)
+        #expect(allowed)
+        #expect(governor.latestDecision.selectedLever == .reduceCadence)
+        #expect(governor.latestDecision.cause == .transport)
     }
 
     @Test("Proximity passive motion at floor can demote cadence")
@@ -770,6 +840,7 @@ struct HostStreamQualityGovernorTests {
         senderQueuedBytes: Int = 0,
         senderDropHoldActive: Bool = false,
         unstartedPFrameCount: Int = 0,
+        oldestUnstartedPFrameAgeMs: Double = 0,
         queuedUnreliablePendingPackets: Int = 0,
         queuedUnreliableQueuedBytes: Int = 0,
         realtimePressureState: HostAdaptivePFrameController.PressureState = .observing,
@@ -794,7 +865,7 @@ struct HostStreamQualityGovernorTests {
             maxQueuedBytes: 2_000_000,
             senderDropHoldActive: senderDropHoldActive,
             unstartedPFrameCount: unstartedPFrameCount,
-            oldestUnstartedPFrameAgeMs: 0,
+            oldestUnstartedPFrameAgeMs: oldestUnstartedPFrameAgeMs,
             oldestUnstartedPFrameLatenessMs: 0,
             queuedUnreliablePendingPackets: queuedUnreliablePendingPackets,
             queuedUnreliableOutstandingPackets: 0,
