@@ -144,7 +144,6 @@ actor StreamContext {
     var frameChainState: HostFrameChainState = .normal
     let recoveryKeyframeCooldown: CFAbsoluteTime = 5.0
     let postEmergencyKeyframeCleanPFrameCount = 8
-    let recoveryScaleRestoreCleanPFrameCount = 90
     let emergencyKeyframeBudgetRatio: Double = 0.70
     var lastSuccessfulKeyframeSendTime: CFAbsoluteTime = 0
     var latestReceiverRecoveryCause: MirageMediaFeedbackRecoveryCause = .none
@@ -156,10 +155,6 @@ actor StreamContext {
     var pendingReceiverAcceptedKeyframeReason: String?
     var receiverKeyframeAcceptanceFallbackTask: Task<Void, Never>?
     var senderDeadlineRecoveryQualityCeiling: Float?
-    var emergencyRecoveryBaseStreamScale: CGFloat?
-    var emergencyRecoveryScaleIndex: Int = 0
-    var emergencyRecoveryCleanPFrames: Int = 0
-    var emergencyRecoveryScaleChangeInProgress = false
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
     var encodeStageLastLogTime: CFAbsoluteTime = 0
     var senderFreshnessLastLogTime: CFAbsoluteTime = 0
@@ -167,9 +162,6 @@ actor StreamContext {
     var receiverFrameBudgetObserveOnlyLastLogTime: CFAbsoluteTime = 0
     var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0
     var lastMotionFrameEncodeTime: CFAbsoluteTime = 0
-    var dynamicCadenceBaseFrameRate: Int?
-    var lastDynamicCadenceStepTime: CFAbsoluteTime = 0
-    var isApplyingDynamicCadenceStep = false
     var lastStillQualityRefreshKeyframeTime: CFAbsoluteTime = 0
     var lowMotionRampCandidateFrameCount: Int = 0
     nonisolated(unsafe) var shouldAdmitIdleQualityProbeFrame = false
@@ -322,16 +314,9 @@ actor StreamContext {
     var lastReceiverFeedbackTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackLogTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackTrigger: HostStreamTransportController.PressureTrigger = .none
-    var lastAwdlInteractiveFrameRateAdjustmentTime: CFAbsoluteTime = 0
-    var lastAwdlInteractiveScaleAdjustmentTime: CFAbsoluteTime = 0
-    var awdlInteractiveBaseStreamScale: CGFloat?
     var awdlHostEncoderStructuralQualityReductionAllowed = false
     var awdlHostEncoderStructuralQualityReductionDeadline: CFAbsoluteTime = 0
     let awdlHostEncoderStructuralQualityReductionHold: CFAbsoluteTime = 3.0
-    var pendingAwdlInteractiveFrameRate: Int?
-    var pendingAwdlInteractiveFrameRateReason: String?
-    var pendingAwdlInteractiveResolutionScale: Double?
-    var pendingAwdlInteractiveScaleReason: String?
     nonisolated(unsafe) var latestAwdlMediaDecisionSnapshot: MirageAwdlMediaController.Decision?
 
     /// Keyframe request throttling

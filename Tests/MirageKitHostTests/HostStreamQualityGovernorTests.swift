@@ -270,7 +270,7 @@ struct HostStreamQualityGovernorTests {
         #expect(result.streamDecision.cause == .motion)
     }
 
-    @Test("Passive healthy promotion is capped to 25 percent every two seconds")
+    @Test("Passive healthy promotion is capped to 50 percent after clean evidence")
     func passiveHealthyPromotionIsCapped() throws {
         var governor = HostStreamQualityGovernor()
         let contract = makeContract(mediaPathProfile: .proximityWiredLike)
@@ -299,7 +299,7 @@ struct HostStreamQualityGovernorTests {
         )
 
         #expect(try #require(initial.decision).targetBitrateBps == 75_000_000)
-        #expect(try #require(promoted.decision).targetBitrateBps == 93_750_000)
+        #expect(try #require(promoted.decision).targetBitrateBps == 112_500_000)
     }
 
     @Test("Recent runtime reduction blocks immediate frame-intent quality raise")
@@ -324,7 +324,7 @@ struct HostStreamQualityGovernorTests {
             targetQuality: 0.80,
             currentQuality: 0.42,
             contract: contract,
-            now: 20.5
+            now: 20.25
         )
 
         #expect(allowed == false)
@@ -605,136 +605,6 @@ struct HostStreamQualityGovernorTests {
 
         #expect(allowed)
         #expect(governor.latestDecision.selectedLever == .admissionSkip)
-        #expect(governor.latestDecision.cause == .transport)
-    }
-
-    @Test("Proximity input motion at floor protects cadence")
-    func proximityInputMotionAtFloorProtectsCadence() {
-        var governor = HostStreamQualityGovernor()
-        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
-        _ = governor.evaluateRuntimeDecision(
-            makeBudgetDecision(
-                targetBitrateBps: 12_000_000,
-                quality: 0.20,
-                state: .pressured,
-                reason: .encodedFrame
-            ),
-            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
-            contract: contract,
-            currentBitrateBps: 75_000_000,
-            allowsLocalBulkReductionOverride: false,
-            now: 40
-        )
-
-        let allowed = governor.allowsDynamicCadenceDemotion(
-            snapshot: makeSnapshot(
-                mediaPathProfile: .proximityWiredLike,
-                realtimePressureState: .pressured,
-                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
-                transportAdmissionActiveDuration: 2.0
-            ),
-            inputActive: true,
-            contract: contract,
-            now: 40.2
-        )
-
-        #expect(allowed == false)
-        #expect(governor.latestDecision.selectedLever == .observe)
-        #expect(governor.latestDecision.blockedLeverReason == "input-cadence-protected")
-        #expect(governor.latestDecision.cause == .motion)
-    }
-
-    @Test("Proximity sustained soft transport can demote cadence during input")
-    func proximitySustainedSoftTransportCanDemoteCadenceDuringInput() {
-        var governor = HostStreamQualityGovernor()
-        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
-        let snapshot = makeSnapshot(
-            mediaPathProfile: .proximityWiredLike,
-            unstartedPFrameCount: 3,
-            oldestUnstartedPFrameAgeMs: 120,
-            realtimePressureState: .pressured,
-            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
-        )
-
-        let early = governor.allowsDynamicCadenceDemotion(
-            snapshot: snapshot,
-            inputActive: true,
-            contract: contract,
-            now: 42
-        )
-        let allowed = governor.allowsDynamicCadenceDemotion(
-            snapshot: snapshot,
-            inputActive: true,
-            contract: contract,
-            now: 43.1
-        )
-
-        #expect(early == false)
-        #expect(allowed)
-        #expect(governor.latestDecision.selectedLever == .reduceCadence)
-        #expect(governor.latestDecision.cause == .transport)
-    }
-
-    @Test("Proximity passive motion at floor can demote cadence")
-    func proximityPassiveMotionAtFloorCanDemoteCadence() {
-        var governor = HostStreamQualityGovernor()
-        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
-        _ = governor.evaluateRuntimeDecision(
-            makeBudgetDecision(
-                targetBitrateBps: 12_000_000,
-                quality: 0.20,
-                state: .pressured,
-                reason: .encodedFrame
-            ),
-            snapshot: makeSnapshot(mediaPathProfile: .proximityWiredLike),
-            contract: contract,
-            currentBitrateBps: 75_000_000,
-            allowsLocalBulkReductionOverride: false,
-            now: 40
-        )
-
-        let allowed = governor.allowsDynamicCadenceDemotion(
-            snapshot: makeSnapshot(
-                mediaPathProfile: .proximityWiredLike,
-                realtimePressureState: .pressured,
-                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue
-            ),
-            inputActive: false,
-            contract: contract,
-            now: 40.2
-        )
-
-        #expect(allowed == true)
-        #expect(governor.latestDecision.selectedLever == .reduceCadence)
-        #expect(governor.latestDecision.cause == .motion)
-    }
-
-    @Test("Proximity sustained hard transport pressure can demote cadence during input")
-    func proximitySustainedHardTransportPressureCanDemoteCadenceDuringInput() {
-        var governor = HostStreamQualityGovernor()
-        let contract = makeContract(mediaPathProfile: .proximityWiredLike)
-        let snapshot = makeSnapshot(
-            mediaPathProfile: .proximityWiredLike,
-            senderDropHoldActive: true,
-            realtimePressureState: .severe,
-            realtimePressureReason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue
-        )
-
-        _ = governor.allowsDynamicCadenceDemotion(
-            snapshot: snapshot,
-            inputActive: true,
-            contract: contract,
-            now: 50
-        )
-        let allowed = governor.allowsDynamicCadenceDemotion(
-            snapshot: snapshot,
-            inputActive: true,
-            contract: contract,
-            now: 51.1
-        )
-
-        #expect(allowed)
-        #expect(governor.latestDecision.selectedLever == .reduceCadence)
         #expect(governor.latestDecision.cause == .transport)
     }
 

@@ -90,17 +90,11 @@ extension StreamContext {
             await applyTransportFeedbackDecision(transportDecision, now: now)
         }
         if let structuralPressure = pFrameTimingDecision.structuralPressure,
-           pFrameTimingDecision.frameBudgetDecision == nil,
-           transportDecision?.awdlTargetFrameRate == nil,
-           transportDecision?.awdlResolutionScale == nil {
+           pFrameTimingDecision.frameBudgetDecision == nil {
             await applyAwdlReceiverPFrameTimingStructuralPressure(
                 structuralPressure,
                 now: now
             )
-        }
-        if mediaPathProfile.usesAwdlRadioPolicy {
-            await retryPendingAwdlInteractiveFrameRateIfNeeded(now: now)
-            await retryPendingAwdlInteractiveScaleIfNeeded(now: now)
         }
         let receiverBudgetPressureSnapshot = adaptiveTransportPressureSnapshot(
             senderTelemetry: senderTelemetry,
@@ -224,11 +218,7 @@ extension StreamContext {
             clearAwdlHostStructuralQualityReduction()
             return false
         }
-        let cadenceDemoted = currentFrameRate <= 30
-        let baseScale = awdlInteractiveBaseStreamScale ?? requestedStreamScale
-        let scaleMultiplier = baseScale > 0 ? Double(streamScale / baseScale) : 1.0
-        let resolutionDemoted = scaleMultiplier <= 0.751
-        return cadenceDemoted && resolutionDemoted
+        return true
     }
 
     func currentAwdlQualityReductionAllowed(
@@ -237,11 +227,13 @@ extension StreamContext {
         runtimeQualityAdjustmentEnabled && currentAwdlFrameBudgetReductionAllowed(now: now)
     }
 
+    @discardableResult
     func grantAwdlHostStructuralQualityReduction(
         now: CFAbsoluteTime,
         reason: String
-    ) {
-        guard mediaPathProfile.usesAwdlRadioPolicy else { return }
+    ) -> Bool {
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return false }
+        let openedWindow = !currentAwdlFrameBudgetReductionAllowed(now: now)
         let grantStart = max(now, CFAbsoluteTimeGetCurrent())
         awdlHostEncoderStructuralQualityReductionAllowed = true
         awdlHostEncoderStructuralQualityReductionDeadline = max(
@@ -252,6 +244,7 @@ extension StreamContext {
             "AWDL survival quality window for stream \(streamID): " +
                 "reason=\(reason) expiresAt=\(awdlHostEncoderStructuralQualityReductionDeadline)"
         )
+        return openedWindow
     }
 
     func clearAwdlHostStructuralQualityReduction() {
@@ -654,21 +647,6 @@ extension StreamContext {
                 reason: decision.awdlPacingTrigger.rawValue
             )
         }
-
-        guard mediaPathProfile.usesAwdlRadioPolicy else { return }
-        await applyAwdlInteractiveDisplayStep(decision, now: now)
-    }
-
-    private func applyAwdlInteractiveDisplayStep(
-        _ decision: HostStreamTransportController.Decision,
-        now: CFAbsoluteTime
-    ) async {
-        if let targetFPS = decision.awdlTargetFrameRate {
-            await applyAwdlInteractiveFrameRate(targetFPS, now: now, reason: decision.awdlPolicyTrigger?.rawValue)
-        }
-        if let scale = decision.awdlResolutionScale {
-            _ = await applyAwdlInteractiveScale(scale, now: now, reason: decision.awdlPolicyTrigger?.rawValue)
-        }
     }
 
     private func updateReceiverPlayoutDelayTarget(
@@ -686,159 +664,6 @@ extension StreamContext {
         if let controllerTargetMs = transportDecision?.awdlPlayoutDelayMs ?? latestAwdlMediaDecisionSnapshot?.playoutDelayMs {
             receiverPlayoutDelayTargetMs = controllerTargetMs
         }
-    }
-
-    @discardableResult
-    func applyAwdlInteractiveFrameRate(
-        _ targetFPS: Int,
-        now: CFAbsoluteTime,
-        reason: String?
-    ) async -> Bool {
-        let clamped = max(1, min(60, targetFPS))
-        guard clamped != currentFrameRate else {
-            if clamped > 30 {
-                clearAwdlHostStructuralQualityReduction()
-            }
-            pendingAwdlInteractiveFrameRate = nil
-            pendingAwdlInteractiveFrameRateReason = nil
-            return true
-        }
-        let isDemotion = clamped < currentFrameRate
-        let cooldown: CFAbsoluteTime = isDemotion ? 1.0 : 8.0
-        guard lastAwdlInteractiveFrameRateAdjustmentTime == 0 ||
-            now - lastAwdlInteractiveFrameRateAdjustmentTime >= cooldown else {
-            pendingAwdlInteractiveFrameRate = clamped
-            pendingAwdlInteractiveFrameRateReason = reason
-            return false
-        }
-        do {
-            try await updateFrameRate(clamped, updatesAwdlInteractiveCeiling: false)
-            if let onHostAdaptiveDesktopCadenceUpdate {
-                await onHostAdaptiveDesktopCadenceUpdate(streamID)
-            }
-            lastAwdlInteractiveFrameRateAdjustmentTime = now
-            if clamped > 30 {
-                clearAwdlHostStructuralQualityReduction()
-            }
-            pendingAwdlInteractiveFrameRate = nil
-            pendingAwdlInteractiveFrameRateReason = nil
-            MirageLogger.metrics(
-                "AWDL interactive cadence step for stream \(streamID): " +
-                    "targetFPS=\(clamped) reason=\(reason ?? "policy")"
-            )
-            return true
-        } catch {
-            MirageLogger.error(.stream, error: error, message: "AWDL frame-rate step failed: ")
-            pendingAwdlInteractiveFrameRate = clamped
-            pendingAwdlInteractiveFrameRateReason = reason
-            return false
-        }
-    }
-
-    private func retryPendingAwdlInteractiveFrameRateIfNeeded(now: CFAbsoluteTime) async {
-        guard let targetFPS = pendingAwdlInteractiveFrameRate else { return }
-        _ = await applyAwdlInteractiveFrameRate(
-            targetFPS,
-            now: now,
-            reason: pendingAwdlInteractiveFrameRateReason
-        )
-    }
-
-    private func retryPendingAwdlInteractiveScaleIfNeeded(now: CFAbsoluteTime) async {
-        guard let scale = pendingAwdlInteractiveResolutionScale else { return }
-        _ = await applyAwdlInteractiveScale(
-            scale,
-            now: now,
-            reason: pendingAwdlInteractiveScaleReason
-        )
-    }
-
-    @discardableResult
-    func applyAwdlInteractiveScale(
-        _ resolutionScale: Double,
-        now: CFAbsoluteTime,
-        reason: String?
-    ) async -> Bool {
-        let multiplier = max(0.75, min(1.0, resolutionScale))
-        let baseScale = awdlInteractiveBaseStreamScale ?? requestedStreamScale
-        awdlInteractiveBaseStreamScale = baseScale
-        let targetScale = CGFloat(Double(baseScale) * multiplier)
-        guard abs(Double(targetScale - streamScale)) > 0.0001 else {
-            if multiplier > 0.751 {
-                clearAwdlHostStructuralQualityReduction()
-            }
-            pendingAwdlInteractiveResolutionScale = nil
-            pendingAwdlInteractiveScaleReason = nil
-            return true
-        }
-        let isDemotion = targetScale < streamScale
-        let cooldown: CFAbsoluteTime = isDemotion ? 4.0 : 20.0
-        guard lastAwdlInteractiveScaleAdjustmentTime == 0 ||
-            now - lastAwdlInteractiveScaleAdjustmentTime >= cooldown else {
-            pendingAwdlInteractiveResolutionScale = multiplier
-            pendingAwdlInteractiveScaleReason = reason
-            return false
-        }
-        do {
-            try await updateEmergencyRecoveryScale(
-                targetScale,
-                reason: "awdl-\(reason ?? "interactive")",
-                advancesDimensionToken: true
-            )
-            if let onHostAdaptiveDesktopGeometryUpdate {
-                await onHostAdaptiveDesktopGeometryUpdate(streamID)
-            }
-            await prepareAwdlInteractiveScaleKeyframe(
-                multiplier: multiplier,
-                reason: reason
-            )
-            await encoder?.forceKeyframe()
-            lastAwdlInteractiveScaleAdjustmentTime = now
-            if multiplier > 0.751 {
-                clearAwdlHostStructuralQualityReduction()
-            }
-            pendingAwdlInteractiveResolutionScale = nil
-            pendingAwdlInteractiveScaleReason = nil
-            MirageLogger.metrics(
-                "AWDL interactive scale step for stream \(streamID): " +
-                    "targetScale=\(String(format: "%.3f", Double(targetScale))) " +
-                    "multiplier=\(String(format: "%.3f", multiplier)) reason=\(reason ?? "policy")"
-            )
-            return true
-        } catch {
-            MirageLogger.error(.stream, error: error, message: "AWDL scale step failed: ")
-            pendingAwdlInteractiveResolutionScale = multiplier
-            pendingAwdlInteractiveScaleReason = reason
-            return false
-        }
-    }
-
-    private func prepareAwdlInteractiveScaleKeyframe(
-        multiplier: Double,
-        reason: String?
-    ) async {
-        guard mediaPathProfile.usesAwdlRadioPolicy else { return }
-        let frameFloor = resolvedRuntimeQualityFloor(for: resolvedQualityCeiling)
-        let floor = max(
-            frameFloor,
-            resolvedRuntimeKeyframeQualityFloor(for: resolvedQualityCeiling)
-        )
-        let boundedQuality = max(
-            floor,
-            min(
-                keyframeQuality,
-                activeQuality,
-                resolvedQualityCeiling
-            )
-        )
-        pendingEmergencyKeyframeQuality = boundedQuality
-        await encoder?.prepareForKeyframe(quality: boundedQuality)
-        MirageLogger.metrics(
-            "AWDL interactive scale keyframe prepared for stream \(streamID): " +
-                "quality=\(formatAwdlMetric(Double(boundedQuality))) " +
-                "floor=\(formatAwdlMetric(Double(floor))) " +
-                "multiplier=\(formatAwdlMetric(multiplier)) reason=\(reason ?? "policy")"
-        )
     }
 
     private func logAwdlReceiverFeedbackIfNeeded(

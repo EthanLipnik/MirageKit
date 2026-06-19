@@ -128,44 +128,6 @@ struct ClarityFirstGovernorTests {
         #expect(awdlFloor < 0.46)
     }
 
-    // MARK: - Dynamic cadence ladder
-
-    @Test("Still transport admission pressure demotes cadence before quality floor")
-    func stillTransportAdmissionPressureDemotesCadenceBeforeQualityFloor() async {
-        let context = makeContext()
-        await context.configureForDynamicCadenceTest(
-            pressure: .observing,
-            quality: 0.80,
-            floor: 0.46
-        )
-        await context.configureSustainedTransportAdmissionPressureForTest(
-            now: 10,
-            sourceStill: true
-        )
-
-        await context.applySustainedTransportAdmissionPressureIfNeeded(now: 10)
-
-        #expect(await context.testCurrentFrameRate() == 45)
-    }
-
-    @Test("Motion transport admission pressure preserves cadence above quality floor")
-    func motionTransportAdmissionPressurePreservesCadenceAboveQualityFloor() async {
-        let context = makeContext()
-        await context.configureForDynamicCadenceTest(
-            pressure: .observing,
-            quality: 0.80,
-            floor: 0.46
-        )
-        await context.configureSustainedTransportAdmissionPressureForTest(
-            now: 10,
-            sourceStill: false
-        )
-
-        await context.applySustainedTransportAdmissionPressureIfNeeded(now: 10)
-
-        #expect(await context.testCurrentFrameRate() == 60)
-    }
-
     // MARK: - Helpers
 
     private func makeContext(
@@ -193,70 +155,6 @@ struct ClarityFirstGovernorTests {
             transportPathKind: .unknown,
             mediaPathProfile: mediaPathProfile
         )
-    }
-}
-
-private extension StreamContext {
-    func configureForDynamicCadenceTest(
-        pressure: HostAdaptivePFrameController.PressureState,
-        quality: Float,
-        floor: Float
-    ) {
-        isRunning = true
-        realtimePressureState = pressure
-        realtimePressureReason = pressure == .observing
-            ? nil
-            : HostAdaptivePFrameController.Reason.transportBacklog.rawValue
-        activeQuality = quality
-        qualityFloor = floor
-        if pressure == .observing {
-            transportAdmissionPressureState = HostTransportAdmissionPressureState()
-            senderFrameBudgetDropHoldUntil = 0
-        } else {
-            transportAdmissionPressureState = HostTransportAdmissionPressureState(
-                mode: pressure == .severe ? .hardThrottle : .softThrottle,
-                reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
-                evidence: pressure == .severe ? "hard:transport-backlog" : "soft:transport-backlog",
-                firstSkipTime: 1,
-                lastSkipTime: 9,
-                activeUntil: 10_000,
-                skipBurstCount: 3,
-                lastMinimumFrameIntervalMs: 33.3,
-                lastStructuralStepTime: 0
-            )
-            senderFrameBudgetDropHoldUntil = 10_000
-            lastClientInputTime = 9.9
-            lastNonIdleCapturedFrameTime = 9.9
-        }
-    }
-
-    func testCurrentFrameRate() -> Int {
-        currentFrameRate
-    }
-
-    func configureSustainedTransportAdmissionPressureForTest(
-        now: CFAbsoluteTime,
-        sourceStill: Bool = false
-    ) {
-        transportAdmissionPressureState = HostTransportAdmissionPressureState(
-            mode: .softThrottle,
-            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
-            evidence: "soft:transport-backlog",
-            firstSkipTime: now - 2.1,
-            lastSkipTime: now,
-            activeUntil: now + 1.0,
-            skipBurstCount: 3,
-            lastMinimumFrameIntervalMs: 33.3,
-            lastStructuralStepTime: 0
-        )
-        senderFrameBudgetDropHoldUntil = now + 1.0
-        if sourceStill {
-            let policy = activeFrameFreshnessPolicy
-            lastClientInputTime = 0
-            lastNonIdleCapturedFrameTime = now - policy.stillContentWindow - 0.01
-        } else {
-            lastNonIdleCapturedFrameTime = now
-        }
     }
 }
 #endif

@@ -907,31 +907,10 @@ extension StreamContext {
         at now: CFAbsoluteTime
     ) async -> Bool {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return false }
-        let targetFPS: Int
-        if currentFrameRate > 45 {
-            targetFPS = 45
-        } else if currentFrameRate > 30 {
-            targetFPS = 30
-        } else {
-            return await applyAwdlHostStructuralScaleStepIfNeeded(
-                reason: reason,
-                averageEncodeMs: averageEncodeMs,
-                frameBudgetMs: frameBudgetMs,
-                encodeAttemptFPS: encodeAttemptFPS,
-                encodedFPS: encodedFPS,
-                at: now
-            )
-        }
-        guard lastAwdlInteractiveFrameRateAdjustmentTime == 0 ||
-            now - lastAwdlInteractiveFrameRateAdjustmentTime >= 1.0 else {
-            pendingAwdlInteractiveFrameRate = targetFPS
-            pendingAwdlInteractiveFrameRateReason = reason
-            return false
-        }
-        let applied = await applyAwdlInteractiveFrameRate(targetFPS, now: now, reason: reason)
+        let openedQualityWindow = grantAwdlHostStructuralQualityReduction(now: now, reason: reason)
         MirageLogger.metrics(
-            "AWDL host structural cadence step for stream \(streamID): " +
-                "targetFPS=\(targetFPS) reason=\(reason) applied=\(applied) " +
+            "AWDL host pressure quality window for stream \(streamID): " +
+                "reason=\(reason) opened=\(openedQualityWindow) structural=false " +
                 awdlHostStructuralPressureMetrics(
                     averageEncodeMs: averageEncodeMs,
                     frameBudgetMs: frameBudgetMs,
@@ -939,59 +918,7 @@ extension StreamContext {
                     encodedFPS: encodedFPS
                 )
         )
-        return applied
-    }
-
-    private func applyAwdlHostStructuralScaleStepIfNeeded(
-        reason: String,
-        averageEncodeMs: Double?,
-        frameBudgetMs: Double?,
-        encodeAttemptFPS: Double?,
-        encodedFPS: Double?,
-        at now: CFAbsoluteTime
-    ) async -> Bool {
-        let baseScale = awdlInteractiveBaseStreamScale ?? requestedStreamScale
-        let currentMultiplier = baseScale > 0 ? Double(streamScale / baseScale) : 1.0
-        let targetMultiplier: Double
-        if currentMultiplier > 0.876 {
-            targetMultiplier = 0.875
-        } else if currentMultiplier > 0.751 {
-            targetMultiplier = 0.75
-        } else {
-            if currentFrameRate <= 30 {
-                grantAwdlHostStructuralQualityReduction(now: now, reason: reason)
-            } else {
-                clearAwdlHostStructuralQualityReduction()
-            }
-            return false
-        }
-
-        let applied = await applyAwdlInteractiveScale(
-            targetMultiplier,
-            now: now,
-            reason: reason
-        )
-        if applied {
-            let effectiveMultiplier = baseScale > 0 ? Double(streamScale / baseScale) : targetMultiplier
-            if currentFrameRate <= 30 && effectiveMultiplier <= 0.751 {
-                grantAwdlHostStructuralQualityReduction(now: now, reason: reason)
-            } else {
-                clearAwdlHostStructuralQualityReduction()
-            }
-        }
-        MirageLogger.metrics(
-            "AWDL host structural scale step for stream \(streamID): " +
-                "targetMultiplier=\(targetMultiplier.formatted(.number.precision(.fractionLength(3)))) " +
-                "currentMultiplier=\(currentMultiplier.formatted(.number.precision(.fractionLength(3)))) " +
-                "reason=\(reason) applied=\(applied) " +
-                awdlHostStructuralPressureMetrics(
-                    averageEncodeMs: averageEncodeMs,
-                    frameBudgetMs: frameBudgetMs,
-                    encodeAttemptFPS: encodeAttemptFPS,
-                    encodedFPS: encodedFPS
-                )
-        )
-        return applied
+        return openedQualityWindow
     }
 
     private func awdlHostStructuralPressureMetrics(
@@ -1154,7 +1081,6 @@ extension StreamContext {
                 "inputActive=\(inputActive) cadencePressureArmed=\(!inputActive)"
         )
         if !inputActive {
-            await applySustainedTransportAdmissionPressureIfNeeded(now: now)
         }
     }
 
@@ -1256,7 +1182,6 @@ extension StreamContext {
             )
             transportAdmissionPressureState.noteSkip(admissionDecision, now: now)
             logPreEncodePFrameAdmissionIfNeeded(decision, action: "skip", now: now)
-            await applySustainedTransportAdmissionPressureIfNeeded(now: now)
             return true
         }
     }

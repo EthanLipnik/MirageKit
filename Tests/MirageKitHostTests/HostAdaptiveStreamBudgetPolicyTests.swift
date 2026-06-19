@@ -1015,12 +1015,13 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             at: 10
         )
 
-        #expect(context.currentFrameRate == 45)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(context.currentFrameRate == 60)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
+        #expect(await context.currentAwdlQualityReductionAllowed())
     }
 
-    @Test("AWDL encoder throughput demotes FPS and resolution before quality")
-    func awdlEncoderThroughputDemotesFPSAndResolutionBeforeQuality() async {
+    @Test("AWDL encoder throughput preserves FPS and resolution while allowing quality recovery")
+    func awdlEncoderThroughputPreservesFPSAndResolutionWhileAllowingQualityRecovery() async {
         let context = makeContext(
             bitrate: 32_000_000,
             transportPathKind: .awdl,
@@ -1040,9 +1041,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             encodedFPS: 30,
             at: 10
         )
-        #expect(context.currentFrameRate == 45)
+        #expect(context.currentFrameRate == 60)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(await context.currentAwdlQualityReductionAllowed())
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 60,
@@ -1051,9 +1052,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             encodedFPS: 24,
             at: 11.2
         )
-        #expect(context.currentFrameRate == 30)
+        #expect(context.currentFrameRate == 60)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(await context.currentAwdlQualityReductionAllowed())
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 70,
@@ -1062,9 +1063,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             encodedFPS: 18,
             at: 12.4
         )
-        #expect(context.currentFrameRate == 30)
-        #expect(abs((await context.streamScale) - 0.875) < 0.001)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(context.currentFrameRate == 60)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
+        #expect(await context.currentAwdlQualityReductionAllowed())
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 70,
@@ -1073,13 +1074,13 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             encodedFPS: 15,
             at: 16.6
         )
-        #expect(context.currentFrameRate == 30)
-        #expect(abs((await context.streamScale) - 0.75) < 0.001)
+        #expect(context.currentFrameRate == 60)
+        #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
     }
 
-    @Test("AWDL encoded P-frame oversize steps structural ladder before quality")
-    func awdlEncodedPFrameOversizeStepsStructuralLadderBeforeQuality() async {
+    @Test("AWDL encoded P-frame oversize preserves FPS and resolution while allowing quality")
+    func awdlEncodedPFrameOversizePreservesFPSAndResolutionWhileAllowingQuality() async {
         let context = makeContext(
             bitrate: 60_000_000,
             transportPathKind: .awdl,
@@ -1098,9 +1099,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision.admission == .send)
         #expect(decision.budgetDecision == nil)
-        #expect(context.currentFrameRate == 45)
+        #expect(context.currentFrameRate == 60)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(await context.currentAwdlQualityReductionAllowed())
     }
 
     @Test("Dirty encoded frame observes oversize without clean transport pressure")
@@ -1138,8 +1139,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision.byteRatio > 1.0)
     }
 
-    @Test("AWDL receiver P-frame timing sample steps structural ladder before quality")
-    func awdlReceiverPFrameTimingSampleStepsStructuralLadderBeforeQuality() async {
+    @Test("AWDL receiver P-frame timing preserves FPS and resolution while allowing quality")
+    func awdlReceiverPFrameTimingPreservesFPSAndResolutionWhileAllowingQuality() async {
         let context = makeContext(
             bitrate: 32_000_000,
             transportPathKind: .awdl,
@@ -1163,9 +1164,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(context.currentFrameRate == 45)
+        #expect(context.currentFrameRate == 60)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(await context.currentAwdlQualityReductionAllowed())
     }
 
     @Test("Missing client ceiling keeps host-owned recovery ceiling")
@@ -1279,34 +1280,6 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(context.currentTargetBitrateBps == 18_000_000)
         #expect(await context.realtimeEncoderRateHintBps == 18_000_000)
         #expect(await context.realtimeSenderPacingBitrateBps == 10_000_000)
-    }
-
-    @Test("AWDL scale recovery keyframe keeps readable anchor quality")
-    func awdlScaleRecoveryKeyframeKeepsReadableAnchorQuality() async {
-        let context = makeContext(
-            bitrate: 76_700_000,
-            bitrateAdaptationCeiling: 221_500_000,
-            transportPathKind: .awdl,
-            mediaPathProfile: .awdlRadio
-        )
-        let outputSize = CGSize(width: 2752, height: 2064)
-
-        await context.configureRunningForRealtimeBudgetTest()
-        await context.updateCaptureSizesIfNeeded(outputSize)
-        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
-
-        let applied = await context.applyAwdlInteractiveScale(
-            0.875,
-            now: 100,
-            reason: "unit-test"
-        )
-
-        #expect(applied)
-        let pendingQuality = await context.pendingEmergencyKeyframeQuality
-        let activeQuality = await context.activeQuality
-        let qualityFloor = await context.qualityFloor
-        #expect((pendingQuality ?? 0) > activeQuality * 0.65)
-        #expect((pendingQuality ?? 0) >= qualityFloor)
     }
 
     @Test("Disabled runtime adjustment keeps fixed quality budget untouched")

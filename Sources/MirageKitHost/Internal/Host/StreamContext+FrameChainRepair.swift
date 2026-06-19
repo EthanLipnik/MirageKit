@@ -14,7 +14,6 @@ import MirageKit
 #if os(macOS)
 extension StreamContext {
     var frameChainSuppressesPFrames: Bool {
-        if emergencyRecoveryScaleChangeInProgress { return true }
         return switch frameChainState {
         case .chainBroken,
              .emergencyKeyframePending:
@@ -172,42 +171,6 @@ extension StreamContext {
     private func emergencyKeyframeQualityFloor() -> Float {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return 0.02 }
         return resolvedRuntimeKeyframeQualityFloor(for: resolvedQualityCeiling)
-    }
-
-    @discardableResult
-    func advanceEmergencyRecoveryScaleIfPossible(reason: String, now: CFAbsoluteTime) async -> Bool {
-        guard !emergencyRecoveryScaleChangeInProgress else { return false }
-        let nextIndex = emergencyRecoveryScaleIndex + 1
-        guard nextIndex < Self.emergencyRecoveryScaleFactors.count else { return false }
-
-        let baseScale = emergencyRecoveryBaseStreamScale ?? requestedStreamScale
-        emergencyRecoveryBaseStreamScale = baseScale
-        let nextScale = StreamContext.clampStreamScale(
-            baseScale * Self.emergencyRecoveryScaleFactors[nextIndex]
-        )
-        guard abs(Double(nextScale - streamScale)) > 0.0001 else {
-            emergencyRecoveryScaleIndex = nextIndex
-            return true
-        }
-
-        emergencyRecoveryScaleChangeInProgress = true
-        defer { emergencyRecoveryScaleChangeInProgress = false }
-        do {
-            try await updateEmergencyRecoveryScale(nextScale, reason: reason)
-            emergencyRecoveryScaleIndex = nextIndex
-            emergencyRecoveryCleanPFrames = 0
-            startFrameChainRepair(reason: reason, now: now)
-            await noteEmergencyKeyframePrepared(using: nil)
-            MirageLogger.metrics(
-                "Emergency recovery scale lowered for stream \(streamID): " +
-                    "scale=\(String(format: "%.2f", Double(nextScale))) " +
-                    "token=\(dimensionToken) reason=\(reason)"
-            )
-            return true
-        } catch {
-            MirageLogger.error(.stream, error: error, message: "Emergency recovery scale update failed: ")
-            return false
-        }
     }
 
     func handleFrameTransportCompleted(_ completion: StreamPacketSender.FrameTransportCompletion) async {
@@ -440,66 +403,6 @@ extension StreamContext {
                 frameChainState = .postKeyframeCooling(untilCleanPFrames: nextRemaining)
             }
         }
-
-        guard emergencyRecoveryBaseStreamScale != nil else { return }
-        emergencyRecoveryCleanPFrames += 1
-        guard frameChainState == .normal,
-              emergencyRecoveryCleanPFrames >= recoveryScaleRestoreCleanPFrameCount,
-              lastSuccessfulKeyframeSendTime > 0,
-              now - lastSuccessfulKeyframeSendTime >= recoveryKeyframeCooldown else {
-            return
-        }
-        await restoreEmergencyRecoveryScaleIfReady(now: now)
-    }
-
-    private func restoreEmergencyRecoveryScaleIfReady(now: CFAbsoluteTime) async {
-        guard !emergencyRecoveryScaleChangeInProgress,
-              pendingKeyframeReason == nil,
-              let baseScale = emergencyRecoveryBaseStreamScale else {
-            return
-        }
-        guard receiverCanRestoreEmergencyRecoveryScale(now: now) else { return }
-        let nextIndex = max(0, emergencyRecoveryScaleIndex - 1)
-        let targetScale = StreamContext.clampStreamScale(
-            baseScale * Self.emergencyRecoveryScaleFactors[nextIndex]
-        )
-        emergencyRecoveryScaleChangeInProgress = true
-        defer { emergencyRecoveryScaleChangeInProgress = false }
-        do {
-            try await updateEmergencyRecoveryScale(targetScale, reason: "restore")
-            emergencyRecoveryScaleIndex = nextIndex
-            emergencyRecoveryCleanPFrames = 0
-            if nextIndex == 0 {
-                emergencyRecoveryBaseStreamScale = nil
-            }
-            startFrameChainRepair(reason: "emergency-recovery-scale-restore", now: now)
-            await noteEmergencyKeyframePrepared(using: nil)
-            await scheduleEmergencyChainRepairKeyframe(
-                reason: "Emergency recovery scale restore",
-                bypassesRecoveryCooldown: false,
-                now: now
-            )
-            MirageLogger.metrics(
-                "Emergency recovery scale restored for stream \(streamID): " +
-                    "scale=\(String(format: "%.2f", Double(targetScale))) token=\(dimensionToken)"
-            )
-        } catch {
-            MirageLogger.error(.stream, error: error, message: "Emergency recovery scale restore failed: ")
-        }
-    }
-
-    private func receiverCanRestoreEmergencyRecoveryScale(now: CFAbsoluteTime) -> Bool {
-        guard lastReceiverFeedbackTime > 0,
-              now - lastReceiverFeedbackTime <= 1.0,
-              receiverFrameBudgetIsHealthy(now: now),
-              receiverCapacityLearningQuarantineUntil <= now,
-              receiverDecodeBacklogFrames == 0,
-              receiverPresentationBacklogFrames == 0,
-              let latestPresentedFrameAgeMs = receiverLatestPresentedFrameAgeMs,
-              latestPresentedFrameAgeMs <= 500 else {
-            return false
-        }
-        return receiverLatestPresentedFrameNumber != nil
     }
 
     private func logKeyframeTransportCompletion(_ completion: StreamPacketSender.FrameTransportCompletion) {
@@ -714,8 +617,6 @@ extension StreamContext {
 }
 
 private extension StreamContext {
-    static let emergencyRecoveryScaleFactors: [CGFloat] = [1.0, 0.75, 0.5]
-
     var emergencyKeyframeReceiverAcceptanceTimeout: CFAbsoluteTime {
         let playoutSeconds = max(0, receiverPlayoutDelayTargetMs ?? MirageAwdlMediaController.basePlayoutDelayMs) / 1_000
         let constrainedTimeout = max(activeKeyframeInFlightCap, playoutSeconds + 1.0)

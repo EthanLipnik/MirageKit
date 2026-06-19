@@ -163,8 +163,8 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeRequiresFlush)
         #expect(await context.pendingKeyframeRequiresReset)
         #expect(await context.dependencyRecoveryRetryNecessary == false)
-        #expect(context.currentFrameRate == 45)
-        #expect(await !context.currentAwdlQualityReductionAllowed())
+        #expect(context.currentFrameRate == 60)
+        #expect(await context.currentAwdlQualityReductionAllowed())
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 

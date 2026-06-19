@@ -55,59 +55,8 @@ struct AppStreamRecoveryParityTests {
     }
 
     @MainActor
-    @Test("Emergency recovery scale keeps dimension token stable")
-    func emergencyRecoveryScaleKeepsDimensionTokenStable() async throws {
-        let context = makeContext(streamID: 78)
-        await context.configureForDedicatedVirtualDisplayTest(
-            baseCaptureSize: CGSize(width: 2_048, height: 1_536),
-            windowFrame: CGRect(x: 0, y: 0, width: 1_024, height: 768),
-            displaySnapshot: makeDisplaySnapshot(),
-            visibleBounds: CGRect(x: 0, y: 0, width: 1_024, height: 768)
-        )
-        let initialToken = await context.streamStartSnapshot.dimensionToken
-
-        try await context.updateEmergencyRecoveryScale(0.75, reason: "test")
-
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken)
-        #expect(abs((await context.streamScale) - 0.75) < 0.001)
-        #expect(abs((await context.requestedStreamScale) - 1.0) < 0.001)
-        let recoveryDimensions = await context.encodedDimensions
-        #expect(recoveryDimensions.width == 1_536)
-        #expect(recoveryDimensions.height == 1_152)
-
-        try await context.updateStreamScale(0.5)
-
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 1)
-    }
-
-    @MainActor
-    @Test("AWDL interactive scale advances dimension token")
-    func awdlInteractiveScaleAdvancesDimensionToken() async throws {
-        let context = makeContext(streamID: 80, mediaPathProfile: .awdlRadio)
-        await context.configureForDedicatedVirtualDisplayTest(
-            baseCaptureSize: CGSize(width: 2_752, height: 2_064),
-            windowFrame: CGRect(x: 0, y: 0, width: 1_376, height: 1_032),
-            displaySnapshot: makeDisplaySnapshot(),
-            visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
-        )
-        let initialToken = await context.streamStartSnapshot.dimensionToken
-
-        try await context.updateEmergencyRecoveryScale(
-            0.875,
-            reason: "awdl-interactive",
-            advancesDimensionToken: true
-        )
-
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 1)
-        #expect(abs((await context.streamScale) - 0.875) < 0.001)
-        let recoveryDimensions = await context.encodedDimensions
-        #expect(recoveryDimensions.width == 2_384)
-        #expect(recoveryDimensions.height == 1_792)
-    }
-
-    @MainActor
-    @Test("AWDL interactive feedback scale splits cadence and geometry announcements")
-    func awdlInteractiveFeedbackScaleSplitsCadenceAndGeometryAnnouncements() async {
+    @Test("AWDL interactive feedback preserves requested cadence and resolution")
+    func awdlInteractiveFeedbackPreservesRequestedCadenceAndResolution() async {
         let context = makeContext(streamID: 82, mediaPathProfile: .awdlRadio)
         await context.configureForDedicatedVirtualDisplayTest(
             baseCaptureSize: CGSize(width: 2_752, height: 2_064),
@@ -115,32 +64,6 @@ struct AppStreamRecoveryParityTests {
             displaySnapshot: makeDisplaySnapshot(),
             visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
         )
-        let geometryRecorder = AwdlGeometryUpdateRecorder()
-        let cadenceRecorder = AwdlGeometryUpdateRecorder()
-        await context.setHostAdaptiveDesktopGeometryUpdateHandler { streamID in
-            geometryRecorder.record(streamID)
-        }
-        await context.setHostAdaptiveDesktopCadenceUpdateHandler { streamID in
-            cadenceRecorder.record(streamID)
-        }
-
-        await applyAwdlFeedbackThroughResolutionDemotion(context)
-
-        #expect(geometryRecorder.streamIDs == [82])
-        #expect(cadenceRecorder.streamIDs == [82, 82])
-        #expect(abs((await context.streamScale) - 0.875) < 0.001)
-    }
-
-    @MainActor
-    @Test("AWDL interactive feedback frame-rate step announces desktop cadence")
-    func awdlInteractiveFeedbackFrameRateStepAnnouncesDesktopCadence() async {
-        let context = makeContext(streamID: 83, mediaPathProfile: .awdlRadio)
-        await context.configureForDedicatedVirtualDisplayTest(
-            baseCaptureSize: CGSize(width: 2_752, height: 2_064),
-            windowFrame: CGRect(x: 0, y: 0, width: 1_376, height: 1_032),
-            displaySnapshot: makeDisplaySnapshot(),
-            visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
-        )
         let initialToken = await context.streamStartSnapshot.dimensionToken
         let geometryRecorder = AwdlGeometryUpdateRecorder()
         let cadenceRecorder = AwdlGeometryUpdateRecorder()
@@ -151,75 +74,14 @@ struct AppStreamRecoveryParityTests {
             cadenceRecorder.record(streamID)
         }
 
-        for sequence in 1...2 {
-            await context.applyReceiverMediaFeedback(
-                awdlFeedback(
-                    sequence: UInt64(sequence),
-                    pFrameCompletionLatencyP95Ms: 80,
-                    latePFrameCount: 4
-                )
-            )
-        }
+        await applyAwdlPressureFeedback(context)
 
         #expect(geometryRecorder.streamIDs.isEmpty)
-        #expect(cadenceRecorder.streamIDs == [83])
-        #expect(context.currentFrameRate == 45)
-        #expect(await context.streamStartSnapshot.targetFrameRate == 45)
+        #expect(cadenceRecorder.streamIDs.isEmpty)
+        #expect(context.currentFrameRate == 60)
+        #expect(await context.streamStartSnapshot.targetFrameRate == 60)
         #expect(await context.streamStartSnapshot.dimensionToken == initialToken)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
-    }
-
-    @MainActor
-    @Test("AWDL interactive scale restore retries after cooldown")
-    func awdlInteractiveScaleRestoreRetriesAfterCooldown() async {
-        let context = makeContext(streamID: 81, mediaPathProfile: .awdlRadio)
-        await context.configureForDedicatedVirtualDisplayTest(
-            baseCaptureSize: CGSize(width: 2_752, height: 2_064),
-            windowFrame: CGRect(x: 0, y: 0, width: 1_376, height: 1_032),
-            displaySnapshot: makeDisplaySnapshot(),
-            visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
-        )
-        let initialToken = await context.streamStartSnapshot.dimensionToken
-
-        await applyAwdlFeedbackThroughResolutionDemotion(context)
-
-        #expect(abs((await context.streamScale) - 0.875) < 0.001)
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 1)
-
-        for sequence in 5...7 {
-            await context.applyReceiverMediaFeedback(awdlFeedback(sequence: UInt64(sequence)))
-        }
-
-        #expect(abs((await context.streamScale) - 0.875) < 0.001)
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 1)
-
-        await context.forceAwdlInteractiveScaleCooldownForTest(secondsAgo: 21)
-        await context.applyReceiverMediaFeedback(awdlFeedback(sequence: 8))
-
-        #expect(abs((await context.streamScale) - 1.0) < 0.001)
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 2)
-    }
-
-    @MainActor
-    @Test("AWDL interactive demotion remains active when runtime quality is disabled")
-    func awdlInteractiveDemotionRemainsActiveWhenRuntimeQualityIsDisabled() async {
-        let context = makeContext(
-            streamID: 81,
-            runtimeQualityAdjustmentEnabled: false,
-            mediaPathProfile: .awdlRadio
-        )
-        await context.configureForDedicatedVirtualDisplayTest(
-            baseCaptureSize: CGSize(width: 2_752, height: 2_064),
-            windowFrame: CGRect(x: 0, y: 0, width: 1_376, height: 1_032),
-            displaySnapshot: makeDisplaySnapshot(),
-            visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
-        )
-        let initialToken = await context.streamStartSnapshot.dimensionToken
-
-        await applyAwdlFeedbackThroughResolutionDemotion(context)
-
-        #expect(abs((await context.streamScale) - 0.875) < 0.001)
-        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 1)
     }
 
     @MainActor
@@ -237,9 +99,6 @@ struct AppStreamRecoveryParityTests {
         #expect(readableRepairQuality >= 0.49)
 
         await context.setAwdlQualityReductionGateForTesting(
-            frameRate: 30,
-            streamScale: 0.75,
-            baseScale: 1.0,
             allowed: true
         )
         let survivalRepairQuality = await context.emergencyKeyframeQuality()
@@ -327,7 +186,7 @@ struct AppStreamRecoveryParityTests {
         )
     }
 
-    private func applyAwdlFeedbackThroughResolutionDemotion(
+    private func applyAwdlPressureFeedback(
         _ context: StreamContext,
         startSequence: UInt64 = 1
     ) async {
@@ -345,7 +204,6 @@ struct AppStreamRecoveryParityTests {
                 latePFrameCount: 4
             )
         )
-        await context.forceAwdlInteractiveFrameRateCooldownForTest(secondsAgo: 2)
         await context.applyReceiverMediaFeedback(
             awdlFeedback(
                 sequence: startSequence + 2,
@@ -391,23 +249,9 @@ private extension StreamContext {
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: qualityCeiling)
     }
 
-    func forceAwdlInteractiveScaleCooldownForTest(secondsAgo: CFAbsoluteTime) {
-        lastAwdlInteractiveScaleAdjustmentTime = max(0, CFAbsoluteTimeGetCurrent() - secondsAgo)
-    }
-
-    func forceAwdlInteractiveFrameRateCooldownForTest(secondsAgo: CFAbsoluteTime) {
-        lastAwdlInteractiveFrameRateAdjustmentTime = max(0, CFAbsoluteTimeGetCurrent() - secondsAgo)
-    }
-
     func setAwdlQualityReductionGateForTesting(
-        frameRate: Int,
-        streamScale: CGFloat,
-        baseScale: CGFloat,
         allowed: Bool
     ) {
-        currentFrameRate = frameRate
-        self.streamScale = streamScale
-        awdlInteractiveBaseStreamScale = baseScale
         if allowed {
             awdlHostEncoderStructuralQualityReductionAllowed = true
             awdlHostEncoderStructuralQualityReductionDeadline = CFAbsoluteTimeGetCurrent() + 60

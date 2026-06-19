@@ -391,46 +391,6 @@ struct HostAdaptiveFrameCoordinator: Sendable, Equatable {
         }
     }
 
-    func allowsDynamicCadenceDemotion(
-        pressureState: HostAdaptivePFrameController.PressureState,
-        activeQuality: Float,
-        qualityFloor: Float,
-        sourceStill: Bool,
-        inputActive: Bool,
-        receiverState: ReceiverEvidenceState,
-        transportPressureActionable: Bool,
-        transportAdmissionActiveDuration: CFAbsoluteTime
-    ) -> Bool {
-        guard pressureState == .pressured || pressureState == .severe else { return false }
-        guard transportPressureActionable else { return false }
-        if receiverState == .severe, transportAdmissionActiveDuration >= 1.0 {
-            return true
-        }
-        if pressureState == .severe, transportAdmissionActiveDuration >= 1.0 {
-            return true
-        }
-        if inputActive {
-            return activeQuality <= qualityFloor + 0.04 &&
-                transportAdmissionActiveDuration >= 1.0
-        }
-        if !sourceStill,
-           activeQuality <= qualityFloor + 0.04,
-           transportAdmissionActiveDuration >= 0.5 {
-            return true
-        }
-        if sourceStill, !inputActive, transportAdmissionActiveDuration >= 2.0 {
-            return true
-        }
-        return activeQuality <= qualityFloor + 0.04 && transportAdmissionActiveDuration >= 2.0
-    }
-
-    func allowsStructuralScaleDemotion(
-        receiverState: ReceiverEvidenceState,
-        transportAdmissionActiveDuration: CFAbsoluteTime
-    ) -> Bool {
-        transportAdmissionActiveDuration >= 2.0 && receiverState == .severe
-    }
-
     mutating func shouldLogDecision(_ decision: FrameDecision, now: CFAbsoluteTime) -> Bool {
         let key = [
             decision.intent.rawValue,

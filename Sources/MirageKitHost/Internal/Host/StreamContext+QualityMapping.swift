@@ -29,9 +29,9 @@ extension StreamContext {
     private static let awdlInteractiveFrameQualityFloor: Float = 0.16
     private static let awdlInteractiveKeyframeQualityFloor: Float = 0.14
     private static let qualityRefreshEpsilon: Float = 0.0001
-    // Clarity-first policy for automatic streams: pressure trades frame rate
-    // before it trades readability, so runtime cuts and recovery keyframes hold
-    // a readable encode quality. Bitrate caps remain the hard constraint.
+    // Clarity-first policy for automatic streams: runtime cuts and recovery
+    // keyframes hold a readable encode quality. Bitrate caps remain the hard
+    // constraint.
     private static let automaticClarityQualityFloorMinimum: Float = 0.46
     private static let automaticClarityKeyframeQualityFloorMinimum: Float = 0.38
 

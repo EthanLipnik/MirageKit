@@ -133,8 +133,6 @@ struct StreamQualityDecision: Sendable, Equatable {
         case reduceBitrate = "reduce-bitrate"
         case reduceQuality = "reduce-quality"
         case admissionSkip = "admission-skip"
-        case reduceCadence = "reduce-cadence"
-        case reduceScale = "reduce-scale"
         case keyframeRecovery = "keyframe-recovery"
         case presentationRecovery = "presentation-recovery"
     }
@@ -169,9 +167,9 @@ struct StreamQualityDecision: Sendable, Equatable {
 }
 
 struct HostStreamQualityGovernor: Sendable, Equatable {
-    private static let localMotionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.50
-    private static let localRuntimeReductionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.50
-    private static let remoteRuntimeReductionQualityRaiseHoldSeconds: CFAbsoluteTime = 1.00
+    private static let localMotionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.25
+    private static let localRuntimeReductionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.25
+    private static let remoteRuntimeReductionQualityRaiseHoldSeconds: CFAbsoluteTime = 0.50
 
     struct RuntimeDecisionResult: Sendable, Equatable {
         let decision: HostFrameBudgetDecision?
@@ -406,48 +404,6 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         return allowed
     }
 
-    mutating func allowsDynamicCadenceDemotion(
-        snapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
-        inputActive: Bool,
-        contract: StreamQualityContract,
-        now: CFAbsoluteTime
-    ) -> Bool {
-        configureIfNeeded(contract: contract, now: now)
-        guard !snapshot.mediaPathProfile.usesAwdlRadioPolicy else { return true }
-        let evidence = classify(snapshot: snapshot, decision: nil, contract: contract, now: now)
-        if snapshot.mediaPathProfile.usesLocalBulkTransportPolicy {
-            let hardTransportAllowed = evidence.hardTransport && hardEvidenceDuration(now: now) >= 1.0
-            let motionAllowed = evidence.cause == .motion &&
-                !inputActive &&
-                motionCadenceReliefAllowed(contract: contract, now: now)
-            let sustainedTransportAllowed = localSustainedTransportReliefAllowed(
-                snapshot: snapshot,
-                evidence: evidence,
-                minimumActiveDuration: inputActive ? 1.0 : 0.75,
-                now: now
-            )
-            let allowed = hardTransportAllowed || motionAllowed || sustainedTransportAllowed
-            let blockedReason: String? = if allowed {
-                nil
-            } else if inputActive && evidence.cause == .motion {
-                "input-cadence-protected"
-            } else if inputActive {
-                "input-cadence-requires-sustained-transport"
-            } else {
-                "cadence-demotion-requires-hard-or-motion-floor"
-            }
-            recordStructuralDecision(
-                evidence: evidence,
-                contract: contract,
-                lever: .reduceCadence,
-                blockedReason: blockedReason,
-                now: now
-            )
-            return allowed
-        }
-        return evidence.evidenceClass == .hard || evidence.evidenceClass == .soft
-    }
-
     mutating func recordMotionFloorSaturation(
         contract: StreamQualityContract,
         summary: String,
@@ -470,28 +426,6 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             streamScale: contract.streamScale,
             evidenceSummary: summary
         )
-    }
-
-    mutating func allowsStructuralScaleDemotion(
-        snapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
-        contract: StreamQualityContract,
-        now: CFAbsoluteTime
-    ) -> Bool {
-        configureIfNeeded(contract: contract, now: now)
-        guard !snapshot.mediaPathProfile.usesAwdlRadioPolicy else { return true }
-        let evidence = classify(snapshot: snapshot, decision: nil, contract: contract, now: now)
-        if snapshot.mediaPathProfile.usesLocalBulkTransportPolicy {
-            let allowed = evidence.hardTransport && hardEvidenceDuration(now: now) >= 5.0
-            recordStructuralDecision(
-                evidence: evidence,
-                contract: contract,
-                lever: .reduceScale,
-                blockedReason: allowed ? nil : "scale-demotion-requires-5s-hard-evidence",
-                now: now
-            )
-            return allowed
-        }
-        return evidence.evidenceClass == .hard && hardEvidenceDuration(now: now) >= 2.0
     }
 
     mutating func allowsFrameIntentQualityWrite(
@@ -596,9 +530,9 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
               decision.targetBitrateBps > currentBitrateBps else {
             return decision
         }
-        guard now - healthySince >= 3.0,
-              now - lastPassivePromotionTime >= 2.0,
-              (lastMotionPressureTime <= 0 || now - lastMotionPressureTime >= 2.0) else {
+        guard now - healthySince >= 1.0,
+              now - lastPassivePromotionTime >= 0.75,
+              (lastMotionPressureTime <= 0 || now - lastMotionPressureTime >= 0.75) else {
             return replacingBudget(
                 decision,
                 targetBitrateBps: currentBitrateBps,
@@ -612,7 +546,7 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         let promoted = min(
             decision.targetBitrateBps,
             ceiling,
-            max(currentBitrateBps + 1, Int((Double(currentBitrateBps) * 1.25).rounded(.up)))
+            max(currentBitrateBps + 1, Int((Double(currentBitrateBps) * 1.50).rounded(.up)))
         )
         if promoted > currentBitrateBps {
             lastPassivePromotionTime = now
@@ -1058,27 +992,6 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             targetFrameRate: contract.targetFrameRate,
             streamScale: contract.streamScale,
             evidenceSummary: evidenceLabel ?? reason ?? evidence.summary
-        )
-    }
-
-    @discardableResult
-    private mutating func recordStructuralDecision(
-        evidence: Evidence,
-        contract: StreamQualityContract,
-        lever: StreamQualityDecision.Lever,
-        blockedReason: String?,
-        now _: CFAbsoluteTime
-    ) -> StreamQualityDecision {
-        recordDecision(
-            state: latestDecision.state,
-            evidence: evidence,
-            selectedLever: blockedReason == nil ? lever : .observe,
-            blockedLeverReason: blockedReason,
-            targetBitrateBps: contract.targetBitrateBps,
-            qualityTarget: nil,
-            frameAdmissionMode: nil,
-            targetFrameRate: contract.targetFrameRate,
-            streamScale: contract.streamScale
         )
     }
 

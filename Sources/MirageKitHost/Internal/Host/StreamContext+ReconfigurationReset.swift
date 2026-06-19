@@ -122,11 +122,6 @@ extension StreamContext {
         frameChainState = .normal
         frameChainRepairKeyframeRetryTask?.cancel()
         frameChainRepairKeyframeRetryTask = nil
-        if !emergencyRecoveryScaleChangeInProgress {
-            emergencyRecoveryBaseStreamScale = nil
-            emergencyRecoveryScaleIndex = 0
-            emergencyRecoveryCleanPFrames = 0
-        }
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
     }

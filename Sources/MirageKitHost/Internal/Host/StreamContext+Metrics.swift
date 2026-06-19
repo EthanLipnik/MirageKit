@@ -129,7 +129,7 @@ extension StreamContext {
                 awdlPolicyTrigger: awdlPolicy?.trigger.rawValue,
                 awdlSelectedLever: awdlPolicy?.selectedLever.rawValue,
                 awdlPlayoutDelayMs: awdlPolicy?.playoutDelayMs,
-                awdlResolutionScale: awdlPolicy?.resolutionScale,
+                awdlResolutionScale: nil,
                 awdlQualityReductionAllowed: awdlPolicy?.qualityReductionAllowed,
                 awdlHostPacingBudgetBps: awdlPolicy?.hostPacingBudgetBps,
                 captureAdmissionDrops: captureDroppedIntervalCount,

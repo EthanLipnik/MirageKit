@@ -335,9 +335,9 @@ struct HostAdaptivePFrameController: Equatable {
             case .lowMotionRamp:
                 max(bytes + 16 * 1024, Int((Double(bytes) * 1.18).rounded(.up)))
             case .passive:
-                max(bytes + 4 * 1024, Int((Double(bytes) * 1.06).rounded(.up)))
+                max(bytes + 8 * 1024, Int((Double(bytes) * 1.10).rounded(.up)))
             case .input:
-                max(bytes + 2 * 1024, Int((Double(bytes) * 1.035).rounded(.up)))
+                max(bytes + 6 * 1024, Int((Double(bytes) * 1.08).rounded(.up)))
             }
         }
 
@@ -348,9 +348,9 @@ struct HostAdaptivePFrameController: Equatable {
             case .lowMotionRamp:
                 min(ceiling, max(quality + 0.045, quality * 1.09))
             case .passive:
-                min(ceiling, max(quality + 0.025, quality * 1.05))
+                min(ceiling, max(quality + 0.035, quality * 1.07))
             case .input:
-                min(ceiling, max(quality + 0.015, quality * 1.03))
+                min(ceiling, max(quality + 0.030, quality * 1.06))
             }
         }
 
@@ -361,9 +361,9 @@ struct HostAdaptivePFrameController: Equatable {
             case .lowMotionRamp:
                 1.02
             case .passive:
-                0.85
+                0.92
             case .input:
-                0.75
+                0.90
             }
         }
 
@@ -374,9 +374,9 @@ struct HostAdaptivePFrameController: Equatable {
             case .lowMotionRamp:
                 1.05
             case .passive:
-                0.92
+                1.00
             case .input:
-                0.88
+                0.98
             }
         }
 
@@ -387,9 +387,9 @@ struct HostAdaptivePFrameController: Equatable {
             case .lowMotionRamp:
                 Int((Double(bytes) * 1.50).rounded(.up))
             case .passive:
-                Int((Double(bytes) * 1.25).rounded(.up))
+                Int((Double(bytes) * 1.50).rounded(.up))
             case .input:
-                Int((Double(bytes) * 1.12).rounded(.up))
+                Int((Double(bytes) * 1.35).rounded(.up))
             }
         }
     }
@@ -417,17 +417,17 @@ struct HostAdaptivePFrameController: Equatable {
     private static let pFrameSpikeMinimumRatio = 1.25
     private static let pFrameSpikeLogStepScale = 0.35
     private static let pFrameSpikePacketSlack = 8
-    private static let predictivePFrameOversizeTargetRatio = 1.18
-    private static let predictivePFrameOversizePacketRatio = 1.15
+    private static let predictivePFrameOversizeTargetRatio = 1.35
+    private static let predictivePFrameOversizePacketRatio = 1.30
     private static let predictivePFrameMinimumCutScale = 0.50
     private static let predictivePFrameMaximumCutScale = 0.92
     private static let preEncodeMostlyStillDirtyPercentage: Float = 1.0
-    private static let preEncodeLowMotionDirtyPercentage: Float = 6.0
-    private static let preEncodeRiskMinimumWireBytes = 64 * 1024
-    private static let preEncodeTransportRiskRatio = 0.85
-    private static let preEncodeQualityDropRatio = 1.12
-    private static let preEncodeSkipMinimumCutScale = 0.50
-    private static let preEncodeSkipMaximumCutScale = 0.86
+    private static let preEncodeLowMotionDirtyPercentage: Float = 10.0
+    private static let preEncodeRiskMinimumWireBytes = 96 * 1024
+    private static let preEncodeTransportRiskRatio = 1.05
+    private static let preEncodeQualityDropRatio = 1.35
+    private static let preEncodeSkipMinimumCutScale = 0.62
+    private static let preEncodeSkipMaximumCutScale = 0.92
     private static let motionGrowthPFrameMinimumWireBytes = 96 * 1024
     private static let motionGrowthPFrameWireRatio = 1.60
     private static let motionGrowthPFramePacketRatio = 1.45
@@ -452,12 +452,12 @@ struct HostAdaptivePFrameController: Equatable {
     private static let catastrophicRepairMaximumHeadroomScale = 2.0
     private static let catastrophicRepairMinimumSavingsRatio = 0.85
     private static let catastrophicRepairQualityScale = 2.0 / 3.0
-    private static let recentFailureRaiseHeadroom = 0.82
-    private static let maximumFailureProbeHeadroom = 0.98
-    private static let failureProbeWindowSeconds: CFAbsoluteTime = 60.0
-    private static let passiveFailureProbeWindowSeconds: CFAbsoluteTime = 3.0
-    private static let recentPassivePressureRaiseCooldownSeconds: CFAbsoluteTime = 0.20
-    private static let recentInputPressureRaiseCooldownSeconds: CFAbsoluteTime = 0.30
+    private static let recentFailureRaiseHeadroom = 0.95
+    private static let maximumFailureProbeHeadroom = 1.10
+    private static let failureProbeWindowSeconds: CFAbsoluteTime = 8.0
+    private static let passiveFailureProbeWindowSeconds: CFAbsoluteTime = 1.5
+    private static let recentPassivePressureRaiseCooldownSeconds: CFAbsoluteTime = 0.10
+    private static let recentInputPressureRaiseCooldownSeconds: CFAbsoluteTime = 0.15
     private static let stillFailureProbeBypassSeconds: CFAbsoluteTime = 0.25
     private static let freshnessPrecutHeadroomMs = 320.0
     private static let freshnessSoftHeadroomMs = 350.0

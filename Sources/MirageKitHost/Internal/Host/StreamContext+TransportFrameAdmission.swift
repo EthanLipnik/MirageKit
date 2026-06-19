@@ -181,7 +181,6 @@ extension StreamContext {
         updateTransportAdmissionPressureState(decision, signal: signal, now: now)
         guard !decision.admitsFrame else { return false }
         recordTransportAdmissionSkip(decision, now: now)
-        await applySustainedTransportAdmissionPressureIfNeeded(now: now)
         return true
     }
 

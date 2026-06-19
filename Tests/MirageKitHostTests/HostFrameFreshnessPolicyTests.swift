@@ -318,27 +318,25 @@ struct HostFrameFreshnessPolicyTests {
         #expect(await context.receiverCapacityLearningQuarantineReason == "presentation-underflow")
     }
 
-    @Test("AWDL quality cuts require applied survival cadence and scale")
-    func awdlQualityCutsRequireAppliedSurvivalCadenceAndScale() async {
+    @Test("AWDL quality cuts require active survival window")
+    func awdlQualityCutsRequireActiveSurvivalWindow() async {
         let context = makeContext(latencyMode: .lowestLatency, mediaPathProfile: .awdlRadio)
+        let now = CFAbsoluteTimeGetCurrent()
 
-        await context.seedAwdlSurvivalDecisionForTesting()
-
-        await context.setAwdlAppliedDemotionForTesting(frameRate: 60, streamScale: 1.0, baseScale: 1.0)
         #expect(!(await context.currentAwdlFrameBudgetReductionAllowed()))
 
-        await context.setAwdlAppliedDemotionForTesting(frameRate: 30, streamScale: 0.875, baseScale: 1.0)
-        #expect(!(await context.currentAwdlFrameBudgetReductionAllowed()))
-
-        await context.setAwdlAppliedDemotionForTesting(frameRate: 30, streamScale: 0.75, baseScale: 1.0)
+        let openedWindow = await context.grantAwdlHostStructuralQualityReduction(now: now, reason: "test")
+        #expect(openedWindow)
         #expect(await context.currentAwdlFrameBudgetReductionAllowed())
+
+        let repeatedGrant = await context.grantAwdlHostStructuralQualityReduction(now: now, reason: "test")
+        #expect(!repeatedGrant)
     }
 
     @Test("AWDL survival quality window expires")
     func awdlSurvivalQualityWindowExpires() async {
         let context = makeContext(latencyMode: .lowestLatency, mediaPathProfile: .awdlRadio)
 
-        await context.setAwdlAppliedDemotionForTesting(frameRate: 30, streamScale: 0.75, baseScale: 1.0)
         await context.grantAwdlHostStructuralQualityReduction(now: CFAbsoluteTimeGetCurrent(), reason: "test")
         let deadline = await context.awdlHostEncoderStructuralQualityReductionDeadline
 
@@ -441,50 +439,5 @@ private extension StreamContext {
         receiverFrameBudgetLossHoldUntil = holdUntil
     }
 
-    func seedAwdlSurvivalDecisionForTesting() {
-        for sequence in 1...8 {
-            _ = transportController.update(
-                with: ReceiverMediaFeedbackMessage(
-                    streamID: streamID,
-                    sequence: UInt64(sequence),
-                    sentAtUptime: 0,
-                    targetFPS: 60,
-                    ackRanges: [],
-                    lostFrameCount: 0,
-                    discardedPacketCount: 0,
-                    jitterP95Ms: 0,
-                    jitterP99Ms: 0,
-                    queueEstimateFrames: 0,
-                    reassemblyBacklogFrames: 0,
-                    reassemblyBacklogKeyframes: 0,
-                    reassemblyBacklogBytes: 0,
-                    decodeBacklogFrames: 0,
-                    presentationBacklogFrames: 0,
-                    decodedFPS: 60,
-                    receivedFPS: 60,
-                    rendererAcceptedFPS: 60,
-                    rendererPresentedFPS: 60,
-                    recoveryState: .idle,
-                    pFrameCompletionLatencyP95Ms: 80,
-                    latePFrameCount: 4
-                ),
-                currentFrameRate: currentFrameRate,
-                transportPathKind: .awdl,
-                mediaPathProfile: .awdlRadio,
-                now: Double(sequence)
-            )
-        }
-        grantAwdlHostStructuralQualityReduction(now: CFAbsoluteTimeGetCurrent(), reason: "test-survival")
-    }
-
-    func setAwdlAppliedDemotionForTesting(
-        frameRate: Int,
-        streamScale: CGFloat,
-        baseScale: CGFloat
-    ) {
-        currentFrameRate = frameRate
-        self.streamScale = streamScale
-        awdlInteractiveBaseStreamScale = baseScale
-    }
 }
 #endif

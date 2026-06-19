@@ -318,24 +318,6 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(snapshot.clarityFailedProbes == 1)
     }
 
-    @Test("Structural scale demotion is last resort after severe receiver pressure")
-    func structuralScaleDemotionIsLastResortAfterSevereReceiverPressure() {
-        let coordinator = HostAdaptiveFrameCoordinator()
-
-        #expect(!coordinator.allowsStructuralScaleDemotion(
-            receiverState: HostAdaptiveFrameCoordinator.ReceiverEvidenceState.pressured,
-            transportAdmissionActiveDuration: 3
-        ))
-        #expect(!coordinator.allowsStructuralScaleDemotion(
-            receiverState: HostAdaptiveFrameCoordinator.ReceiverEvidenceState.severe,
-            transportAdmissionActiveDuration: 1.5
-        ))
-        #expect(coordinator.allowsStructuralScaleDemotion(
-            receiverState: HostAdaptiveFrameCoordinator.ReceiverEvidenceState.severe,
-            transportAdmissionActiveDuration: 2.1
-        ))
-    }
-
     @Test("Startup receiver quarantine is observe-only without live pressure")
     func startupReceiverQuarantineIsObserveOnlyWithoutLivePressure() {
         let coordinator = HostAdaptiveFrameCoordinator()
@@ -618,78 +600,6 @@ struct HostAdaptiveFrameCoordinatorTests {
 
         #expect(!coordinator.transportPressureIsActionable(snapshot))
         #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
-    }
-
-    @Test("Active input blocks early pressured cadence demotion at quality floor")
-    func activeInputBlocksEarlyPressuredCadenceDemotionAtQualityFloor() {
-        let coordinator = HostAdaptiveFrameCoordinator()
-
-        let allowed = coordinator.allowsDynamicCadenceDemotion(
-            pressureState: .pressured,
-            activeQuality: 0.35,
-            qualityFloor: 0.35,
-            sourceStill: false,
-            inputActive: true,
-            receiverState: .healthy,
-            transportPressureActionable: true,
-            transportAdmissionActiveDuration: 0.5
-        )
-
-        #expect(!allowed)
-    }
-
-    @Test("Active input allows sustained pressured cadence demotion at quality floor")
-    func activeInputAllowsSustainedPressuredCadenceDemotionAtQualityFloor() {
-        let coordinator = HostAdaptiveFrameCoordinator()
-
-        let allowed = coordinator.allowsDynamicCadenceDemotion(
-            pressureState: .pressured,
-            activeQuality: 0.35,
-            qualityFloor: 0.35,
-            sourceStill: false,
-            inputActive: true,
-            receiverState: .healthy,
-            transportPressureActionable: true,
-            transportAdmissionActiveDuration: 1.0
-        )
-
-        #expect(allowed)
-    }
-
-    @Test("Active input blocks pressured cadence demotion above quality floor")
-    func activeInputBlocksPressuredCadenceDemotionAboveQualityFloor() {
-        let coordinator = HostAdaptiveFrameCoordinator()
-
-        let allowed = coordinator.allowsDynamicCadenceDemotion(
-            pressureState: .pressured,
-            activeQuality: 0.55,
-            qualityFloor: 0.35,
-            sourceStill: false,
-            inputActive: true,
-            receiverState: .healthy,
-            transportPressureActionable: true,
-            transportAdmissionActiveDuration: 2.0
-        )
-
-        #expect(!allowed)
-    }
-
-    @Test("Severe pressure can demote cadence during active input")
-    func severePressureCanDemoteCadenceDuringActiveInput() {
-        let coordinator = HostAdaptiveFrameCoordinator()
-
-        let allowed = coordinator.allowsDynamicCadenceDemotion(
-            pressureState: .severe,
-            activeQuality: 0.35,
-            qualityFloor: 0.35,
-            sourceStill: false,
-            inputActive: true,
-            receiverState: .healthy,
-            transportPressureActionable: true,
-            transportAdmissionActiveDuration: 1.0
-        )
-
-        #expect(allowed)
     }
 
     @Test("Queued-unreliable backlog with timing pressure is actionable")
