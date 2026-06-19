@@ -85,13 +85,16 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 25)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 16)
+        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        let firstPendingSequence = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence
+
+        #expect(pendingFrameCount == 26)
+        #expect(firstPendingSequence == 15)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 15)
-        #expect(telemetry.smoothestDepthDrops == 15)
+        #expect(telemetry.smoothestQueueDrops == UInt64(40 - pendingFrameCount))
+        #expect(telemetry.smoothestDepthDrops == UInt64(40 - pendingFrameCount))
         #expect(telemetry.smoothestDisplayDebtDrops == 0)
         #expect(telemetry.smoothestFifoResetCount == 0)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)

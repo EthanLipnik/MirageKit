@@ -21,6 +21,15 @@ extension MirageHostService {
         _ message: ControlMessage,
         from clientContext: ClientContext
     ) async {
+        let clientID = clientContext.client.id
+        var didStartTransfer = false
+        activeHostSupportLogClientIDs.insert(clientID)
+        defer {
+            if !didStartTransfer {
+                activeHostSupportLogClientIDs.remove(clientID)
+            }
+        }
+
         let request: HostSupportLogArchiveRequestMessage
         do {
             request = try message.decode(HostSupportLogArchiveRequestMessage.self)
@@ -37,6 +46,7 @@ extension MirageHostService {
                 )
                 do {
                     try await clientContext.send(.hostSupportLogArchive, content: response)
+                    recordClientControlSendActivity(clientID: clientID)
                 } catch {
                     await handleControlChannelSendFailure(
                         client: clientContext.client,
@@ -59,6 +69,7 @@ extension MirageHostService {
             )
             do {
                 try await clientContext.send(.hostSupportLogArchive, content: response)
+                recordClientControlSendActivity(clientID: clientID)
             } catch {
                 removeHostSupportLogArchive(at: archiveURL, context: "response send failure")
                 await handleControlChannelSendFailure(
@@ -78,6 +89,7 @@ extension MirageHostService {
                     expectedClient: clientContext.client
                 )
             }
+            didStartTransfer = true
 
             MirageLogger.host(
                 "Prepared host support log Loom transfer requestID=\(request.requestID.uuidString.lowercased()) " +
@@ -99,6 +111,7 @@ extension MirageHostService {
             )
             do {
                 try await clientContext.send(.hostSupportLogArchive, content: response)
+                recordClientControlSendActivity(clientID: clientID)
             } catch {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
@@ -139,6 +152,7 @@ extension MirageHostService {
         expectedClient: MirageConnectedClient
     ) async {
         defer {
+            activeHostSupportLogClientIDs.remove(expectedClient.id)
             Task { @MainActor [weak self] in
                 self?.removeHostSupportLogArchive(at: archiveURL, context: "transfer completion")
             }

@@ -162,6 +162,10 @@ public extension MirageClientService {
             }
             let isCurrentAttempt = isCurrentConnectAttempt(attemptID)
             let isCancelledFailure = error is CancellationError || Task.isCancelled || !isCurrentAttempt
+            let shouldCleanUpFailedConnect = shouldRunDisconnectCleanupAfterFailedConnect(
+                attemptID: attemptID,
+                isCancelledFailure: isCancelledFailure
+            )
             cancelPendingConnectTask(attemptID: attemptID)
             finishConnectAttempt(attemptID)
             if isCancelledFailure {
@@ -174,7 +178,7 @@ public extension MirageClientService {
             if !isCancelledFailure {
                 MirageInstrumentation.record(.clientConnectionFailed)
             }
-            if isCurrentAttempt, requiresDisconnectCleanupAfterFailedConnect {
+            if shouldCleanUpFailedConnect {
                 await handleDisconnect(
                     reason: error.localizedDescription,
                     state: .disconnected,
@@ -266,6 +270,10 @@ public extension MirageClientService {
             }
             let isCurrentAttempt = isCurrentConnectAttempt(attemptID)
             let isCancelledFailure = error is CancellationError || Task.isCancelled || !isCurrentAttempt
+            let shouldCleanUpFailedConnect = shouldRunDisconnectCleanupAfterFailedConnect(
+                attemptID: attemptID,
+                isCancelledFailure: isCancelledFailure
+            )
             cancelPendingConnectTask(attemptID: attemptID)
             finishConnectAttempt(attemptID)
             if isCancelledFailure {
@@ -278,7 +286,7 @@ public extension MirageClientService {
             if !isCancelledFailure {
                 MirageInstrumentation.record(.clientConnectionFailed)
             }
-            if isCurrentAttempt, requiresDisconnectCleanupAfterFailedConnect {
+            if shouldCleanUpFailedConnect {
                 await handleDisconnect(
                     reason: error.localizedDescription,
                     state: .disconnected,

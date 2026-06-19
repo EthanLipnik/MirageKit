@@ -59,9 +59,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision?.startupBitrateBps == 64_000_000)
         #expect(decision?.maximumCeilingBps == 64_000_000)
-        #expect(expectedReadabilityFloor > 8_000_000)
-        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
-        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 8_000_000)
+        #expect(expectedReadabilityFloor > 10_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 10_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 10_000_000)
     }
 
     @Test("Optimized VPN large stream starts readable and keeps elastic recovery floor")
@@ -90,7 +90,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.startupBitrateBps == 36_000_000)
         #expect((decision?.maximumCeilingBps ?? 0) > 70_000_000)
         #expect(expectedReadabilityFloor > 20_000_000)
-        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 10_000_000)
         #expect((decision?.startupBitrateBps ?? 0) > (decision?.minimumBitrateFloorBps ?? 0))
     }
 
@@ -109,11 +109,11 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.updateCaptureSizesIfNeeded(outputSize)
         await context.applyDerivedQuality(for: outputSize, logLabel: nil)
         await context.applyRealtimeBudgetBitrate(
-            8_000_000,
+            10_000_000,
             ceilingBitrateBps: 36_000_000,
-            encoderRateHintBps: 8_000_000,
-            senderPacingBitrateBps: 8_000_000,
-            minimumBitrateFloorBps: 8_000_000,
+            encoderRateHintBps: 10_000_000,
+            senderPacingBitrateBps: 10_000_000,
+            minimumBitrateFloorBps: 10_000_000,
             reason: "unit-test-vpn-pressure"
         )
 
@@ -172,7 +172,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision?.startupBitrateBps == 153_363_456)
         #expect(decision?.maximumCeilingBps == 153_363_456)
-        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 10_000_000)
     }
 
     @Test("Custom adaptive bitrate remains the upper bound")

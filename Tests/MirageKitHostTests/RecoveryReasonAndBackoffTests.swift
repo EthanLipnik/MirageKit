@@ -192,7 +192,7 @@ struct RecoveryReasonMappingTests {
             ),
             now: now
         )
-        #expect(await context.activeQuality == 0.04)
+        #expect(await context.activeQuality >= 0.46)
 
         await context.pauseForClientBackground()
         await context.resumeAfterClientForeground()

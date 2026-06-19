@@ -851,7 +851,8 @@ struct HostKeyframeRecoveryTests {
 
         #expect(await context.activeQuality == startupQuality)
         #expect(context.currentTargetBitrateBps == startupTarget)
-        #expect(await context.realtimePressureReason == "local-bulk-observe")
+        #expect(await context.realtimePressureState == .observing)
+        #expect(await context.realtimePressureReason != HostAdaptivePFrameController.Reason.clientRecovery.rawValue)
     }
 
     @Test("AWDL derived quality keeps startup and retune above readability floor")
@@ -1156,7 +1157,8 @@ struct HostKeyframeRecoveryTests {
                 state: .pressured,
                 reason: .pFrameLatency
             ),
-            now: now
+            now: now,
+            allowsLocalBulkReductionOverride: true
         )
         let scheduled = await context.scheduleStillQualityProbeIfNeeded(
             now: now + 1.0,

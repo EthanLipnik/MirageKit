@@ -5,6 +5,8 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import Foundation
+
 @MainActor
 extension MirageClientService {
     /// Returns whether a failed connection attempt left session state that needs normal disconnect cleanup.
@@ -15,5 +17,23 @@ extension MirageClientService {
         case .connecting, .handshaking, .connected, .reconnecting:
             true
         }
+    }
+
+    func shouldRunDisconnectCleanupAfterFailedConnect(
+        attemptID: UUID,
+        isCancelledFailure: Bool
+    ) -> Bool {
+        guard requiresDisconnectCleanupAfterFailedConnect else { return false }
+        if isCurrentConnectAttempt(attemptID) {
+            return true
+        }
+
+        guard isCancelledFailure,
+              currentConnectAttemptID == nil,
+              controlChannel == nil,
+              loomSession == nil else {
+            return false
+        }
+        return true
     }
 }

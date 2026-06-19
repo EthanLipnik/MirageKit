@@ -38,11 +38,11 @@ struct ClarityFirstGovernorTests {
             currentBitrateBps: 60_000_000,
             requestedTargetBitrateBps: 60_000_000,
             startupCeilingBps: 153_000_000,
-            minimumBitrateFloorBps: 8_000_000,
+            minimumBitrateFloorBps: 10_000_000,
             currentFrameRate: 60,
             maxPayloadSize: 1_200,
             currentQuality: currentQuality,
-            qualityFloor: 0.42,
+            qualityFloor: 0.46,
             steadyQualityCeiling: 0.90,
             latencyMode: .lowestLatency,
             mediaPathProfile: mediaPathProfile,
@@ -113,7 +113,7 @@ struct ClarityFirstGovernorTests {
         let context = makeContext()
         let floor = await context.resolvedRuntimeQualityFloor(for: 0.90)
         let keyframeFloor = await context.resolvedRuntimeKeyframeQualityFloor(for: 0.90)
-        #expect(floor >= 0.42)
+        #expect(floor >= 0.46)
         #expect(keyframeFloor >= 0.38)
     }
 
@@ -121,11 +121,11 @@ struct ClarityFirstGovernorTests {
     func manualQualityAndAwdlFloorsAreUnchanged() async {
         let manualContext = makeContext(runtimeQualityAdjustmentEnabled: false)
         let manualFloor = await manualContext.resolvedRuntimeQualityFloor(for: 0.90)
-        #expect(manualFloor < 0.42)
+        #expect(manualFloor < 0.46)
 
         let awdlContext = makeContext(mediaPathProfile: .awdlRadio)
         let awdlFloor = await awdlContext.resolvedRuntimeQualityFloor(for: 0.90)
-        #expect(awdlFloor < 0.42)
+        #expect(awdlFloor < 0.46)
     }
 
     // MARK: - Dynamic cadence ladder
@@ -136,7 +136,7 @@ struct ClarityFirstGovernorTests {
         await context.configureForDynamicCadenceTest(
             pressure: .observing,
             quality: 0.80,
-            floor: 0.42
+            floor: 0.46
         )
         await context.configureSustainedTransportAdmissionPressureForTest(
             now: 10,
@@ -154,7 +154,7 @@ struct ClarityFirstGovernorTests {
         await context.configureForDynamicCadenceTest(
             pressure: .observing,
             quality: 0.80,
-            floor: 0.42
+            floor: 0.46
         )
         await context.configureSustainedTransportAdmissionPressureForTest(
             now: 10,

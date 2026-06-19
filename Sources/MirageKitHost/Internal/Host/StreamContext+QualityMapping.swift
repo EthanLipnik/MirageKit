@@ -32,7 +32,7 @@ extension StreamContext {
     // Clarity-first policy for automatic streams: pressure trades frame rate
     // before it trades readability, so runtime cuts and recovery keyframes hold
     // a readable encode quality. Bitrate caps remain the hard constraint.
-    private static let automaticClarityQualityFloorMinimum: Float = 0.42
+    private static let automaticClarityQualityFloorMinimum: Float = 0.46
     private static let automaticClarityKeyframeQualityFloorMinimum: Float = 0.38
 
     private struct DerivedQualityTargets {

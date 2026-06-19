@@ -71,6 +71,9 @@ extension MirageClientService {
         hostSupportLogArchiveRequestID = nil
         hostSupportLogArchiveTransferTask?.cancel()
         hostSupportLogArchiveTransferTask = nil
+        if case .connected = connectionState {
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(5)
+        }
         guard let continuation = hostSupportLogArchiveContinuation else { return }
         hostSupportLogArchiveContinuation = nil
         hostSupportLogArchiveTimeoutTask?.cancel()

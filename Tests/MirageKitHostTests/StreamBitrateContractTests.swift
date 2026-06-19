@@ -226,7 +226,7 @@ struct StreamBitrateContractTests {
             now: CFAbsoluteTimeGetCurrent()
         )
 
-        #expect(abs(await context.activeQualityForTest() - 0.44) < 0.0001)
+        #expect(abs(await context.activeQualityForTest() - 0.46) < 0.0001)
     }
 
     @Test("Bitrate update clears stale runtime pressure ceilings before deriving quality")

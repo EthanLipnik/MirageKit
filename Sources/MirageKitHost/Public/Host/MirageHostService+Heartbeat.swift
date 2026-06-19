@@ -223,9 +223,14 @@ extension MirageHostService {
             let lastActivity = activitySnapshot[clientID] ?? 0
             let elapsed = now - lastActivity
             let mediaElapsed = mediaActivitySnapshot[clientID].map { now - $0 }
-            let controlWorkElapsed = controlSendActivitySnapshot[clientID].map { now - $0 }
+            let hasActiveHostSupportLogWork = activeHostSupportLogClientIDs.contains(clientID)
+            let controlWorkElapsed = hasActiveHostSupportLogWork
+                ? 0
+                : controlSendActivitySnapshot[clientID].map { now - $0 }
             let hasActiveStreams = hasActiveStream(forClientID: clientID)
-            let hasActiveControlWork = appListRequestTask != nil && pendingAppListRequest?.clientID == clientID
+            let hasActiveControlWork =
+                (appListRequestTask != nil && pendingAppListRequest?.clientID == clientID) ||
+                hasActiveHostSupportLogWork
             let hasActiveBackgroundLease = hostHasActiveBackgroundLease(
                 timedExpiration: backgroundLeaseExpirationsByClientID[clientID],
                 hasSuspendedLease: suspendedBackgroundLeaseIDsByClientID[clientID] != nil,

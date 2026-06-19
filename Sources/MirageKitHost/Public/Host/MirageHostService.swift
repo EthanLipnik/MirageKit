@@ -492,6 +492,8 @@ public final class MirageHostService {
     var appListRequestToken: UUID = .init()
     /// Whether app-list refresh is deferred until interactive stream workload settles.
     var appListRequestDeferredForInteractiveWorkload: Bool = false
+    /// Client IDs with an active host support-log export or transfer.
+    var activeHostSupportLogClientIDs: Set<UUID> = []
 
     /// Pending host hardware-icon request, if any.
     var pendingHostHardwareIconRequest: PendingHostHardwareIconRequest?

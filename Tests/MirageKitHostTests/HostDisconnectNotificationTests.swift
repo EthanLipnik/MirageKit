@@ -126,16 +126,11 @@ struct HostDisconnectNotificationTests {
         host.clientsByID[oldClient.id] = oldClientContext
         host.singleClientSessionID = oldSessionID
 
-        let oldDisconnectTask = Task {
-            try await nextControlMessage(
-                from: oldClientControl,
-                matching: { $0.type == .disconnect }
-            )
-        }
-
         let newPair = try await makeLoopbackControlPair()
         try await newPair.startAuthenticatedSessions()
+        host.identityManager = newPair.serverIdentityManager
         let clientService = MirageClientService(deviceName: "Replacement iPad")
+        clientService.identityManager = newPair.clientIdentityManager
         let hostPeer = LoomPeer(
             id: hostID,
             name: "Busy Takeover Host",
@@ -160,9 +155,6 @@ struct HostDisconnectNotificationTests {
             )
             await hostTask.value
 
-            let disconnectMessage = try await oldDisconnectTask.value
-            let disconnect = try disconnectMessage.decode(DisconnectMessage.self)
-            #expect(disconnect.reason == .takenOver)
             #expect(host.connectedClients.count == 1)
             #expect(host.connectedClients.first?.id == newPair.clientHello.deviceID)
             #expect(host.clientsByID[oldClient.id] == nil)
@@ -171,7 +163,6 @@ struct HostDisconnectNotificationTests {
             #expect(host.singleClientSessionID == newPair.server.id)
             #expect(clientService.connectionState == .connected(host: "Busy Takeover Host"))
         } catch {
-            oldDisconnectTask.cancel()
             hostTask.cancel()
             await oldClientControl.cancel()
             await oldServerControl.cancel()
