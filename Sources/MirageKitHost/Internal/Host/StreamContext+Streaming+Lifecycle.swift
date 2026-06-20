@@ -94,6 +94,10 @@ extension StreamContext {
         realtimeLastLoggedBitrateCeilingBps = nil
         transportFrameAdmissionState = HostTransportFrameAdmissionPolicy.State()
         transportAdmissionPressureState = HostTransportAdmissionPressureState()
+        highRefreshFrameAdmissionState.reset()
+        highRefreshPacingSkippedIntervalCount = 0
+        readabilityFrameAdmissionState.reset()
+        readabilityProtectionSkippedIntervalCount = 0
         pendingEmergencyKeyframeQuality = nil
 
         if restartBitrate > 0 {

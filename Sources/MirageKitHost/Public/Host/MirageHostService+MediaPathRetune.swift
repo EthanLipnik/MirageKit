@@ -224,6 +224,7 @@ extension MirageHostService {
                     mediaPathDiagnosticSummary: policy.diagnosticSummary,
                     enteredBitrate: restartSnapshot.explicitEnteredBitrate ?? restartSnapshot.enteredBitrate,
                     bitrateAdaptationCeiling: restartSnapshot.bitrateAdaptationCeiling,
+                    compressionQualityCeiling: restartSnapshot.compressionQualityCeiling,
                     encoderMaxWidth: restartSnapshot.encoderMaxWidth,
                     encoderMaxHeight: restartSnapshot.encoderMaxHeight,
                     cursorPresentation: desktopCursorPresentation,

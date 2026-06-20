@@ -265,24 +265,32 @@ extension StreamContext {
         realtimePressureReason = decision.reason.rawValue
         let runtimeCeilingBps = max(controllerRuntimeCeilingBps ?? decision.targetBitrateBps, decision.targetBitrateBps)
         realtimeRuntimeBitrateCeilingBps = runtimeCeilingBps
-        realtimeRuntimeQualityCeiling = decision.state == .observing ? nil : decision.qualityCeiling
 
-        let appliesGradualHealthyFrameBudget = decision.state == .observing && decision.reason == .healthy
         let currentBudgetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? decision.targetBitrateBps
+        let isHealthyFrameBudgetDecision = decision.state == .observing && decision.reason == .healthy
+        let appliesGradualHealthyFrameBudget = isHealthyFrameBudgetDecision &&
+            governedDecision.streamDecision.selectedLever == .promoteBitrate &&
+            decision.targetBitrateBps > currentBudgetBitrate
+        let holdsHealthyFrameBudget = isHealthyFrameBudgetDecision && !appliesGradualHealthyFrameBudget
+        if decision.state != .observing {
+            realtimeRuntimeQualityCeiling = decision.qualityCeiling
+        } else if appliesGradualHealthyFrameBudget || decision.reason != .healthy {
+            realtimeRuntimeQualityCeiling = nil
+        }
         let currentEncoderRateHint = realtimeEncoderRateHintBps ?? encoderConfig.bitrate ?? currentBudgetBitrate
         let currentSenderPacingBitrate = realtimeSenderPacingBitrateBps ?? currentBudgetBitrate
         let decisionSenderPacingBitrate = adaptiveRuntimeSenderPacingBitrate(for: decision)
-        let appliedTargetBitrate = appliesGradualHealthyFrameBudget
+        let appliedTargetBitrate = isHealthyFrameBudgetDecision
             ? max(decision.targetBitrateBps, currentBudgetBitrate)
             : decision.targetBitrateBps
-        let appliedEncoderRateHint = appliesGradualHealthyFrameBudget
+        let appliedEncoderRateHint = isHealthyFrameBudgetDecision
             ? max(decision.targetBitrateBps, currentEncoderRateHint, appliedTargetBitrate)
             : decision.targetBitrateBps
-        let appliedSenderPacingBitrate = appliesGradualHealthyFrameBudget
+        let appliedSenderPacingBitrate = isHealthyFrameBudgetDecision
             ? max(decisionSenderPacingBitrate, currentSenderPacingBitrate, appliedTargetBitrate)
             : decisionSenderPacingBitrate
         let appliedRuntimeBitrateCeiling: Int?
-        if appliesGradualHealthyFrameBudget {
+        if isHealthyFrameBudgetDecision {
             appliedRuntimeBitrateCeiling = max(
                 runtimeCeilingBps,
                 appliedTargetBitrate,
@@ -300,12 +308,15 @@ extension StreamContext {
             encoderRateHintBps: appliedEncoderRateHint,
             senderPacingBitrateBps: appliedSenderPacingBitrate,
             reason: decision.reason.rawValue,
-            allowsActiveQualityRaise: appliesGradualHealthyFrameBudget ? true : nil,
-            clearsRuntimeQualityCeiling: appliesGradualHealthyFrameBudget ? true : nil,
-            allowsFrameBudgetRaise: appliesGradualHealthyFrameBudget ? true : nil
+            allowsActiveQualityRaise: appliesGradualHealthyFrameBudget ? true : (holdsHealthyFrameBudget ? false : nil),
+            clearsRuntimeQualityCeiling: appliesGradualHealthyFrameBudget ? true : (holdsHealthyFrameBudget ? false : nil),
+            allowsFrameBudgetRaise: appliesGradualHealthyFrameBudget ? true : (holdsHealthyFrameBudget ? false : nil)
         )
 
-        let qualityChanged = await applyAdaptiveRuntimeQuality(decision)
+        let qualityChanged = await applyAdaptiveRuntimeQuality(
+            decision,
+            allowsHealthyQualityRaise: !holdsHealthyFrameBudget
+        )
         if qualityChanged {
             queueStillQualityRefreshKeyframeIfNeeded(decision: decision, now: now)
         }
@@ -356,12 +367,18 @@ extension StreamContext {
         }
     }
 
-    private func applyAdaptiveRuntimeQuality(_ decision: HostFrameBudgetDecision) async -> Bool {
+    private func applyAdaptiveRuntimeQuality(
+        _ decision: HostFrameBudgetDecision,
+        allowsHealthyQualityRaise: Bool = true
+    ) async -> Bool {
         let previousQuality = activeQuality
         let proposedQualityCeiling: Float
         if decision.state == .observing {
             proposedQualityCeiling = if decision.reason == .healthy,
-                                        !mediaPathProfile.usesAwdlRadioPolicy {
+                                        !allowsHealthyQualityRaise {
+                qualityCeiling
+            } else if decision.reason == .healthy,
+                      !mediaPathProfile.usesAwdlRadioPolicy {
                 min(resolvedQualityCeiling, max(qualityCeiling, configuredQualityCeiling, steadyQualityCeiling))
             } else {
                 min(resolvedQualityCeiling, steadyQualityCeiling)
@@ -389,7 +406,11 @@ extension StreamContext {
         let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
         activeQuality = if decision.state == .observing {
             if decision.reason == .healthy {
-                max(min(previousQuality, qualityCeiling), decisionQuality)
+                if allowsHealthyQualityRaise {
+                    max(min(previousQuality, qualityCeiling), decisionQuality)
+                } else {
+                    min(previousQuality, qualityCeiling)
+                }
             } else if decision.reason == .motionOnset {
                 decisionQuality
             } else {

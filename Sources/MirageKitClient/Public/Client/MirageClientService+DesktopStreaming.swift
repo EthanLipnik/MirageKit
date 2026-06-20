@@ -130,6 +130,7 @@ public extension MirageClientService {
             audioConfiguration: encoderRequest.audioConfiguration,
             dataPort: encoderRequest.dataPort,
             useHostResolution: encoderRequest.useHostResolution,
+            compressionQualityCeiling: encoderRequest.compressionQualityCeiling,
             mediaMaxPacketSize: encoderRequest.mediaMaxPacketSize
         )
         request.keyFrameInterval = encoderRequest.keyFrameInterval
@@ -567,6 +568,7 @@ extension MirageClientService {
             audioConfiguration: previousRequest.audioConfiguration,
             dataPort: previousRequest.dataPort,
             useHostResolution: previousRequest.useHostResolution,
+            compressionQualityCeiling: previousRequest.compressionQualityCeiling,
             mediaMaxPacketSize: previousRequest.mediaMaxPacketSize,
             desktopGeometryContractID: geometryTarget?.contractID,
             desktopGeometrySceneIdentity: geometryTarget?.sceneIdentity,

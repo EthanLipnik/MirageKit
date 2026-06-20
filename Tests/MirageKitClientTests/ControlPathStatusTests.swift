@@ -181,6 +181,43 @@ struct ControlPathStatusTests {
         #expect(snapshot.hasHostMetrics)
     }
 
+    @Test("Host metrics preserve readability protection telemetry")
+    func hostMetricsPreserveReadabilityProtectionTelemetry() throws {
+        let store = MirageClientMetricsStore()
+        let streamID: StreamID = 45
+        store.updateHostMetrics(StreamMetricsMessage(
+            streamID: streamID,
+            encodedFPS: 42,
+            idleEncodedFPS: 0,
+            droppedFrames: 3,
+            activeQuality: 0.50,
+            targetFrameRate: 60,
+            highRefreshPacingSkips: 4,
+            highRefreshPacingMode: "protecting",
+            highRefreshPacingReason: "stale-frame",
+            highRefreshPacingFloorFPS: 60,
+            readabilityProtectionSkips: 3,
+            readabilityProtectionMode: "protecting",
+            readabilityProtectionReason: "encoder-lag",
+            readabilityProtectionAdmitTargetFPS: 20,
+            runtimeQualityFloor: 0.50,
+            runtimeQualityCeiling: 0.52
+        ))
+
+        let snapshot = try #require(store.snapshot(for: streamID))
+        #expect(snapshot.hostHighRefreshPacingSkips == 4)
+        #expect(snapshot.hostHighRefreshPacingMode == "protecting")
+        #expect(snapshot.hostHighRefreshPacingReason == "stale-frame")
+        #expect(snapshot.hostHighRefreshPacingFloorFPS == 60)
+        #expect(snapshot.hostReadabilityProtectionSkips == 3)
+        #expect(snapshot.hostReadabilityProtectionMode == "protecting")
+        #expect(snapshot.hostReadabilityProtectionReason == "encoder-lag")
+        #expect(snapshot.hostReadabilityProtectionAdmitTargetFPS == 20)
+        #expect(abs((snapshot.hostRuntimeQualityFloor ?? 0) - 0.50) < 0.001)
+        #expect(abs((snapshot.hostRuntimeQualityCeiling ?? 0) - 0.52) < 0.001)
+        #expect(snapshot.hasHostMetrics)
+    }
+
     @MainActor
     @Test("Diagnostics context includes complete AWDL host transport drop telemetry")
     func diagnosticsContextIncludesCompleteAwdlHostTransportDropTelemetry() {

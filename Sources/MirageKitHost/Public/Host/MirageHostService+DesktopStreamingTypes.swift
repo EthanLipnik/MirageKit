@@ -244,6 +244,7 @@ extension MirageHostService {
         let mediaPathDiagnosticSummary: String?
         let enteredBitrate: Int?
         let bitrateAdaptationCeiling: Int?
+        let compressionQualityCeiling: Float?
         let encoderMaxWidth: Int?
         let encoderMaxHeight: Int?
         let cursorPresentation: MirageDesktopCursorPresentation

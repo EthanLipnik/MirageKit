@@ -43,6 +43,7 @@ public extension MirageHostService {
         allowBestEffortRemap: Bool = true,
         audioConfiguration: MirageAudioConfiguration? = nil,
         bitrateAdaptationCeiling: Int? = nil,
+        compressionQualityCeiling: Float? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
         mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
@@ -71,6 +72,7 @@ public extension MirageHostService {
             allowBestEffortRemap: allowBestEffortRemap,
             audioConfiguration: audioConfiguration,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            compressionQualityCeiling: compressionQualityCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight,
             mediaMaxPacketSize: mediaMaxPacketSize,
@@ -101,6 +103,7 @@ public extension MirageHostService {
         allowBestEffortRemap: Bool = true,
         audioConfiguration: MirageAudioConfiguration? = nil,
         bitrateAdaptationCeiling: Int? = nil,
+        compressionQualityCeiling: Float? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
         mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
@@ -227,6 +230,7 @@ public extension MirageHostService {
             mediaPathProfile: resolvedMediaPathPolicy.mediaPathProfile,
             mediaPathDiagnosticSummary: resolvedMediaPathPolicy.diagnosticSummary,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            compressionQualityCeiling: compressionQualityCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
         )

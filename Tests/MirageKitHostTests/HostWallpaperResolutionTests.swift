@@ -59,5 +59,54 @@ struct HostWallpaperResolutionTests {
 
         #expect(candidate?.windowID == 12)
     }
+
+    @Test("Wallpaper window selection accepts Dock wallpaper windows with nonnegative layers")
+    func wallpaperWindowSelectionAcceptsNonnegativeLayer() {
+        let targetDisplayFrame = CGRect(x: 0, y: 0, width: 1_800, height: 1_200)
+        let candidates = [
+            MirageHostWallpaperResolver.WallpaperWindowCandidate(
+                windowID: 21,
+                ownerName: "Dock",
+                title: "Wallpaper-",
+                frame: targetDisplayFrame,
+                windowLayer: 0
+            ),
+        ]
+
+        let candidate = MirageHostWallpaperResolver.wallpaperWindowCandidate(
+            from: candidates,
+            for: targetDisplayFrame
+        )
+
+        #expect(candidate?.windowID == 21)
+    }
+
+    @Test("Wallpaper window selection prefers desktop layers for equal overlap")
+    func wallpaperWindowSelectionPrefersDesktopLayerForEqualOverlap() {
+        let targetDisplayFrame = CGRect(x: 0, y: 0, width: 1_800, height: 1_200)
+        let candidates = [
+            MirageHostWallpaperResolver.WallpaperWindowCandidate(
+                windowID: 31,
+                ownerName: "Dock",
+                title: "Wallpaper-",
+                frame: targetDisplayFrame,
+                windowLayer: 0
+            ),
+            MirageHostWallpaperResolver.WallpaperWindowCandidate(
+                windowID: 32,
+                ownerName: "Dock",
+                title: "Wallpaper-",
+                frame: targetDisplayFrame,
+                windowLayer: -2_147_483_624
+            ),
+        ]
+
+        let candidate = MirageHostWallpaperResolver.wallpaperWindowCandidate(
+            from: candidates,
+            for: targetDisplayFrame
+        )
+
+        #expect(candidate?.windowID == 32)
+    }
 }
 #endif

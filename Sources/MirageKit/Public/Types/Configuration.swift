@@ -303,6 +303,8 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var encoderMaxHeight: Int?
     /// Client-requested MetalFX upscaling mode.
     public var upscalingMode: MirageUpscalingMode?
+    /// Maximum host encoder compression-quality value for this stream.
+    public var compressionQualityCeiling: Float?
 
     /// Creates a partial encoder override payload for runtime or stream-start updates.
     public init(
@@ -321,7 +323,8 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
-        upscalingMode: MirageUpscalingMode? = nil
+        upscalingMode: MirageUpscalingMode? = nil,
+        compressionQualityCeiling: Float? = nil
     ) {
         self.codec = codec
         self.keyFrameInterval = keyFrameInterval
@@ -339,5 +342,6 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
         self.upscalingMode = upscalingMode
+        self.compressionQualityCeiling = compressionQualityCeiling
     }
 }

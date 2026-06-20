@@ -307,6 +307,7 @@ extension CGVirtualDisplayBridge {
                 width: width,
                 height: height,
                 ppi: ppi,
+                hiDPI: hiDPI,
                 profile: profile
             )
 

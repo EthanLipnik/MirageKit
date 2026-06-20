@@ -96,6 +96,7 @@ extension MirageHostService {
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+                compressionQualityCeiling: request.compressionQualityCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,

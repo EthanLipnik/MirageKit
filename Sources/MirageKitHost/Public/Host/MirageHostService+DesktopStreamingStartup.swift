@@ -119,6 +119,7 @@ extension MirageHostService {
             mediaPathDiagnosticSummary: request.mediaPathDiagnosticSummary,
             enteredBitrate: request.enteredBitrate,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+            compressionQualityCeiling: request.compressionQualityCeiling,
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight,
             captureShowsCursor: request.cursorPresentation.capturesHostCursor

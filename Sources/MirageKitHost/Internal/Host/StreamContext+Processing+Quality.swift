@@ -193,6 +193,8 @@ extension StreamContext {
             MirageLogger.metrics(
                 "Pipeline: ingress=\(ingressText)fps capture=\(captureText)fps drop=\(captureDroppedIntervalCount) " +
                     "bp=\(backpressureDropIntervalCount) transportSkip=\(transportAdmissionSkippedIntervalCount) " +
+                    "highRefreshSkip=\(highRefreshPacingSkippedIntervalCount) " +
+                    "readabilitySkip=\(readabilityProtectionSkippedIntervalCount) " +
                     "encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
                     "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
                     "session=\(encodeSkipNoSessionIntervalCount) pixelFormat=\(encodeSkipPixelFormatMismatchIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
@@ -228,6 +230,8 @@ extension StreamContext {
         encodeErrorIntervalCount = 0
         backpressureDropIntervalCount = 0
         transportAdmissionSkippedIntervalCount = 0
+        highRefreshPacingSkippedIntervalCount = 0
+        readabilityProtectionSkippedIntervalCount = 0
         encodeSkipQueueFullIntervalCount = 0
         encodeSkipDimensionIntervalCount = 0
         encodeSkipInactiveIntervalCount = 0
@@ -493,6 +497,14 @@ extension StreamContext {
         let policy = activeFrameFreshnessPolicy
         let sourceStill = sourceIsStill(now: now, policy: policy)
         let inputActive = inputIsActive(now: now, policy: policy)
+        guard encoderThroughputCadenceAllowsHealthyRaise(
+            encodeAttemptFPS: encodeAttemptFPS,
+            encodedFPS: encodedFPS,
+            sourceStill: sourceStill,
+            inputActive: inputActive
+        ) else {
+            return
+        }
         let stillQualityRaise = sourceStill && !inputActive
         let raiseRatio = stillQualityRaise ? 1.75 : 1.45
         let raiseStep = stillQualityRaise ? 48_000_000 : 24_000_000
@@ -522,6 +534,21 @@ extension StreamContext {
                 "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
             "encodedFPS=\(Self.formattedFPS(encodedFPS))"
         )
+    }
+
+    private func encoderThroughputCadenceAllowsHealthyRaise(
+        encodeAttemptFPS: Double,
+        encodedFPS: Double,
+        sourceStill: Bool,
+        inputActive: Bool
+    ) -> Bool {
+        if sourceStill && !inputActive { return true }
+        let targetFPS = Double(max(1, currentFrameRate))
+        let attemptFPS = encodeAttemptFPS > 0 ? encodeAttemptFPS : encodedFPS
+        let completedFPS = encodedFPS > 0 ? encodedFPS : encodeAttemptFPS
+        let observedFPS = min(attemptFPS, completedFPS)
+        guard observedFPS > 0 else { return false }
+        return observedFPS >= targetFPS * 0.90
     }
 
     private func encoderThroughputBudgetDecision(
@@ -1080,8 +1107,211 @@ extension StreamContext {
                 "target=\(currentTargetBitrateBps ?? encoderConfig.bitrate ?? 0) " +
                 "inputActive=\(inputActive) cadencePressureArmed=\(!inputActive)"
         )
-        if !inputActive {
+    }
+
+    private func highRefreshPacingPressureReason(
+        frame: CapturedFrame,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        now: CFAbsoluteTime
+    ) -> String? {
+        guard runtimeQualityAdjustmentEnabled,
+              encoderCatchUpQualityAdjustmentEnabled,
+              encoderConfig.codec != .proRes4444,
+              currentFrameRate > HostHighRefreshFrameAdmissionState.protectedFloorFPS else {
+            highRefreshFrameAdmissionState.reset()
+            return nil
         }
+
+        guard pressureSnapshot.receiverState != .severe,
+              !pressureSnapshot.senderDropHoldActive else {
+            highRefreshFrameAdmissionState.reset()
+            return nil
+        }
+
+        let targetFrameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let protectedFrameBudgetMs = 1_000.0 / Double(HostHighRefreshFrameAdmissionState.protectedFloorFPS)
+        let staleFrameAgeMs = max(0, (now - frame.captureTime) * 1_000)
+        if staleFrameAgeMs >= protectedFrameBudgetMs {
+            return "stale-frame"
+        }
+
+        let averageEncodeMs = encoderAverageEncodeMsSnapshot
+        if averageEncodeMs >= max(targetFrameBudgetMs * 1.15, targetFrameBudgetMs + 2.0) {
+            return "encoder-over-target-budget"
+        }
+
+        let encodeBacklogMs = max(latestEncodeStartCaptureAgeMs, worstEncodeStartCaptureAgeMs)
+        if encodeBacklogMs >= max(protectedFrameBudgetMs, targetFrameBudgetMs * 2.0) {
+            return "encoder-backlog"
+        }
+
+        if frameInbox.pendingCount > 0 {
+            return "pending-frames"
+        }
+
+        let captureFPS = lastCaptureFPS ?? 0
+        let encodeAttemptFPS = lastEncodeAttemptFPS ?? 0
+        if captureFPS > Double(HostHighRefreshFrameAdmissionState.protectedFloorFPS),
+           encodeAttemptFPS > 0,
+           encodeAttemptFPS < min(captureFPS, Double(currentFrameRate)) * 0.90 {
+            return "cadence-behind"
+        }
+
+        if inFlightCount >= maxInFlightFrames,
+           averageEncodeMs >= targetFrameBudgetMs * 0.90 {
+            return "encoder-in-flight"
+        }
+
+        return nil
+    }
+
+    private func recordHighRefreshPacingSkip(
+        frame: CapturedFrame,
+        reason: String,
+        now: CFAbsoluteTime
+    ) {
+        droppedFrameCount += 1
+        highRefreshPacingSkippedIntervalCount += 1
+
+        guard MirageLogger.isEnabled(.metrics),
+              now - highRefreshFrameAdmissionState.lastSkipLogTime >= 1.0 else {
+            return
+        }
+        highRefreshFrameAdmissionState.lastSkipLogTime = now
+        let frameAgeMs = max(0, (now - frame.captureTime) * 1_000)
+        MirageLogger.metrics(
+            "event=high_refresh_frame_admission stream=\(streamID) action=skip " +
+                "targetFPS=\(currentFrameRate) " +
+                "floorFPS=\(HostHighRefreshFrameAdmissionState.protectedFloorFPS) " +
+                "reason=\(reason) " +
+                "frameAgeMs=\(frameAgeMs.formatted(.number.precision(.fractionLength(1)))) " +
+                "encodeAvgMs=\(encoderAverageEncodeMsSnapshot.formatted(.number.precision(.fractionLength(1))))"
+        )
+    }
+
+    private func shouldSkipPFrameForHighRefreshPacingAdmission(
+        frame: CapturedFrame,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        let reason = highRefreshPacingPressureReason(
+            frame: frame,
+            pressureSnapshot: pressureSnapshot,
+            now: now
+        )
+        let shouldSkip = highRefreshFrameAdmissionState.evaluateAdmission(
+            currentFrameRate: currentFrameRate,
+            frameCaptureTime: frame.captureTime,
+            reason: reason,
+            now: now
+        )
+        guard shouldSkip, let reason else { return false }
+        recordHighRefreshPacingSkip(frame: frame, reason: reason, now: now)
+        return true
+    }
+
+    private func readabilityProtectionPressureReason() -> String? {
+        let frameBudgetMs = runtimeQualityFrameBudgetMs()
+        guard frameBudgetMs > 0 else { return nil }
+
+        let averageEncodeMs = encoderAverageEncodeMsSnapshot
+        if averageEncodeMs >= max(frameBudgetMs * 1.05, frameBudgetMs + 2.0) {
+            return "encoder-lag"
+        }
+
+        let encodeBacklogMs = max(latestEncodeStartCaptureAgeMs, worstEncodeStartCaptureAgeMs)
+        if encodeBacklogMs >= max(frameBudgetMs * 1.5, frameBudgetMs + 10.0) {
+            return "encoder-backlog"
+        }
+
+        if frameInbox.pendingCount > 1 {
+            return "pending-frames"
+        }
+
+        let captureFPS = lastCaptureFPS ?? 0
+        let encodeAttemptFPS = lastEncodeAttemptFPS ?? 0
+        let targetFPS = Double(max(1, currentFrameRate))
+        if captureFPS >= max(12.0, targetFPS * 0.45),
+           encodeAttemptFPS > 0,
+           encodeAttemptFPS < captureFPS * 0.86 {
+            return "cadence-behind"
+        }
+
+        if inFlightCount >= maxInFlightFrames,
+           averageEncodeMs >= frameBudgetMs * 0.90 {
+            return "encoder-in-flight"
+        }
+
+        return nil
+    }
+
+    private func readabilityProtectionQualityIsAtFloor(_ floor: Float) -> Bool {
+        guard floor > 0 else { return false }
+        let slack: Float = 0.025
+        if activeQuality <= floor + slack { return true }
+        if qualityCeiling <= floor + slack { return true }
+        if let realtimeRuntimeQualityCeiling,
+           realtimeRuntimeQualityCeiling <= floor + slack {
+            return true
+        }
+        return false
+    }
+
+    private func readabilityProtectionCanUseSkipAdmission(
+        frame: CapturedFrame,
+        inputActive: Bool,
+        sourceStill: Bool,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot
+    ) -> String? {
+        guard runtimeQualityAdjustmentEnabled,
+              encoderCatchUpQualityAdjustmentEnabled,
+              encoderConfig.codec != .proRes4444,
+              currentFrameRate > HostReadabilityFrameAdmissionState.admitTargetFPS,
+              !inputActive else {
+            readabilityFrameAdmissionState.reset()
+            return nil
+        }
+
+        let lowMotion = sourceStill || frame.info.dirtyPercentage <= Self.lowMotionRampDirtyPercentage
+        guard lowMotion else {
+            readabilityFrameAdmissionState.reset()
+            return nil
+        }
+
+        guard pressureSnapshot.receiverState != .severe,
+              !pressureSnapshot.senderDropHoldActive,
+              pressureSnapshot.senderQueuedBytes < pressureSnapshot.maxQueuedBytes else {
+            readabilityFrameAdmissionState.reset()
+            return nil
+        }
+
+        let floor = currentStreamQualityContract().effectiveReadabilityQualityFloor
+        guard readabilityProtectionQualityIsAtFloor(floor),
+              let reason = readabilityProtectionPressureReason() else {
+            readabilityFrameAdmissionState.reset()
+            return nil
+        }
+        return reason
+    }
+
+    private func recordReadabilityProtectionSkip(reason: String, now: CFAbsoluteTime) {
+        droppedFrameCount += 1
+        readabilityProtectionSkippedIntervalCount += 1
+
+        guard MirageLogger.isEnabled(.metrics),
+              now - readabilityFrameAdmissionState.lastSkipLogTime >= 1.0 else {
+            return
+        }
+        readabilityFrameAdmissionState.lastSkipLogTime = now
+        MirageLogger.metrics(
+            "event=readability_frame_admission stream=\(streamID) action=skip " +
+                "targetFPS=\(HostReadabilityFrameAdmissionState.admitTargetFPS) " +
+                "minIntervalMs=\(HostReadabilityFrameAdmissionState.minimumFrameIntervalMs) " +
+                "reason=\(reason) " +
+                "quality=\(activeQuality.formatted(.number.precision(.fractionLength(2)))) " +
+                "floor=\(qualityFloor.formatted(.number.precision(.fractionLength(2)))) " +
+                "ceiling=\(qualityCeiling.formatted(.number.precision(.fractionLength(2))))"
+        )
     }
 
     func shouldSkipPFrameForPreEncodeBudgetAdmission(
@@ -1090,10 +1320,19 @@ extension StreamContext {
         admitsStillQualityProbe: Bool,
         now: CFAbsoluteTime
     ) async -> Bool {
-        guard !forceKeyframe,
-              !admitsStillQualityProbe,
-              !frame.info.isIdleFrame,
-              runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else {
+        if forceKeyframe || admitsStillQualityProbe {
+            highRefreshFrameAdmissionState.reset(admittedAt: now)
+            readabilityFrameAdmissionState.reset(admittedAt: now)
+            return false
+        }
+        if frame.info.isIdleFrame {
+            highRefreshFrameAdmissionState.reset(admittedAt: now)
+            readabilityFrameAdmissionState.reset(admittedAt: now)
+            return false
+        }
+        guard runtimeQualityAdjustmentEnabled || mediaPathProfile.usesAwdlRadioPolicy else {
+            highRefreshFrameAdmissionState.reset()
+            readabilityFrameAdmissionState.reset()
             return false
         }
 
@@ -1106,6 +1345,29 @@ extension StreamContext {
             senderTelemetry: senderTelemetry,
             now: now
         )
+        if shouldSkipPFrameForHighRefreshPacingAdmission(
+            frame: frame,
+            pressureSnapshot: pressureSnapshot,
+            now: now
+        ) {
+            return true
+        }
+        if let readabilityReason = readabilityProtectionCanUseSkipAdmission(
+            frame: frame,
+            inputActive: inputActive,
+            sourceStill: sourceStill,
+            pressureSnapshot: pressureSnapshot
+        ) {
+            let shouldSkip = readabilityFrameAdmissionState.evaluateAdmission(
+                currentFrameRate: currentFrameRate,
+                reason: readabilityReason,
+                now: now
+            )
+            if shouldSkip {
+                recordReadabilityProtectionSkip(reason: readabilityReason, now: now)
+                return true
+            }
+        }
         let decision = adaptivePFrameController.evaluatePreEncodePFrame(
             dirtyPercentage: frame.info.dirtyPercentage,
             inputActive: inputActive,

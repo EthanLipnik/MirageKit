@@ -311,6 +311,26 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostTransportAdmissionActiveHoldMs: Double?
     /// Current skip-burst count for host transport admission throttling.
     public var hostTransportAdmissionSkipBurstCount: UInt64?
+    /// Number of host frames skipped before encode to avoid stale high-refresh catch-up bursts.
+    public var hostHighRefreshPacingSkips: UInt64?
+    /// Current host-side high-refresh pacing mode.
+    public var hostHighRefreshPacingMode: String?
+    /// Host-side reason for high-refresh pacing skip admission.
+    public var hostHighRefreshPacingReason: String?
+    /// Protected frame-rate floor while host high-refresh pacing is active.
+    public var hostHighRefreshPacingFloorFPS: Int?
+    /// Number of host frames skipped before encode to preserve readability near the runtime quality floor.
+    public var hostReadabilityProtectionSkips: UInt64?
+    /// Current host-side readability protection mode.
+    public var hostReadabilityProtectionMode: String?
+    /// Host-side reason for readability protection skip admission.
+    public var hostReadabilityProtectionReason: String?
+    /// Target admitted frame rate while host readability protection is active.
+    public var hostReadabilityProtectionAdmitTargetFPS: Int?
+    /// Host-side runtime quality floor.
+    public var hostRuntimeQualityFloor: Double?
+    /// Host-side runtime quality ceiling.
+    public var hostRuntimeQualityCeiling: Double?
     /// Host frame budget, in milliseconds.
     public var hostFrameBudgetMs: Double?
     /// Average host encode duration, in milliseconds.
@@ -619,6 +639,16 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostTransportAdmissionMinimumFrameIntervalMs: Double? = nil,
         hostTransportAdmissionActiveHoldMs: Double? = nil,
         hostTransportAdmissionSkipBurstCount: UInt64? = nil,
+        hostHighRefreshPacingSkips: UInt64? = nil,
+        hostHighRefreshPacingMode: String? = nil,
+        hostHighRefreshPacingReason: String? = nil,
+        hostHighRefreshPacingFloorFPS: Int? = nil,
+        hostReadabilityProtectionSkips: UInt64? = nil,
+        hostReadabilityProtectionMode: String? = nil,
+        hostReadabilityProtectionReason: String? = nil,
+        hostReadabilityProtectionAdmitTargetFPS: Int? = nil,
+        hostRuntimeQualityFloor: Double? = nil,
+        hostRuntimeQualityCeiling: Double? = nil,
         hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
         hostCaptureIngressFPS: Double? = nil,
@@ -771,6 +801,16 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostTransportAdmissionMinimumFrameIntervalMs = hostTransportAdmissionMinimumFrameIntervalMs
         self.hostTransportAdmissionActiveHoldMs = hostTransportAdmissionActiveHoldMs
         self.hostTransportAdmissionSkipBurstCount = hostTransportAdmissionSkipBurstCount
+        self.hostHighRefreshPacingSkips = hostHighRefreshPacingSkips
+        self.hostHighRefreshPacingMode = hostHighRefreshPacingMode
+        self.hostHighRefreshPacingReason = hostHighRefreshPacingReason
+        self.hostHighRefreshPacingFloorFPS = hostHighRefreshPacingFloorFPS
+        self.hostReadabilityProtectionSkips = hostReadabilityProtectionSkips
+        self.hostReadabilityProtectionMode = hostReadabilityProtectionMode
+        self.hostReadabilityProtectionReason = hostReadabilityProtectionReason
+        self.hostReadabilityProtectionAdmitTargetFPS = hostReadabilityProtectionAdmitTargetFPS
+        self.hostRuntimeQualityFloor = hostRuntimeQualityFloor
+        self.hostRuntimeQualityCeiling = hostRuntimeQualityCeiling
         self.hostFrameBudgetMs = hostFrameBudgetMs
         self.hostAverageEncodeMs = hostAverageEncodeMs
         self.hostCaptureIngressFPS = hostCaptureIngressFPS

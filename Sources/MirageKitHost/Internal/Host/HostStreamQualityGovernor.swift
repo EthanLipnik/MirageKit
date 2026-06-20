@@ -56,12 +56,27 @@ struct StreamQualityContract: Sendable, Equatable {
         mediaPathProfile.usesLocalBulkTransportPolicy ? 0.66 : 0.0
     }
 
+    var nonLocalReadabilityQualityFloor: Float {
+        guard !mediaPathProfile.usesLocalBulkTransportPolicy,
+              !mediaPathProfile.usesAwdlRadioPolicy,
+              runtimeOwnership == .host,
+              runtimeQualityAdjustmentEnabled,
+              codec != .proRes4444 else {
+            return 0.0
+        }
+        return 0.50
+    }
+
+    var effectiveReadabilityQualityFloor: Float {
+        max(localReadabilityQualityFloor, nonLocalReadabilityQualityFloor)
+    }
+
     var localMotionQualityFloor: Float {
         mediaPathProfile.usesLocalBulkTransportPolicy ? 0.35 : 0.0
     }
 
     func readabilityFloorBitrateBps() -> Int? {
-        floorBitrateBps(forFrameQuality: localReadabilityQualityFloor)
+        floorBitrateBps(forFrameQuality: effectiveReadabilityQualityFloor)
     }
 
     func motionFloorBitrateBps() -> Int? {
@@ -363,6 +378,9 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         let localSustainedTransportAdmissionAllowed = localSustainedTransportReliefAllowed(
             snapshot: snapshot,
             evidence: evidence,
+            contract: contract,
+            reason: reason,
+            evidenceLabel: evidenceLabel,
             minimumActiveDuration: inputActive ? 0.75 : 0.5,
             now: now
         )
@@ -853,6 +871,9 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
     private mutating func localSustainedTransportReliefAllowed(
         snapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
         evidence: Evidence,
+        contract: StreamQualityContract,
+        reason: String?,
+        evidenceLabel: String?,
         minimumActiveDuration: CFAbsoluteTime,
         now: CFAbsoluteTime
     ) -> Bool {
@@ -872,6 +893,9 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             snapshot.receiverReassemblyBacklogFrames > 0 ||
                 snapshot.receiverReassemblyBacklogBytes > 0 ||
                 (snapshot.receiverAckLagMs ?? 0) >= 250
+        case .motion:
+            admissionSignalIndicatesTransportRelief(reason: reason, evidenceLabel: evidenceLabel) &&
+                motionCadenceReliefAllowed(contract: contract, now: now)
         default:
             false
         }
@@ -893,7 +917,26 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             snapshot.transportAdmissionActiveDuration,
             now - localTransportPressureStartedAt
         )
-        return observedDuration >= minimumActiveDuration
+        let motionObservedDuration = now - localTransportPressureStartedAt
+        return (evidence.cause == .motion ? motionObservedDuration : observedDuration) >= minimumActiveDuration
+    }
+
+    private func admissionSignalIndicatesTransportRelief(reason: String?, evidenceLabel: String?) -> Bool {
+        reasonIndicatesTransportRelief(reason) || reasonIndicatesTransportRelief(evidenceLabel)
+    }
+
+    private func reasonIndicatesTransportRelief(_ reason: String?) -> Bool {
+        guard let reason else { return false }
+        return reason == HostAdaptivePFrameController.Reason.transportBacklog.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.senderDeadline.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.receiverFreshness.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.pFrameLatency.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.receiverBacklog.rawValue ||
+            reason.contains("transport-backlog") ||
+            reason.contains("sender-deadline") ||
+            reason.contains("receiver-freshness") ||
+            reason.contains("p-frame-latency") ||
+            reason.contains("receiver-backlog")
     }
 
     private func reasonIndicatesMotionComplexity(_ reason: String?) -> Bool {

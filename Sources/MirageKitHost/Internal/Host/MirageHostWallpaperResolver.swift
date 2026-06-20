@@ -68,6 +68,7 @@ enum MirageHostWallpaperResolver {
         preferredMaxPixelHeight: Int
     ) async -> Payload? {
         guard let primaryDisplayID = resolvedPrimaryPhysicalDisplayID() else {
+            MirageLogger.host("Host wallpaper unavailable: no primary physical display")
             return nil
         }
 
@@ -76,17 +77,38 @@ enum MirageHostWallpaperResolver {
             content = try await SCShareableContent.mirageHostContent()
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to resolve shareable content for host wallpaper: ")
-            return nil
+            return configuredDesktopImagePayload(
+                for: primaryDisplayID,
+                preferredMaxPixelWidth: preferredMaxPixelWidth,
+                preferredMaxPixelHeight: preferredMaxPixelHeight
+            )
         }
 
         guard let display = content.displays.first(where: { $0.displayID == primaryDisplayID }) else {
-            return nil
+            MirageLogger.host(
+                "Host wallpaper SCK display unavailable displayID=\(primaryDisplayID) " +
+                    "availableDisplays=\(content.displays.map(\.displayID))"
+            )
+            return configuredDesktopImagePayload(
+                for: primaryDisplayID,
+                preferredMaxPixelWidth: preferredMaxPixelWidth,
+                preferredMaxPixelHeight: preferredMaxPixelHeight
+            )
         }
 
         let candidates = content.windows.map(WallpaperWindowCandidate.init(window:))
         guard let candidate = wallpaperWindowCandidate(from: candidates, for: display.frame),
               let wallpaperWindow = content.windows.first(where: { $0.windowID == candidate.windowID }) else {
-            return nil
+            logWallpaperWindowResolutionFailure(
+                primaryDisplayID: primaryDisplayID,
+                displayFrame: display.frame,
+                candidates: candidates
+            )
+            return configuredDesktopImagePayload(
+                for: primaryDisplayID,
+                preferredMaxPixelWidth: preferredMaxPixelWidth,
+                preferredMaxPixelHeight: preferredMaxPixelHeight
+            )
         }
 
         let filter = SCContentFilter(desktopIndependentWindow: wallpaperWindow)
@@ -110,14 +132,27 @@ enum MirageHostWallpaperResolver {
         MirageLogger.endInterval(captureEncodeInterval)
 
         guard let image else {
-            return nil
+            return configuredDesktopImagePayload(
+                for: primaryDisplayID,
+                preferredMaxPixelWidth: preferredMaxPixelWidth,
+                preferredMaxPixelHeight: preferredMaxPixelHeight
+            )
         }
 
-        return payload(
+        guard let payload = payload(
             from: image,
             preferredMaxPixelWidth: preferredMaxPixelWidth,
             preferredMaxPixelHeight: preferredMaxPixelHeight
-        )
+        ) else {
+            MirageLogger.host("Host wallpaper SCK capture could not be encoded; falling back to configured desktop image")
+            return configuredDesktopImagePayload(
+                for: primaryDisplayID,
+                preferredMaxPixelWidth: preferredMaxPixelWidth,
+                preferredMaxPixelHeight: preferredMaxPixelHeight
+            )
+        }
+
+        return payload
     }
 
     nonisolated static func resolvedPrimaryPhysicalDisplayID(
@@ -139,8 +174,7 @@ enum MirageHostWallpaperResolver {
         windows
             .compactMap { candidate -> (WallpaperWindowCandidate, CGFloat)? in
                 guard candidate.ownerName == "Dock",
-                      candidate.title.hasPrefix("Wallpaper"),
-                      candidate.windowLayer < 0 else {
+                      candidate.title.hasPrefix("Wallpaper") else {
                     return nil
                 }
 
@@ -155,6 +189,11 @@ enum MirageHostWallpaperResolver {
             }
             .max { lhs, rhs in
                 if lhs.1 == rhs.1 {
+                    let lhsIsDesktopLayer = lhs.0.windowLayer < 0
+                    let rhsIsDesktopLayer = rhs.0.windowLayer < 0
+                    if lhsIsDesktopLayer != rhsIsDesktopLayer {
+                        return !lhsIsDesktopLayer && rhsIsDesktopLayer
+                    }
                     return lhs.0.windowID > rhs.0.windowID
                 }
                 return lhs.1 < rhs.1
@@ -162,7 +201,7 @@ enum MirageHostWallpaperResolver {
             .0
     }
 
-    private static func payload(
+    static func payload(
         from image: CGImage,
         preferredMaxPixelWidth: Int,
         preferredMaxPixelHeight: Int

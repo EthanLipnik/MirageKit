@@ -35,6 +35,18 @@ struct StreamBitrateContractTests {
         #expect(await context.requestedTargetBitrate == 100_000_000)
     }
 
+    @Test("Compression quality ceiling clamps startup quality")
+    func compressionQualityCeilingClampsStartupQuality() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            compressionQualityCeiling: 0.5
+        )
+
+        #expect(await context.compressionQualityCeilingForTest() == 0.5)
+        #expect(await context.qualityCeilingForTest() <= 0.5)
+        #expect(await context.activeQualityForTest() <= 0.5)
+    }
+
     @Test("Uncapped stream context bypasses default encoded dimension cap")
     func uncappedStreamContextBypassesDefaultEncodedDimensionCap() async {
         let context = makeContext(
@@ -126,7 +138,10 @@ struct StreamBitrateContractTests {
 
     @Test("Healthy frame budget decision raises quality without lowering ceiling")
     func healthyFrameBudgetDecisionRaisesQualityWithoutLoweringCeiling() async {
-        let context = makeContext(bitrate: 60_000_000)
+        let context = makeContext(
+            bitrate: 60_000_000,
+            bitrateAdaptationCeiling: 221_500_000
+        )
         await context.configureRunningForBitrateContractTest()
         await context.configureRuntimeQualityRefreshTest(
             size: CGSize(width: 2752, height: 2064),
@@ -134,22 +149,22 @@ struct StreamBitrateContractTests {
         )
         let gradualQuality: Float = 0.44
         let originalCeiling = await context.qualityCeilingForTest()
-
-        await context.applyAdaptiveRuntimeDecision(
-            HostFrameBudgetDecision(
-                targetBitrateBps: 221_500_000,
-                maxFrameBytes: 461_459,
-                maxWireBytes: 461_459,
-                maxPacketCount: 385,
-                quality: gradualQuality,
-                qualityCeiling: 0.90,
-                keyframeQuality: 0.70,
-                sendDeadline: CFAbsoluteTimeGetCurrent() + 1,
-                state: .observing,
-                reason: .healthy
-            ),
-            now: CFAbsoluteTimeGetCurrent()
+        let now = CFAbsoluteTimeGetCurrent()
+        let decision = HostFrameBudgetDecision(
+            targetBitrateBps: 221_500_000,
+            maxFrameBytes: 461_459,
+            maxWireBytes: 461_459,
+            maxPacketCount: 385,
+            quality: gradualQuality,
+            qualityCeiling: 0.90,
+            keyframeQuality: 0.70,
+            sendDeadline: now + 1,
+            state: .observing,
+            reason: .healthy
         )
+
+        await context.applyAdaptiveRuntimeDecision(decision, now: now)
+        await context.applyAdaptiveRuntimeDecision(decision, now: now + 1.2)
         let activeQuality = await context.activeQualityForTest()
 
         #expect(activeQuality >= gradualQuality)
@@ -258,7 +273,8 @@ struct StreamBitrateContractTests {
         bitrateAdaptationCeiling: Int? = nil,
         disableResolutionCap: Bool = false,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        compressionQualityCeiling: Float? = nil
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
             targetFrameRate: 60,
@@ -276,6 +292,7 @@ struct StreamBitrateContractTests {
             capturePressureProfile: .tuned,
             latencyMode: .lowestLatency,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            compressionQualityCeiling: compressionQualityCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
         )
@@ -302,6 +319,10 @@ private extension StreamContext {
 
     func qualityCeilingForTest() -> Float {
         qualityCeiling
+    }
+
+    func compressionQualityCeilingForTest() -> Float {
+        compressionQualityCeiling
     }
 
     func currentTargetBitrateForTest() -> Int {

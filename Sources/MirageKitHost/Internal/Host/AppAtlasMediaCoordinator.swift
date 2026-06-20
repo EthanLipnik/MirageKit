@@ -98,12 +98,16 @@ actor AppAtlasMediaCoordinator {
     func updateQualityContract(
         bitrate: Int?,
         bitrateAdaptationCeiling: Int?,
+        compressionQualityCeiling: Float?,
         runtimeQualityAdjustmentEnabled: Bool?,
         encoderCatchUpQualityAdjustmentEnabled: Bool?
     ) async throws {
         await context.updateQualityAdjustmentPolicy(
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled
+        )
+        await context.updateCompressionQualityCeiling(
+            compressionQualityCeiling ?? StreamContext.defaultCompressionQualityCeiling
         )
         try await context.updateEncoderSettings(
             colorDepth: nil,

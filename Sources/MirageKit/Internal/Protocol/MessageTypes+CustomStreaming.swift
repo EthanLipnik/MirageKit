@@ -58,6 +58,9 @@ package struct StartCustomStreamMessage: Codable {
     /// Maximum bitrate the in-stream adaptation governor may ramp toward.
     package var bitrateAdaptationCeiling: Int?
 
+    /// Maximum host encoder compression-quality value for this stream.
+    package var compressionQualityCeiling: Float?
+
     /// Maximum encoded width in pixels for host-computed stream scaling.
     package var encoderMaxWidth: Int?
 
@@ -97,6 +100,7 @@ package struct StartCustomStreamMessage: Codable {
         displayHeight: Int,
         targetFrameRate: Int,
         streamScale: CGFloat? = nil,
+        compressionQualityCeiling: Float? = nil,
         mediaMaxPacketSize: Int? = nil,
         clientTransportPathKind: MirageNetworkPathKind? = nil,
         clientMediaPathProfile: MirageMediaPathProfile? = nil,
@@ -111,6 +115,7 @@ package struct StartCustomStreamMessage: Codable {
         self.displayHeight = max(1, displayHeight)
         self.targetFrameRate = max(1, min(120, targetFrameRate))
         self.streamScale = streamScale
+        self.compressionQualityCeiling = compressionQualityCeiling
         self.mediaMaxPacketSize = mediaMaxPacketSize
         self.clientTransportPathKind = clientTransportPathKind
         self.clientMediaPathProfile = clientMediaPathProfile

@@ -133,6 +133,10 @@ extension StreamContext {
         pendingAdaptiveFrameIntentsByPresentationTime.removeAll()
         transportFrameAdmissionState = HostTransportFrameAdmissionPolicy.State()
         transportAdmissionPressureState = HostTransportAdmissionPressureState()
+        highRefreshFrameAdmissionState.reset()
+        highRefreshPacingSkippedIntervalCount = 0
+        readabilityFrameAdmissionState.reset()
+        readabilityProtectionSkippedIntervalCount = 0
         realtimeLastEncoderThroughputAdjustmentTime = 0
         lastCapturedFrame = nil
         cachedStartupFrame = nil

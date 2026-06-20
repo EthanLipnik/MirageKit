@@ -185,6 +185,9 @@ package struct SelectAppMessage: Codable {
     /// Maximum bitrate the in-stream adaptation governor may ramp toward.
     package var bitrateAdaptationCeiling: Int?
 
+    /// Maximum host encoder compression-quality value for this stream.
+    package var compressionQualityCeiling: Float?
+
     /// Maximum encoded width in pixels for host-computed stream scaling.
     package var encoderMaxWidth: Int?
 
@@ -244,6 +247,7 @@ package struct SelectAppMessage: Codable {
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
         sizePreset: MirageDisplaySizePreset? = nil,
+        compressionQualityCeiling: Float? = nil,
         mediaMaxPacketSize: Int? = nil,
         clientTransportPathKind: MirageNetworkPathKind? = nil,
         clientMediaPathProfile: MirageMediaPathProfile? = nil,
@@ -273,6 +277,7 @@ package struct SelectAppMessage: Codable {
         self.audioConfiguration = audioConfiguration
         self.maxConcurrentVisibleWindows = max(1, maxConcurrentVisibleWindows)
         self.sizePreset = sizePreset
+        self.compressionQualityCeiling = compressionQualityCeiling
         self.mediaMaxPacketSize = mediaMaxPacketSize
         self.clientTransportPathKind = clientTransportPathKind
         self.clientMediaPathProfile = clientMediaPathProfile

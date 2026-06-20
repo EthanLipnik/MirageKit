@@ -397,12 +397,59 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             encodedFPS: 60,
             at: 10.05
         )
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(await context.activeQuality == originalQuality)
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
+            encodedFPS: 60,
+            at: 11.2
+        )
         let finalQuality = await context.activeQuality
         let finalConfiguredCeiling = await context.configuredQualityCeiling
 
-        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect((context.currentTargetBitrateBps ?? 0) > originalTarget)
         #expect(finalQuality > originalQuality)
         #expect(finalQuality <= finalConfiguredCeiling)
+    }
+
+    @Test("Non-still encoder throughput waits for active cadence before raise")
+    func nonStillEncoderThroughputWaitsForActiveCadenceBeforeRaise() async {
+        let context = makeContext(
+            bitrate: 54_100_000,
+            bitrateAdaptationCeiling: 180_000_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setActiveQualityForRealtimeBudgetTest(0.42)
+        await context.markSourceMovingForRealtimeBudgetTest(at: 10)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 60,
+            encodeAttemptFPS: 42,
+            encodedFPS: 42,
+            at: 10.05
+        )
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 60,
+            encodeAttemptFPS: 42,
+            encodedFPS: 42,
+            at: 11.2
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(await context.activeQuality == originalQuality)
     }
 
     @Test("Still quality probe restores active quality to ceiling immediately")

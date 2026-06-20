@@ -26,6 +26,33 @@ extension StreamContext {
         }
     }
 
+    func updateCompressionQualityCeiling(_ ceiling: Float) async {
+        let normalizedCeiling = Self.normalizedCompressionQualityCeiling(ceiling)
+        guard abs(compressionQualityCeiling - normalizedCeiling) > 0.0001 else { return }
+        let isRaisingCeiling = normalizedCeiling > compressionQualityCeiling
+        compressionQualityCeiling = normalizedCeiling
+
+        let targetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? requestedTargetBitrate ?? startupBitrate
+        if let targetBitrate, targetBitrate > 0 {
+            await refreshRuntimeQualityTargets(
+                for: targetBitrate,
+                reason: "compression-quality-ceiling",
+                allowsActiveQualityRaise: true,
+                clearsRuntimeQualityCeiling: isRaisingCeiling
+            )
+            return
+        }
+
+        let configurationCeiling = min(encoderConfig.frameQuality, normalizedCeiling)
+        configuredQualityCeiling = configurationCeiling
+        steadyQualityCeiling = configurationCeiling
+        qualityCeiling = resolvedQualityCeiling
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: qualityCeiling)
+        activeQuality = max(qualityFloor, min(activeQuality, qualityCeiling))
+        await encoder?.updateQuality(activeQuality)
+    }
+
     func applyRealtimeBudgetBitrate(
         _ bitrate: Int,
         ceilingBitrateBps: Int?,

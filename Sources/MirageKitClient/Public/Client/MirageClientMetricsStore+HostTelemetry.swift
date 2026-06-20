@@ -76,6 +76,16 @@ extension MirageClientMetricsStore {
             snapshot.hostTransportAdmissionMinimumFrameIntervalMs = metrics.transportAdmissionMinimumFrameIntervalMs
             snapshot.hostTransportAdmissionActiveHoldMs = metrics.transportAdmissionActiveHoldMs
             snapshot.hostTransportAdmissionSkipBurstCount = metrics.transportAdmissionSkipBurstCount
+            snapshot.hostHighRefreshPacingSkips = metrics.highRefreshPacingSkips
+            snapshot.hostHighRefreshPacingMode = metrics.highRefreshPacingMode
+            snapshot.hostHighRefreshPacingReason = metrics.highRefreshPacingReason
+            snapshot.hostHighRefreshPacingFloorFPS = metrics.highRefreshPacingFloorFPS
+            snapshot.hostReadabilityProtectionSkips = metrics.readabilityProtectionSkips
+            snapshot.hostReadabilityProtectionMode = metrics.readabilityProtectionMode
+            snapshot.hostReadabilityProtectionReason = metrics.readabilityProtectionReason
+            snapshot.hostReadabilityProtectionAdmitTargetFPS = metrics.readabilityProtectionAdmitTargetFPS
+            snapshot.hostRuntimeQualityFloor = metrics.runtimeQualityFloor.map(Double.init)
+            snapshot.hostRuntimeQualityCeiling = metrics.runtimeQualityCeiling.map(Double.init)
             snapshot.hostFrameBudgetMs = metrics.frameBudgetMs
             snapshot.hostAverageEncodeMs = metrics.averageEncodeMs
             snapshot.hostCaptureIngressFPS = metrics.captureIngressFPS

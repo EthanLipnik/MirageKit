@@ -17,6 +17,8 @@ import ScreenCaptureKit
 /// Manages the capture → encode → send pipeline for a single stream
 /// Uses virtual displays for window isolation, with display-level capture cropped to visible bounds
 actor StreamContext {
+    nonisolated static let defaultCompressionQualityCeiling: Float = 0.94
+
     let streamID: StreamID
     var windowID: WindowID
     let streamKind: VideoEncoder.StreamKind
@@ -117,7 +119,7 @@ actor StreamContext {
     var configuredQualityCeiling: Float
     var steadyQualityCeiling: Float
     var keyframeQualityFloor: Float
-    let compressionQualityCeiling: Float = 0.94
+    var compressionQualityCeiling: Float
     let qualityFloorFactor: Float = 0.45
     let keyframeFloorFactor: Float = 0.35
     let bitrateCappedQualityFloorFactor: Float = 0.45
@@ -201,6 +203,10 @@ actor StreamContext {
     var encodeErrorIntervalCount: UInt64 = 0
     var backpressureDropIntervalCount: UInt64 = 0
     var transportAdmissionSkippedIntervalCount: UInt64 = 0
+    var highRefreshFrameAdmissionState = HostHighRefreshFrameAdmissionState()
+    var highRefreshPacingSkippedIntervalCount: UInt64 = 0
+    var readabilityFrameAdmissionState = HostReadabilityFrameAdmissionState()
+    var readabilityProtectionSkippedIntervalCount: UInt64 = 0
     var encodeSkipQueueFullIntervalCount: UInt64 = 0
     var encodeSkipDimensionIntervalCount: UInt64 = 0
     var encodeSkipInactiveIntervalCount: UInt64 = 0
@@ -437,6 +443,11 @@ actor StreamContext {
         min(max(channelCount, minAudioCaptureChannelCount), maxAudioCaptureChannelCount)
     }
 
+    nonisolated static func normalizedCompressionQualityCeiling(_ ceiling: Float?) -> Float {
+        guard let ceiling, ceiling > 0 else { return defaultCompressionQualityCeiling }
+        return max(0.02, min(defaultCompressionQualityCeiling, ceiling))
+    }
+
     nonisolated static func resolvedMediaPathProfile(
         transportPathKind: MirageNetworkPathKind,
         mediaPathProfile: MirageMediaPathProfile?
@@ -470,6 +481,7 @@ actor StreamContext {
         mediaPathDiagnosticSummary: String? = nil,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
+        compressionQualityCeiling: Float? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
         captureShowsCursor: Bool = false
@@ -535,6 +547,7 @@ actor StreamContext {
         self.disableResolutionCap = disableResolutionCap
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
+        self.compressionQualityCeiling = Self.normalizedCompressionQualityCeiling(compressionQualityCeiling)
         self.encoderLowPowerEnabled = encoderLowPowerEnabled
         self.capturePressureProfile = capturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
@@ -557,7 +570,7 @@ actor StreamContext {
         frameInbox = StreamFrameInbox(capacity: bufferPolicy.bufferDepth)
         maxEncodeTimeMs = resolvedEncoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
-        let cappedFrameQuality = min(resolvedEncoderConfig.frameQuality, compressionQualityCeiling)
+        let cappedFrameQuality = min(resolvedEncoderConfig.frameQuality, self.compressionQualityCeiling)
         configuredQualityCeiling = cappedFrameQuality
         steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = cappedFrameQuality

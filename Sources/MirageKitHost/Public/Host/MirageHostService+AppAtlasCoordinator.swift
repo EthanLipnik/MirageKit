@@ -196,6 +196,7 @@ extension MirageHostService {
             mediaPathDiagnosticSummary: mediaPathPolicy.diagnosticSummary,
             enteredBitrate: selectRequest.enteredBitrate,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
+            compressionQualityCeiling: selectRequest.compressionQualityCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight
         )
@@ -322,6 +323,7 @@ extension MirageHostService {
         try await coordinator.updateQualityContract(
             bitrate: requestedBitrate ?? selectRequest.bitrate,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
+            compressionQualityCeiling: selectRequest.compressionQualityCeiling,
             runtimeQualityAdjustmentEnabled: selectRequest.allowRuntimeQualityAdjustment,
             encoderCatchUpQualityAdjustmentEnabled: selectRequest.allowEncoderCatchUpQualityAdjustment
         )

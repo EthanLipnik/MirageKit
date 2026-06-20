@@ -70,6 +70,40 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .networkBound)
     }
 
+    @Test("Readability protection skips do not classify as transport pressure")
+    func readabilityProtectionSkipsDoNotClassifyAsTransportPressure() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostEncodedFPS = 30
+        snapshot.hostEncodeAttemptFPS = 30
+        snapshot.receivedFPS = 30
+        snapshot.decodedFPS = 30
+        snapshot.layerEnqueueFPS = 30
+        snapshot.uniqueLayerEnqueueFPS = 30
+        snapshot.clientVisibleFrameFPS = 30
+        snapshot.hostReadabilityProtectionSkips = 30
+        snapshot.hostReadabilityProtectionMode = "protecting"
+        snapshot.hostReadabilityProtectionReason = "encoder-lag"
+
+        #expect(snapshot.bottleneckKind != .networkBound)
+    }
+
+    @Test("High refresh pacing skips do not classify as transport pressure")
+    func highRefreshPacingSkipsDoNotClassifyAsTransportPressure() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostEncodedFPS = 76
+        snapshot.hostEncodeAttemptFPS = 76
+        snapshot.receivedFPS = 76
+        snapshot.decodedFPS = 76
+        snapshot.layerEnqueueFPS = 76
+        snapshot.uniqueLayerEnqueueFPS = 76
+        snapshot.clientVisibleFrameFPS = 76
+        snapshot.hostHighRefreshPacingSkips = 12
+        snapshot.hostHighRefreshPacingMode = "protecting"
+        snapshot.hostHighRefreshPacingReason = "stale-frame"
+
+        #expect(snapshot.bottleneckKind != .networkBound)
+    }
+
     @Test("Clean transport window clears prior network-bound classification inputs")
     func cleanTransportWindowClearsPriorNetworkBoundClassificationInputs() {
         var stressedSnapshot = baselineSnapshot()

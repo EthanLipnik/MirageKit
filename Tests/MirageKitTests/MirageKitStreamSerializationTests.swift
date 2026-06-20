@@ -162,6 +162,16 @@ struct MirageKitStreamSerializationTests {
             transportAdmissionMinimumFrameIntervalMs: 33.3,
             transportAdmissionActiveHoldMs: 750,
             transportAdmissionSkipBurstCount: 4,
+            highRefreshPacingSkips: 5,
+            highRefreshPacingMode: "protecting",
+            highRefreshPacingReason: "stale-frame",
+            highRefreshPacingFloorFPS: 60,
+            readabilityProtectionSkips: 2,
+            readabilityProtectionMode: "protecting",
+            readabilityProtectionReason: "encoder-lag",
+            readabilityProtectionAdmitTargetFPS: 20,
+            runtimeQualityFloor: 0.50,
+            runtimeQualityCeiling: 0.52,
             averageEncodeMs: 13.2,
             captureCadence: captureCadence,
             sendQueueBytes: 262_144,
@@ -238,6 +248,16 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.transportAdmissionMinimumFrameIntervalMs == 33.3)
         #expect(decoded.transportAdmissionActiveHoldMs == 750)
         #expect(decoded.transportAdmissionSkipBurstCount == 4)
+        #expect(decoded.highRefreshPacingSkips == 5)
+        #expect(decoded.highRefreshPacingMode == "protecting")
+        #expect(decoded.highRefreshPacingReason == "stale-frame")
+        #expect(decoded.highRefreshPacingFloorFPS == 60)
+        #expect(decoded.readabilityProtectionSkips == 2)
+        #expect(decoded.readabilityProtectionMode == "protecting")
+        #expect(decoded.readabilityProtectionReason == "encoder-lag")
+        #expect(decoded.readabilityProtectionAdmitTargetFPS == 20)
+        #expect(decoded.runtimeQualityFloor == 0.50)
+        #expect(decoded.runtimeQualityCeiling == 0.52)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
         #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)
@@ -289,6 +309,12 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.averageEncodeMs == nil)
         #expect(decoded.usingHardwareEncoder == nil)
         #expect(decoded.encoderGPURegistryID == nil)
+        #expect(decoded.highRefreshPacingSkips == nil)
+        #expect(decoded.highRefreshPacingMode == nil)
+        #expect(decoded.readabilityProtectionSkips == nil)
+        #expect(decoded.readabilityProtectionMode == nil)
+        #expect(decoded.runtimeQualityFloor == nil)
+        #expect(decoded.runtimeQualityCeiling == nil)
         #expect(decoded.capturePixelFormat == "420v")
         #expect(decoded.encoderPixelFormat == "8-bit (NV12)")
         #expect(decoded.tenBitDisplayP3Validated == false)

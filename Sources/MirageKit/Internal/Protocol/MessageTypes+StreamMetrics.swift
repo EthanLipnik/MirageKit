@@ -192,6 +192,16 @@ package struct StreamMetricsMessage: Codable {
     package let transportAdmissionMinimumFrameIntervalMs: Double?
     package let transportAdmissionActiveHoldMs: Double?
     package let transportAdmissionSkipBurstCount: UInt64?
+    package let highRefreshPacingSkips: UInt64?
+    package let highRefreshPacingMode: String?
+    package let highRefreshPacingReason: String?
+    package let highRefreshPacingFloorFPS: Int?
+    package let readabilityProtectionSkips: UInt64?
+    package let readabilityProtectionMode: String?
+    package let readabilityProtectionReason: String?
+    package let readabilityProtectionAdmitTargetFPS: Int?
+    package let runtimeQualityFloor: Float?
+    package let runtimeQualityCeiling: Float?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
     package let captureIngressFPS: Double?
@@ -322,6 +332,16 @@ package struct StreamMetricsMessage: Codable {
         transportAdmissionMinimumFrameIntervalMs: Double? = nil,
         transportAdmissionActiveHoldMs: Double? = nil,
         transportAdmissionSkipBurstCount: UInt64? = nil,
+        highRefreshPacingSkips: UInt64? = nil,
+        highRefreshPacingMode: String? = nil,
+        highRefreshPacingReason: String? = nil,
+        highRefreshPacingFloorFPS: Int? = nil,
+        readabilityProtectionSkips: UInt64? = nil,
+        readabilityProtectionMode: String? = nil,
+        readabilityProtectionReason: String? = nil,
+        readabilityProtectionAdmitTargetFPS: Int? = nil,
+        runtimeQualityFloor: Float? = nil,
+        runtimeQualityCeiling: Float? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
         captureIngressFPS: Double? = nil,
@@ -451,6 +471,16 @@ package struct StreamMetricsMessage: Codable {
         self.transportAdmissionMinimumFrameIntervalMs = transportAdmissionMinimumFrameIntervalMs
         self.transportAdmissionActiveHoldMs = transportAdmissionActiveHoldMs
         self.transportAdmissionSkipBurstCount = transportAdmissionSkipBurstCount
+        self.highRefreshPacingSkips = highRefreshPacingSkips
+        self.highRefreshPacingMode = highRefreshPacingMode
+        self.highRefreshPacingReason = highRefreshPacingReason
+        self.highRefreshPacingFloorFPS = highRefreshPacingFloorFPS
+        self.readabilityProtectionSkips = readabilityProtectionSkips
+        self.readabilityProtectionMode = readabilityProtectionMode
+        self.readabilityProtectionReason = readabilityProtectionReason
+        self.readabilityProtectionAdmitTargetFPS = readabilityProtectionAdmitTargetFPS
+        self.runtimeQualityFloor = runtimeQualityFloor
+        self.runtimeQualityCeiling = runtimeQualityCeiling
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs
         self.captureIngressFPS = captureIngressFPS

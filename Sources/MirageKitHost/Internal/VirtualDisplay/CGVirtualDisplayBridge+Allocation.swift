@@ -20,20 +20,32 @@ extension CGVirtualDisplayBridge {
         width: Int,
         height: Int,
         ppi: Double,
+        hiDPI: Bool,
         profile: DescriptorAttempt
     ) {
+        let nativePixelSize = descriptorNativePixelSize(width: width, height: height, hiDPI: hiDPI)
         descriptor.setValue(name, forKey: "name")
         descriptor.setValue(mirageVendorID, forKey: "vendorID")
         descriptor.setValue(mirageProductID, forKey: "productID")
         descriptor.setValue(profile.serial, forKey: "serialNum")
-        descriptor.setValue(UInt32(width), forKey: "maxPixelsWide")
-        descriptor.setValue(UInt32(height), forKey: "maxPixelsHigh")
+        descriptor.setValue(UInt32(nativePixelSize.width), forKey: "maxPixelsWide")
+        descriptor.setValue(UInt32(nativePixelSize.height), forKey: "maxPixelsHigh")
         descriptor.setValue(
-            CGSize(width: 25.4 * Double(width) / ppi, height: 25.4 * Double(height) / ppi),
+            CGSize(
+                width: 25.4 * Double(nativePixelSize.width) / ppi,
+                height: 25.4 * Double(nativePixelSize.height) / ppi
+            ),
             forKey: "sizeInMillimeters"
         )
 
         descriptor.setValue(profile.queue, forKey: "queue")
+    }
+
+    static func descriptorNativePixelSize(width: Int, height: Int, hiDPI: Bool) -> (width: Int, height: Int) {
+        let safeWidth = max(1, width)
+        let safeHeight = max(1, height)
+        guard !hiDPI else { return (safeWidth, safeHeight) }
+        return (safeWidth * 2, safeHeight * 2)
     }
 
     /// Allocates and initializes a private CGVirtualDisplay instance.

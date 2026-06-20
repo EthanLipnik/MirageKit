@@ -64,6 +64,10 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate adaptation ceiling: \(mirageFormattedMegabitRate(bitrateAdaptationCeiling))")
         }
+        if let compressionQualityCeiling = overrides.compressionQualityCeiling, compressionQualityCeiling > 0 {
+            request.compressionQualityCeiling = compressionQualityCeiling
+            MirageLogger.client("Requesting compression quality ceiling: \(compressionQualityCeiling)")
+        }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth
         }
@@ -138,6 +142,10 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate adaptation ceiling: \(mirageFormattedMegabitRate(bitrateAdaptationCeiling))")
         }
+        if let compressionQualityCeiling = overrides.compressionQualityCeiling, compressionQualityCeiling > 0 {
+            request.compressionQualityCeiling = compressionQualityCeiling
+            MirageLogger.client("Requesting compression quality ceiling: \(compressionQualityCeiling)")
+        }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth
         }
@@ -211,6 +219,10 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate adaptation ceiling: \(mirageFormattedMegabitRate(bitrateAdaptationCeiling))")
         }
+        if let compressionQualityCeiling = overrides.compressionQualityCeiling, compressionQualityCeiling > 0 {
+            request.compressionQualityCeiling = compressionQualityCeiling
+            MirageLogger.client("Requesting compression quality ceiling: \(compressionQualityCeiling)")
+        }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth
         }
@@ -255,6 +267,9 @@ extension MirageClientService {
         }
         if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
             request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
+        }
+        if let compressionQualityCeiling = overrides.compressionQualityCeiling, compressionQualityCeiling > 0 {
+            request.compressionQualityCeiling = compressionQualityCeiling
         }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth

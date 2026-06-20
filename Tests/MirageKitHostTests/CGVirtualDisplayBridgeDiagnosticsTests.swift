@@ -30,6 +30,7 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
             width: 2752,
             height: 2064,
             ppi: 220,
+            hiDPI: true,
             profile: attempt
         )
 
@@ -40,6 +41,25 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
         #expect(!descriptor.recordedKeys.contains("greenPrimary"))
         #expect(!descriptor.recordedKeys.contains("bluePrimary"))
         #expect(!descriptor.recordedKeys.contains("whitePoint"))
+    }
+
+    @Test("Non-Retina descriptor advertises enough native pixels for full-size 1x modes")
+    func nonRetinaDescriptorAdvertisesEnoughNativePixelsForFullSizeOneXModes() {
+        let oneX = CGVirtualDisplayBridge.descriptorNativePixelSize(
+            width: 1600,
+            height: 1200,
+            hiDPI: false
+        )
+        let retina = CGVirtualDisplayBridge.descriptorNativePixelSize(
+            width: 3200,
+            height: 2400,
+            hiDPI: true
+        )
+
+        #expect(oneX.width == 3200)
+        #expect(oneX.height == 2400)
+        #expect(retina.width == 3200)
+        #expect(retina.height == 2400)
     }
 
     @Test("Cached descriptor profile is evicted immediately after failure")

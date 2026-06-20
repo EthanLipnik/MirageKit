@@ -520,8 +520,8 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.cause == .motion)
     }
 
-    @Test("Proximity input motion pressure blocks transport-named admission at floor")
-    func proximityInputMotionPressureBlocksTransportNamedAdmissionAtFloor() {
+    @Test("Proximity input motion pressure allows sustained transport-named admission at floor")
+    func proximityInputMotionPressureAllowsSustainedTransportNamedAdmissionAtFloor() {
         var governor = HostStreamQualityGovernor()
         let contract = makeContract(mediaPathProfile: .proximityWiredLike)
         _ = governor.evaluateRuntimeDecision(
@@ -538,13 +538,14 @@ struct HostStreamQualityGovernorTests {
             now: 30
         )
 
-        let allowed = governor.allowsTransportAdmissionSkip(
-            snapshot: makeSnapshot(
-                mediaPathProfile: .proximityWiredLike,
-                realtimePressureState: .pressured,
-                realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
-                transportAdmissionActiveDuration: 2.0
-            ),
+        let snapshot = makeSnapshot(
+            mediaPathProfile: .proximityWiredLike,
+            realtimePressureState: .pressured,
+            realtimePressureReason: HostAdaptivePFrameController.Reason.encodedFrame.rawValue,
+            transportAdmissionActiveDuration: 2.0
+        )
+        let early = governor.allowsTransportAdmissionSkip(
+            snapshot: snapshot,
             proposedMode: .softThrottle,
             reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
             evidenceLabel: "soft:transport-backlog",
@@ -552,10 +553,19 @@ struct HostStreamQualityGovernorTests {
             contract: contract,
             now: 30.1
         )
+        let allowed = governor.allowsTransportAdmissionSkip(
+            snapshot: snapshot,
+            proposedMode: .softThrottle,
+            reason: HostAdaptivePFrameController.Reason.transportBacklog.rawValue,
+            evidenceLabel: "soft:transport-backlog",
+            inputActive: true,
+            contract: contract,
+            now: 30.9
+        )
 
-        #expect(allowed == false)
-        #expect(governor.latestDecision.selectedLever == .observe)
-        #expect(governor.latestDecision.blockedLeverReason == "input-cadence-protected")
+        #expect(early == false)
+        #expect(allowed)
+        #expect(governor.latestDecision.selectedLever == .admissionSkip)
         #expect(governor.latestDecision.cause == .motion)
     }
 
@@ -644,8 +654,20 @@ struct HostStreamQualityGovernorTests {
         #expect(recovery.selectedLever == .presentationRecovery)
     }
 
+    @Test("Non-local adaptive streams use practical readability floor")
+    func nonLocalAdaptiveStreamsUsePracticalReadabilityFloor() {
+        let vpnContract = makeContract(mediaPathProfile: .vpnOrOverlay)
+        let localContract = makeContract(mediaPathProfile: .proximityWiredLike)
+        let proResContract = makeContract(mediaPathProfile: .vpnOrOverlay, codec: .proRes4444)
+
+        #expect(vpnContract.effectiveReadabilityQualityFloor == 0.50)
+        #expect(localContract.effectiveReadabilityQualityFloor == 0.66)
+        #expect(proResContract.effectiveReadabilityQualityFloor == 0.0)
+    }
+
     private func makeContract(
         mediaPathProfile: MirageMediaPathProfile,
+        codec: MirageVideoCodec = .hevc,
         startupBaseTime: CFAbsoluteTime = 0,
         encodedFrameCount: UInt64 = 120,
         qualityCeiling: Float = 0.80,
@@ -657,7 +679,7 @@ struct HostStreamQualityGovernorTests {
             encodedHeight: 2064,
             targetFrameRate: 60,
             streamScale: 1.0,
-            codec: .hevc,
+            codec: codec,
             colorDepth: .standard,
             enteredBitrateBps: 300_000_000,
             targetBitrateBps: 75_000_000,

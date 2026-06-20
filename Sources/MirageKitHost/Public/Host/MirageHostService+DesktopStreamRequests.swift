@@ -142,6 +142,7 @@ extension MirageHostService {
                 audioConfiguration: audioConfiguration,
                 targetFrameRate: targetFrameRate,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+                compressionQualityCeiling: request.compressionQualityCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,

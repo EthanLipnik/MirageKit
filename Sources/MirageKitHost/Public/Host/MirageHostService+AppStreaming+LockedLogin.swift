@@ -147,6 +147,7 @@ extension MirageHostService {
                 mediaPathDiagnosticSummary: mediaPathPolicy.diagnosticSummary,
                 enteredBitrate: request.enteredBitrate,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+                compressionQualityCeiling: request.compressionQualityCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
                 captureShowsCursor: false

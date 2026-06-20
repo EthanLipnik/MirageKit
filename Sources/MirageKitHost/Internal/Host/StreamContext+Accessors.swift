@@ -69,6 +69,7 @@ struct DesktopPipelineRestartSnapshot: Sendable {
     let enteredBitrate: Int?
     let explicitEnteredBitrate: Int?
     let bitrateAdaptationCeiling: Int?
+    let compressionQualityCeiling: Float
     let encoderMaxWidth: Int?
     let encoderMaxHeight: Int?
     let captureShowsCursor: Bool
@@ -253,6 +254,7 @@ extension StreamContext {
             enteredBitrate: enteredTargetBitrate,
             explicitEnteredBitrate: explicitEnteredTargetBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            compressionQualityCeiling: compressionQualityCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight,
             captureShowsCursor: captureShowsCursor,
