@@ -74,6 +74,18 @@ extension StreamContext {
             )
             let awdlPolicy = transportController.latestAwdlMediaDecision
             let streamQualityDecision = latestStreamQualityDecision()
+            let readabilityMode: String
+            let readabilityReason: String?
+            if readabilityFrameAdmissionState.mode != .inactive {
+                readabilityMode = readabilityFrameAdmissionState.mode.rawValue
+                readabilityReason = readabilityFrameAdmissionState.reason
+            } else if readabilityFloorRecoveryState.mode != .inactive {
+                readabilityMode = readabilityFloorRecoveryState.mode.rawValue
+                readabilityReason = readabilityFloorRecoveryState.reason
+            } else {
+                readabilityMode = readabilityFrameAdmissionState.mode.rawValue
+                readabilityReason = readabilityFrameAdmissionState.reason
+            }
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -147,8 +159,8 @@ extension StreamContext {
                 highRefreshPacingReason: highRefreshFrameAdmissionState.reason,
                 highRefreshPacingFloorFPS: HostHighRefreshFrameAdmissionState.protectedFloorFPS,
                 readabilityProtectionSkips: readabilityProtectionSkippedIntervalCount,
-                readabilityProtectionMode: readabilityFrameAdmissionState.mode.rawValue,
-                readabilityProtectionReason: readabilityFrameAdmissionState.reason,
+                readabilityProtectionMode: readabilityMode,
+                readabilityProtectionReason: readabilityReason,
                 readabilityProtectionAdmitTargetFPS: HostReadabilityFrameAdmissionState.admitTargetFPS,
                 runtimeQualityFloor: qualityFloor,
                 runtimeQualityCeiling: qualityCeiling,

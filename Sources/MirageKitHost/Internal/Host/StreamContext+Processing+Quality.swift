@@ -1257,38 +1257,66 @@ extension StreamContext {
         return false
     }
 
+    private func resetReadabilityProtectionGate(reason: String, reportsBlockedReason: Bool) {
+        guard reportsBlockedReason else {
+            readabilityFrameAdmissionState.reset()
+            return
+        }
+        readabilityFrameAdmissionState.noteBlocked(reason: reason)
+    }
+
     private func readabilityProtectionCanUseSkipAdmission(
         frame: CapturedFrame,
         inputActive: Bool,
         sourceStill: Bool,
         pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot
     ) -> String? {
+        let floor = currentStreamQualityContract().effectiveReadabilityQualityFloor
+        let reportsBlockedReason = readabilityProtectionQualityIsAtFloor(floor)
         guard runtimeQualityAdjustmentEnabled,
               encoderCatchUpQualityAdjustmentEnabled,
               encoderConfig.codec != .proRes4444,
               currentFrameRate > HostReadabilityFrameAdmissionState.admitTargetFPS,
               !inputActive else {
-            readabilityFrameAdmissionState.reset()
+            let reason = if !runtimeQualityAdjustmentEnabled {
+                "runtime-quality-disabled"
+            } else if !encoderCatchUpQualityAdjustmentEnabled {
+                "encoder-catch-up-disabled"
+            } else if encoderConfig.codec == .proRes4444 {
+                "prores"
+            } else if currentFrameRate <= HostReadabilityFrameAdmissionState.admitTargetFPS {
+                "target-fps-at-floor"
+            } else {
+                "input-active"
+            }
+            resetReadabilityProtectionGate(reason: reason, reportsBlockedReason: reportsBlockedReason)
             return nil
         }
 
         let lowMotion = sourceStill || frame.info.dirtyPercentage <= Self.lowMotionRampDirtyPercentage
         guard lowMotion else {
-            readabilityFrameAdmissionState.reset()
+            resetReadabilityProtectionGate(reason: "motion-active", reportsBlockedReason: reportsBlockedReason)
             return nil
         }
 
         guard pressureSnapshot.receiverState != .severe,
               !pressureSnapshot.senderDropHoldActive,
               pressureSnapshot.senderQueuedBytes < pressureSnapshot.maxQueuedBytes else {
-            readabilityFrameAdmissionState.reset()
+            let reason = if pressureSnapshot.receiverState == .severe {
+                "receiver-severe"
+            } else if pressureSnapshot.senderDropHoldActive {
+                "sender-drop-hold"
+            } else {
+                "sender-queue"
+            }
+            resetReadabilityProtectionGate(reason: reason, reportsBlockedReason: reportsBlockedReason)
             return nil
         }
 
-        let floor = currentStreamQualityContract().effectiveReadabilityQualityFloor
         guard readabilityProtectionQualityIsAtFloor(floor),
               let reason = readabilityProtectionPressureReason() else {
-            readabilityFrameAdmissionState.reset()
+            let blockedReason = readabilityProtectionQualityIsAtFloor(floor) ? "no-pressure" : "above-floor"
+            resetReadabilityProtectionGate(reason: blockedReason, reportsBlockedReason: reportsBlockedReason)
             return nil
         }
         return reason

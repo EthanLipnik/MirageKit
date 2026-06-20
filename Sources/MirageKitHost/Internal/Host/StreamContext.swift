@@ -206,6 +206,7 @@ actor StreamContext {
     var highRefreshFrameAdmissionState = HostHighRefreshFrameAdmissionState()
     var highRefreshPacingSkippedIntervalCount: UInt64 = 0
     var readabilityFrameAdmissionState = HostReadabilityFrameAdmissionState()
+    var readabilityFloorRecoveryState = HostReadabilityFloorRecoveryState()
     var readabilityProtectionSkippedIntervalCount: UInt64 = 0
     var encodeSkipQueueFullIntervalCount: UInt64 = 0
     var encodeSkipDimensionIntervalCount: UInt64 = 0

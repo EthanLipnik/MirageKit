@@ -11,6 +11,8 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
+    private static let readabilityFloorRecoveryDirtyPercentage: Float = 6.0
+
     func currentStreamQualityContract() -> StreamQualityContract {
         StreamQualityContract(
             streamFamily: StreamQualityContract.family(for: streamKind),
@@ -84,7 +86,9 @@ extension StreamContext {
         if !mediaPathProfile.usesLocalBulkTransportPolicy {
             switch decision.reason {
             case .encoderLag:
-                guard decision.state == .pressured else { return 0 }
+                guard decision.state == .pressured || readabilityFloorRecoveryState.isProtecting else {
+                    return 0
+                }
                 return contract.effectiveReadabilityQualityFloor
             case .startup,
                  .healthy,
@@ -121,6 +125,153 @@ extension StreamContext {
              .adaptiveRepair:
             return contract.localReadabilityQualityFloor
         }
+    }
+
+    func updateReadabilityFloorRecoveryState(
+        for decision: HostFrameBudgetDecision?,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        now: CFAbsoluteTime
+    ) {
+        guard let decision else {
+            resetReadabilityFloorRecoveryStateIfNeeded(now: now)
+            return
+        }
+
+        if let reason = readabilityFloorRecoveryReason(
+            for: decision,
+            pressureSnapshot: pressureSnapshot,
+            now: now
+        ) {
+            let previousMode = readabilityFloorRecoveryState.mode
+            let protectsFloor = readabilityFloorRecoveryState.update(reason: reason, now: now)
+            if protectsFloor,
+               previousMode != .floorProtecting {
+                logReadabilityFloorRecoveryTransition(
+                    mode: readabilityFloorRecoveryState.mode,
+                    reason: reason,
+                    now: now
+                )
+            }
+            return
+        }
+
+        guard shouldHoldReadabilityFloorRecoveryState(
+            through: decision,
+            pressureSnapshot: pressureSnapshot,
+            now: now
+        ) else {
+            resetReadabilityFloorRecoveryStateIfNeeded(now: now)
+            return
+        }
+    }
+
+    private func readabilityFloorRecoveryReason(
+        for decision: HostFrameBudgetDecision,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        now: CFAbsoluteTime
+    ) -> String? {
+        guard runtimeQualityAdjustmentEnabled,
+              encoderCatchUpQualityAdjustmentEnabled,
+              encoderConfig.codec != .proRes4444,
+              !mediaPathProfile.usesLocalBulkTransportPolicy,
+              decision.reason == .encoderLag,
+              decision.state == .severe else {
+            return nil
+        }
+
+        guard currentStreamQualityContract().effectiveReadabilityQualityFloor > 0,
+              readabilityFloorRecoveryEnvironmentAllows(pressureSnapshot: pressureSnapshot, now: now) else {
+            return nil
+        }
+
+        return "still-severe-encoder-lag"
+    }
+
+    private func shouldHoldReadabilityFloorRecoveryState(
+        through decision: HostFrameBudgetDecision,
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        guard readabilityFloorRecoveryState.mode != .inactive,
+              now - readabilityFloorRecoveryState.lastEligibleTime <= HostReadabilityFloorRecoveryState.emergencyGraceSeconds,
+              readabilityFloorRecoveryEnvironmentAllows(pressureSnapshot: pressureSnapshot, now: now) else {
+            return false
+        }
+
+        switch decision.reason {
+        case .encoderLag,
+             .encodedFrame:
+            return decision.state != .observing
+        case .startup,
+             .healthy,
+             .motionOnset,
+             .pFrameLatency,
+             .transportBacklog,
+             .receiverFreshness,
+             .receiverBacklog,
+             .receiverLoss,
+             .senderDeadline,
+             .clientRecovery,
+             .adaptiveRepair:
+            return false
+        }
+    }
+
+    private func readabilityFloorRecoveryEnvironmentAllows(
+        pressureSnapshot: HostAdaptiveFrameCoordinator.TransportPressureSnapshot,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        let policy = activeFrameFreshnessPolicy
+        guard !inputIsActive(now: now, policy: policy) else { return false }
+        let latestFrameInfo = lastCapturedFrame?.info
+        let lowMotion = sourceIsStill(now: now, policy: policy) ||
+            latestFrameInfo?.isIdleFrame == true ||
+            (latestFrameInfo?.dirtyPercentage ?? Float.greatestFiniteMagnitude) <= Self.readabilityFloorRecoveryDirtyPercentage
+        guard lowMotion else { return false }
+
+        guard !pressureSnapshot.startupProtectionActive,
+              !pressureSnapshot.frameChainRepairActive,
+              pressureSnapshot.receiverState != .severe,
+              !pressureSnapshot.receiverLossHoldActive,
+              !pressureSnapshot.senderDropHoldActive,
+              pressureSnapshot.senderQueuedBytes < pressureSnapshot.queuePressureBytes,
+              pressureSnapshot.unstartedPFrameCount <= 1,
+              pressureSnapshot.oldestUnstartedPFrameLatenessMs <= runtimeQualityFrameBudgetMs() else {
+            return false
+        }
+
+        return true
+    }
+
+    func resetReadabilityFloorRecoveryStateIfNeeded(now: CFAbsoluteTime) {
+        guard readabilityFloorRecoveryState.mode != .inactive else { return }
+        let previousMode = readabilityFloorRecoveryState.mode
+        let previousReason = readabilityFloorRecoveryState.reason
+        readabilityFloorRecoveryState.reset()
+        logReadabilityFloorRecoveryTransition(
+            mode: .inactive,
+            reason: previousReason ?? previousMode.rawValue,
+            now: now
+        )
+    }
+
+    private func logReadabilityFloorRecoveryTransition(
+        mode: HostReadabilityFloorRecoveryState.Mode,
+        reason: String,
+        now: CFAbsoluteTime
+    ) {
+        guard MirageLogger.isEnabled(.metrics),
+              now - readabilityFloorRecoveryState.lastTransitionLogTime >= 0.5 else {
+            return
+        }
+        readabilityFloorRecoveryState.lastTransitionLogTime = now
+        MirageLogger.metrics(
+            "event=readability_floor_recovery stream=\(streamID) " +
+                "mode=\(mode.rawValue) reason=\(reason) " +
+                "quality=\(activeQuality.formatted(.number.precision(.fractionLength(2)))) " +
+                "floor=\(qualityFloor.formatted(.number.precision(.fractionLength(2)))) " +
+                "ceiling=\(qualityCeiling.formatted(.number.precision(.fractionLength(2))))"
+        )
     }
 }
 #endif

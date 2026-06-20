@@ -123,6 +123,88 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(keyframeQualityFloor < 0.42)
     }
 
+    @Test("Persistent still VPN encoder lag recovers the readability floor")
+    func persistentStillVPNEncoderLagRecoversReadabilityFloor() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 60,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        await context.markSourceStillForRealtimeBudgetTest(at: 10.0)
+        await context.setLastCapturedFrameForStillQualityProbeTest(makeIdleFrame(now: 9.950))
+
+        let severeDecision = makeRuntimeDecision(
+            targetBitrateBps: 10_200_000,
+            quality: 0.10,
+            qualityCeiling: 0.14,
+            state: .severe,
+            reason: .encoderLag
+        )
+        let interleavedDecision = makeRuntimeDecision(
+            targetBitrateBps: 10_200_000,
+            quality: 0.50,
+            qualityCeiling: 0.50,
+            state: .pressured,
+            reason: .encodedFrame
+        )
+
+        await context.applyAdaptiveRuntimeDecision(severeDecision, now: 10.000)
+        #expect(await context.activeQuality < 0.50)
+
+        await context.applyAdaptiveRuntimeDecision(interleavedDecision, now: 10.250)
+        await context.applyAdaptiveRuntimeDecision(severeDecision, now: 10.500)
+        await context.applyAdaptiveRuntimeDecision(severeDecision, now: 10.800)
+
+        let readabilityFloor = await context.currentStreamQualityContract().effectiveReadabilityQualityFloor
+        #expect(await context.readabilityFloorRecoveryState.mode == .floorProtecting)
+        #expect(await context.activeQuality >= readabilityFloor - 0.001)
+        #expect(await context.qualityFloor >= readabilityFloor - 0.001)
+        #expect(await context.qualityCeiling >= readabilityFloor - 0.001)
+        #expect(await context.readabilityProtectionSkippedIntervalCount == 0)
+    }
+
+    @Test("Motion VPN encoder lag keeps the emergency quality escape")
+    func motionVPNEncoderLagKeepsEmergencyQualityEscape() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 60,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        await context.markSourceMovingForRealtimeBudgetTest(at: 10.0)
+
+        let severeDecision = makeRuntimeDecision(
+            targetBitrateBps: 10_200_000,
+            quality: 0.10,
+            qualityCeiling: 0.14,
+            state: .severe,
+            reason: .encoderLag
+        )
+
+        await context.applyAdaptiveRuntimeDecision(severeDecision, now: 10.000)
+        await context.markSourceMovingForRealtimeBudgetTest(at: 10.800)
+        await context.applyAdaptiveRuntimeDecision(severeDecision, now: 10.800)
+
+        #expect(await context.readabilityFloorRecoveryState.mode == .inactive)
+        #expect(await context.activeQuality < 0.50)
+        #expect(await context.qualityCeiling < 0.50)
+    }
+
     @Test("WiFi ProMotion automatic stream starts at readability floor")
     func wifiProMotionAutomaticStreamStartsAtReadabilityFloor() throws {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
@@ -1592,6 +1674,27 @@ struct HostAdaptiveStreamBudgetPolicyTests {
                 dirtyPercentage: 0,
                 isIdleFrame: true
             )
+        )
+    }
+
+    private func makeRuntimeDecision(
+        targetBitrateBps: Int,
+        quality: Float,
+        qualityCeiling: Float,
+        state: HostAdaptivePFrameController.PressureState,
+        reason: HostAdaptivePFrameController.Reason
+    ) -> HostFrameBudgetDecision {
+        HostFrameBudgetDecision(
+            targetBitrateBps: targetBitrateBps,
+            maxFrameBytes: max(1, targetBitrateBps / 8 / 60),
+            maxWireBytes: max(1, targetBitrateBps / 8 / 60),
+            maxPacketCount: 110,
+            quality: quality,
+            qualityCeiling: qualityCeiling,
+            keyframeQuality: qualityCeiling,
+            sendDeadline: 0,
+            state: state,
+            reason: reason
         )
     }
 

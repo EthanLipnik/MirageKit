@@ -136,6 +136,7 @@ extension StreamContext {
         highRefreshFrameAdmissionState.reset()
         highRefreshPacingSkippedIntervalCount = 0
         readabilityFrameAdmissionState.reset()
+        readabilityFloorRecoveryState.reset()
         readabilityProtectionSkippedIntervalCount = 0
         realtimeLastEncoderThroughputAdjustmentTime = 0
         lastCapturedFrame = nil

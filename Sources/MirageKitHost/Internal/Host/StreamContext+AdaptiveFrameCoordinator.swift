@@ -226,6 +226,7 @@ extension StreamContext {
     ) async {
         let controllerRuntimeCeilingBps = adaptivePFrameController.runtimeCeilingBps
         guard runtimeQualityAdjustmentEnabled else {
+            resetReadabilityFloorRecoveryStateIfNeeded(now: now)
             realtimePressureState = decision.state
             realtimePressureReason = decision.reason.rawValue
             realtimeRuntimeBitrateCeilingBps = controllerRuntimeCeilingBps
@@ -251,6 +252,11 @@ extension StreamContext {
         )
 
         guard let decision = governedDecision.decision else {
+            updateReadabilityFloorRecoveryState(
+                for: nil,
+                pressureSnapshot: pressureSnapshot,
+                now: now
+            )
             if realtimePressureState != .recovery {
                 realtimePressureState = .observing
                 realtimePressureReason = governedDecision.streamDecision.blockedLeverReason ?? "governor-observe"
@@ -261,6 +267,11 @@ extension StreamContext {
             return
         }
 
+        updateReadabilityFloorRecoveryState(
+            for: decision,
+            pressureSnapshot: pressureSnapshot,
+            now: now
+        )
         realtimePressureState = decision.state
         realtimePressureReason = decision.reason.rawValue
         let runtimeCeilingBps = max(controllerRuntimeCeilingBps ?? decision.targetBitrateBps, decision.targetBitrateBps)
@@ -387,14 +398,20 @@ extension StreamContext {
             proposedQualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling, steadyQualityCeiling)
         }
         let governorQualityFloor = adaptiveRuntimeQualityFloor(for: decision)
+        let runtimeQualityCeilingLimit = governorQualityFloor > 0
+            ? min(configuredQualityCeiling, compressionQualityCeiling)
+            : resolvedQualityCeiling
         qualityCeiling = min(
-            resolvedQualityCeiling,
+            runtimeQualityCeilingLimit,
             max(
                 resolvedRuntimeQualityCeiling(for: proposedQualityCeiling),
                 governorQualityFloor
             )
         )
-        let proposedKeyframeQualityCeiling = min(decision.keyframeQuality, qualityCeiling)
+        let proposedKeyframeQualityCeiling = min(
+            max(decision.keyframeQuality, governorQualityFloor),
+            qualityCeiling
+        )
         let keyframeQualityCeiling = resolvedRuntimeKeyframeQualityCeiling(for: proposedKeyframeQualityCeiling)
         qualityFloor = min(
             qualityCeiling,

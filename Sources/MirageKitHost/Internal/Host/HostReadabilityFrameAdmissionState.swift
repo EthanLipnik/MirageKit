@@ -12,6 +12,7 @@ import Foundation
 struct HostReadabilityFrameAdmissionState: Sendable, Equatable {
     enum Mode: String, Sendable, Equatable {
         case inactive
+        case blocked
         case protecting
     }
 
@@ -46,6 +47,12 @@ struct HostReadabilityFrameAdmissionState: Sendable, Equatable {
         skipBurstCount = 0
     }
 
+    mutating func noteBlocked(reason: String) {
+        guard mode != .protecting else { return }
+        mode = .blocked
+        self.reason = reason
+    }
+
     mutating func evaluateAdmission(
         currentFrameRate: Int,
         reason: String,
@@ -57,6 +64,10 @@ struct HostReadabilityFrameAdmissionState: Sendable, Equatable {
         }
 
         guard lastAdmittedFrameTime > 0 else {
+            if mode == .blocked {
+                mode = .inactive
+                self.reason = nil
+            }
             lastAdmittedFrameTime = now
             return false
         }
