@@ -294,16 +294,22 @@ extension HostAdaptiveFrameCoordinator {
             return hasHardSenderPressure(snapshot)
         }
         let frameIntervalMs = 1_000.0 / Double(max(1, snapshot.currentFrameRate))
+        let liveToleranceScale = livePressureToleranceScale(for: snapshot.mediaPathProfile)
+        let queuedPFrameAgeThresholdMs = frameIntervalMs * 2.0 * liveToleranceScale
+        let queuedPFrameLatenessThresholdMs = liveToleranceScale > 1.0
+            ? frameIntervalMs * liveToleranceScale
+            : 0
         let queuedPFrameStress = snapshot.unstartedPFrameCount >= 2 &&
-            (snapshot.oldestUnstartedPFrameAgeMs >= frameIntervalMs * 2.0 ||
-                snapshot.oldestUnstartedPFrameLatenessMs > 0)
+            (snapshot.oldestUnstartedPFrameAgeMs >= queuedPFrameAgeThresholdMs ||
+                snapshot.oldestUnstartedPFrameLatenessMs > queuedPFrameLatenessThresholdMs)
         let queuedUnreliableBacklogStress = snapshot.queuedUnreliablePendingPackets >= 8 ||
             snapshot.queuedUnreliableQueuedBytes >= max(32 * 1024, snapshot.queuePressureBytes / 2)
-        let queuedUnreliableTimingStress = snapshot.queuedUnreliableQueueDwellP99Ms >= 120 ||
-            snapshot.queuedUnreliableContentProcessedP99Ms >= 120 ||
-            snapshot.queuedUnreliableSendGapP99Ms >= 120
+        let queuedUnreliableTimingThresholdMs = 120.0 * liveToleranceScale
+        let queuedUnreliableTimingStress = snapshot.queuedUnreliableQueueDwellP99Ms >= queuedUnreliableTimingThresholdMs ||
+            snapshot.queuedUnreliableContentProcessedP99Ms >= queuedUnreliableTimingThresholdMs ||
+            snapshot.queuedUnreliableSendGapP99Ms >= queuedUnreliableTimingThresholdMs
         let queuedUnreliableQueuePressure = snapshot.queuedUnreliableQueuedBytes >= snapshot.queuePressureBytes
-        let packetPacerDebtStress = snapshot.packetPacerFrameMaxSleepMs >= frameIntervalMs * 3.0
+        let packetPacerDebtStress = snapshot.packetPacerFrameMaxSleepMs >= frameIntervalMs * 3.0 * liveToleranceScale
 
         return snapshot.senderDropHoldActive ||
             snapshot.senderQueuedBytes >= snapshot.maxQueuedBytes ||
@@ -329,7 +335,7 @@ extension HostAdaptiveFrameCoordinator {
             snapshot.receiverPresentationBacklogFrames >= 4 {
             return true
         }
-        return (snapshot.receiverAckLagMs ?? 0) >= 450
+        return (snapshot.receiverAckLagMs ?? 0) >= 450.0 * livePressureToleranceScale(for: snapshot.mediaPathProfile)
     }
 
     private func hasHardSenderPressure(_ snapshot: TransportPressureSnapshot) -> Bool {
@@ -351,6 +357,10 @@ extension HostAdaptiveFrameCoordinator {
             return true
         }
         return (snapshot.receiverAckLagMs ?? 0) >= 1_000
+    }
+
+    private func livePressureToleranceScale(for mediaPathProfile: MirageMediaPathProfile) -> Double {
+        mediaPathProfile.remoteTimingToleranceScale
     }
 
     private func receiverPressureIsSoftQuarantined(_ snapshot: TransportPressureSnapshot) -> Bool {

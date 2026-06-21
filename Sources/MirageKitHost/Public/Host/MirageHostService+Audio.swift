@@ -32,6 +32,7 @@ extension MirageHostService {
         cancelAudioFirstSampleWatchdog(for: clientID)
         audioFirstSampleRetryAttemptedByClientID.remove(clientID)
         audioLastSampleTimeByClientID.removeValue(forKey: clientID)
+        audioCaptureLevelStateByClientID.removeValue(forKey: clientID)
         audioConfigurationByClientID[clientID] = configuration
         MirageLogger.host(
             "Audio activation requested for client \(clientID), stream \(sourceStreamID): " +
@@ -206,6 +207,7 @@ extension MirageHostService {
         guard audioSourceStreamByClientID[clientID] == streamID else { return }
         guard let pipeline = audioPipelinesByClientID[clientID] else { return }
         recordCapturedAudioSample(clientID: clientID, streamID: streamID)
+        recordCapturedAudioLevel(captured, clientID: clientID, streamID: streamID)
         await pipeline.enqueue(captured)
     }
 
@@ -241,6 +243,7 @@ extension MirageHostService {
         cancelAudioFirstSampleWatchdog(for: clientID)
         audioFirstSampleRetryAttemptedByClientID.remove(clientID)
         audioLastSampleTimeByClientID.removeValue(forKey: clientID)
+        audioCaptureLevelStateByClientID.removeValue(forKey: clientID)
         if let pipeline = audioPipelinesByClientID.removeValue(forKey: clientID) {
             await pipeline.stop()
         }
@@ -259,6 +262,39 @@ extension MirageHostService {
         }
 
         updateHostAudioMuteState()
+    }
+
+    private func recordCapturedAudioLevel(
+        _ captured: CapturedAudioBuffer,
+        clientID: UUID,
+        streamID: StreamID
+    ) {
+        let peak = captured.estimatedPeakAmplitude()
+        var state = audioCaptureLevelStateByClientID[clientID] ?? HostAudioCaptureLevelState()
+        if peak >= 0.0005 {
+            state.silentDurationSeconds = 0
+            state.loggedPersistentSilence = false
+            if !state.observedNonSilentCapture {
+                state.observedNonSilentCapture = true
+                MirageLogger.host(
+                    "First non-silent audio capture observed for client \(clientID), stream \(streamID): " +
+                        "peak=\(String(format: "%.4f", peak))"
+                )
+            }
+            audioCaptureLevelStateByClientID[clientID] = state
+            return
+        }
+
+        state.silentDurationSeconds += captured.durationSeconds
+        if state.silentDurationSeconds >= 2.0, !state.loggedPersistentSilence {
+            state.loggedPersistentSilence = true
+            MirageLogger.host(
+                "Host audio capture remains silent for client \(clientID), stream \(streamID): " +
+                    "durationMs=\(Int((state.silentDurationSeconds * 1000).rounded())), " +
+                    "peak=\(String(format: "%.4f", peak)), localMuteRequested=\(muteLocalAudioWhileStreaming)"
+            )
+        }
+        audioCaptureLevelStateByClientID[clientID] = state
     }
 
     /// Tears down all audio state associated with a disconnected client.

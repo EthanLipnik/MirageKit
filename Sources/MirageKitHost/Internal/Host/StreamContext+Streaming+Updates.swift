@@ -340,6 +340,9 @@ extension StreamContext {
         if updatesAwdlInteractiveCeiling {
             awdlInteractiveFrameRateCeiling = effectiveFrameRate
         }
+        if effectiveFrameRate < HostHighRefreshCaptureCadenceRecoveryState.minimumHighRefreshTargetFPS {
+            highRefreshCaptureCadenceRecoveryState.reset()
+        }
         encoderConfig = encoderConfig.withTargetFrameRate(effectiveFrameRate)
         adaptivePFrameController.retuneForFrameRateChange(
             from: previousFrameRate,

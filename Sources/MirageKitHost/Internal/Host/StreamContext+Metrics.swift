@@ -72,6 +72,11 @@ extension StreamContext {
                 telemetry: captureTelemetry,
                 policy: capturePolicy
             )
+            await applyHighRefreshCaptureCadenceRecoveryIfNeeded(
+                metrics: captureCadenceMetrics,
+                policy: capturePolicy,
+                now: now
+            )
             let awdlPolicy = transportController.latestAwdlMediaDecision
             let streamQualityDecision = latestStreamQualityDecision()
             let readabilityMode: String

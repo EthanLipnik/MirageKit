@@ -1,10 +1,8 @@
 //
-//  HostAudioCompressionBudgetController.swift
+//  HostAudioQualityGovernor.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 5/28/26.
-//
-//  Runtime audio compression budget adaptation for host audio streaming.
+//  Created by Ethan Lipnik on 6/21/26.
 //
 
 import CoreFoundation
@@ -13,7 +11,12 @@ import MirageKit
 
 #if os(macOS)
 
-struct HostAudioCompressionBudgetController {
+struct HostAudioQualityGovernor {
+    enum ActivityDecision: Equatable {
+        case send(peak: Float)
+        case gated(peak: Float)
+    }
+
     private enum PressureReason: String {
         case queueDrop = "queue-drop"
         case queueBacklog = "queue-backlog"
@@ -22,16 +25,22 @@ struct HostAudioCompressionBudgetController {
         case recovery = "recovery"
     }
 
+    private static let silenceThreshold: Float = 0.0005
+    private static let silenceGateDelaySeconds = 0.450
+    private static let activityHangoverSeconds = 0.180
+
+    private(set) var profile: ResolvedAudioStreamProfile?
     private var configuration: MirageAudioConfiguration
     private var transportPathKind: MirageNetworkPathKind
     private var mediaPathProfile: MirageMediaPathProfile
-    private var minimumBitrateBps: Int
-    private var maximumBitrateBps: Int
-    private(set) var currentBitrateBps: Int?
     private var lastPressureTime: CFAbsoluteTime = 0
     private var lastReductionTime: CFAbsoluteTime = 0
     private var lastRecoveryTime: CFAbsoluteTime = 0
     private var lastLogTime: CFAbsoluteTime = 0
+    private var silentDurationSeconds: Double = 0
+    private var hangoverSecondsRemaining: Double = 0
+    private var isActivityGated = false
+    private var gatedBufferCount: UInt64 = 0
 
     init(
         configuration: MirageAudioConfiguration,
@@ -41,14 +50,11 @@ struct HostAudioCompressionBudgetController {
         self.configuration = configuration
         self.transportPathKind = transportPathKind
         self.mediaPathProfile = mediaPathProfile
-        let budget = Self.budgetRange(
-            for: configuration,
+        profile = Self.resolveProfile(
+            configuration: configuration,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile
         )
-        minimumBitrateBps = budget.minimum
-        maximumBitrateBps = budget.maximum
-        currentBitrateBps = budget.current
     }
 
     @discardableResult
@@ -56,8 +62,7 @@ struct HostAudioCompressionBudgetController {
         _ configuration: MirageAudioConfiguration,
         transportPathKind: MirageNetworkPathKind? = nil,
         mediaPathProfile: MirageMediaPathProfile? = nil
-    ) -> Int? {
-        let previousBitrate = currentBitrateBps
+    ) -> ResolvedAudioStreamProfile? {
         self.configuration = configuration
         if let transportPathKind {
             self.transportPathKind = transportPathKind
@@ -65,25 +70,62 @@ struct HostAudioCompressionBudgetController {
         if let mediaPathProfile {
             self.mediaPathProfile = mediaPathProfile
         }
-        let budget = Self.budgetRange(
-            for: configuration,
+        profile = Self.resolveProfile(
+            configuration: configuration,
             transportPathKind: self.transportPathKind,
             mediaPathProfile: self.mediaPathProfile
         )
-        minimumBitrateBps = budget.minimum
-        maximumBitrateBps = budget.maximum
-        currentBitrateBps = budget.current
         lastPressureTime = 0
         lastReductionTime = 0
         lastRecoveryTime = 0
-        return currentBitrateBps != previousBitrate ? currentBitrateBps : nil
+        silentDurationSeconds = 0
+        hangoverSecondsRemaining = 0
+        isActivityGated = false
+        gatedBufferCount = 0
+        return profile
+    }
+
+    mutating func activityDecision(for buffer: CapturedAudioBuffer) -> ActivityDecision {
+        let peak = buffer.estimatedPeakAmplitude()
+        let duration = buffer.durationSeconds
+        if peak >= Self.silenceThreshold {
+            if isActivityGated {
+                MirageLogger.host(
+                    "audio activity started peak=\(String(format: "%.4f", peak)) gatedBuffers=\(gatedBufferCount)"
+                )
+            }
+            silentDurationSeconds = 0
+            hangoverSecondsRemaining = Self.activityHangoverSeconds
+            isActivityGated = false
+            gatedBufferCount = 0
+            return .send(peak: peak)
+        }
+
+        silentDurationSeconds += duration
+        if hangoverSecondsRemaining > 0 {
+            hangoverSecondsRemaining = max(0, hangoverSecondsRemaining - duration)
+            return .send(peak: peak)
+        }
+
+        guard silentDurationSeconds >= Self.silenceGateDelaySeconds else {
+            return .send(peak: peak)
+        }
+
+        gatedBufferCount &+= 1
+        if !isActivityGated {
+            isActivityGated = true
+            MirageLogger.host(
+                "audio activity gated silentMs=\(Int((silentDurationSeconds * 1000).rounded()))"
+            )
+        }
+        return .gated(peak: peak)
     }
 
     mutating func recordQueueState(
         queuedDurationSeconds: Double,
         droppedBuffers: Int,
         maxQueuedDurationSeconds: Double
-    ) -> Int? {
+    ) -> ResolvedAudioStreamProfile? {
         guard canAdapt else { return nil }
         let now = CFAbsoluteTimeGetCurrent()
         if droppedBuffers > 0 {
@@ -105,7 +147,7 @@ struct HostAudioCompressionBudgetController {
         )
     }
 
-    mutating func recordTransportPressure() -> Int? {
+    mutating func recordTransportPressure() -> ResolvedAudioStreamProfile? {
         guard canAdapt else { return nil }
         return reduce(
             reason: .transportBackpressure,
@@ -115,7 +157,7 @@ struct HostAudioCompressionBudgetController {
         )
     }
 
-    mutating func recordReceiverFeedback(_ feedback: ReceiverMediaFeedbackMessage) -> Int? {
+    mutating func recordReceiverFeedback(_ feedback: ReceiverMediaFeedbackMessage) -> ResolvedAudioStreamProfile? {
         guard canAdapt else { return nil }
         var severity = 0
         if feedback.decodeBacklogFrames > 1 || feedback.presentationBacklogFrames > 1 {
@@ -150,10 +192,11 @@ struct HostAudioCompressionBudgetController {
         )
     }
 
-    mutating func recordSuccessfulFrame() -> Int? {
+    mutating func recordSuccessfulFrame() -> ResolvedAudioStreamProfile? {
         guard canAdapt,
-              let currentBitrateBps,
-              currentBitrateBps < maximumBitrateBps else {
+              let current = profile?.bitrateBps,
+              let maximum = profile?.maximumBitrateBps,
+              current < maximum else {
             return nil
         }
         let now = CFAbsoluteTimeGetCurrent()
@@ -162,25 +205,20 @@ struct HostAudioCompressionBudgetController {
             return nil
         }
 
-        let increment = max(8_000, maximumBitrateBps / 20)
-        let nextBitrate = min(maximumBitrateBps, currentBitrateBps + increment)
-        guard nextBitrate > currentBitrateBps else { return nil }
-        self.currentBitrateBps = AudioEncoder.roundedAACBitrate(nextBitrate)
+        let increment = max(8_000, maximum / 20)
+        let nextBitrate = min(maximum, current + increment)
+        guard nextBitrate > current else { return nil }
+        profile = profile?.withBitrate(nextBitrate)
         lastRecoveryTime = now
-        logChange(
-            reason: .recovery,
-            bitrateBps: self.currentBitrateBps ?? nextBitrate,
-            queuedDurationSeconds: nil,
-            now: now
-        )
-        return self.currentBitrateBps
+        logChange(reason: .recovery, bitrateBps: profile?.bitrateBps ?? nextBitrate, queuedDurationSeconds: nil, now: now)
+        return profile
     }
 
     private var canAdapt: Bool {
         configuration.enabled &&
             configuration.quality != .lossless &&
             configuration.adaptiveCompressionEnabled &&
-            currentBitrateBps != nil
+            profile?.bitrateBps != nil
     }
 
     private mutating func reduce(
@@ -188,28 +226,21 @@ struct HostAudioCompressionBudgetController {
         severity: Int,
         queuedDurationSeconds: Double?,
         now: CFAbsoluteTime
-    ) -> Int? {
-        guard let currentBitrateBps else { return nil }
+    ) -> ResolvedAudioStreamProfile? {
+        guard let current = profile?.bitrateBps,
+              let minimum = profile?.minimumBitrateBps else {
+            return nil
+        }
         lastPressureTime = now
         guard now - lastReductionTime > 0.75 else { return nil }
 
         let factor = pow(0.86, Double(max(1, severity)))
-        let requestedBitrate = Int(Double(currentBitrateBps) * factor)
-        let nextBitrate = max(
-            minimumBitrateBps,
-            AudioEncoder.roundedAACBitrate(requestedBitrate)
-        )
-        guard nextBitrate < currentBitrateBps else { return nil }
-
-        self.currentBitrateBps = nextBitrate
+        let nextBitrate = max(minimum, AudioEncoder.roundedAACBitrate(Int(Double(current) * factor)))
+        guard nextBitrate < current else { return nil }
+        profile = profile?.withBitrate(nextBitrate)
         lastReductionTime = now
-        logChange(
-            reason: reason,
-            bitrateBps: nextBitrate,
-            queuedDurationSeconds: queuedDurationSeconds,
-            now: now
-        )
-        return nextBitrate
+        logChange(reason: reason, bitrateBps: nextBitrate, queuedDurationSeconds: queuedDurationSeconds, now: now)
+        return profile
     }
 
     private mutating func logChange(
@@ -223,48 +254,24 @@ struct HostAudioCompressionBudgetController {
         let queuedText = queuedDurationSeconds.map {
             " queuedMs=\(Int(($0 * 1000).rounded()))"
         } ?? ""
-        MirageLogger.host(
-            "Audio compression budget \(reason.rawValue): bitrate=\(bitrateBps)bps\(queuedText)"
-        )
+        MirageLogger.host("Audio quality governor \(reason.rawValue): bitrate=\(bitrateBps)bps\(queuedText)")
     }
 
-    private static func budgetRange(
-        for configuration: MirageAudioConfiguration,
+    private static func resolveProfile(
+        configuration: MirageAudioConfiguration,
         transportPathKind: MirageNetworkPathKind,
         mediaPathProfile: MirageMediaPathProfile
-    ) -> (minimum: Int, maximum: Int, current: Int?) {
-        guard configuration.enabled,
-              configuration.quality != .lossless else {
-            return (0, 0, nil)
-        }
-        if let decision = HostAdaptiveAudioBudgetPolicy.resolve(
-            HostAdaptiveAudioBudgetPolicy.Request(
-                configuration: configuration,
-                transportPathKind: transportPathKind,
-                mediaPathProfile: mediaPathProfile
-            )
-        ) {
-            return (
-                decision.minimumBitrateFloorBps,
-                decision.maximumCeilingBps,
-                decision.startupBitrateBps
-            )
-        }
-        let channelCount = configuration.channelLayout.channelCount
-        let minimum = AudioEncoder.minimumAACBitrate(channels: channelCount)
-        let defaultMaximum = AudioEncoder.aacBitrate(
-            quality: configuration.quality,
-            channels: channelCount
+    ) -> ResolvedAudioStreamProfile? {
+        let profile = ResolvedAudioStreamProfile.resolve(
+            configuration: configuration,
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
         )
-        let configuredCurrent = configuration.compressedBitrateBps.map {
-            max(minimum, min(defaultMaximum, AudioEncoder.roundedAACBitrate($0)))
-        } ?? defaultMaximum
-        let configuredCeiling = configuration.compressedBitrateCeilingBps.map {
-            max(minimum, min(defaultMaximum, AudioEncoder.roundedAACBitrate($0)))
+        if profile?.codec == .pcm16LE, configuration.quality != .lossless {
+            MirageLogger.host("Audio profile rejected unexpected PCM for compressed configuration")
+            return nil
         }
-        let maximum = max(configuredCurrent, configuredCeiling ?? configuredCurrent)
-        let current = min(configuredCurrent, maximum)
-        return (minimum, maximum, current)
+        return profile
     }
 }
 

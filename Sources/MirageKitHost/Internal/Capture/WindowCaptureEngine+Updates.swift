@@ -355,6 +355,57 @@ extension WindowCaptureEngine {
         MirageLogger.capture("Frame rate updated to \(fps) fps")
     }
 
+    func updateMinimumFrameIntervalPolicy(
+        _ policy: MinimumFrameIntervalPolicy,
+        reason: String
+    ) async throws {
+        let previousPolicy = minimumFrameIntervalPolicy
+        guard previousPolicy != policy else { return }
+
+        minimumFrameIntervalPolicy = policy
+        guard isCapturing, let stream else {
+            MirageLogger.capture(
+                "Capture frame interval policy updated while idle: \(previousPolicy.rawValue) -> \(policy.rawValue), reason=\(reason)"
+            )
+            return
+        }
+
+        let streamConfig = makeStreamConfigurationForUpdate(
+            showsCursor: captureSessionConfig?.showsCursor ?? false,
+            sourceRect: captureSessionConfig?.sourceRect,
+            destinationRect: captureSessionConfig?.destinationRect
+        )
+
+        do {
+            try await stream.updateConfiguration(streamConfig)
+        } catch {
+            minimumFrameIntervalPolicy = previousPolicy
+            throw error
+        }
+
+        let captureRate = minimumFrameIntervalRate
+        let resolvedWindowID = captureSessionConfig?.windowID ?? 0
+        let mode = captureMode ?? .window
+        let stallPolicy = resolvedStallPolicy(
+            windowID: resolvedWindowID,
+            frameRate: captureRate,
+            captureMode: mode
+        )
+        activeStallPolicy = stallPolicy
+        streamOutput?.updateExpectations(
+            frameRate: captureRate,
+            gapThreshold: frameGapThreshold(for: captureRate),
+            softStallThreshold: stallPolicy.softStallThreshold,
+            hardRestartThreshold: stallPolicy.hardRestartThreshold,
+            targetFrameRate: currentFrameRate
+        )
+        MirageLogger.capture(
+            "event=capture_cadence_policy_update mode=display targetFPS=\(currentFrameRate) " +
+                "sckFPS=\(captureRate) nativeDisplayCadence=\(usesNativeRefreshMinimumFrameInterval) " +
+                "policy=\(policy.rawValue) previous=\(previousPolicy.rawValue) reason=\(reason)"
+        )
+    }
+
     func updateShowsCursor(_ showsCursor: Bool) async throws {
         if captureSessionConfig?.showsCursor == showsCursor { return }
 

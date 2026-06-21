@@ -759,15 +759,23 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             )
         }
 
-        let softSenderTransport = snapshot.unstartedPFrameCount >= 2 ||
-            snapshot.oldestUnstartedPFrameAgeMs >= 1_000.0 / Double(max(1, snapshot.currentFrameRate)) * 2.0 ||
+        let frameIntervalMs = 1_000.0 / Double(max(1, snapshot.currentFrameRate))
+        let liveToleranceScale = livePressureToleranceScale(for: snapshot.mediaPathProfile)
+        let queuedPFrameSoft = snapshot.unstartedPFrameCount >= 2 &&
+            (!snapshot.mediaPathProfile.usesRemoteTolerance ||
+                snapshot.oldestUnstartedPFrameAgeMs >= frameIntervalMs * 2.0 * liveToleranceScale ||
+                snapshot.oldestUnstartedPFrameLatenessMs > queuedPFrameLatenessThresholdMs(
+                    frameIntervalMs: frameIntervalMs,
+                    liveToleranceScale: liveToleranceScale
+                ))
+        let softSenderTransport = queuedPFrameSoft ||
             snapshot.queuedUnreliablePendingPackets >= 8 ||
-            snapshot.queuedUnreliableQueueDwellP99Ms >= 120 ||
+            snapshot.queuedUnreliableQueueDwellP99Ms >= 120.0 * liveToleranceScale ||
             decision?.reason == .transportBacklog ||
             decision?.reason == .senderDeadline ||
             reason == HostAdaptivePFrameController.Reason.transportBacklog.rawValue ||
             reason == HostAdaptivePFrameController.Reason.senderDeadline.rawValue
-        let softReceiver = (snapshot.receiverAckLagMs ?? 0) >= 120 ||
+        let softReceiver = (snapshot.receiverAckLagMs ?? 0) >= 120.0 * liveToleranceScale ||
             snapshot.receiverDecodeBacklogFrames > 0 ||
             snapshot.receiverReassemblyBacklogFrames > 0 ||
             snapshot.receiverReassemblyBacklogBytes > 0 ||
@@ -818,6 +826,17 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             hardEncoder: false,
             softOnly: false
         )
+    }
+
+    private func livePressureToleranceScale(for mediaPathProfile: MirageMediaPathProfile) -> Double {
+        mediaPathProfile.remoteTimingToleranceScale
+    }
+
+    private func queuedPFrameLatenessThresholdMs(
+        frameIntervalMs: Double,
+        liveToleranceScale: Double
+    ) -> Double {
+        liveToleranceScale > 1.0 ? frameIntervalMs * liveToleranceScale : 0
     }
 
     private mutating func noteHardEvidence(now: CFAbsoluteTime) {

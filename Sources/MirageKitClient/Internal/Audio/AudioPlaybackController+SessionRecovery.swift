@@ -26,9 +26,15 @@ extension AudioPlaybackController {
         audioSessionObserverTokens = names.map { name in
             center.addObserver(forName: name, object: session, queue: nil) { [weak self] notification in
                 let reason = notification.name.rawValue
-                Task { @MainActor [weak self, reason] in
+                let interruptionType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                let interruptionOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                Task { @MainActor [weak self, reason, interruptionType, interruptionOptions] in
                     guard let self else { return }
-                    await self.handleAudioSessionRecovery(reason: reason)
+                    await self.handleAudioSessionNotification(
+                        reason: reason,
+                        interruptionType: interruptionType,
+                        interruptionOptions: interruptionOptions
+                    )
                 }
             }
         }
@@ -55,10 +61,29 @@ extension AudioPlaybackController {
         audioSessionObserverTokens.removeAll()
     }
 
-    /// Resets playback after an audio-session interruption or media-services reset.
-    func handleAudioSessionRecovery(reason: String) async {
-        MirageLogger.client("Audio playback session recovery: \(reason)")
-        await reset()
+    /// Applies platform-specific interruption semantics before rebuilding playback.
+    func handleAudioSessionNotification(
+        reason: String,
+        interruptionType: UInt?,
+        interruptionOptions: UInt
+    ) async {
+        if let interruptionType,
+           let type = AVAudioSession.InterruptionType(rawValue: interruptionType) {
+            switch type {
+            case .began:
+                await suspendPlaybackForAudioSessionInterruption(reason: reason)
+            case .ended:
+                await recoverPlaybackAfterAudioSessionReset(
+                    reason: reason,
+                    shouldResume: true
+                )
+            @unknown default:
+                await recoverPlaybackAfterAudioSessionReset(reason: "\(reason)-unknown-\(interruptionType)")
+            }
+            return
+        }
+
+        await recoverPlaybackAfterAudioSessionReset(reason: reason)
     }
 
     /// Handles route changes that alter the output channel count.
@@ -75,7 +100,7 @@ extension AudioPlaybackController {
             return
         }
 
-        await handleAudioSessionRecovery(reason: "route-change-\(reason.rawValue)")
+        await recoverPlaybackAfterAudioSessionReset(reason: "route-change-\(reason.rawValue)")
     }
 
     /// Returns true when an AVAudioSession route-change reason can invalidate the configured output graph.

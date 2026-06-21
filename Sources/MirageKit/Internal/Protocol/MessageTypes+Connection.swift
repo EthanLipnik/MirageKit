@@ -49,6 +49,9 @@ package struct MirageSessionBootstrapRequest: Codable {
     /// Whether the host may disconnect an existing client to accept this request.
     package let requestTakeoverIfBusy: Bool
 
+    /// Client-generated connection attempt ID used to correlate support logs.
+    package let connectionAttemptID: UUID?
+
     /// Optional adaptive governor revision supported by the client.
     package let adaptiveGovernorRevision: Int?
 
@@ -66,6 +69,7 @@ package struct MirageSessionBootstrapRequest: Codable {
         protocolVersion: Int,
         clientRequiresMediaEncryption: Bool,
         requestTakeoverIfBusy: Bool = false,
+        connectionAttemptID: UUID? = nil,
         adaptiveGovernorRevision: Int? = nil,
         hostOwnedRuntimeSupport: Bool? = nil,
         adaptiveFeedbackClassesSupported: [String]? = nil,
@@ -74,6 +78,7 @@ package struct MirageSessionBootstrapRequest: Codable {
         self.protocolVersion = protocolVersion
         self.clientRequiresMediaEncryption = clientRequiresMediaEncryption
         self.requestTakeoverIfBusy = requestTakeoverIfBusy
+        self.connectionAttemptID = connectionAttemptID
         self.adaptiveGovernorRevision = adaptiveGovernorRevision
         self.hostOwnedRuntimeSupport = hostOwnedRuntimeSupport
         self.adaptiveFeedbackClassesSupported = adaptiveFeedbackClassesSupported

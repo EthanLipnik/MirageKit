@@ -62,9 +62,15 @@ actor AudioDecoder {
     }
 
     private var converters: [ConverterKey: AVAudioConverter] = [:]
+    private var decodeFailureCount: UInt64 = 0
+    private var lastDecodeFailureLogTime: CFAbsoluteTime = 0
+    private var hasLoggedFirstDecodedFrame = false
 
     func reset() {
         converters.removeAll()
+        decodeFailureCount = 0
+        lastDecodeFailureLogTime = 0
+        hasLoggedFirstDecodedFrame = false
     }
 
     func decode(_ frame: AudioEncodedFrame, targetChannelCount: Int) -> DecodedPCMFrame? {
@@ -85,17 +91,25 @@ actor AudioDecoder {
             decodePCM16(frame, outputFormat: outputFormat, outputChannelCount: outputChannelCount)
         }
 
-        guard let outputBuffer else { return nil }
-        guard outputBuffer.frameLength > 0 else { return nil }
+        guard let outputBuffer else {
+            logDecodeFailureIfNeeded(frame: frame, reason: "converter")
+            return nil
+        }
+        guard outputBuffer.frameLength > 0 else {
+            logDecodeFailureIfNeeded(frame: frame, reason: "empty-output")
+            return nil
+        }
         let bufferList = UnsafeMutableAudioBufferListPointer(outputBuffer.mutableAudioBufferList)
         guard let firstBuffer = bufferList.first,
               let mData = firstBuffer.mData,
               firstBuffer.mDataByteSize > 0 else {
+            logDecodeFailureIfNeeded(frame: frame, reason: "missing-pcm-data")
             return nil
         }
 
         let byteCount = Int(firstBuffer.mDataByteSize)
         let pcmData = Data(bytes: mData, count: byteCount)
+        logFirstDecodedFrameIfNeeded(frame: frame, outputChannelCount: outputChannelCount, byteCount: byteCount)
         return DecodedPCMFrame(
             sampleRate: frame.sampleRate,
             channelCount: outputChannelCount,
@@ -148,7 +162,7 @@ actor AudioDecoder {
         if let packetDescriptions = compressedBuffer.packetDescriptions {
             packetDescriptions[0].mStartOffset = 0
             packetDescriptions[0].mDataByteSize = UInt32(frame.payload.count)
-            packetDescriptions[0].mVariableFramesInPacket = 0
+            packetDescriptions[0].mVariableFramesInPacket = UInt32(max(1, frame.samplesPerFrame))
         }
 
         let estimatedFrames = max(frame.samplesPerFrame * 2, 2048)
@@ -159,7 +173,7 @@ actor AudioDecoder {
             return nil
         }
 
-        let inputProvider = AudioDecoderInputProvider(buffer: compressedBuffer)
+        let inputProvider = AudioDecoderInputProvider(buffer: compressedBuffer, drainedStatus: .noDataNow)
         var conversionError: NSError?
         let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
             inputProvider.provideInput(outStatus: outStatus)
@@ -168,6 +182,33 @@ actor AudioDecoder {
         guard conversionError == nil else { return nil }
         guard status == .haveData || status == .inputRanDry || status == .endOfStream else { return nil }
         return outputBuffer
+    }
+
+    private func logDecodeFailureIfNeeded(frame: AudioEncodedFrame, reason: String) {
+        decodeFailureCount &+= 1
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastDecodeFailureLogTime == 0 || now - lastDecodeFailureLogTime > 2.0 else { return }
+        MirageLogger.client(
+            "Audio decode failed: codec=\(frame.codec), streamFrame=\(frame.frameNumber), " +
+                "reason=\(reason), failures=\(decodeFailureCount), sampleRate=\(frame.sampleRate), " +
+                "channels=\(frame.channelCount), samples=\(frame.samplesPerFrame), bytes=\(frame.payload.count)"
+        )
+        decodeFailureCount = 0
+        lastDecodeFailureLogTime = now
+    }
+
+    private func logFirstDecodedFrameIfNeeded(
+        frame: AudioEncodedFrame,
+        outputChannelCount: Int,
+        byteCount: Int
+    ) {
+        guard !hasLoggedFirstDecodedFrame else { return }
+        hasLoggedFirstDecodedFrame = true
+        MirageLogger.client(
+            "First decoded audio frame: codec=\(frame.codec), sampleRate=\(frame.sampleRate), " +
+                "inputChannels=\(frame.channelCount), outputChannels=\(outputChannelCount), " +
+                "samples=\(frame.samplesPerFrame), bytes=\(byteCount)"
+        )
     }
 
     private func decodePCM16(

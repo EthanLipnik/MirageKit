@@ -148,6 +148,44 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         #expect(attempts[2].label == "conservative-retry")
     }
 
+    @Test("Reduced preferred startup targets are discarded")
+    func reducedPreferredStartupTargetsAreDiscarded() {
+        let initialPlan = desktopVirtualDisplayStartupPlan(
+            logicalResolution: CGSize(width: 3008, height: 1692),
+            requestedScaleFactor: 2.0,
+            requestedRefreshRate: 60,
+            requestedColorDepth: .standard,
+            requestedColorSpace: .sRGB,
+            requestedStreamScale: 0.638
+        )
+        clearDesktopVirtualDisplayStartupTarget(for: initialPlan.request)
+        defer { clearDesktopVirtualDisplayStartupTarget(for: initialPlan.request) }
+
+        recordDesktopVirtualDisplayStartupTargetSuccess(
+            pixelResolution: CGSize(width: 4480, height: 2512),
+            scaleFactor: 2.0,
+            refreshRate: 60,
+            colorSpace: .sRGB,
+            targetTier: .preferred,
+            for: initialPlan.request
+        )
+
+        let attempts = desktopVirtualDisplayStartupPlan(
+            logicalResolution: CGSize(width: 3008, height: 1692),
+            requestedScaleFactor: 2.0,
+            requestedRefreshRate: 60,
+            requestedColorDepth: .standard,
+            requestedColorSpace: .sRGB,
+            requestedStreamScale: 0.638
+        ).attempts
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].label == "primary")
+        #expect(!attempts[0].isCachedTarget)
+        #expect(attempts[0].backingScale.pixelResolution == CGSize(width: 6016, height: 3376))
+        #expect(attempts[1].label == "conservative-retry")
+    }
+
     @Test("Cached target identical to primary does not duplicate the ladder")
     func cachedTargetIdenticalToPrimaryIsDeduplicated() {
         let initialPlan = desktopVirtualDisplayStartupPlan(

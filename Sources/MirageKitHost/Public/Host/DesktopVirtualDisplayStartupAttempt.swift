@@ -86,6 +86,30 @@ private func desktopVirtualDisplayStartupTargetDefaultsKey(
         "streamScale=\(request.requestedStreamScaleBasis)"
 }
 
+func desktopVirtualDisplayPixelSizeMatches(
+    _ pixelResolution: CGSize,
+    request: DesktopVirtualDisplayStartupRequest,
+    tolerance: Int = 16
+) -> Bool {
+    let width = Int(pixelResolution.width.rounded())
+    let height = Int(pixelResolution.height.rounded())
+    return abs(width - request.requestedPixelWidth) <= tolerance &&
+        abs(height - request.requestedPixelHeight) <= tolerance
+}
+
+private func desktopVirtualDisplayStartupTargetMatches(
+    pixelResolution: CGSize,
+    scaleFactor: CGFloat,
+    refreshRate: Int,
+    colorSpace: MirageColorSpace,
+    request: DesktopVirtualDisplayStartupRequest
+) -> Bool {
+    desktopVirtualDisplayPixelSizeMatches(pixelResolution, request: request) &&
+        (scaleFactor > 1.5) == request.requestedHiDPI &&
+        refreshRate == request.requestedRefreshRate &&
+        colorSpace == request.requestedColorSpace
+}
+
 /// Loads the cached preferred startup target for a request.
 private func cachedDesktopVirtualDisplayStartupTarget(
     for request: DesktopVirtualDisplayStartupRequest
@@ -93,7 +117,27 @@ private func cachedDesktopVirtualDisplayStartupTarget(
     let key = desktopVirtualDisplayStartupTargetDefaultsKey(for: request)
     guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
     do {
-        return try JSONDecoder().decode(DesktopVirtualDisplayStartupCacheEntry.self, from: data)
+        let entry = try JSONDecoder().decode(DesktopVirtualDisplayStartupCacheEntry.self, from: data)
+        let pixelResolution = CGSize(width: entry.pixelWidth, height: entry.pixelHeight)
+        guard desktopVirtualDisplayStartupTargetMatches(
+            pixelResolution: pixelResolution,
+            scaleFactor: entry.hiDPI ? 2.0 : 1.0,
+            refreshRate: entry.refreshRate,
+            colorSpace: entry.colorSpace,
+            request: request
+        ) else {
+            UserDefaults.standard.removeObject(forKey: key)
+            MirageLogger.host(
+                "Discarded stale desktop virtual-display startup target: cached=" +
+                    "\(entry.pixelWidth)x\(entry.pixelHeight)@\(entry.refreshRate)Hz " +
+                    "\(entry.colorSpace.displayName) hiDPI=\(entry.hiDPI), requested=" +
+                    "\(request.requestedPixelWidth)x\(request.requestedPixelHeight)@" +
+                    "\(request.requestedRefreshRate)Hz \(request.requestedColorSpace.displayName) " +
+                    "hiDPI=\(request.requestedHiDPI)"
+            )
+            return nil
+        }
+        return entry
     } catch {
         MirageLogger.error(.host, error: error, message: "Failed to decode desktop virtual-display startup target: ")
         return nil
@@ -117,7 +161,16 @@ func recordDesktopVirtualDisplayStartupTargetSuccess(
     targetTier: DesktopVirtualDisplayStartupTargetTier,
     for request: DesktopVirtualDisplayStartupRequest
 ) {
-    guard targetTier == .preferred else {
+    let key = desktopVirtualDisplayStartupTargetDefaultsKey(for: request)
+    guard targetTier == .preferred,
+          desktopVirtualDisplayStartupTargetMatches(
+              pixelResolution: pixelResolution,
+              scaleFactor: scaleFactor,
+              refreshRate: refreshRate,
+              colorSpace: colorSpace,
+              request: request
+          ) else {
+        UserDefaults.standard.removeObject(forKey: key)
         MirageLogger.host("Not caching degraded desktop virtual display startup result")
         return
     }
@@ -135,7 +188,6 @@ func recordDesktopVirtualDisplayStartupTargetSuccess(
         MirageLogger.error(.host, error: error, message: "Failed to encode desktop virtual-display startup target: ")
         return
     }
-    let key = desktopVirtualDisplayStartupTargetDefaultsKey(for: request)
     UserDefaults.standard.set(data, forKey: key)
 }
 

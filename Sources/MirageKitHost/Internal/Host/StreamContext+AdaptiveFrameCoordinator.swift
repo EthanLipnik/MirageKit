@@ -15,20 +15,23 @@ extension StreamContext {
         guard lastReceiverFeedbackTime > 0 else { return .unknown }
         let feedbackAgeMs = max(0, (now - lastReceiverFeedbackTime) * 1_000)
         guard feedbackAgeMs <= 1_000 else { return .unknown }
+        let remoteToleranceScale = mediaPathProfile.remoteTimingToleranceScale
+        let pressuredAckLagMs = 120.0 * remoteToleranceScale
+        let severeAckLagMs = 450.0 * remoteToleranceScale
 
         if receiverFrameBudgetLossHoldUntil > now ||
             receiverReassemblyBacklogFrames >= 8 ||
             receiverReassemblyBacklogBytes >= 4_000_000 ||
             receiverDecodeBacklogFrames >= 8 ||
             receiverPresentationBacklogFrames >= 8 ||
-            (receiverAckLagMs ?? 0) >= 450 {
+            (receiverAckLagMs ?? 0) >= severeAckLagMs {
             return .severe
         }
         if receiverReassemblyBacklogFrames > 0 ||
             receiverReassemblyBacklogBytes > 0 ||
             receiverDecodeBacklogFrames > 0 ||
             receiverPresentationBacklogFrames > 0 ||
-            (receiverAckLagMs ?? 0) >= 120 {
+            (receiverAckLagMs ?? 0) >= pressuredAckLagMs {
             return .pressured
         }
         return .healthy

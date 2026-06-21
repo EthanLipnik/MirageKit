@@ -44,6 +44,10 @@ extension StreamController {
         latestRenderTelemetrySnapshot = nil
         renderCadenceMissStreak = 0
         lastRenderCadenceMissLogTime = 0
+        adaptivePresentationSmoothingActive = false
+        adaptivePresentationSmoothingMissStreak = 0
+        adaptivePresentationSmoothingCleanStreak = 0
+        adaptivePresentationSmoothingLastChangeTime = 0
         lastStreamingAnomalyDiagnosticSignature = nil
         lastStreamingAnomalyDiagnosticTime = 0
         lastBackgroundDecodeErrorSignature = nil

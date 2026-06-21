@@ -394,12 +394,25 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(coordinator.allowsTransportAdmissionThrottle(snapshot))
     }
 
-    @Test("Packet pacer debt is actionable sender pressure")
-    func packetPacerDebtIsActionableSenderPressure() {
+    @Test("VPN packet pacer debt tolerates moderate pressure")
+    func vpnPacketPacerDebtToleratesModeratePressure() {
         let coordinator = HostAdaptiveFrameCoordinator()
         let snapshot = makePressureSnapshot(
             mediaPathProfile: .vpnOrOverlay,
             packetPacerFrameMaxSleepMs: 80
+        )
+
+        #expect(!coordinator.transportPressureIsActionable(snapshot))
+        #expect(!coordinator.allowsPreEncodeBudgetReduction(snapshot))
+        #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
+    }
+
+    @Test("VPN packet pacer debt is actionable past remote tolerance")
+    func vpnPacketPacerDebtIsActionablePastRemoteTolerance() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let snapshot = makePressureSnapshot(
+            mediaPathProfile: .vpnOrOverlay,
+            packetPacerFrameMaxSleepMs: 120
         )
 
         #expect(coordinator.transportPressureIsActionable(snapshot))
@@ -602,14 +615,62 @@ struct HostAdaptiveFrameCoordinatorTests {
         #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
     }
 
-    @Test("Queued-unreliable backlog with timing pressure is actionable")
-    func queuedUnreliableBacklogWithTimingPressureIsActionable() {
+    @Test("VPN queued-unreliable backlog tolerates moderate timing pressure")
+    func vpnQueuedUnreliableBacklogToleratesModerateTimingPressure() {
         let coordinator = HostAdaptiveFrameCoordinator()
         let snapshot = makePressureSnapshot(
             mediaPathProfile: .vpnOrOverlay,
             queuedUnreliablePendingPackets: 10,
             queuedUnreliableQueuedBytes: 96 * 1024,
             queuedUnreliableQueueDwellP99Ms: 180
+        )
+
+        #expect(!coordinator.transportPressureIsActionable(snapshot))
+        #expect(!coordinator.allowsTransportAdmissionThrottle(snapshot))
+    }
+
+    @Test("VPN queued-unreliable backlog with high timing pressure is actionable")
+    func vpnQueuedUnreliableBacklogWithHighTimingPressureIsActionable() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let snapshot = makePressureSnapshot(
+            mediaPathProfile: .vpnOrOverlay,
+            queuedUnreliablePendingPackets: 10,
+            queuedUnreliableQueuedBytes: 96 * 1024,
+            queuedUnreliableQueueDwellP99Ms: 260
+        )
+
+        #expect(coordinator.transportPressureIsActionable(snapshot))
+        #expect(coordinator.allowsTransportAdmissionThrottle(snapshot))
+    }
+
+    @Test("VPN queued P-frame latency tolerates local pressure window")
+    func vpnQueuedPFrameLatencyToleratesLocalPressureWindow() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let vpnSnapshot = makePressureSnapshot(
+            mediaPathProfile: .vpnOrOverlay,
+            unstartedPFrameCount: 2,
+            oldestUnstartedPFrameAgeMs: 40,
+            oldestUnstartedPFrameLatenessMs: 20
+        )
+        let otherSnapshot = makePressureSnapshot(
+            mediaPathProfile: .other,
+            unstartedPFrameCount: 2,
+            oldestUnstartedPFrameAgeMs: 40,
+            oldestUnstartedPFrameLatenessMs: 20
+        )
+
+        #expect(!coordinator.transportPressureIsActionable(vpnSnapshot))
+        #expect(coordinator.transportPressureIsActionable(otherSnapshot))
+    }
+
+    @Test("VPN queued P-frame latency is actionable past remote tolerance")
+    func vpnQueuedPFrameLatencyIsActionablePastRemoteTolerance() {
+        let coordinator = HostAdaptiveFrameCoordinator()
+        let snapshot = makePressureSnapshot(
+            mediaPathProfile: .vpnOrOverlay,
+            unstartedPFrameCount: 2,
+            oldestUnstartedPFrameAgeMs: 75,
+            oldestUnstartedPFrameLatenessMs: 45
         )
 
         #expect(coordinator.transportPressureIsActionable(snapshot))

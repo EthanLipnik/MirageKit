@@ -151,6 +151,24 @@ extension MirageClientService {
         do {
             let started = try message.decode(AudioStreamStartedMessage.self)
             let previous = activeAudioStreamMessage
+            if previous == started {
+                MirageLogger.client(
+                    "Audio stream start ignored: duplicate stream=\(started.streamID), codec=\(started.codec), sampleRate=\(started.sampleRate), channels=\(started.channelCount)"
+                )
+                fastPathState.setActiveAudioStreamID(started.streamID)
+                return
+            }
+            if let previous,
+               previous.streamID == started.streamID,
+               previous != started {
+                MirageLogger.client(
+                    "Audio stream start rejected: unexpected format change on active stream=\(started.streamID), " +
+                        "previousCodec=\(previous.codec), previousSampleRate=\(previous.sampleRate), previousChannels=\(previous.channelCount), " +
+                        "newCodec=\(started.codec), newSampleRate=\(started.sampleRate), newChannels=\(started.channelCount)"
+                )
+                audioPacketIngressQueue.invalidatePendingPackets()
+                return
+            }
             let isReplacingActiveAudioStream = previous != nil && previous != started
             let playbackController = audioPlaybackController
             let preferredChannels = playbackController.preferredChannelCount(for: Int(started.channelCount))
@@ -211,6 +229,9 @@ extension MirageClientService {
             await audioPlaybackController.prepareForIncomingFormat(
                 sampleRate: started.sampleRate,
                 channelCount: preferredChannels
+            )
+            MirageLogger.client(
+                "Audio playback prepared: stream=\(started.streamID), \(audioPlaybackController.diagnosticSummary)"
             )
             guard isAudioStreamConfigurationCurrent(generation) else { return }
             flushPendingDecodedAudioFrames(

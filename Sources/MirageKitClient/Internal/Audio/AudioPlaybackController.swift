@@ -64,10 +64,12 @@ public final class AudioPlaybackController {
     var isConfigured = false
     var playbackGeneration: UInt64 = 0
     private var hasPlaybackSessionLease = false
+    private var lastPreparedConfigurationKey: PlaybackConfigurationKey?
     private var configurationTask: Task<Bool, Never>?
     private var configurationTaskKey: PlaybackConfigurationKey?
     private var configurationTaskGeneration: UInt64?
     var lastQueueDepthLogTime: CFAbsoluteTime = 0
+    var loggedPlaybackActiveGeneration: UInt64?
 
     init(startupBufferSeconds: Double = 0, maxQueuedSeconds: Double = 0.350) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
@@ -117,7 +119,7 @@ public final class AudioPlaybackController {
         return playbackGraph
     }
 
-    func reset() async {
+    func reset(clearRememberedFormat: Bool = true) async {
         playbackGeneration &+= 1
         configurationTask?.cancel()
         configurationTask = nil
@@ -127,7 +129,33 @@ public final class AudioPlaybackController {
         pendingFrames.removeAll()
         pendingDurationSeconds = 0
         runtimeExtraDelaySeconds = 0
+        loggedPlaybackActiveGeneration = nil
+        if clearRememberedFormat {
+            lastPreparedConfigurationKey = nil
+        }
         await releasePlaybackSessionIfNeeded()
+    }
+
+    func suspendPlaybackForAudioSessionInterruption(reason: String) async {
+        let key = recoverablePlaybackConfigurationKey
+        MirageLogger.client("Audio playback session interrupted: \(reason), \(diagnosticSummary)")
+        lastPreparedConfigurationKey = key
+        await reset(clearRememberedFormat: false)
+    }
+
+    func recoverPlaybackAfterAudioSessionReset(reason: String, shouldResume: Bool = true) async {
+        let key = recoverablePlaybackConfigurationKey
+        MirageLogger.client(
+            "Audio playback session recovery: \(reason), shouldResume=\(shouldResume), \(diagnosticSummary)"
+        )
+        await reset(clearRememberedFormat: false)
+        guard shouldResume, let key = key ?? lastPreparedConfigurationKey else { return }
+
+        let task = startConfigurationTask(for: key, generation: playbackGeneration)
+        if await task.value {
+            _ = await MirageClientAudioSessionCoordinator.shared.reassertActiveSession()
+            MirageLogger.client("Audio playback session recovered: \(diagnosticSummary)")
+        }
     }
 
     func preferredChannelCount(for incomingChannelCount: Int) -> Int {
@@ -275,7 +303,7 @@ public final class AudioPlaybackController {
         for key: PlaybackConfigurationKey,
         generation: UInt64
     ) -> Task<Bool, Never> {
-        Task { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return false }
             return await performConfiguration(key: key, generation: generation)
         }
@@ -351,9 +379,11 @@ public final class AudioPlaybackController {
         #if os(iOS) || os(visionOS)
         configuredOutputChannelCount = resolvedOutputChannelCount(fallback: key.channelCount)
         #endif
+        lastPreparedConfigurationKey = key
         hasStartedPlayback = false
         isDelayHoldActive = false
         isConfigured = true
+        MirageLogger.client("Audio playback graph configured: \(diagnosticSummary)")
         drainPendingFramesIfNeeded()
         return true
     }
@@ -387,6 +417,27 @@ public final class AudioPlaybackController {
         guard hasPlaybackSessionLease else { return }
         hasPlaybackSessionLease = false
         await MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
+    }
+
+    private var recoverablePlaybackConfigurationKey: PlaybackConfigurationKey? {
+        if isConfigured {
+            return PlaybackConfigurationKey(sampleRate: configuredSampleRate, channelCount: configuredChannelCount)
+        }
+        if let configurationTaskKey {
+            return configurationTaskKey
+        }
+        return lastPreparedConfigurationKey
+    }
+
+    var diagnosticSummary: String {
+        let engineRunning = playbackGraph?.engine.isRunning ?? false
+        let playerPlaying = playbackGraph?.playerNode.isPlaying ?? false
+        let pendingMs = Int((pendingDurationSeconds * 1000).rounded())
+        let scheduledMs = Int((scheduledDurationSeconds * 1000).rounded())
+        return "configured=\(isConfigured), engineRunning=\(engineRunning), " +
+            "playerPlaying=\(playerPlaying), pendingMs=\(pendingMs), scheduledMs=\(scheduledMs), " +
+            "sampleRate=\(configuredSampleRate), channels=\(configuredChannelCount), " +
+            "hasSessionLease=\(hasPlaybackSessionLease)"
     }
 
     #if os(iOS) || os(visionOS)

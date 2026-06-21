@@ -50,6 +50,10 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         }
     }
 
+    package var remoteTimingToleranceScale: Double {
+        usesRemoteTolerance ? 2.0 : 1.0
+    }
+
     package static func classify(
         pathKind: MirageNetworkPathKind,
         interfaceNames: [String],

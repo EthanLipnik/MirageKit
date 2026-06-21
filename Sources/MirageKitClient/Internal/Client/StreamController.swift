@@ -128,6 +128,10 @@ actor StreamController {
     var latestRenderTelemetrySnapshot: RenderTelemetrySnapshot?
     var renderCadenceMissStreak: Int = 0
     var lastRenderCadenceMissLogTime: CFAbsoluteTime = 0
+    var adaptivePresentationSmoothingActive = false
+    var adaptivePresentationSmoothingMissStreak = 0
+    var adaptivePresentationSmoothingCleanStreak = 0
+    var adaptivePresentationSmoothingLastChangeTime: CFAbsoluteTime = 0
     var lastStreamingAnomalyDiagnosticSignature: String?
     var lastStreamingAnomalyDiagnosticTime: CFAbsoluteTime = 0
     var presentationTier: StreamPresentationTier = .activeLive

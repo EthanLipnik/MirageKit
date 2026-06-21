@@ -80,7 +80,12 @@ extension StreamContext {
     }
 
     func runtimeQualityFrameBudgetMs() -> Double {
-        1_000.0 / Double(runtimeQualityBudgetFrameRate())
+        let baseBudgetMs = 1_000.0 / Double(runtimeQualityBudgetFrameRate())
+        return baseBudgetMs * runtimeQualityTimingToleranceScale()
+    }
+
+    private func runtimeQualityTimingToleranceScale() -> Double {
+        mediaPathProfile.remoteTimingToleranceScale
     }
 
     private func encoderCatchUpBacklogThresholdMs() -> Double {
@@ -97,7 +102,7 @@ extension StreamContext {
 
         switch latencyMode {
         case .lowestLatency:
-            let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+            let frameBudgetMs = runtimeQualityFrameBudgetMs()
             return max(50.0, min(90.0, frameBudgetMs * 3.0))
         case .balanced:
             return 350

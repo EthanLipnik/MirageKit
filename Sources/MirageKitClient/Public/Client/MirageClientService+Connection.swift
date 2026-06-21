@@ -51,12 +51,14 @@ public extension MirageClientService {
 
     package func makeBootstrapRequest(
         requestTakeoverIfBusy: Bool = false,
-        protocolVersionOverride: Int? = nil
+        protocolVersionOverride: Int? = nil,
+        connectionAttemptID: UUID? = nil
     ) -> MirageSessionBootstrapRequest {
         MirageSessionBootstrapRequest(
             protocolVersion: protocolVersionOverride ?? Int(MirageKit.protocolVersion),
             clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
             requestTakeoverIfBusy: requestTakeoverIfBusy,
+            connectionAttemptID: connectionAttemptID,
             adaptiveGovernorRevision: MirageAdaptiveGovernorProtocol.revision,
             hostOwnedRuntimeSupport: true,
             adaptiveFeedbackClassesSupported: MirageAdaptiveGovernorProtocol.feedbackClasses,
@@ -128,7 +130,8 @@ public extension MirageClientService {
             try await performBootstrap(
                 over: controlChannel,
                 provisionalHost: host,
-                requestTakeoverIfBusy: requestTakeoverIfBusy
+                requestTakeoverIfBusy: requestTakeoverIfBusy,
+                connectionAttemptID: attemptID
             )
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)

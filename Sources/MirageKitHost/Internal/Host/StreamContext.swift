@@ -373,6 +373,8 @@ actor StreamContext {
     var captureFrameRate: Int
     /// Optional override for capture frame rate.
     var captureFrameRateOverride: Int?
+    /// Recovery state for requested high-refresh captures that remain stuck near 60 Hz.
+    var highRefreshCaptureCadenceRecoveryState = HostHighRefreshCaptureCadenceRecoveryState()
 
     /// Maximum encoded resolution (5K cap)
     static let maxEncodedWidth: CGFloat = 5120

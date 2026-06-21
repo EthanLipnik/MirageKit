@@ -70,68 +70,86 @@ final class AudioConverterInputProvider: @unchecked Sendable {
 
 actor AudioEncoder {
     private var audioConfiguration: MirageAudioConfiguration
+    private var activeProfile: ResolvedAudioStreamProfile?
     private var activeFallbackSettings: AudioEncodeSettings?
     private var loggedFallbackDescription: String?
+    private var encodeFailureCount: UInt64 = 0
+    private var lastEncodeFailureLogTime: CFAbsoluteTime = 0
     var aacConverters: [AudioConverterKey: AVAudioConverter] = [:]
 
     init(audioConfiguration: MirageAudioConfiguration) {
         self.audioConfiguration = audioConfiguration
+        activeProfile = ResolvedAudioStreamProfile.resolve(configuration: audioConfiguration)
     }
 
     func updateConfiguration(_ configuration: MirageAudioConfiguration) {
-        audioConfiguration = configuration
-        activeFallbackSettings = nil
-        loggedFallbackDescription = nil
-        aacConverters.removeAll()
+        updateProfile(ResolvedAudioStreamProfile.resolve(configuration: configuration), configuration: configuration)
     }
 
-    func updateCompressedBitrateBudget(_ bitrateBps: Int) {
-        guard audioConfiguration.enabled,
-              audioConfiguration.quality != .lossless,
-              audioConfiguration.compressedBitrateBps != bitrateBps else {
-            return
+    func updateProfile(_ profile: ResolvedAudioStreamProfile?, configuration: MirageAudioConfiguration? = nil) {
+        if let configuration {
+            audioConfiguration = configuration
         }
-        audioConfiguration.compressedBitrateBps = bitrateBps
+        activeProfile = profile
+        activeFallbackSettings = nil
+        loggedFallbackDescription = nil
+        encodeFailureCount = 0
+        lastEncodeFailureLogTime = 0
+        aacConverters.removeAll()
+    }
+
+    func updateResolvedProfile(_ profile: ResolvedAudioStreamProfile) {
+        activeProfile = profile
+        audioConfiguration.compressedBitrateBps = profile.bitrateBps
         activeFallbackSettings = nil
         loggedFallbackDescription = nil
         aacConverters.removeAll()
     }
 
-    func encode(_ captured: CapturedAudioBuffer) -> EncodedAudioFrame? {
-        guard audioConfiguration.enabled else { return nil }
-        guard let inputBuffer = makeInputBuffer(captured) else { return nil }
+    func encode(_ captured: CapturedAudioBuffer) -> [EncodedAudioFrame] {
+        guard audioConfiguration.enabled else { return [] }
+        guard let inputBuffer = makeInputBuffer(captured) else {
+            logEncodeFailureIfNeeded(reason: "input-buffer", captured: captured)
+            return []
+        }
 
         if let activeFallbackSettings,
-           let encoded = encode(inputBuffer: inputBuffer, settings: activeFallbackSettings, timestamp: captured.presentationTime) {
+           let encoded = encode(inputBuffer: inputBuffer, settings: activeFallbackSettings, timestamp: captured.presentationTime),
+           !encoded.isEmpty {
             return encoded
         }
 
         activeFallbackSettings = nil
-        let candidates = encodingCandidates(for: audioConfiguration)
+        guard let activeProfile else { return [] }
+        let candidates = encodingCandidates(for: activeProfile)
         for (index, candidate) in candidates.enumerated() {
-            guard let encoded = encode(inputBuffer: inputBuffer, settings: candidate, timestamp: captured.presentationTime) else {
+            guard let encoded = encode(inputBuffer: inputBuffer, settings: candidate, timestamp: captured.presentationTime),
+                  !encoded.isEmpty else {
                 continue
             }
 
             if index > 0 {
-                activeFallbackSettings = candidate
+                if candidate.codec == .aacLC {
+                    activeFallbackSettings = candidate
+                }
                 logFallbackIfNeeded(candidate)
             }
             return encoded
         }
 
-        return nil
+        logEncodeFailureIfNeeded(reason: "all-candidates", captured: captured)
+        return []
     }
 
-    private func encodingCandidates(for configuration: MirageAudioConfiguration) -> [AudioEncodeSettings] {
-        let primary = settings(for: configuration, fallbackChannelCount: nil)
+    private func encodingCandidates(for profile: ResolvedAudioStreamProfile) -> [AudioEncodeSettings] {
+        let primary = profile.encodeSettings
         var candidates = [primary]
 
-        if configuration.channelLayout == .surround51, primary.codec == .aacLC {
-            let stereoAAC = settings(
-                for: configuration,
-                fallbackChannelCount: AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount)
-            )
+        if primary.channelCount > AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount),
+           primary.codec == .aacLC {
+            let stereoAAC = profile
+                .withChannelCount(MirageAudioChannelLayout.stereo.channelCount, reason: "surround-aac-fallback")
+                .encodeSettings
             if !candidates.contains(stereoAAC) {
                 candidates.append(stereoAAC)
             }
@@ -147,49 +165,25 @@ actor AudioEncoder {
         MirageLogger.host("Audio encode fallback active: \(description)")
     }
 
-    private func settings(
-        for configuration: MirageAudioConfiguration,
-        fallbackChannelCount: AVAudioChannelCount?
-    ) -> AudioEncodeSettings {
-        let requestedChannelCount = configuration.channelLayout.channelCount
-        let channelCount = max(1, Int(fallbackChannelCount ?? AVAudioChannelCount(requestedChannelCount)))
-        let sampleRate = 48_000.0
-
-        let codec: MirageAudioCodec
-        let bitrate: Int?
-        switch configuration.quality {
-        case .lossless:
-            codec = .pcm16LE
-            bitrate = nil
-        case .low:
-            codec = .aacLC
-            bitrate = Self.aacBitrate(
-                quality: .low,
-                channels: channelCount,
-                budgetBps: configuration.compressedBitrateBps
-            )
-        case .high:
-            codec = .aacLC
-            bitrate = Self.aacBitrate(
-                quality: .high,
-                channels: channelCount,
-                budgetBps: configuration.compressedBitrateBps
-            )
-        }
-
-        return AudioEncodeSettings(
-            codec: codec,
-            sampleRate: sampleRate,
-            channelCount: AVAudioChannelCount(channelCount),
-            bitrate: bitrate
+    private func logEncodeFailureIfNeeded(reason: String, captured: CapturedAudioBuffer) {
+        encodeFailureCount &+= 1
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastEncodeFailureLogTime == 0 || now - lastEncodeFailureLogTime > 2.0 else { return }
+        MirageLogger.host(
+            "Audio encode failed: reason=\(reason), failures=\(encodeFailureCount), " +
+                "sampleRate=\(Int(captured.sampleRate.rounded())), channels=\(captured.channelCount), " +
+                "frames=\(captured.frameCount), bytes=\(captured.data.count), " +
+                "float=\(captured.isFloat), interleaved=\(captured.isInterleaved)"
         )
+        encodeFailureCount = 0
+        lastEncodeFailureLogTime = now
     }
 
     private func encode(
         inputBuffer: AVAudioPCMBuffer,
         settings: AudioEncodeSettings,
         timestamp: CMTime
-    ) -> EncodedAudioFrame? {
+    ) -> [EncodedAudioFrame]? {
         guard let processingFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: settings.sampleRate,
@@ -223,15 +217,11 @@ actor AudioEncoder {
             guard conversionError == nil else { return nil }
             guard status == .haveData || status == .inputRanDry || status == .endOfStream else { return nil }
 
-            let byteLength = Int(compressedBuffer.byteLength)
-            guard byteLength > 0 else { return nil }
-            let data = Data(bytes: compressedBuffer.data, count: byteLength)
-            return EncodedAudioFrame(
-                data: data,
-                codec: .aacLC,
+            return aacFrames(
+                from: compressedBuffer,
                 sampleRate: Int(settings.sampleRate.rounded()),
                 channelCount: Int(settings.channelCount),
-                samplesPerFrame: Int(processingBuffer.frameLength),
+                sourceFrameCount: Int(processingBuffer.frameLength),
                 timestampNs: timestampNs
             )
 
@@ -253,15 +243,93 @@ actor AudioEncoder {
             let byteCount = Int(firstBuffer.mDataByteSize)
             guard byteCount > 0 else { return nil }
             let data = Data(bytes: baseAddress, count: byteCount)
-            return EncodedAudioFrame(
+            return [EncodedAudioFrame(
                 data: data,
                 codec: .pcm16LE,
                 sampleRate: Int(settings.sampleRate.rounded()),
                 channelCount: Int(settings.channelCount),
                 samplesPerFrame: Int(pcm16Buffer.frameLength),
                 timestampNs: timestampNs
-            )
+            )]
         }
+    }
+
+    private func aacFrames(
+        from compressedBuffer: AVAudioCompressedBuffer,
+        sampleRate: Int,
+        channelCount: Int,
+        sourceFrameCount: Int,
+        timestampNs: UInt64
+    ) -> [EncodedAudioFrame] {
+        let byteLength = Int(compressedBuffer.byteLength)
+        guard byteLength > 0 else { return [] }
+
+        let packetCount = Int(compressedBuffer.packetCount)
+        guard packetCount > 1 else {
+            return [
+                EncodedAudioFrame(
+                    data: Data(bytes: compressedBuffer.data, count: byteLength),
+                    codec: .aacLC,
+                    sampleRate: sampleRate,
+                    channelCount: channelCount,
+                    samplesPerFrame: max(1, sourceFrameCount),
+                    timestampNs: timestampNs
+                ),
+            ]
+        }
+        guard let packetDescriptions = compressedBuffer.packetDescriptions else { return [] }
+
+        var frames: [EncodedAudioFrame] = []
+        frames.reserveCapacity(packetCount)
+        var cumulativeSamples = 0
+        for packetIndex in 0 ..< packetCount {
+            let description = packetDescriptions[packetIndex]
+            let offset = Int(description.mStartOffset)
+            let packetByteCount = Int(description.mDataByteSize)
+            guard offset >= 0,
+                  packetByteCount > 0,
+                  offset + packetByteCount <= byteLength else {
+                continue
+            }
+
+            let packetSamples = packetSampleCount(
+                description,
+                sourceFrameCount: sourceFrameCount,
+                cumulativeSamples: cumulativeSamples
+            )
+            let packetTimestampNs = timestampNs + Self.nanoseconds(
+                sampleOffset: cumulativeSamples,
+                sampleRate: sampleRate
+            )
+            frames.append(
+                EncodedAudioFrame(
+                    data: Data(bytes: compressedBuffer.data.advanced(by: offset), count: packetByteCount),
+                    codec: .aacLC,
+                    sampleRate: sampleRate,
+                    channelCount: channelCount,
+                    samplesPerFrame: packetSamples,
+                    timestampNs: packetTimestampNs
+                )
+            )
+            cumulativeSamples += packetSamples
+        }
+        return frames
+    }
+
+    private func packetSampleCount(
+        _ description: AudioStreamPacketDescription,
+        sourceFrameCount: Int,
+        cumulativeSamples: Int
+    ) -> Int {
+        if description.mVariableFramesInPacket > 0 {
+            return Int(description.mVariableFramesInPacket)
+        }
+
+        let remainingSourceSamples = sourceFrameCount - cumulativeSamples
+        if remainingSourceSamples > 0 {
+            return min(1_024, remainingSourceSamples)
+        }
+        return 1_024
     }
 
 }

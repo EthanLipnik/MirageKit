@@ -15,7 +15,7 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
-    func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
+    nonisolated func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
         var ordered = [requestedColorSpace]
         for candidate in MirageColorSpace.allCases where candidate != requestedColorSpace {
             ordered.append(candidate)
@@ -23,16 +23,15 @@ extension SharedVirtualDisplayManager {
         return ordered
     }
 
-    private func creationAttempts(
+    nonisolated func creationAttempts(
         resolution: CGSize,
         colorSpace: MirageColorSpace,
-        policy: DisplayCreationPolicy
+        policy: DisplayCreationPolicy,
+        sourcePixelBudget: VirtualDisplaySourcePixelBudget? = VirtualDisplaySourcePixelBudget.current()
     ) -> [DisplayCreationAttempt] {
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
         var attempts: [DisplayCreationAttempt] = []
         var seenAttemptKeys = Set<String>()
-
-        let sourcePixelBudget = VirtualDisplaySourcePixelBudget.current()
 
         func appendAttempt(_ attempt: DisplayCreationAttempt) {
             let budgetedAttempt = Self.resourceBudgetedCreationAttempt(attempt, budget: sourcePixelBudget)

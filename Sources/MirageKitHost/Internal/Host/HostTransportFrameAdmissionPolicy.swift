@@ -354,6 +354,7 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         senderDropCounterDeltas: SenderDropCounterDeltas
     ) -> Evidence {
         let frameIntervalMs = 1_000.0 / Double(max(1, signal.currentFrameRate))
+        let liveToleranceScale = livePressureToleranceScale(for: signal.mediaPathProfile)
         let transportReason = pressureReasonIsTransport(signal.pressureReason)
         let usesLocalBulkTransport = signal.mediaPathProfile.usesLocalBulkTransportPolicy
         let hardSenderDropPressure = senderDropCounterDeltas.senderLocalDeadlineDrops > 0 ||
@@ -374,8 +375,11 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         }
 
         let queuedPFrameStress = signal.unstartedPFrameCount >= 2 &&
-            (signal.oldestUnstartedPFrameAgeMs >= frameIntervalMs * 2.0 ||
-                signal.oldestUnstartedPFrameLatenessMs > 0)
+            (signal.oldestUnstartedPFrameAgeMs >= frameIntervalMs * 2.0 * liveToleranceScale ||
+                signal.oldestUnstartedPFrameLatenessMs > queuedPFrameLatenessThresholdMs(
+                    frameIntervalMs: frameIntervalMs,
+                    liveToleranceScale: liveToleranceScale
+                ))
         let lateNonKeyframeSendStress = senderDropCounterDeltas.lateNonKeyframeSends >= 2 ||
             senderDropCounterDeltas.lateNonKeyframeSendWindowReachedThreshold
         let deadlineStress = hardSenderDropPressure ||
@@ -384,16 +388,16 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
             signal.queuedUnreliableQueuedBytes >= max(32 * 1024, signal.queuePressureBytes / 2)
         let liveQueuedUnreliableQueuePressure = signal.queuedUnreliableQueuedBytes >= signal.queuePressureBytes
         let queuedUnreliableTimingStress = liveQueuedUnreliableBacklogStress &&
-            (signal.queuedUnreliableQueueDwellP99Ms >= max(120, frameIntervalMs * 4.0) ||
-                signal.queuedUnreliableContentProcessedP99Ms >= max(120, frameIntervalMs * 4.0) ||
-                signal.queuedUnreliableSendGapP99Ms >= max(120, frameIntervalMs * 4.0))
+            (signal.queuedUnreliableQueueDwellP99Ms >= max(120, frameIntervalMs * 4.0) * liveToleranceScale ||
+                signal.queuedUnreliableContentProcessedP99Ms >= max(120, frameIntervalMs * 4.0) * liveToleranceScale ||
+                signal.queuedUnreliableSendGapP99Ms >= max(120, frameIntervalMs * 4.0) * liveToleranceScale)
         let receiverTransportStress = signal.transportPressureIsActionable &&
             (signal.receiverLossHoldActive ||
                 signal.receiverReassemblyBacklogFrames > 0 ||
                 signal.receiverReassemblyBacklogBytes > 0)
         let ackLagStress = signal.transportPressureIsActionable &&
             receiverFeedbackIsFresh(signal) &&
-            (signal.receiverAckLagMs ?? 0) >= max(120, frameIntervalMs * 4.0)
+            (signal.receiverAckLagMs ?? 0) >= max(120, frameIntervalMs * 4.0) * liveToleranceScale
 
         if signal.transportPressureIsActionable,
            signal.pressureState == .pressured,
@@ -424,6 +428,17 @@ struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {
         default:
             return false
         }
+    }
+
+    private static func livePressureToleranceScale(for mediaPathProfile: MirageMediaPathProfile) -> Double {
+        mediaPathProfile.remoteTimingToleranceScale
+    }
+
+    private static func queuedPFrameLatenessThresholdMs(
+        frameIntervalMs: Double,
+        liveToleranceScale: Double
+    ) -> Double {
+        liveToleranceScale > 1.0 ? frameIntervalMs * liveToleranceScale : 0
     }
 
     private static func receiverFeedbackIsFresh(_ signal: Signal) -> Bool {

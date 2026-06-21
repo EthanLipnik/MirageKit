@@ -65,6 +65,7 @@ extension MirageClientService {
             "client.debugRouteOverride.transport": debugRouteOverride.map { .string($0.transportKind.rawValue) } ?? .null,
             "client.debugRouteOverride.interfaceName": debugRouteOverride?.interfaceName.map(LoomDiagnosticsValue.string) ?? .null,
             "client.debugRouteOverride.interfaceKind": debugRouteOverride?.interfaceKind.map { .string($0.rawValue) } ?? .null,
+            "client.control.selectedAttemptID": selectedControlAttempt?.connectionAttemptID.map(LoomDiagnosticsValue.string) ?? .null,
             "client.control.selectedTransport": selectedControlAttempt.map { .string($0.transport) } ?? .null,
             "client.control.selectedInterface": selectedControlAttempt.map { .string($0.requiredInterface) } ?? .null,
             "client.control.selectedRouteTier": selectedControlAttempt.map { .string($0.routeTier) } ?? .null,

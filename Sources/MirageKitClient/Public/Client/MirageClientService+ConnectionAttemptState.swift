@@ -89,20 +89,27 @@ extension MirageClientService {
         over controlChannel: MirageControlChannel,
         provisionalHost: LoomPeer,
         requestTakeoverIfBusy: Bool = false,
-        protocolVersionOverride: Int? = nil
+        protocolVersionOverride: Int? = nil,
+        connectionAttemptID: UUID? = nil
     ) async throws {
+        let attemptIDText = connectionAttemptID?.uuidString.lowercased() ?? "none"
         connectionState = .handshaking(host: provisionalHost.name)
         MirageInstrumentation.record(.clientHelloSent)
-        MirageLogger.client("Sending Mirage bootstrap request to \(provisionalHost.name)")
+        MirageLogger.client(
+            "Sending Mirage bootstrap request attempt=\(attemptIDText) to \(provisionalHost.name)"
+        )
         try await controlChannel.send(
             .sessionBootstrapRequest,
             content: makeBootstrapRequest(
                 requestTakeoverIfBusy: requestTakeoverIfBusy,
-                protocolVersionOverride: protocolVersionOverride
+                protocolVersionOverride: protocolVersionOverride,
+                connectionAttemptID: connectionAttemptID
             )
         )
 
-        MirageLogger.client("Waiting for Mirage bootstrap response from \(provisionalHost.name)")
+        MirageLogger.client(
+            "Waiting for Mirage bootstrap response attempt=\(attemptIDText) from \(provisionalHost.name)"
+        )
         let responseMessage = try await receiveSingleControlMessage(
             from: controlChannel.incomingBytes,
             timeout: bootstrapResponseTimeout,
@@ -111,7 +118,9 @@ extension MirageClientService {
         guard responseMessage.type == .sessionBootstrapResponse else {
             throw MirageError.protocolError("Expected Mirage session bootstrap response")
         }
-        MirageLogger.client("Received Mirage bootstrap response from \(provisionalHost.name)")
+        MirageLogger.client(
+            "Received Mirage bootstrap response attempt=\(attemptIDText) from \(provisionalHost.name)"
+        )
         let response = try responseMessage.decode(MirageSessionBootstrapResponse.self)
         try await handleBootstrapResponse(
             response,

@@ -163,6 +163,7 @@ extension StreamController {
         let targetUnchanged = target == streamCadenceTarget
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
 
+        resetAdaptivePresentationSmoothing(reason: reason)
         streamCadenceTarget = target
         streamCadenceClock.updateTargetFPS(target.sourceFPS)
         decodeSchedulerTargetFPS = target.sourceFPS

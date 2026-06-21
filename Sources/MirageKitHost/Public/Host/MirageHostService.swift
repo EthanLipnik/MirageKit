@@ -286,6 +286,8 @@ public final class MirageHostService {
     var audioFirstSampleRetryAttemptedByClientID: Set<UUID> = []
     /// Most recent host audio sample time by client.
     var audioLastSampleTimeByClientID: [UUID: CFAbsoluteTime] = [:]
+    /// Capture-level diagnostics for host audio samples by client.
+    var audioCaptureLevelStateByClientID: [UUID: HostAudioCaptureLevelState] = [:]
     /// Minimum window sizes reported by clients and enforced before stream startup.
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     /// Base times used for host-side stream startup telemetry.

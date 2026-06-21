@@ -93,6 +93,16 @@ actor MirageClientAudioSessionCoordinator {
         await refreshSessionIfNeeded()
     }
 
+    /// Reapplies the currently desired platform session without changing lease ownership.
+    func reassertActiveSession() async -> Bool {
+        guard desiredConfiguration != nil else { return false }
+        currentConfiguration = nil
+        pendingActivationConfiguration = nil
+        activationBackoffUntil = nil
+        await refreshSessionIfNeeded()
+        return currentConfiguration != nil
+    }
+
     /// Requests a dictation lease, preempting playback because dictation needs an input-capable session.
     func requestDictationSession() async -> Bool {
         dictationLeaseCount += 1

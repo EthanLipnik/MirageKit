@@ -27,9 +27,6 @@ protocol HostAudioDeviceDriving: AnyObject {
     func defaultOutputDeviceID() -> AudioDeviceID?
     func readMuteState(for deviceID: AudioDeviceID) -> Bool?
     func writeMuteState(_ muted: Bool, for deviceID: AudioDeviceID) -> Bool
-    func writableVolumeElements(for deviceID: AudioDeviceID) -> [AudioObjectPropertyElement]
-    func readVolumeScalar(for deviceID: AudioDeviceID, element: AudioObjectPropertyElement) -> Float?
-    func writeVolumeScalar(_ volume: Float, for deviceID: AudioDeviceID, element: AudioObjectPropertyElement) -> Bool
     func addDefaultOutputDeviceChangeListener(
         queue: DispatchQueue,
         handler: @escaping @Sendable () -> Void
@@ -41,7 +38,6 @@ protocol HostAudioDeviceDriving: AnyObject {
 final class HostAudioMuteController {
     private enum AppliedMuteState {
         case mute(original: Bool)
-        case volume(originalByElement: [AudioObjectPropertyElement: Float])
     }
 
     private var appliedMuteStateByDeviceID: [AudioDeviceID: AppliedMuteState] = [:]
@@ -94,10 +90,6 @@ final class HostAudioMuteController {
             return
         }
 
-        if applyVolumeFallbackIfAvailable(deviceID: deviceID) {
-            return
-        }
-
         logUnsupportedOutputDeviceIfNeeded(deviceID)
     }
 
@@ -109,39 +101,10 @@ final class HostAudioMuteController {
         return true
     }
 
-    private func applyVolumeFallbackIfAvailable(deviceID: AudioDeviceID) -> Bool {
-        let elements = driver.writableVolumeElements(for: deviceID)
-        guard !elements.isEmpty else { return false }
-
-        var originalByElement: [AudioObjectPropertyElement: Float] = [:]
-        for element in elements {
-            guard let volume = driver.readVolumeScalar(for: deviceID, element: element) else { continue }
-            originalByElement[element] = volume
-        }
-        guard !originalByElement.isEmpty else { return false }
-
-        var wroteAnyVolume = false
-        for element in originalByElement.keys.sorted() {
-            wroteAnyVolume = driver.writeVolumeScalar(0, for: deviceID, element: element) || wroteAnyVolume
-        }
-        guard wroteAnyVolume else { return false }
-
-        appliedMuteStateByDeviceID[deviceID] = .volume(originalByElement: originalByElement)
-        MirageLogger.host(
-            "Muted local audio output device \(deviceID) using volume fallback " +
-                "(elements=\(originalByElement.keys.sorted()))"
-        )
-        return true
-    }
-
     private func reapplyMutedState(_ state: AppliedMuteState, deviceID: AudioDeviceID) {
         switch state {
         case .mute:
             _ = driver.writeMuteState(true, for: deviceID)
-        case let .volume(originalByElement):
-            for element in originalByElement.keys.sorted() {
-                _ = driver.writeVolumeScalar(0, for: deviceID, element: element)
-            }
         }
     }
 
@@ -150,11 +113,6 @@ final class HostAudioMuteController {
             switch state {
             case let .mute(original):
                 _ = driver.writeMuteState(original, for: deviceID)
-            case let .volume(originalByElement):
-                for element in originalByElement.keys.sorted() {
-                    guard let volume = originalByElement[element] else { continue }
-                    _ = driver.writeVolumeScalar(volume, for: deviceID, element: element)
-                }
             }
         }
         appliedMuteStateByDeviceID.removeAll()
@@ -162,7 +120,7 @@ final class HostAudioMuteController {
 
     private func logUnsupportedOutputDeviceIfNeeded(_ deviceID: AudioDeviceID) {
         guard unsupportedOutputDeviceIDs.insert(deviceID).inserted else { return }
-        MirageLogger.host("Default output device \(deviceID) does not expose writable mute or volume controls")
+        MirageLogger.host("Default output device \(deviceID) does not expose a writable mute property")
     }
 }
 
@@ -229,70 +187,6 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         return true
     }
 
-    func writableVolumeElements(for deviceID: AudioDeviceID) -> [AudioObjectPropertyElement] {
-        var elements: [AudioObjectPropertyElement] = []
-        if isVolumeElementWritable(deviceID: deviceID, element: kAudioObjectPropertyElementMain) {
-            elements.append(kAudioObjectPropertyElementMain)
-        }
-
-        let channelCount = max(0, outputChannelCount(for: deviceID))
-        guard channelCount > 0 else { return elements }
-        for channelIndex in 1...channelCount {
-            let element = AudioObjectPropertyElement(channelIndex)
-            if isVolumeElementWritable(deviceID: deviceID, element: element) {
-                elements.append(element)
-            }
-        }
-        return elements
-    }
-
-    func readVolumeScalar(for deviceID: AudioDeviceID, element: AudioObjectPropertyElement) -> Float? {
-        var address = Self.outputVolumeAddress(element: element)
-        guard AudioObjectHasProperty(deviceID, &address) else { return nil }
-
-        var volume: Float32 = 0
-        var size = UInt32(MemoryLayout<Float32>.size)
-        let status = AudioObjectGetPropertyData(
-            deviceID,
-            &address,
-            0,
-            nil,
-            &size,
-            &volume
-        )
-        guard status == noErr else {
-            MirageLogger.error(.host, "Failed to read device volume: OSStatus \(status)")
-            return nil
-        }
-        return volume
-    }
-
-    func writeVolumeScalar(
-        _ volume: Float,
-        for deviceID: AudioDeviceID,
-        element: AudioObjectPropertyElement
-    )
-    -> Bool {
-        var address = Self.outputVolumeAddress(element: element)
-        guard isPropertyWritable(deviceID: deviceID, address: &address) else { return false }
-
-        var value = Float32(max(0, min(1, volume)))
-        let size = UInt32(MemoryLayout<Float32>.size)
-        let status = AudioObjectSetPropertyData(
-            deviceID,
-            &address,
-            0,
-            nil,
-            size,
-            &value
-        )
-        guard status == noErr else {
-            MirageLogger.error(.host, "Failed to set device volume: OSStatus \(status)")
-            return false
-        }
-        return true
-    }
-
     func addDefaultOutputDeviceChangeListener(
         queue: DispatchQueue,
         handler: @escaping @Sendable () -> Void
@@ -330,15 +224,6 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         }
     }
 
-    private func isVolumeElementWritable(
-        deviceID: AudioDeviceID,
-        element: AudioObjectPropertyElement
-    )
-    -> Bool {
-        var address = Self.outputVolumeAddress(element: element)
-        return isPropertyWritable(deviceID: deviceID, address: &address)
-    }
-
     private func isPropertyWritable(
         deviceID: AudioDeviceID,
         address: inout AudioObjectPropertyAddress
@@ -354,30 +239,6 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         return settable.boolValue
     }
 
-    private func outputChannelCount(for deviceID: AudioDeviceID) -> Int {
-        var address = Self.outputStreamConfigurationAddress
-        guard AudioObjectHasProperty(deviceID, &address) else { return 0 }
-
-        var size: UInt32 = 0
-        let sizeStatus = AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size)
-        guard sizeStatus == noErr, size > 0 else { return 0 }
-
-        let rawPointer = UnsafeMutableRawPointer.allocate(
-            byteCount: Int(size),
-            alignment: MemoryLayout<AudioBufferList>.alignment
-        )
-        defer { rawPointer.deallocate() }
-
-        let bufferList = rawPointer.bindMemory(to: AudioBufferList.self, capacity: 1)
-        let dataStatus = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, bufferList)
-        guard dataStatus == noErr else { return 0 }
-
-        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
-        return buffers.reduce(0) { count, buffer in
-            count + Int(buffer.mNumberChannels)
-        }
-    }
-
     private static let defaultOutputDeviceAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -386,20 +247,6 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
 
     private static let outputMuteAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyMute,
-        mScope: kAudioDevicePropertyScopeOutput,
-        mElement: kAudioObjectPropertyElementMain
-    )
-
-    private static func outputVolumeAddress(element: AudioObjectPropertyElement) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: element
-        )
-    }
-
-    private static let outputStreamConfigurationAddress = AudioObjectPropertyAddress(
-        mSelector: kAudioDevicePropertyStreamConfiguration,
         mScope: kAudioDevicePropertyScopeOutput,
         mElement: kAudioObjectPropertyElementMain
     )

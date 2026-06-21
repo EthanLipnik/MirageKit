@@ -37,14 +37,20 @@ extension MirageHostService {
 
         let peerIdentity = context.peerIdentity
         let sessionID = session.id
+        let transportKind = await session.transportKind
         let remoteEndpoint = await session.remoteEndpoint
         let pathSnapshot = await session.pathSnapshot
+        let classifiedPath = pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
         let origin: MirageHostConnectionOrigin = ClientContext.isPeerToPeerConnection(
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
         ) ? .local : .remote
         MirageLogger.host(
-            "Incoming authenticated session trustDecision=\(String(describing: context.trustEvaluation.decision)) "
+            "Incoming authenticated session sessionID=\(sessionID.uuidString.lowercased()) "
+                + "transport=\(transportKind.rawValue) "
+                + "remoteEndpoint=\(remoteEndpoint?.debugDescription ?? "unknown") "
+                + "path=\(classifiedPath?.signature ?? "unknown") "
+                + "trustDecision=\(String(describing: context.trustEvaluation.decision)) "
                 + "autoTrustNotice=\(context.trustEvaluation.shouldShowAutoTrustNotice) "
                 + "deviceID=\(peerIdentity.deviceID.uuidString.lowercased()) "
                 + "keyID=\(peerIdentity.identityKeyID?.lowercased() ?? "nil") "
@@ -169,7 +175,12 @@ extension MirageHostService {
             ) { [self] in
                 try await receiveBootstrapRequest(from: controlChannel)
             }
-            MirageLogger.host("Received Mirage bootstrap request from \(peerIdentity.name)")
+            let connectionAttemptID = bootstrap.connectionAttemptID?.uuidString.lowercased() ?? "none"
+            MirageLogger.host(
+                "Received Mirage bootstrap request attempt=\(connectionAttemptID) " +
+                    "sessionID=\(sessionID.uuidString.lowercased()) transport=\(transportKind.rawValue) " +
+                    "from \(peerIdentity.name)"
+            )
 
             if let busyClientContext = busyClientContext(forIncomingSessionID: sessionID) {
                 if let rejectionReason = busyHostTakeoverRejectionReason(
@@ -184,6 +195,10 @@ extension MirageHostService {
                     singleClientSlotReleaseReason = "busy-bootstrap-rejected-\(rejectionReason.rawValue)"
                     let rejection = makeRejectedBootstrapResponse(reason: rejectionReason)
                     try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
+                    MirageLogger.host(
+                        "Sent Mirage bootstrap response attempt=\(connectionAttemptID) to \(peerIdentity.name) " +
+                            "accepted=false reason=\(rejectionReason.rawValue)"
+                    )
                     await closeBootstrapControlChannel(controlChannel, reason: "busy rejection")
                     return
                 }
@@ -209,6 +224,10 @@ extension MirageHostService {
                     singleClientSlotReleaseReason = "slot-reservation-rejected"
                     let rejection = makeRejectedBootstrapResponse(reason: .hostBusy)
                     try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
+                    MirageLogger.host(
+                        "Sent Mirage bootstrap response attempt=\(connectionAttemptID) to \(peerIdentity.name) " +
+                            "accepted=false reason=\(MirageSessionBootstrapRejectionReason.hostBusy.rawValue)"
+                    )
                     await closeBootstrapControlChannel(controlChannel, reason: "slot reservation rejection")
                     return
                 }
@@ -225,7 +244,9 @@ extension MirageHostService {
             )
             try await controlChannel.send(.sessionBootstrapResponse, content: responseResult.response)
             MirageLogger.host(
-                "Sent Mirage bootstrap response to \(peerIdentity.name) accepted=\(responseResult.response.accepted)"
+                "Sent Mirage bootstrap response attempt=\(connectionAttemptID) to \(peerIdentity.name) " +
+                    "accepted=\(responseResult.response.accepted) " +
+                    "reason=\(responseResult.response.rejectionReason?.rawValue ?? "none")"
             )
 
             guard responseResult.response.accepted else {

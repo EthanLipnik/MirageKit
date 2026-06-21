@@ -590,6 +590,71 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encodedFrame.rawValue)
     }
 
+    @Test("VPN per-frame encoder timing tolerates double local budget")
+    func vpnPerFrameEncoderTimingToleratesDoubleLocalBudget() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 12,
+                encodeDurationMs: 32,
+                captureToCallbackMs: 45,
+                captureDirtyPercentage: 100,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(await context.activeQuality == originalQuality)
+    }
+
+    @Test("VPN per-frame encoder timing cuts past remote tolerance")
+    func vpnPerFrameEncoderTimingCutsPastRemoteTolerance() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 221_500_000,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await raiseAboveReadabilityFloorForPressureTest(context)
+        let originalQuality = await context.activeQuality
+
+        await context.applyPerFrameEncoderTimingPressureIfNeeded(
+            VideoEncoder.EncodedFrameTiming(
+                frameNumber: 13,
+                encodeDurationMs: 76,
+                captureToCallbackMs: 100,
+                captureDirtyPercentage: 100,
+                captureIsIdleFrame: false
+            ),
+            isKeyframe: false,
+            now: 10
+        )
+
+        #expect(await context.activeQuality < originalQuality)
+        #expect(await context.realtimePressureReason == HostAdaptivePFrameController.Reason.encoderLag.rawValue)
+    }
+
     @Test("Startup local-clean encoder threshold wobble does not cut automatic quality")
     func startupLocalCleanEncoderThresholdWobbleDoesNotCutAutomaticQuality() async {
         let context = makeContext(

@@ -15,12 +15,12 @@ import MirageKit
 actor HostAudioPipeline {
     private let encoder: AudioEncoder
     private let packetizer: AudioPacketizer
-    private var compressionBudgetController: HostAudioCompressionBudgetController
+    private var qualityGovernor: HostAudioQualityGovernor
     private let onPacketsReady: @Sendable ([Data], EncodedAudioFrame, StreamID) async -> Void
     private var sourceStreamID: StreamID
     private var queue: [CapturedAudioBuffer] = []
     private var queuedDurationSeconds: Double = 0
-    private var pendingCompressionBitrateBps: Int?
+    private var pendingProfile: ResolvedAudioStreamProfile?
     private var pendingDiscontinuity = false
     private var droppedBufferCount: UInt64 = 0
     private var lastDropLogTime: CFAbsoluteTime = 0
@@ -40,17 +40,19 @@ actor HostAudioPipeline {
     ) {
         self.sourceStreamID = sourceStreamID
         encoder = AudioEncoder(audioConfiguration: audioConfiguration)
-        compressionBudgetController = HostAudioCompressionBudgetController(
+        qualityGovernor = HostAudioQualityGovernor(
             configuration: audioConfiguration,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile
         )
+        pendingProfile = qualityGovernor.profile
         packetizer = AudioPacketizer(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext
         )
         self.maxQueuedDurationSeconds = max(0.020, maxQueuedDurationSeconds)
         self.onPacketsReady = onPacketsReady
+        Self.logResolvedProfile(qualityGovernor.profile, reason: "start")
     }
 
     func updateConfiguration(
@@ -58,12 +60,14 @@ actor HostAudioPipeline {
         transportPathKind: MirageNetworkPathKind,
         mediaPathProfile: MirageMediaPathProfile
     ) async {
-        await encoder.updateConfiguration(configuration)
-        pendingCompressionBitrateBps = compressionBudgetController.updateConfiguration(
+        let profile = qualityGovernor.updateConfiguration(
             configuration,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile
         )
+        await encoder.updateProfile(profile, configuration: configuration)
+        pendingProfile = nil
+        Self.logResolvedProfile(qualityGovernor.profile, reason: "update")
     }
 
     func updateSourceStreamID(_ streamID: StreamID) {
@@ -84,25 +88,25 @@ actor HostAudioPipeline {
             droppedBufferCount &+= UInt64(droppedCount)
             logDropsIfNeeded()
         }
-        if let bitrate = compressionBudgetController.recordQueueState(
+        if let profile = qualityGovernor.recordQueueState(
             queuedDurationSeconds: queuedDurationSeconds,
             droppedBuffers: droppedCount,
             maxQueuedDurationSeconds: maxQueuedDurationSeconds
         ) {
-            pendingCompressionBitrateBps = bitrate
+            pendingProfile = profile
         }
         startProcessingIfNeeded()
     }
 
     func recordTransportPressure() {
-        if let bitrate = compressionBudgetController.recordTransportPressure() {
-            pendingCompressionBitrateBps = bitrate
+        if let profile = qualityGovernor.recordTransportPressure() {
+            pendingProfile = profile
         }
     }
 
     func recordReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
-        if let bitrate = compressionBudgetController.recordReceiverFeedback(feedback) {
-            pendingCompressionBitrateBps = bitrate
+        if let profile = qualityGovernor.recordReceiverFeedback(feedback) {
+            pendingProfile = profile
         }
     }
 
@@ -144,36 +148,44 @@ actor HostAudioPipeline {
             guard !queue.isEmpty else { return }
             let captured = queue.removeFirst()
             queuedDurationSeconds = max(0, queuedDurationSeconds - Self.durationSeconds(for: captured))
-            await applyPendingCompressionBitrateIfNeeded()
-            guard let encoded = await encoder.encode(captured) else { continue }
-            if let bitrate = compressionBudgetController.recordSuccessfulFrame() {
-                pendingCompressionBitrateBps = bitrate
+            switch qualityGovernor.activityDecision(for: captured) {
+            case .send:
+                break
+            case .gated:
+                continue
+            }
+            await applyPendingProfileIfNeeded()
+            let encodedFrames = await encoder.encode(captured)
+            guard !encodedFrames.isEmpty else { continue }
+            if let profile = qualityGovernor.recordSuccessfulFrame() {
+                pendingProfile = profile
             }
             let currentStreamID = sourceStreamID
-            let discontinuity = pendingDiscontinuity
-            let packets = await packetizer.packetize(
-                frame: encoded,
-                streamID: currentStreamID,
-                discontinuity: discontinuity
-            )
-            if discontinuity {
-                pendingDiscontinuity = false
+            for (index, encoded) in encodedFrames.enumerated() {
+                let discontinuity = pendingDiscontinuity && index == 0
+                let packets = await packetizer.packetize(
+                    frame: encoded,
+                    streamID: currentStreamID,
+                    discontinuity: discontinuity
+                )
+                if discontinuity {
+                    pendingDiscontinuity = false
+                }
+                guard !packets.isEmpty else { continue }
+                await onPacketsReady(packets, encoded, currentStreamID)
             }
-            guard !packets.isEmpty else { continue }
-            await onPacketsReady(packets, encoded, currentStreamID)
         }
     }
 
-    private func applyPendingCompressionBitrateIfNeeded() async {
-        guard let pendingCompressionBitrateBps else { return }
-        self.pendingCompressionBitrateBps = nil
+    private func applyPendingProfileIfNeeded() async {
+        guard let pendingProfile else { return }
+        self.pendingProfile = nil
         pendingDiscontinuity = true
-        await encoder.updateCompressedBitrateBudget(pendingCompressionBitrateBps)
+        await encoder.updateResolvedProfile(pendingProfile)
     }
 
     private static func durationSeconds(for buffer: CapturedAudioBuffer) -> Double {
-        guard buffer.sampleRate > 0, buffer.frameCount > 0 else { return 0.010 }
-        return Double(buffer.frameCount) / buffer.sampleRate
+        buffer.durationSeconds
     }
 
     private func logDropsIfNeeded() {
@@ -184,6 +196,21 @@ actor HostAudioPipeline {
         )
         droppedBufferCount = 0
         lastDropLogTime = now
+    }
+
+    private nonisolated static func logResolvedProfile(_ profile: ResolvedAudioStreamProfile?, reason: String) {
+        guard let profile else {
+            MirageLogger.host("Audio resolved profile unavailable reason=\(reason)")
+            return
+        }
+        MirageLogger.host(
+            "Audio resolved profile reason=\(reason) codec=\(profile.codec) " +
+                "quality=\(profile.quality.rawValue) sampleRate=\(Int(profile.sampleRate.rounded())) " +
+                "channels=\(profile.channelCount) bitrate=\(profile.bitrateBps.map(String.init) ?? "lossless") " +
+                "floor=\(profile.minimumBitrateBps.map(String.init) ?? "none") " +
+                "ceiling=\(profile.maximumBitrateBps.map(String.init) ?? "none") " +
+                "adaptive=\(profile.adaptiveCompressionEnabled) policy=\(profile.reason)"
+        )
     }
 }
 

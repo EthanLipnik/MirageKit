@@ -153,6 +153,11 @@ extension AudioEncoder {
         return UInt64(seconds * 1_000_000_000)
     }
 
+    nonisolated static func nanoseconds(sampleOffset: Int, sampleRate: Int) -> UInt64 {
+        guard sampleOffset > 0, sampleRate > 0 else { return 0 }
+        return UInt64(sampleOffset) * 1_000_000_000 / UInt64(sampleRate)
+    }
+
     static func aacBitrate(
         quality: MirageAudioQuality,
         channels: Int,

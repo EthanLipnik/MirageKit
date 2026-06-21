@@ -188,8 +188,8 @@ struct HostTransportFrameAdmissionPolicyTests {
         #expect(decision.mode == .normal)
     }
 
-    @Test("Live queued-unreliable backlog with timing pressure activates admission throttling")
-    func liveQueuedUnreliableBacklogWithTimingPressureActivatesAdmissionThrottling() {
+    @Test("VPN live queued-unreliable backlog tolerates moderate timing pressure")
+    func vpnLiveQueuedUnreliableBacklogToleratesModerateTimingPressure() {
         var state = HostTransportFrameAdmissionPolicy.State()
         let signal = makeSignal(
             mediaPathProfile: .vpnOrOverlay,
@@ -197,6 +197,29 @@ struct HostTransportFrameAdmissionPolicyTests {
                 queuedUnreliablePendingPackets: 10,
                 queuedUnreliableQueuedBytes: 96 * 1024,
                 queuedUnreliableQueueDwellP99Ms: 180
+            )
+        )
+
+        let decision = HostTransportFrameAdmissionPolicy.evaluate(
+            state: &state,
+            signal: signal,
+            bypass: false,
+            now: 470
+        )
+
+        #expect(decision.admitsFrame)
+        #expect(decision.mode == .normal)
+    }
+
+    @Test("VPN live queued-unreliable backlog with high timing pressure activates admission throttling")
+    func vpnLiveQueuedUnreliableBacklogWithHighTimingPressureActivatesAdmissionThrottling() {
+        var state = HostTransportFrameAdmissionPolicy.State()
+        let signal = makeSignal(
+            mediaPathProfile: .vpnOrOverlay,
+            senderTelemetry: makeSenderTelemetry(
+                queuedUnreliablePendingPackets: 10,
+                queuedUnreliableQueuedBytes: 96 * 1024,
+                queuedUnreliableQueueDwellP99Ms: 260
             )
         )
 

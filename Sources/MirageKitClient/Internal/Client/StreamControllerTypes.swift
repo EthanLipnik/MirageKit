@@ -34,6 +34,9 @@ extension StreamController {
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let renderCadenceMissLogCooldown: CFAbsoluteTime = 5.0
     static let renderCadenceMissSampleThreshold = 3
+    static let adaptivePresentationSmoothingActivationSamples = 2
+    static let adaptivePresentationSmoothingReleaseSamples = 6
+    static let adaptivePresentationSmoothingCooldown: CFAbsoluteTime = 2.0
     static let metricsDispatchInterval: Duration = .milliseconds(100)
 
     enum RecoveryReason: Equatable {

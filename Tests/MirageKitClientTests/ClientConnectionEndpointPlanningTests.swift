@@ -91,8 +91,8 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client demotes cooled route before route and transport priority")
-    func controlSessionAttemptCooldownOverridesRouteAndTransportPriority() throws {
+    @Test("Client keeps TCP after cooled UDP routes")
+    func controlSessionAttemptCooldownKeepsTCPAfterUDPFallbacks() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61005))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61006))
         let fallbackPort = try #require(NWEndpoint.Port(rawValue: 61007))
@@ -133,10 +133,34 @@ struct ClientConnectionEndpointPlanningTests {
         ])
 
         #expect(orderedAttempts.map(\.endpoint.debugDescription) == [
-            sameRouteTCPAttempt.endpoint.debugDescription,
             lowerRouteUDPAttempt.endpoint.debugDescription,
             cooledUDPAttempt.endpoint.debugDescription,
+            sameRouteTCPAttempt.endpoint.debugDescription,
         ])
+    }
+
+    @MainActor
+    @Test("Control session diagnostics include attempt ID and TCP fallback marker")
+    func controlSessionDiagnosticsIncludeAttemptIDAndTCPFallbackMarker() throws {
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61006))
+        let tcpAttempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: NWEndpoint.Host("192.168.1.50"), port: tcpPort),
+            transportKind: .tcp,
+            candidateKind: .local,
+            routeTier: .wifiLAN,
+            endpointSource: "resolved-local-address",
+            requiredInterfaceType: nil
+        )
+        let connectionAttemptID = try #require(UUID(uuidString: "4DF97645-633E-4D7B-987C-6F0E40B7D295"))
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.recordControlSessionAttemptStarted(tcpAttempt, connectionAttemptID: connectionAttemptID)
+
+        let summary = try #require(service.recentControlSessionAttemptSummaries.last)
+        #expect(summary.connectionAttemptID == "4df97645-633e-4d7b-987c-6f0e40b7d295")
+        #expect(summary.supportSummaryLine.contains("attempt=4df97645-633e-4d7b-987c-6f0e40b7d295"))
+        #expect(summary.supportSummaryLine.contains("compatibilityFallback=tcp"))
     }
 
     @MainActor

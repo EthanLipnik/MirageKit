@@ -201,7 +201,11 @@ struct DesktopVirtualDisplayStartupSession {
     ) {
         let effectiveTier: DesktopVirtualDisplayStartupTargetTier = if snapshot.colorSpace == plan.request.requestedColorSpace,
                                                                        snapshot.refreshRate.rounded() == Double(plan.request.requestedRefreshRate),
-                                                                       (snapshot.scaleFactor > 1.5) == plan.request.requestedHiDPI {
+                                                                       (snapshot.scaleFactor > 1.5) == plan.request.requestedHiDPI,
+                                                                       desktopVirtualDisplayPixelSizeMatches(
+                                                                           snapshot.resolution,
+                                                                           request: plan.request
+                                                                       ) {
             .preferred
         } else {
             .degraded

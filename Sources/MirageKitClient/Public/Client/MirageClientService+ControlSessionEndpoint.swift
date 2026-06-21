@@ -139,15 +139,18 @@ extension MirageClientService {
         pruneExpiredControlSessionAttemptCooldowns(now: now)
         return attempts.enumerated()
             .sorted { lhs, rhs in
-                let leftSystemProximity = lhs.element.endpointSource == experimentalSystemProximityEndpointSource
-                let rightSystemProximity = rhs.element.endpointSource == experimentalSystemProximityEndpointSource
-                if leftSystemProximity != rightSystemProximity {
-                    return leftSystemProximity
-                }
+                let leftFallbackRank = controlSessionCompatibilityFallbackRank(for: lhs.element)
+                let rightFallbackRank = controlSessionCompatibilityFallbackRank(for: rhs.element)
+                if leftFallbackRank != rightFallbackRank { return leftFallbackRank < rightFallbackRank }
                 let leftOnCooldown = controlSessionAttemptIsOnCooldown(lhs.element, now: now)
                 let rightOnCooldown = controlSessionAttemptIsOnCooldown(rhs.element, now: now)
                 if leftOnCooldown != rightOnCooldown {
                     return !leftOnCooldown
+                }
+                let leftSystemProximity = lhs.element.endpointSource == experimentalSystemProximityEndpointSource
+                let rightSystemProximity = rhs.element.endpointSource == experimentalSystemProximityEndpointSource
+                if leftSystemProximity != rightSystemProximity {
+                    return leftSystemProximity
                 }
                 let leftRouteRank = controlSessionRouteRank(for: lhs.element.routeTier)
                 let rightRouteRank = controlSessionRouteRank(for: rhs.element.routeTier)
@@ -166,6 +169,10 @@ extension MirageClientService {
                 return lhs.offset < rhs.offset
             }
             .map(\.element)
+    }
+
+    func controlSessionCompatibilityFallbackRank(for attempt: ControlSessionAttempt) -> Int {
+        attempt.transportKind == .tcp ? 1 : 0
     }
 
     func coolDownControlSessionAttempt(

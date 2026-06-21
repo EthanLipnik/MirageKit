@@ -63,6 +63,49 @@ struct VirtualDisplaySourcePixelBudgetTests {
         )
     }
 
+    @Test("Resource budget preemptively adjusts Retina attempt")
+    func resourceBudgetPreemptivelyAdjustsRetinaAttempt() {
+        let budget = VirtualDisplaySourcePixelBudget(
+            totalSourcePixels: 30_965_760,
+            safetyMarginPixels: 1_000_000,
+            displayLoads: [
+                .init(displayID: 1, sourcePixels: 18_662_400),
+            ]
+        )
+
+        let attempts = SharedVirtualDisplayManager.shared.creationAttempts(
+            resolution: CGSize(width: 6000, height: 3376),
+            colorSpace: .sRGB,
+            policy: .singleAttempt(hiDPI: true),
+            sourcePixelBudget: budget
+        )
+
+        #expect(attempts.count == 1)
+        #expect(attempts[0].resolution.width < 6000)
+        #expect(attempts[0].resolution.height < 3376)
+        #expect(attempts[0].hiDPI)
+        #expect(attempts[0].label == "resource-budgeted-retina-explicit-retina")
+    }
+
+    @Test("Resource budget is scoped to macOS 27")
+    func resourceBudgetIsScopedToMacOS27() {
+        #expect(
+            VirtualDisplaySourcePixelBudget.isRequiredForVirtualDisplayStartup(
+                osVersion: OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)
+            )
+        )
+        #expect(
+            !VirtualDisplaySourcePixelBudget.isRequiredForVirtualDisplayStartup(
+                osVersion: OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0)
+            )
+        )
+        #expect(
+            !VirtualDisplaySourcePixelBudget.isRequiredForVirtualDisplayStartup(
+                osVersion: OperatingSystemVersion(majorVersion: 28, minorVersion: 0, patchVersion: 0)
+            )
+        )
+    }
+
     @Test("Resource budget falls back to 1x when no useful Retina size fits")
     func resourceBudgetFallsBackToOneXWhenRetinaCannotFit() {
         let budget = VirtualDisplaySourcePixelBudget(

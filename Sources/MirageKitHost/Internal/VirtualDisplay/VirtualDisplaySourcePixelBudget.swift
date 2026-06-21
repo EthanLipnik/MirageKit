@@ -11,8 +11,8 @@ import MirageKit
 
 #if os(macOS)
 
-struct VirtualDisplaySourcePixelBudget: Equatable {
-    struct DisplayLoad: Equatable {
+struct VirtualDisplaySourcePixelBudget: Sendable, Equatable {
+    struct DisplayLoad: Sendable, Equatable {
         let displayID: CGDirectDisplayID
         let sourcePixels: CGFloat
     }
@@ -39,7 +39,15 @@ struct VirtualDisplaySourcePixelBudget: Equatable {
         return "current=\(Int(currentSourcePixels.rounded())) available=\(Int(availableSourcePixels.rounded())) total=\(Int(totalSourcePixels.rounded())) margin=\(Int(safetyMarginPixels.rounded())) loads=[\(loadText)]"
     }
 
+    static func isRequiredForVirtualDisplayStartup(
+        osVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) -> Bool {
+        osVersion.majorVersion == 27
+    }
+
     static func current() -> VirtualDisplaySourcePixelBudget? {
+        guard isRequiredForVirtualDisplayStartup() else { return nil }
+
         var displayCount: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &displayCount) == .success, displayCount > 0 else {
             return nil

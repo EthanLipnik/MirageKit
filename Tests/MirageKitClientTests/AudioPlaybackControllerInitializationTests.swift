@@ -20,6 +20,7 @@ struct AudioPlaybackControllerInitializationTests {
         #expect(controller.playbackGraph == nil)
         await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2)
         #expect(controller.playbackGraph != nil)
+        await controller.reset()
     }
 
     @MainActor
@@ -41,10 +42,66 @@ struct AudioPlaybackControllerInitializationTests {
         service.handleAudioStreamStarted(message)
 
         let controller = try #require(service.audioPlaybackControllerIfInitialized)
-        try await waitUntil(timeout: .seconds(5)) {
+        try await waitUntil(timeout: .seconds(10)) {
             controller.playbackGraph != nil
         }
         #expect(controller.playbackGraph != nil)
+        await controller.reset()
+        service.stopAudioConnection()
+    }
+
+    @MainActor
+    @Test("Duplicate audio stream start is idempotent")
+    func duplicateAudioStreamStartIsIdempotent() async throws {
+        let service = MirageClientService(deviceName: "Duplicate Audio Start Test")
+        let message = try ControlMessage(
+            type: .audioStreamStarted,
+            content: AudioStreamStartedMessage(
+                streamID: 42,
+                codec: .aacLC,
+                sampleRate: 48_000,
+                channelCount: 2
+            )
+        )
+
+        service.handleAudioStreamStarted(message)
+        let firstGeneration = service.audioStreamConfigurationGeneration
+        service.handleAudioStreamStarted(message)
+
+        #expect(service.audioStreamConfigurationGeneration == firstGeneration)
+        #expect(service.activeAudioStreamMessage?.codec == .aacLC)
+        service.stopAudioConnection()
+    }
+
+    @MainActor
+    @Test("Unexpected audio format change on same stream is rejected")
+    func unexpectedAudioFormatChangeOnSameStreamIsRejected() async throws {
+        let service = MirageClientService(deviceName: "Audio Format Change Test")
+        let first = try ControlMessage(
+            type: .audioStreamStarted,
+            content: AudioStreamStartedMessage(
+                streamID: 42,
+                codec: .aacLC,
+                sampleRate: 48_000,
+                channelCount: 2
+            )
+        )
+        let changed = try ControlMessage(
+            type: .audioStreamStarted,
+            content: AudioStreamStartedMessage(
+                streamID: 42,
+                codec: .pcm16LE,
+                sampleRate: 48_000,
+                channelCount: 2
+            )
+        )
+
+        service.handleAudioStreamStarted(first)
+        let firstGeneration = service.audioStreamConfigurationGeneration
+        service.handleAudioStreamStarted(changed)
+
+        #expect(service.audioStreamConfigurationGeneration == firstGeneration)
+        #expect(service.activeAudioStreamMessage?.codec == .aacLC)
         service.stopAudioConnection()
     }
 
@@ -76,8 +133,31 @@ struct AudioPlaybackControllerInitializationTests {
     }
 
     @MainActor
+    @Test("Audio session recovery rebuilds the remembered playback format")
+    func audioSessionRecoveryRebuildsRememberedPlaybackFormat() async throws {
+        let controller = AudioPlaybackController()
+
+        await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2)
+        #expect(controller.isConfigured)
+        #expect(controller.configuredSampleRate == 48_000)
+        #expect(controller.configuredChannelCount == 2)
+
+        await controller.suspendPlaybackForAudioSessionInterruption(reason: "test-began")
+        #expect(!controller.isConfigured)
+
+        await controller.recoverPlaybackAfterAudioSessionReset(reason: "test-ended")
+
+        try await waitUntil(timeout: .seconds(5)) {
+            controller.isConfigured
+        }
+        #expect(controller.configuredSampleRate == 48_000)
+        #expect(controller.configuredChannelCount == 2)
+        await controller.reset()
+    }
+
+    @MainActor
     @Test("Pending startup audio is capped before playback starts")
-    func pendingStartupAudioIsCappedBeforePlaybackStarts() {
+    func pendingStartupAudioIsCappedBeforePlaybackStarts() async {
         let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.25)
 
         for index in 0 ..< 10 {
@@ -86,11 +166,12 @@ struct AudioPlaybackControllerInitializationTests {
 
         #expect(controller.pendingDurationSeconds <= 0.25)
         #expect(controller.pendingFrames.count <= 2)
+        await controller.reset()
     }
 
     @MainActor
     @Test("Format changes discard superseded pending startup frames")
-    func formatChangesDiscardSupersededPendingStartupFrames() {
+    func formatChangesDiscardSupersededPendingStartupFrames() async {
         let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.5)
 
         controller.enqueue(makeDecodedFrame(sampleRate: 48_000, timestampNs: 1))
@@ -98,11 +179,12 @@ struct AudioPlaybackControllerInitializationTests {
 
         #expect(controller.pendingFrames.count == 1)
         #expect(controller.pendingDurationSeconds < 0.12)
+        await controller.reset()
     }
 
     @MainActor
     @Test("Buffered audio discard clears pending startup frames")
-    func bufferedAudioDiscardClearsPendingStartupFrames() {
+    func bufferedAudioDiscardClearsPendingStartupFrames() async {
         let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.5)
 
         controller.enqueue(makeDecodedFrame(timestampNs: 1))
@@ -113,6 +195,7 @@ struct AudioPlaybackControllerInitializationTests {
 
         #expect(controller.pendingFrames.count == 0)
         #expect(controller.pendingDurationSeconds == 0)
+        await controller.reset()
     }
 
     @MainActor

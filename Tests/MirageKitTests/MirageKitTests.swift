@@ -122,9 +122,11 @@ struct MirageKitTests {
 
     @Test("Control message serialization")
     func controlMessageSerialization() throws {
+        let connectionAttemptID = try #require(UUID(uuidString: "4DF97645-633E-4D7B-987C-6F0E40B7D295"))
         let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             clientRequiresMediaEncryption: true,
+            connectionAttemptID: connectionAttemptID,
             adaptiveGovernorRevision: 2,
             hostOwnedRuntimeSupport: true,
             adaptiveFeedbackClassesSupported: ["hard", "soft", "diagnostic"],
@@ -142,10 +144,20 @@ struct MirageKitTests {
         #expect(MirageKit.protocolVersion == 260604)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
+        #expect(decodedBootstrap.connectionAttemptID == connectionAttemptID)
         #expect(decodedBootstrap.adaptiveGovernorRevision == 2)
         #expect(decodedBootstrap.hostOwnedRuntimeSupport == true)
         #expect(decodedBootstrap.adaptiveFeedbackClassesSupported == ["hard", "soft", "diagnostic"])
         #expect(decodedBootstrap.adaptiveLegacyFallbackMode == "legacy-passive-fallback")
+
+        let legacyBootstrap = MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            clientRequiresMediaEncryption: true
+        )
+        let legacyMessage = try ControlMessage(type: .sessionBootstrapRequest, content: legacyBootstrap)
+        let (decodedLegacyMessage, _) = try requireParsedControlMessage(from: legacyMessage.serialize())
+        let decodedLegacyBootstrap = try decodedLegacyMessage.decode(MirageSessionBootstrapRequest.self)
+        #expect(decodedLegacyBootstrap.connectionAttemptID == nil)
     }
 
     @Test("Legacy quality-test control message IDs remain parseable")

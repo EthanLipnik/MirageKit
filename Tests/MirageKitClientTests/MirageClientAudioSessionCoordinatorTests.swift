@@ -51,6 +51,23 @@ struct MirageClientAudioSessionCoordinatorTests {
     }
 
     @MainActor
+    @Test("Active playback session can be reasserted without adding a lease")
+    func activePlaybackSessionCanBeReassertedWithoutAddingLease() async {
+        let driver = RecordingAudioSessionDriver()
+        let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
+
+        #expect(await coordinator.requestPlaybackSession())
+        #expect(await coordinator.reassertActiveSession())
+        await coordinator.releasePlaybackSession()
+
+        #expect(driver.events == [
+            .activate(.playback),
+            .activate(.playback),
+            .deactivate,
+        ])
+    }
+
+    @MainActor
     @Test("Inactive app defers session activation")
     func inactiveAppDefersSessionActivation() async {
         let driver = RecordingAudioSessionDriver(isApplicationActive: false)

@@ -156,6 +156,10 @@ extension AudioPlaybackController {
         }
         let playerNode = playbackGraph.playerNode
         if !playerNode.isPlaying { playerNode.play() }
+        if scheduledDurationSeconds > 0, loggedPlaybackActiveGeneration != playbackGeneration {
+            loggedPlaybackActiveGeneration = playbackGeneration
+            MirageLogger.client("Audio playback active: \(diagnosticSummary)")
+        }
     }
 
     /// Rebuilds the graph when the audio engine fails after configuration.

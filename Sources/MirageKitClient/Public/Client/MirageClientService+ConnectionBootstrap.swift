@@ -30,7 +30,7 @@ extension MirageClientService {
 
         let plannedHost = try await refreshedHostForPendingAwdlScopedAddressIfNeeded(host)
         let attempts = controlSessionAttempts(for: plannedHost)
-        recordControlSessionAttemptPlan(attempts, host: plannedHost)
+        recordControlSessionAttemptPlan(attempts, host: plannedHost, connectionAttemptID: attemptID)
         if attempts.isEmpty, let debugRouteOverride {
             throw MirageError.protocolError(
                 "Debug route override \(debugRouteOverride.displayName) matched no available connection route for \(plannedHost.name); forced routes do not fall back automatically."
@@ -75,7 +75,8 @@ extension MirageClientService {
                 openedSession = session
                 try await validateProximityControlSessionPath(
                     session,
-                    attempt: activeAttempt
+                    attempt: activeAttempt,
+                    connectionAttemptID: attemptID
                 )
                 let controlChannel = try await MirageControlChannel.open(on: session)
                 openedChannel = controlChannel
@@ -85,11 +86,12 @@ extension MirageClientService {
                     over: controlChannel,
                     provisionalHost: plannedHost,
                     requestTakeoverIfBusy: requestTakeoverIfBusy,
-                    protocolVersionOverride: bootstrapProtocolVersionOverride
+                    protocolVersionOverride: bootstrapProtocolVersionOverride,
+                    connectionAttemptID: attemptID
                 )
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
-                recordControlSessionAttemptSucceeded(activeAttempt)
+                recordControlSessionAttemptSucceeded(activeAttempt, connectionAttemptID: attemptID)
                 currentControlSessionAttemptCooldownKey = activeAttempt.cooldownKey
                 return BootstrappedControlSession(session: session, controlChannel: controlChannel)
             } catch {
@@ -119,7 +121,11 @@ extension MirageClientService {
                     underlyingError: error
                 )
                 lastFailureReason = failureReason
-                recordControlSessionAttemptFailed(activeAttempt, reason: failureReason)
+                recordControlSessionAttemptFailed(
+                    activeAttempt,
+                    reason: failureReason,
+                    connectionAttemptID: attemptID
+                )
                 if classification.shouldRetryLaterDirectAttempt {
                     coolDownControlSessionAttempt(
                         activeAttempt,
@@ -214,13 +220,18 @@ extension MirageClientService {
         startingAt startIndex: Int
     ) -> [ControlSessionAttempt] {
         guard attempts.indices.contains(startIndex) else { return [] }
-        let candidateKind = attempts[startIndex].candidateKind
-        guard candidateKind == .overlay else { return [attempts[startIndex]] }
+        let startingAttempt = attempts[startIndex]
+        let candidateKind = startingAttempt.candidateKind
+        guard candidateKind == .overlay,
+              startingAttempt.transportKind == .udp else {
+            return [startingAttempt]
+        }
 
         var group: [ControlSessionAttempt] = []
         var index = startIndex
         while attempts.indices.contains(index),
-              attempts[index].candidateKind == candidateKind {
+              attempts[index].candidateKind == candidateKind,
+              attempts[index].transportKind == startingAttempt.transportKind {
             group.append(attempts[index])
             index += 1
         }
@@ -263,7 +274,8 @@ extension MirageClientService {
                         await MainActor.run {
                             self?.recordControlSessionAttemptHedgeLaunched(
                                 attempt,
-                                delayDescription: Self.controlSessionHedgeDelayDescription(delay)
+                                delayDescription: Self.controlSessionHedgeDelayDescription(delay),
+                                connectionAttemptID: attemptID
                             )
                         }
                         guard let self else {
@@ -305,7 +317,8 @@ extension MirageClientService {
                     if await raceState.markWinner(attempt.transportKind) {
                         recordControlSessionAttemptWinner(
                             attempt,
-                            reason: "overlay race winner"
+                            reason: "overlay race winner",
+                            connectionAttemptID: attemptID
                         )
                         group.cancelAll()
                         cancelPendingConnectTask(attemptID: attemptID)
@@ -314,13 +327,15 @@ extension MirageClientService {
                     await session.cancel()
                     recordControlSessionAttemptCancelled(
                         attempt,
-                        reason: "overlay race loser"
+                        reason: "overlay race loser",
+                        connectionAttemptID: attemptID
                     )
                 case let .failed(_, attempt, classification, reason):
                     lastFailure = (classification, reason)
                     recordControlSessionAttemptFailed(
                         attempt,
-                        reason: reason
+                        reason: reason,
+                        connectionAttemptID: attemptID
                     )
                     if classification.shouldRetryLaterDirectAttempt {
                         coolDownControlSessionAttempt(
@@ -329,11 +344,16 @@ extension MirageClientService {
                         )
                     }
                 case let .suppressed(_, attempt, reason):
-                    recordControlSessionAttemptSuppressed(attempt, reason: reason)
+                    recordControlSessionAttemptSuppressed(
+                        attempt,
+                        reason: reason,
+                        connectionAttemptID: attemptID
+                    )
                 case let .cancelled(_, attempt):
                     recordControlSessionAttemptCancelled(
                         attempt,
-                        reason: "overlay race cancelled"
+                        reason: "overlay race cancelled",
+                        connectionAttemptID: attemptID
                     )
                 }
             }
@@ -357,12 +377,21 @@ extension MirageClientService {
         progressObserver: (@Sendable (LoomAuthenticatedSessionBootstrapProgress) async -> Void)? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
+        let connectionAttemptID = attemptID.uuidString.lowercased()
+        if attempt.transportKind == .tcp {
+            MirageLogger.client(
+                "Starting TCP compatibility fallback control session attempt=\(connectionAttemptID) " +
+                    "to \(attempt.hostName) candidate=\(attempt.candidateKind.rawValue) " +
+                    "route=\(attempt.routeTier.rawValue) endpoint=\(attempt.endpoint) " +
+                    "interface=\(attempt.interfaceDescription)"
+            )
+        }
         MirageLogger.client(
-            "Starting \(attempt.transportKind) control session to \(attempt.hostName) " +
+            "Starting \(attempt.transportKind) control session attempt=\(connectionAttemptID) to \(attempt.hostName) " +
                 "candidate=\(attempt.candidateKind.rawValue) route=\(attempt.routeTier.rawValue) endpoint=\(attempt.endpoint) " +
                 "interface=\(attempt.interfaceDescription)"
         )
-        recordControlSessionAttemptStarted(attempt)
+        recordControlSessionAttemptStarted(attempt, connectionAttemptID: attemptID)
         let node = loomNode
         let bootstrapProgressTracker = ConnectSessionBootstrapProgressTracker()
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
@@ -420,10 +449,15 @@ extension MirageClientService {
 
     func validateProximityControlSessionPath(
         _ session: LoomAuthenticatedSession,
-        attempt: ControlSessionAttempt
+        attempt: ControlSessionAttempt,
+        connectionAttemptID: UUID? = nil
     ) async throws {
         guard attempt.requiresProximityPathValidation else {
-            recordControlSessionProximityValidation(attempt, outcome: "notRequired")
+            recordControlSessionProximityValidation(
+                attempt,
+                outcome: "notRequired",
+                connectionAttemptID: connectionAttemptID
+            )
             return
         }
 
@@ -431,7 +465,11 @@ extension MirageClientService {
             let reason = "Proximity path validation failed for \(attempt.hostName) " +
                 "expected=\(attempt.proximityDescription) actual=missing-path-snapshot"
             MirageLogger.client(reason)
-            recordControlSessionProximityValidation(attempt, outcome: "missingPathSnapshot")
+            recordControlSessionProximityValidation(
+                attempt,
+                outcome: "missingPathSnapshot",
+                connectionAttemptID: connectionAttemptID
+            )
             throw MirageError.protocolError(reason)
         }
 
@@ -442,7 +480,8 @@ extension MirageClientService {
             MirageLogger.client(reason)
             recordControlSessionProximityValidation(
                 attempt,
-                outcome: "rejected actual=\(classifiedSnapshot.signature)"
+                outcome: "rejected actual=\(classifiedSnapshot.signature)",
+                connectionAttemptID: connectionAttemptID
             )
             throw MirageError.protocolError(reason)
         }
@@ -453,7 +492,8 @@ extension MirageClientService {
         )
         recordControlSessionProximityValidation(
             attempt,
-            outcome: "accepted actual=\(classifiedSnapshot.signature)"
+            outcome: "accepted actual=\(classifiedSnapshot.signature)",
+            connectionAttemptID: connectionAttemptID
         )
     }
 
@@ -592,7 +632,7 @@ extension MirageClientService {
         if let failureReason = progress.failureReason {
             authorizationState = .idle
             MirageLogger.client(
-                "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed at " +
+                "Pre-bootstrap \(attempt.transportKind.rawValue) control session attempt=\(attemptID.uuidString.lowercased()) failed at " +
                     "\(progress.phase.rawValue) for \(attempt.hostName): \(failureReason)"
             )
             return
@@ -605,7 +645,8 @@ extension MirageClientService {
         }
 
         MirageLogger.client(
-            "Pre-bootstrap \(attempt.transportKind.rawValue) progress for \(attempt.hostName): \(progress.phase.rawValue)"
+            "Pre-bootstrap \(attempt.transportKind.rawValue) progress attempt=\(attemptID.uuidString.lowercased()) " +
+                "for \(attempt.hostName): \(progress.phase.rawValue)"
         )
     }
 }

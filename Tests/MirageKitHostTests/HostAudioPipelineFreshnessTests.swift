@@ -66,17 +66,19 @@ struct HostAudioPipelineFreshnessTests {
             compressedBitrateBps: 192_000,
             adaptiveCompressionEnabled: true
         )
-        var controller = HostAudioCompressionBudgetController(configuration: configuration)
+        var governor = HostAudioQualityGovernor(configuration: configuration)
 
-        let reducedBitrate = controller.recordQueueState(
+        let reducedProfile = governor.recordQueueState(
             queuedDurationSeconds: 0.110,
             droppedBuffers: 2,
             maxQueuedDurationSeconds: 0.120
         )
 
-        #expect(reducedBitrate != nil)
-        #expect((reducedBitrate ?? 192_000) < 192_000)
-        #expect((reducedBitrate ?? 0) >= 64_000)
+        #expect(reducedProfile != nil)
+        #expect((reducedProfile?.bitrateBps ?? 192_000) < 192_000)
+        #expect((reducedProfile?.bitrateBps ?? 0) >= 64_000)
+        #expect(reducedProfile?.codec == .aacLC)
+        #expect(reducedProfile?.channelCount == 2)
     }
 
     @Test("Adaptive audio budget treats configured bitrate as ceiling")
@@ -88,12 +90,12 @@ struct HostAudioPipelineFreshnessTests {
             compressedBitrateBps: 96_000,
             adaptiveCompressionEnabled: true
         )
-        var controller = HostAudioCompressionBudgetController(configuration: configuration)
+        var governor = HostAudioQualityGovernor(configuration: configuration)
 
-        let recoveredBitrate = controller.recordSuccessfulFrame()
+        let recoveredProfile = governor.recordSuccessfulFrame()
 
-        #expect(controller.currentBitrateBps == 96_000)
-        #expect(recoveredBitrate == nil)
+        #expect(governor.profile?.bitrateBps == 96_000)
+        #expect(recoveredProfile == nil)
     }
 
     @Test("Adaptive audio budget can recover toward explicit ceiling")
@@ -106,12 +108,13 @@ struct HostAudioPipelineFreshnessTests {
             compressedBitrateCeilingBps: 192_000,
             adaptiveCompressionEnabled: true
         )
-        var controller = HostAudioCompressionBudgetController(configuration: configuration)
+        var governor = HostAudioQualityGovernor(configuration: configuration)
 
-        let recoveredBitrate = controller.recordSuccessfulFrame()
+        let recoveredProfile = governor.recordSuccessfulFrame()
 
-        #expect((recoveredBitrate ?? 0) > 96_000)
-        #expect((recoveredBitrate ?? 0) <= 192_000)
+        #expect((recoveredProfile?.bitrateBps ?? 0) > 96_000)
+        #expect((recoveredProfile?.bitrateBps ?? 0) <= 192_000)
+        #expect(recoveredProfile?.codec == .aacLC)
     }
 
     @Test("Adaptive audio budget applies constrained path startup")
@@ -124,14 +127,14 @@ struct HostAudioPipelineFreshnessTests {
             compressedBitrateCeilingBps: 192_000,
             adaptiveCompressionEnabled: true
         )
-        let controller = HostAudioCompressionBudgetController(
+        let governor = HostAudioQualityGovernor(
             configuration: configuration,
             transportPathKind: .vpn,
             mediaPathProfile: .vpnOrOverlay
         )
 
-        #expect((controller.currentBitrateBps ?? 0) < 192_000)
-        #expect((controller.currentBitrateBps ?? 0) >= 64_000)
+        #expect((governor.profile?.bitrateBps ?? 0) < 192_000)
+        #expect((governor.profile?.bitrateBps ?? 0) >= 64_000)
     }
 
     @Test("Adaptive audio budget reduces when client reports audio drops")
@@ -143,22 +146,78 @@ struct HostAudioPipelineFreshnessTests {
             compressedBitrateBps: 192_000,
             adaptiveCompressionEnabled: true
         )
-        var controller = HostAudioCompressionBudgetController(configuration: configuration)
+        var governor = HostAudioQualityGovernor(configuration: configuration)
 
-        let reducedBitrate = controller.recordReceiverFeedback(
+        let reducedProfile = governor.recordReceiverFeedback(
             receiverFeedback(audioDroppedFrameCount: 4, audioGateActive: true)
         )
 
-        #expect(reducedBitrate != nil)
-        #expect((reducedBitrate ?? 192_000) < 192_000)
+        #expect(reducedProfile != nil)
+        #expect((reducedProfile?.bitrateBps ?? 192_000) < 192_000)
+    }
+
+    @Test("Silence gate suppresses sustained silent audio and resumes on signal")
+    func silenceGateSuppressesSustainedSilentAudioAndResumesOnSignal() {
+        let configuration = MirageAudioConfiguration(
+            enabled: true,
+            channelLayout: .stereo,
+            quality: .high,
+            compressedBitrateBps: 128_000,
+            adaptiveCompressionEnabled: true
+        )
+        var governor = HostAudioQualityGovernor(configuration: configuration)
+
+        for _ in 0 ..< 5 {
+            _ = governor.activityDecision(for: makeBuffer(data: Data(count: 4_800 * 2 * MemoryLayout<Float32>.size)))
+        }
+
+        let gated = governor.activityDecision(for: makeBuffer(data: Data(count: 4_800 * 2 * MemoryLayout<Float32>.size)))
+        #expect(gated == .gated(peak: 0))
+
+        var signal = Data()
+        for _ in 0 ..< 4_800 * 2 {
+            var sample = Float32(0.20)
+            withUnsafeBytes(of: &sample) { signal.append(contentsOf: $0) }
+        }
+        let resumed = governor.activityDecision(for: makeBuffer(data: signal))
+        switch resumed {
+        case .send:
+            break
+        case .gated:
+            Issue.record("Expected signaled audio to resume sending")
+        }
+    }
+
+    @Test("Captured audio peak estimator distinguishes silence from signal")
+    func capturedAudioPeakEstimatorDistinguishesSilenceFromSignal() {
+        var signal = Data()
+        for index in 0 ..< 64 {
+            var sample = Float32(index.isMultiple(of: 2) ? 0.25 : -0.5)
+            withUnsafeBytes(of: &sample) { signal.append(contentsOf: $0) }
+        }
+        let silentBuffer = makeBuffer(data: Data(count: 64 * MemoryLayout<Float32>.size))
+        let signalBuffer = makeBuffer(data: signal)
+
+        #expect(silentBuffer.estimatedPeakAmplitude() == 0)
+        #expect(signalBuffer.estimatedPeakAmplitude() >= 0.49)
     }
 
     private func makeBuffer(timestampSeconds: Double) -> CapturedAudioBuffer {
-        CapturedAudioBuffer(
+        makeBuffer(
             data: Data(count: 4_800 * 2 * MemoryLayout<Float>.size),
+            timestampSeconds: timestampSeconds
+        )
+    }
+
+    private func makeBuffer(
+        data: Data,
+        timestampSeconds: Double = 1
+    ) -> CapturedAudioBuffer {
+        CapturedAudioBuffer(
+            data: data,
             sampleRate: 48_000,
             channelCount: 2,
-            frameCount: 4_800,
+            frameCount: max(1, data.count / (2 * MemoryLayout<Float>.size)),
             bitsPerChannel: 32,
             isFloat: true,
             isInterleaved: true,

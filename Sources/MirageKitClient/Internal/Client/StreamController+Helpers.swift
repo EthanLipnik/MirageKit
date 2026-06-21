@@ -138,10 +138,17 @@ extension StreamController {
     ) {
         guard presentationTier == .activeLive, hasPresentedFirstFrame else {
             renderCadenceMissStreak = 0
+            resetAdaptivePresentationSmoothing(reason: "inactive presentation")
             return
         }
 
         let targetFPS = Double(max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.displayFPS))
+        updateAdaptivePresentationSmoothing(
+            renderTelemetry: renderTelemetry,
+            decodedFPS: decodedFPS,
+            receivedFPS: receivedFPS,
+            targetFPS: targetFPS
+        )
         let targetFloor = targetFPS * 0.90
         let sourceFPS = max(decodedFPS, receivedFPS)
         guard sourceFPS >= targetFPS * 0.70,
@@ -197,6 +204,108 @@ extension StreamController {
                 "frameP99=\(Int(renderTelemetry.frameIntervalP99Ms.rounded()))ms " +
                 "tickP99=\(Int(renderTelemetry.displayTickIntervalP99Ms.rounded()))ms"
         )
+    }
+
+    private func updateAdaptivePresentationSmoothing(
+        renderTelemetry: RenderTelemetrySnapshot,
+        decodedFPS: Double,
+        receivedFPS: Double,
+        targetFPS: Double
+    ) {
+        guard streamCadenceTarget.latencyMode == .lowestLatency,
+              !awdlTransportActive,
+              presentationTier == .activeLive else {
+            resetAdaptivePresentationSmoothing(reason: "latency mode changed")
+            return
+        }
+
+        let frameBudgetMs = 1_000.0 / max(1, targetFPS)
+        let sourceHealthy = min(decodedFPS, receivedFPS) >= targetFPS * 0.92
+        let presentationShortfall = renderTelemetry.uniqueSubmittedFPS > 0 &&
+            renderTelemetry.uniqueSubmittedFPS < targetFPS * 0.90
+        let roughFrameTails = renderTelemetry.frameIntervalP95Ms >= max(24.0, frameBudgetMs * 1.45) ||
+            renderTelemetry.frameIntervalP99Ms >= max(40.0, frameBudgetMs * 2.40)
+        let queueCanAbsorbMicroBuffer = renderTelemetry.pendingFrameCount <= 1
+        let shouldSmooth = sourceHealthy &&
+            renderTelemetry.displayLayerNotReadyCount == 0 &&
+            queueCanAbsorbMicroBuffer &&
+            (presentationShortfall || roughFrameTails)
+
+        let clean = sourceHealthy &&
+            renderTelemetry.uniqueSubmittedFPS >= targetFPS * 0.95 &&
+            renderTelemetry.frameIntervalP95Ms <= max(22.0, frameBudgetMs * 1.35) &&
+            renderTelemetry.frameIntervalP99Ms <= max(34.0, frameBudgetMs * 2.0)
+
+        let now = currentTime
+        if shouldSmooth {
+            adaptivePresentationSmoothingMissStreak += 1
+            adaptivePresentationSmoothingCleanStreak = 0
+        } else if clean {
+            adaptivePresentationSmoothingCleanStreak += 1
+            adaptivePresentationSmoothingMissStreak = 0
+        } else {
+            adaptivePresentationSmoothingMissStreak = 0
+            adaptivePresentationSmoothingCleanStreak = 0
+        }
+
+        if adaptivePresentationSmoothingActive {
+            guard adaptivePresentationSmoothingCleanStreak >= Self.adaptivePresentationSmoothingReleaseSamples,
+                  now - adaptivePresentationSmoothingLastChangeTime >= Self.adaptivePresentationSmoothingCooldown else {
+                return
+            }
+            adaptivePresentationSmoothingActive = false
+            adaptivePresentationSmoothingLastChangeTime = now
+            MirageRenderStreamStore.shared.setLatencyMode(
+                for: streamID,
+                latencyMode: .lowestLatency,
+                playoutDelayFrames: streamCadenceTarget.playoutDelayFrames
+            )
+            MirageLogger.client(
+                "Adaptive presentation smoothing released for stream \(streamID): visible=\(String(format: "%.1f", renderTelemetry.uniqueSubmittedFPS))fps"
+            )
+            return
+        }
+
+        guard adaptivePresentationSmoothingMissStreak >= Self.adaptivePresentationSmoothingActivationSamples,
+              now - adaptivePresentationSmoothingLastChangeTime >= Self.adaptivePresentationSmoothingCooldown else {
+            return
+        }
+
+        adaptivePresentationSmoothingActive = true
+        adaptivePresentationSmoothingLastChangeTime = now
+        adaptivePresentationSmoothingCleanStreak = 0
+        MirageRenderStreamStore.shared.setLatencyMode(
+            for: streamID,
+            latencyMode: .balanced,
+            playoutDelayFrames: MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .balanced)
+        )
+        MirageLogger.client(
+            "Adaptive presentation smoothing enabled for stream \(streamID): " +
+                "target=\(Int(targetFPS))fps received=\(String(format: "%.1f", receivedFPS))fps " +
+                "decoded=\(String(format: "%.1f", decodedFPS))fps visible=\(String(format: "%.1f", renderTelemetry.uniqueSubmittedFPS))fps " +
+                "frameP95=\(Int(renderTelemetry.frameIntervalP95Ms.rounded()))ms " +
+                "frameP99=\(Int(renderTelemetry.frameIntervalP99Ms.rounded()))ms"
+        )
+    }
+
+    func resetAdaptivePresentationSmoothing(reason: String) {
+        guard adaptivePresentationSmoothingActive ||
+            adaptivePresentationSmoothingMissStreak > 0 ||
+            adaptivePresentationSmoothingCleanStreak > 0 else {
+            return
+        }
+        if adaptivePresentationSmoothingActive {
+            MirageRenderStreamStore.shared.setLatencyMode(
+                for: streamID,
+                latencyMode: streamCadenceTarget.latencyMode,
+                playoutDelayFrames: streamCadenceTarget.playoutDelayFrames
+            )
+            MirageLogger.client("Adaptive presentation smoothing reset for stream \(streamID): \(reason)")
+        }
+        adaptivePresentationSmoothingActive = false
+        adaptivePresentationSmoothingMissStreak = 0
+        adaptivePresentationSmoothingCleanStreak = 0
+        adaptivePresentationSmoothingLastChangeTime = currentTime
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {

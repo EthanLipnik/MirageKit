@@ -50,7 +50,7 @@ extension SharedVirtualDisplayManager {
         let modeRefreshRate: Double?
     }
 
-    struct DisplayCreationAttempt: Equatable {
+    struct DisplayCreationAttempt: Sendable, Equatable {
         let resolution: CGSize
         let hiDPI: Bool
         let colorSpace: MirageColorSpace
