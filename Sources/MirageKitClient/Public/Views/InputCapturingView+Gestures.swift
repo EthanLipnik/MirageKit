@@ -321,11 +321,6 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
             return true
         }
 
-        if (gestureRecognizer == directLongPressGesture && otherGestureRecognizer == directTouchScrollPanGesture) ||
-            (gestureRecognizer == directTouchScrollPanGesture && otherGestureRecognizer == directLongPressGesture) {
-            return true
-        }
-
         if (gestureRecognizer == longPressGesture && otherGestureRecognizer == scrollGesture) ||
             (gestureRecognizer == scrollGesture && otherGestureRecognizer == longPressGesture) {
             return true

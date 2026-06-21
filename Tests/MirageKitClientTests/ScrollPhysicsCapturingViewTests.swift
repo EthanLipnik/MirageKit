@@ -13,8 +13,8 @@ import UIKit
 
 @Suite("Scroll Physics Capturing View")
 struct ScrollPhysicsCapturingViewTests {
-    @Test("Input capturing view gives one-finger direct scroll priority over taps")
-    func inputCapturingViewGivesOneFingerDirectScrollPriorityOverTaps() throws {
+    @Test("Input capturing view keeps direct scroll separate from taps and held drags")
+    func inputCapturingViewKeepsDirectScrollSeparateFromTapsAndHeldDrags() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         let directTouchScrollPanGesture = try #require(view.scrollPhysicsView?.directTouchPanGestureRecognizer)
 
@@ -25,7 +25,7 @@ struct ScrollPhysicsCapturingViewTests {
             )
         )
         #expect(
-            view.gestureRecognizer(
+            !view.gestureRecognizer(
                 view.directLongPressGesture,
                 shouldRecognizeSimultaneouslyWith: directTouchScrollPanGesture
             )
