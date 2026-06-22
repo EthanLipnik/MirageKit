@@ -137,15 +137,16 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     private func clearCurrentFrameState(removeDisplayedImage: Bool = true) {
         guard let displayLayer else { return }
-        if removeDisplayedImage {
-            displayLayer.flushAndRemoveImage()
-            displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-            #if os(iOS) || os(visionOS)
-            currentContentReferenceSize = nil
-            #endif
-        } else {
-            displayLayer.flush()
+        displayLayer.sampleBufferRenderer.flush(removingDisplayedImage: removeDisplayedImage, completionHandler: nil)
+        guard removeDisplayedImage else {
+            lastSubmittedCursor = .zero
+            displayLayerNotReadyStartTime = 0
+            return
         }
+        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        #if os(iOS) || os(visionOS)
+        currentContentReferenceSize = nil
+        #endif
         lastSubmittedCursor = .zero
         displayLayerNotReadyStartTime = 0
     }
@@ -154,7 +155,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         guard let streamID, let displayLayer else { return .blocked }
         guard !renderingSuspended else { return .blocked }
         recoverDisplayLayerIfNeeded()
-        guard displayLayer.status != .failed else { return .blocked }
+        guard displayLayer.sampleBufferRenderer.status != .failed else { return .blocked }
 
         let now = CACurrentMediaTime()
         rebaseSequenceTrackingIfNeeded(for: streamID)
@@ -163,7 +164,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         }
 
         MirageRenderStreamStore.shared.noteSubmitAttempt(for: streamID)
-        guard displayLayer.isReadyForMoreMediaData else {
+        guard displayLayer.sampleBufferRenderer.isReadyForMoreMediaData else {
             MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
             recoverDisplayLayerLivenessIfNeeded(now: now, presenterHasPendingFrame: true)
             return .displayLayerNotReady
@@ -203,7 +204,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return .blocked
         }
 
-        displayLayer.enqueue(preparedSampleBuffer.sampleBuffer)
+        displayLayer.sampleBufferRenderer.enqueue(preparedSampleBuffer.sampleBuffer)
         lastSubmittedCursor = frame.cursor
         lastFrameSubmissionTime = CACurrentMediaTime()
         displayLayerNotReadyStartTime = 0

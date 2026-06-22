@@ -183,7 +183,7 @@ public class MirageSampleBufferView: NSView {
         } else {
             let clock = MirageMacDisplayClock()
             presentationDisplayClock = clock
-            clock.start(targetFPS: targetFPS) { [weak self] referenceTime in
+            clock.start(in: self, targetFPS: targetFPS) { [weak self] referenceTime in
                 Task { @MainActor [weak self] in
                     self?.presentationDisplayTickHandler?(referenceTime)
                 }

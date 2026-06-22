@@ -222,8 +222,8 @@ extension VideoEncoder {
                             "Dropping frame \(info.frameNumber): failed to extract encoded bytes (\(extractionError.logSummary))"
                         )
                 }
-                Task { [weak self] in
-                    await self?.scheduleRecoveryKeyframe(reason: "encoded-frame-extraction")
+                Task { [weak encoder = self] in
+                    await encoder?.scheduleRecoveryKeyframe(reason: "encoded-frame-extraction")
                 }
                 return
             } catch {
@@ -234,8 +234,8 @@ extension VideoEncoder {
                         "Dropping frame \(info.frameNumber): unexpected extraction failure (\(error))"
                     )
                 }
-                Task { [weak self] in
-                    await self?.scheduleRecoveryKeyframe(reason: "encoded-frame-extraction")
+                Task { [weak encoder = self] in
+                    await encoder?.scheduleRecoveryKeyframe(reason: "encoded-frame-extraction")
                 }
                 return
             }
@@ -256,8 +256,8 @@ extension VideoEncoder {
                                 "Dropping frame \(info.frameNumber): invalid AVCC payload (\(validation.logSummary))"
                             )
                     }
-                    Task { [weak self] in
-                        await self?.scheduleRecoveryKeyframe(reason: "invalid-avcc")
+                    Task { [weak encoder = self] in
+                        await encoder?.scheduleRecoveryKeyframe(reason: "invalid-avcc")
                     }
                     return
                 }

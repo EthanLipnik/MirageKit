@@ -319,8 +319,14 @@ extension SharedVirtualDisplayManager {
         durationSeconds: Double = 0.35
     ) async -> VirtualDisplayCadenceValidation {
         let targetFPS = Double(max(1, targetFrameRate))
-        guard let cadenceProbe = VirtualDisplayCadenceProbe(displayID: snapshot.displayID),
-              cadenceProbe.start() else {
+        let cadenceProbe: VirtualDisplayCadenceProbe? = await MainActor.run(body: {
+            guard let cadenceProbe = VirtualDisplayCadenceProbe(displayID: snapshot.displayID),
+                  cadenceProbe.start() else {
+                return nil
+            }
+            return cadenceProbe
+        })
+        guard let cadenceProbe else {
             MirageLogger.host(
                 "Virtual display cadence validation unavailable for display \(snapshot.displayID); using explicit SCK frame interval"
             )
@@ -332,12 +338,12 @@ extension SharedVirtualDisplayManager {
         }
 
         let clampedDuration = max(0.10, min(durationSeconds, 1.0))
-        cadenceProbe.beginMeasurement()
+        await cadenceProbe.beginMeasurement()
         let startedAt = CFAbsoluteTimeGetCurrent()
         do {
             try await Task.sleep(for: .milliseconds(Int((clampedDuration * 1000).rounded())))
         } catch {
-            cadenceProbe.stop()
+            await cadenceProbe.stop()
             return VirtualDisplayCadenceValidation(
                 targetFPS: targetFPS,
                 observedFPS: nil,
@@ -345,8 +351,8 @@ extension SharedVirtualDisplayManager {
             )
         }
         let elapsed = max(0.001, CFAbsoluteTimeGetCurrent() - startedAt)
-        let observedFPS = cadenceProbe.completeMeasurement(durationSeconds: elapsed)
-        cadenceProbe.stop()
+        let observedFPS = await cadenceProbe.completeMeasurement(durationSeconds: elapsed)
+        await cadenceProbe.stop()
         let usesNativeDisplayCadence = observedFPS.map { $0 >= targetFPS * 0.85 } ?? false
         let validation = VirtualDisplayCadenceValidation(
             targetFPS: targetFPS,

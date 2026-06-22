@@ -5,61 +5,42 @@
 //  Created by Ethan Lipnik on 4/15/26.
 //
 
+import AppKit
 import CoreGraphics
-import CoreVideo
 import Foundation
+import QuartzCore
 
 #if os(macOS)
 
-/// Measures callback cadence for a virtual display using a CoreVideo display link.
-final class VirtualDisplayCadenceProbe: @unchecked Sendable {
+/// Measures callback cadence for a virtual display using a screen display link.
+@MainActor
+final class VirtualDisplayCadenceProbe: NSObject, @unchecked Sendable {
     private let displayID: CGDirectDisplayID
     private let stateLock = NSLock()
 
-    private var displayLink: CVDisplayLink?
+    private var displayLink: CADisplayLink?
     private var isRunning = false
     private var measurementActive = false
     private var callbackCount: UInt64 = 0
 
-    /// Creates a cadence probe for `displayID`, returning `nil` if CoreVideo cannot attach.
+    /// Creates a cadence probe for `displayID`, returning `nil` if AppKit cannot attach.
     init?(displayID: CGDirectDisplayID) {
         self.displayID = displayID
 
-        var createdDisplayLink: CVDisplayLink?
-        let creationStatus = CVDisplayLinkCreateWithCGDisplay(displayID, &createdDisplayLink)
-        guard creationStatus == kCVReturnSuccess, let createdDisplayLink else {
+        guard let screen = NSScreen.screens.first(where: { $0.mirageDisplayID == displayID }) else {
             MirageLogger.error(
                 .host,
-                "Failed to create display cadence probe for display \(displayID): CVReturn=\(creationStatus)"
+                "Failed to create display cadence probe for display \(displayID): matching screen unavailable"
             )
             return nil
         }
 
-        let callbackStatus = CVDisplayLinkSetOutputCallback(
-            createdDisplayLink,
-            { _, _, _, _, _, userInfo in
-                guard let userInfo else { return kCVReturnError }
-                let probe = Unmanaged<VirtualDisplayCadenceProbe>
-                    .fromOpaque(userInfo)
-                    .takeUnretainedValue()
-                probe.handleDisplayTick()
-                return kCVReturnSuccess
-            },
-            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        )
-        guard callbackStatus == kCVReturnSuccess else {
-            MirageLogger.error(
-                .host,
-                "Failed to attach display cadence callback for display \(displayID): CVReturn=\(callbackStatus)"
-            )
-            return nil
-        }
-
-        displayLink = createdDisplayLink
+        super.init()
+        displayLink = screen.displayLink(target: self, selector: #selector(handleDisplayTick(_:)))
     }
 
     /// Stops the display link before release.
-    deinit {
+    isolated deinit {
         stop()
     }
 
@@ -68,15 +49,7 @@ final class VirtualDisplayCadenceProbe: @unchecked Sendable {
         guard let displayLink else { return false }
         guard !isRunning else { return true }
 
-        let status = CVDisplayLinkStart(displayLink)
-        guard status == kCVReturnSuccess else {
-            MirageLogger.error(
-                .host,
-                "Failed to start display cadence probe for display \(displayID): CVReturn=\(status)"
-            )
-            return false
-        }
-
+        displayLink.add(to: .main, forMode: .common)
         isRunning = true
         return true
     }
@@ -84,7 +57,8 @@ final class VirtualDisplayCadenceProbe: @unchecked Sendable {
     /// Stops the display link when measurement is no longer needed.
     func stop() {
         guard let displayLink, isRunning else { return }
-        CVDisplayLinkStop(displayLink)
+        displayLink.invalidate()
+        self.displayLink = nil
         isRunning = false
     }
 
@@ -117,12 +91,18 @@ final class VirtualDisplayCadenceProbe: @unchecked Sendable {
     }
 
     /// Records a callback only while a measurement window is active.
-    private func handleDisplayTick() {
+    @objc private func handleDisplayTick(_ displayLink: CADisplayLink) {
         stateLock.lock()
         defer { stateLock.unlock() }
         if measurementActive {
             callbackCount &+= 1
         }
+    }
+}
+
+private extension NSScreen {
+    var mirageDisplayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 }
 

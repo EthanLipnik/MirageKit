@@ -256,19 +256,32 @@ private extension MirageStreamContentView {
     @ViewBuilder
     var streamReadinessOverlay: some View {
         if !isReadyForInitialPresentation {
-            Rectangle()
-                .fill(.black)
-                .overlay {
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .controlSize(.large)
-                            .tint(.white)
+            if canRetainPresentedFrameDuringReadinessWait {
+                ZStack {
+                    Color.black
+                        .opacity(0.18)
+                        .ignoresSafeArea()
 
-                        Text("Connecting to stream...")
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(.white)
                 }
                 .allowsHitTesting(false)
+            } else {
+                Rectangle()
+                    .fill(.black)
+                    .overlay {
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .controlSize(.large)
+                                .tint(.white)
+
+                            Text("Connecting to stream...")
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                    .allowsHitTesting(false)
+            }
         } else if awaitingPostResizeFirstFrame, session.hasPresentedFrame {
             ProgressView()
                 .controlSize(.regular)
@@ -300,6 +313,9 @@ private extension MirageStreamContentView {
     }
 
     func handleStreamContentAppear() {
+        if session.hasPresentedFrame {
+            hasPresentedFrameBeforeReadinessReset = true
+        }
         updateRecoveryBlurDebounceState()
         updatePresentationBlurProgressMonitoring()
         if !inputEnabled {
@@ -335,6 +351,9 @@ private extension MirageStreamContentView {
     }
 
     func handleSessionHasPresentedFrameChanged() {
+        if session.hasPresentedFrame {
+            hasPresentedFrameBeforeReadinessReset = true
+        }
         updatePresentationBlurProgressMonitoring()
         scheduleDesktopPresentationReadyIfNeeded(requirePresentedFrame: true)
     }
@@ -406,6 +425,7 @@ private extension MirageStreamContentView {
         cancelInputResumeGate(reason: "stream_content_disappeared")
         stopPresentationBlurProgressMonitoring()
         resetRecoveryBlurDebounceState()
+        hasPresentedFrameBeforeReadinessReset = false
         if awaitingAppResizeAck {
             onAppResizeWaitingChanged?(false)
         }

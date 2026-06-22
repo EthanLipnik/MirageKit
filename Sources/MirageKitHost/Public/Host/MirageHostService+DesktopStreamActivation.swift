@@ -217,7 +217,7 @@ extension MirageHostService {
                 await activeVideoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
             }
         )
-        let startDesktopDisplay: () async throws -> Void = {
+        let startDesktopDisplay: () async throws -> Void = { [self] in
             try await activation.streamContext.startDesktopDisplay(
                 displayWrapper: activation.captureDisplay,
                 resolution: activation.captureResolution,
@@ -228,9 +228,9 @@ extension MirageHostService {
                         packetData,
                         profile: activeMediaSendProfile,
                         options: metadata.loomQueuedUnreliableSendOptions
-                    ) { error in
+                    ) { [weak self] error in
                         if error == nil {
-                            self.markDesktopFirstVideoPacketIfNeeded(
+                            self?.markDesktopFirstVideoPacketIfNeeded(
                                 streamID: activation.streamID,
                                 marker: firstSuccessfulVideoPacketSent
                             )

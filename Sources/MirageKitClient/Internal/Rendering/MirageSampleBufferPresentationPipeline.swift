@@ -145,7 +145,7 @@ final class MirageSampleBufferPresentationPipeline {
 
     func setInitialVideoLayerState(scale: CGFloat) {
         displayLayer.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
-        displayLayer.wantsExtendedDynamicRangeContent = true
+        displayLayer.preferredDynamicRange = .high
         displayLayer.isOpaque = true
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
         displayLayer.contentsScale = scale

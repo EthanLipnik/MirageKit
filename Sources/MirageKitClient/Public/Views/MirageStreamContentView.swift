@@ -132,6 +132,7 @@ public struct MirageStreamContentView: View {
     @State var presentationBlurProgressTask: Task<Void, Never>?
     @State var presentationBlurProgressTaskGeneration: UInt64 = 0
     @State var presentationBlurProgressSuppressed = false
+    @State var hasPresentedFrameBeforeReadinessReset = false
     @State var recoveryBlurTrackedStatus: MirageStreamClientRecoveryStatus = .idle
     @State var recoveryBlurStatusBecameActiveAt: CFAbsoluteTime?
     @State var inputResumeBaselineSubmissionCursor: MirageRenderCursor?
@@ -428,6 +429,11 @@ extension MirageStreamContentView {
         }
     }
 
+    /// Whether a previous presented frame can stand in while the stream waits for a fresh chain.
+    var canRetainPresentedFrameDuringReadinessWait: Bool {
+        !isReadyForInitialPresentation && hasPresentedFrameBeforeReadinessReset
+    }
+
     /// Whether the stream is waiting for the first decoded frame after a desktop resize.
     var awaitingPostResizeFirstFrame: Bool {
         sessionStore.postResizeAwaitingFirstFrameStreamIDs.contains(session.streamID)
@@ -473,9 +479,14 @@ extension MirageStreamContentView {
         return elapsed >= debounce ? baseRadius : 0
     }
 
-    /// Combined presentation blur from resize masking and stream recovery.
+    /// Combined presentation blur from resize masking, stream recovery, and retained-frame readiness waits.
     var rawPresentationBlurRadius: CGFloat {
-        max(resizeBlurRadius, recoveryBlurRadius)
+        max(resizeBlurRadius, max(recoveryBlurRadius, retainedFrameReadinessBlurRadius))
+    }
+
+    /// Blur applied while a retained frame stands in for a reset stream chain.
+    var retainedFrameReadinessBlurRadius: CGFloat {
+        canRetainPresentedFrameDuringReadinessWait ? 16 : 0
     }
 
     /// Whether recent accepted frames should keep the stream visually live.
@@ -506,10 +517,13 @@ extension MirageStreamContentView {
 
     /// Combined presentation blur after recovery-only live frame-progress suppression.
     var presentationBlurRadius: CGFloat {
-        Self.resolvedPresentationBlurRadius(
-            resizeRadius: resizeBlurRadius,
-            recoveryRadius: recoveryBlurRadius,
-            suppressesRecoveryBlurForRecentProgress: suppressesPresentationBlurForRecentProgress
+        max(
+            retainedFrameReadinessBlurRadius,
+            Self.resolvedPresentationBlurRadius(
+                resizeRadius: resizeBlurRadius,
+                recoveryRadius: recoveryBlurRadius,
+                suppressesRecoveryBlurForRecentProgress: suppressesPresentationBlurForRecentProgress
+            )
         )
     }
 
