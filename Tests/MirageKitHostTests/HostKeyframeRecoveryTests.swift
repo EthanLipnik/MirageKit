@@ -163,7 +163,7 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeRequiresFlush)
         #expect(await context.pendingKeyframeRequiresReset)
         #expect(await context.dependencyRecoveryRetryNecessary == false)
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(await context.currentAwdlQualityReductionAllowed())
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
@@ -664,71 +664,13 @@ struct HostKeyframeRecoveryTests {
         await context.stop()
     }
 
-    @Test("Low-latency high-res boost keeps a modest encoder-speed bias at 600 Mbps")
-    func lowLatencyHighResBoostKeepsModestEncoderSpeedBiasAtHighBitrate() async {
-        let boostedContext = makeContext(
-            frameRate: 60,
-            bitrate: 600_000_000,
-            runtimeQualityAdjustmentEnabled: false,
-            latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: true
-        )
-        let baselineContext = makeContext(
-            frameRate: 60,
-            bitrate: 600_000_000,
-            runtimeQualityAdjustmentEnabled: false,
-            latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: false
-        )
-        let fiveKSize = CGSize(width: 5120, height: 2880)
-        await boostedContext.updateCaptureSizesIfNeeded(fiveKSize)
-        await boostedContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
-        await baselineContext.updateCaptureSizesIfNeeded(fiveKSize)
-        await baselineContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
-
-        let boosted = await boostedContext.activeQuality
-        let baseline = await baselineContext.activeQuality
-        #expect(boosted >= 0.82)
-        #expect(boosted < baseline)
-        #expect(abs(boosted - baseline) < 0.10)
-    }
-
-    @Test("Low-latency high-res boost remains aggressive at 25 Mbps")
-    func lowLatencyHighResBoostStaysAggressiveWhenConstrained() async {
-        let boostedContext = makeContext(
-            frameRate: 60,
-            bitrate: 25_000_000,
-            runtimeQualityAdjustmentEnabled: false,
-            latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: true
-        )
-        let baselineContext = makeContext(
-            frameRate: 60,
-            bitrate: 25_000_000,
-            runtimeQualityAdjustmentEnabled: false,
-            latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: false
-        )
-        let fiveKSize = CGSize(width: 5120, height: 2880)
-        await boostedContext.updateCaptureSizesIfNeeded(fiveKSize)
-        await boostedContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
-        await baselineContext.updateCaptureSizesIfNeeded(fiveKSize)
-        await baselineContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
-
-        let boosted = await boostedContext.activeQuality
-        let baseline = await baselineContext.activeQuality
-        #expect(boosted <= 0.06)
-        #expect(boosted + 0.07 < baseline)
-    }
-
     @Test("Runtime bitrate raises active quality on clean health")
     func runtimeBitrateRaisesActiveQualityOnCleanHealth() async {
         let context = makeContext(
             frameRate: 60,
             bitrate: 32_000_000,
             runtimeQualityAdjustmentEnabled: true,
-            latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: true
+            latencyMode: .lowestLatency
         )
         let displaySize = CGSize(width: 2752, height: 2064)
         await context.updateCaptureSizesIfNeeded(displaySize)
@@ -754,8 +696,7 @@ struct HostKeyframeRecoveryTests {
             frameRate: 60,
             bitrate: 32_000_000,
             runtimeQualityAdjustmentEnabled: true,
-            latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: true
+            latencyMode: .lowestLatency
         )
         let displaySize = CGSize(width: 2752, height: 2064)
         await context.updateCaptureSizesIfNeeded(displaySize)
@@ -784,7 +725,6 @@ struct HostKeyframeRecoveryTests {
             bitrate: 24_000_000,
             runtimeQualityAdjustmentEnabled: true,
             latencyMode: .balanced,
-            lowLatencyHighResolutionCompressionBoostEnabled: true,
             transportPathKind: .awdl,
             mediaPathProfile: .awdlRadio
         )
@@ -822,7 +762,6 @@ struct HostKeyframeRecoveryTests {
             bitrate: 300_000_000,
             runtimeQualityAdjustmentEnabled: true,
             latencyMode: .lowestLatency,
-            lowLatencyHighResolutionCompressionBoostEnabled: true,
             transportPathKind: .awdl,
             mediaPathProfile: .proximityWiredLike
         )
@@ -862,7 +801,6 @@ struct HostKeyframeRecoveryTests {
             bitrate: 18_000_000,
             runtimeQualityAdjustmentEnabled: true,
             latencyMode: .balanced,
-            lowLatencyHighResolutionCompressionBoostEnabled: true,
             transportPathKind: .awdl,
             mediaPathProfile: .awdlRadio
         )
@@ -1287,7 +1225,6 @@ struct HostKeyframeRecoveryTests {
         bitrate: Int = 600_000_000,
         runtimeQualityAdjustmentEnabled: Bool = true,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
         transportPathKind: MirageNetworkPathKind = .unknown,
         mediaPathProfile: MirageMediaPathProfile? = nil,
         bitrateAdaptationCeiling: Int? = nil
@@ -1306,7 +1243,6 @@ struct HostKeyframeRecoveryTests {
             encoderConfig: encoderConfig,
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
-            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             latencyMode: latencyMode,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,

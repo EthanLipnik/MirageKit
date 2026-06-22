@@ -160,6 +160,19 @@ struct MirageKitTests {
         #expect(decodedLegacyBootstrap.connectionAttemptID == nil)
     }
 
+    @Test("Bootstrap request defaults missing takeover flag to false")
+    func bootstrapRequestDefaultsMissingTakeoverFlagToFalse() throws {
+        let payload = """
+        {"protocolVersion":260604,"clientRequiresMediaEncryption":true}
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(MirageSessionBootstrapRequest.self, from: payload)
+
+        #expect(decoded.protocolVersion == 260604)
+        #expect(decoded.clientRequiresMediaEncryption)
+        #expect(!decoded.requestTakeoverIfBusy)
+    }
+
     @Test("Legacy quality-test control message IDs remain parseable")
     func legacyQualityTestControlMessageIDsRemainParseable() throws {
         for type in [

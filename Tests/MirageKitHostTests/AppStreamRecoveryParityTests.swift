@@ -55,8 +55,8 @@ struct AppStreamRecoveryParityTests {
     }
 
     @MainActor
-    @Test("AWDL interactive feedback preserves requested cadence and resolution")
-    func awdlInteractiveFeedbackPreservesRequestedCadenceAndResolution() async {
+    @Test("AWDL interactive feedback keeps fixed cadence and resolution")
+    func awdlInteractiveFeedbackKeepsFixedCadenceAndResolution() async {
         let context = makeContext(streamID: 82, mediaPathProfile: .awdlRadio)
         await context.configureForDedicatedVirtualDisplayTest(
             baseCaptureSize: CGSize(width: 2_752, height: 2_064),
@@ -78,8 +78,8 @@ struct AppStreamRecoveryParityTests {
 
         #expect(geometryRecorder.streamIDs.isEmpty)
         #expect(cadenceRecorder.streamIDs.isEmpty)
-        #expect(context.currentFrameRate == 60)
-        #expect(await context.streamStartSnapshot.targetFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
+        #expect(await context.streamStartSnapshot.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(await context.streamStartSnapshot.dimensionToken == initialToken)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
     }
@@ -123,7 +123,6 @@ struct AppStreamRecoveryParityTests {
                 bitrate: 24_000_000
             ),
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
-            lowLatencyHighResolutionCompressionBoostEnabled: true,
             capturePressureProfile: .baseline,
             latencyMode: .lowestLatency,
             mediaPathProfile: mediaPathProfile

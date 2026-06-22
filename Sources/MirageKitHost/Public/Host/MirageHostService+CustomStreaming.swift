@@ -151,7 +151,6 @@ extension MirageHostService {
             ),
             mediaSecurityContext: mediaSecurityByClientID[clientContext.client.id],
             runtimeQualityAdjustmentEnabled: request.allowRuntimeQualityAdjustment ?? true,
-            lowLatencyHighResolutionCompressionBoostEnabled: request.lowLatencyHighResolutionCompressionBoost ?? false,
             disableResolutionCap: request.disableResolutionCap ?? false,
             latencyMode: request.latencyMode ?? .lowestLatency,
             hostBufferingPolicy: request.resolvedHostBufferingPolicy,

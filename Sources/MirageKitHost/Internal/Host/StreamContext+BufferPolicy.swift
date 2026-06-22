@@ -38,8 +38,7 @@ extension StreamContext {
     ) -> StreamBufferPolicy {
         if mediaPathProfile.usesAwdlRadioPolicy {
             return awdlInteractiveDisplayBufferPolicy(
-                streamKind: streamKind,
-                frameRate: frameRate
+                streamKind: streamKind
             )
         }
 
@@ -105,33 +104,14 @@ extension StreamContext {
 
     /// Returns the host pipeline depth for AWDL interactive display streams.
     static func awdlInteractiveDisplayBufferPolicy(
-        streamKind: VideoEncoder.StreamKind,
-        frameRate: Int
+        streamKind: VideoEncoder.StreamKind
     ) -> StreamBufferPolicy {
-        let safeFrameRate = max(1, frameRate)
         let isDesktopLike = streamKind == .desktop || streamKind == .appAtlas
-        let bufferDepth: Int
-        let initialInFlight: Int
-        let maximumInFlight: Int
-        if safeFrameRate >= 45, isDesktopLike {
-            bufferDepth = 3
-            initialInFlight = 2
-            maximumInFlight = 3
-        } else if safeFrameRate >= 45 {
-            bufferDepth = 2
-            initialInFlight = 1
-            maximumInFlight = 2
-        } else {
-            bufferDepth = 2
-            initialInFlight = 1
-            maximumInFlight = 2
-        }
-
         return StreamBufferPolicy(
-            bufferDepth: bufferDepth,
-            initialInFlightFrames: initialInFlight,
-            minimumInFlightFrames: initialInFlight,
-            maxInFlightFramesCap: maximumInFlight
+            bufferDepth: isDesktopLike ? 3 : 2,
+            initialInFlightFrames: isDesktopLike ? 2 : 1,
+            minimumInFlightFrames: isDesktopLike ? 2 : 1,
+            maxInFlightFramesCap: isDesktopLike ? 3 : 2
         )
     }
 

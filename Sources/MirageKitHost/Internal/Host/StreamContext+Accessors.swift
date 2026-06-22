@@ -59,7 +59,6 @@ struct DesktopPipelineRestartSnapshot: Sendable {
     let requestedAudioChannelCount: Int
     let runtimeQualityAdjustmentEnabled: Bool
     let encoderCatchUpQualityAdjustmentEnabled: Bool
-    let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     let disableResolutionCap: Bool
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     let latencyMode: MirageStreamLatencyMode
@@ -244,7 +243,6 @@ extension StreamContext {
             requestedAudioChannelCount: requestedAudioChannelCount,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled,
-            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             disableResolutionCap: disableResolutionCap,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,

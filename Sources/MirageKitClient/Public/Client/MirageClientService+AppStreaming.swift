@@ -215,10 +215,6 @@ public extension MirageClientService {
             hostBufferingPolicy: encoderRequest.hostBufferingPolicy,
             allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
             allowEncoderCatchUpQualityAdjustment: encoderRequest.allowEncoderCatchUpQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost:
-                effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                    encoderRequest.lowLatencyHighResolutionCompressionBoost
-                ),
             disableResolutionCap: encoderRequest.disableResolutionCap,
             audioConfiguration: encoderRequest.audioConfiguration,
             maxConcurrentVisibleWindows: encoderRequest.maxConcurrentVisibleWindows,

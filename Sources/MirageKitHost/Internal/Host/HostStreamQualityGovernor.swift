@@ -477,7 +477,9 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
         let runtimeReductionHoldSeconds = contract.mediaPathProfile.usesLocalBulkTransportPolicy
             ? Self.localRuntimeReductionQualityRaiseHoldSeconds
             : Self.remoteRuntimeReductionQualityRaiseHoldSeconds
-        guard now - lastRuntimeReductionTime >= runtimeReductionHoldSeconds else {
+        let nonLocalReadabilityFloorRaise = contract.nonLocalReadabilityQualityFloor > 0 &&
+            targetQuality <= contract.nonLocalReadabilityQualityFloor + 0.001
+        guard now - lastRuntimeReductionTime >= runtimeReductionHoldSeconds || nonLocalReadabilityFloorRaise else {
             latestDecision = makeDecision(
                 state: latestDecision.state,
                 evidenceClass: latestDecision.evidenceClass,
@@ -493,7 +495,8 @@ struct HostStreamQualityGovernor: Sendable, Equatable {
             )
             return false
         }
-        if latestDecision.state == .pressure || latestDecision.state == .recovery {
+        if (latestDecision.state == .pressure || latestDecision.state == .recovery) &&
+            !nonLocalReadabilityFloorRaise {
             latestDecision = makeDecision(
                 state: latestDecision.state,
                 evidenceClass: latestDecision.evidenceClass,

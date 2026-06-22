@@ -44,17 +44,6 @@ extension MirageClientService {
                     "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
                 )
         }
-        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                lowLatencyHighResolutionCompressionBoost
-            )
-            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
-            logLowLatencyHighResolutionCompressionBoostRequest(
-                requested: lowLatencyHighResolutionCompressionBoost,
-                effective: effectiveBoost,
-                streamKind: "window"
-            )
-        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -122,17 +111,6 @@ extension MirageClientService {
                     "Requesting encoder catch-up quality adjustment: \(allowEncoderCatchUpQualityAdjustment ? "enabled" : "disabled")"
                 )
         }
-        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                lowLatencyHighResolutionCompressionBoost
-            )
-            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
-            logLowLatencyHighResolutionCompressionBoostRequest(
-                requested: lowLatencyHighResolutionCompressionBoost,
-                effective: effectiveBoost,
-                streamKind: "app"
-            )
-        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -199,17 +177,6 @@ extension MirageClientService {
                     "\(allowEncoderCatchUpQualityAdjustment ? "enabled" : "disabled")"
             )
         }
-        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                lowLatencyHighResolutionCompressionBoost
-            )
-            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
-            logLowLatencyHighResolutionCompressionBoostRequest(
-                requested: lowLatencyHighResolutionCompressionBoost,
-                effective: effectiveBoost,
-                streamKind: "desktop"
-            )
-        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -251,17 +218,6 @@ extension MirageClientService {
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         }
-        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
-            let effectiveBoost = effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                lowLatencyHighResolutionCompressionBoost
-            )
-            request.lowLatencyHighResolutionCompressionBoost = effectiveBoost
-            logLowLatencyHighResolutionCompressionBoostRequest(
-                requested: lowLatencyHighResolutionCompressionBoost,
-                effective: effectiveBoost,
-                streamKind: "custom"
-            )
-        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
         }
@@ -285,19 +241,4 @@ extension MirageClientService {
         }
     }
 
-    private func logLowLatencyHighResolutionCompressionBoostRequest(
-        requested: Bool,
-        effective: Bool?,
-        streamKind: String
-    ) {
-        if requested == true, effective == false {
-            MirageLogger.client(
-                "AWDL media policy disabling \(streamKind) low-latency high-res compression boost"
-            )
-            return
-        }
-        MirageLogger.client(
-            "Requesting low-latency high-res compression boost: \((effective ?? requested) ? "enabled" : "disabled")"
-        )
-    }
 }

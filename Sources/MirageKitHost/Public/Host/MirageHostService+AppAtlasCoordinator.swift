@@ -185,7 +185,6 @@ extension MirageHostService {
             mediaSecurityContext: nil,
             runtimeQualityAdjustmentEnabled: selectRequest.allowRuntimeQualityAdjustment ?? true,
             encoderCatchUpQualityAdjustmentEnabled: selectRequest.allowEncoderCatchUpQualityAdjustment ?? true,
-            lowLatencyHighResolutionCompressionBoostEnabled: selectRequest.lowLatencyHighResolutionCompressionBoost ?? false,
             disableResolutionCap: true,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,

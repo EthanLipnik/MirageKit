@@ -60,7 +60,7 @@ struct HostMediaSendProfileRetuneTests {
         let mediaPathSnapshot = await replacementContext.streamMediaPathSnapshot
 
         #expect(startSnapshot.dimensionToken == 1)
-        #expect(startSnapshot.targetFrameRate == 60)
+        #expect(startSnapshot.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(startSnapshot.mediaMaxPacketSize == mirageDirectProximityMaxPacketSize)
         #expect(mediaPathSnapshot.transportPathKind == .awdl)
         #expect(mediaPathSnapshot.mediaPathProfile == .awdlRadio)

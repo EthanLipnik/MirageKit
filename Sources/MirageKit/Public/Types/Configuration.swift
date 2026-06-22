@@ -289,7 +289,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var allowRuntimeQualityAdjustment: Bool?
     /// Whether the host may temporarily lower quality when encoding falls behind.
     public var allowEncoderCatchUpQualityAdjustment: Bool?
-    /// Whether the host should apply the low-latency compression boost for high-resolution streams.
+    /// Legacy compatibility field. Current hosts ignore this value.
     public var lowLatencyHighResolutionCompressionBoost: Bool?
     /// Whether the host should ignore normal resolution caps for this stream.
     public var disableResolutionCap: Bool

@@ -13,19 +13,6 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
-    private struct LowLatencyHighResolutionQualityBoost {
-        let frameQuality: Float
-        let keyframeQuality: Float
-        let applied: Bool
-        let drop: Float
-    }
-
-    private static let lowLatencyHighResolutionBoostStartPixels: Double = 4_096_000 // ~2560x1600
-    private static let lowLatencyHighResolutionBoostFullPixels: Double = 10_500_000 // ~5K and above
-    private static let lowLatencyHighResolutionBoostMinDrop: Float = 0.06
-    private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
-    private static let lowLatencyHighResolutionBoostMinimumPressureScale: Float = 0.45
-    private static let mapperMinimumQuality: Float = 0.03
     private static let awdlInteractiveFrameQualityFloor: Float = 0.16
     private static let awdlInteractiveKeyframeQualityFloor: Float = 0.14
     private static let qualityRefreshEpsilon: Float = 0.0001
@@ -41,7 +28,6 @@ extension StreamContext {
         let bpp: Double?
         let frameRateScale: Double
         let qualityReferenceFrameRate: Int
-        let boostDrop: Float?
     }
 
     func clearTransientRuntimePressureForReconfiguration() {
@@ -226,87 +212,6 @@ extension StreamContext {
         return max(0.01, min(1.0, ratio))
     }
 
-    private func applyLowLatencyHighResolutionCompressionBoost(
-        frameQuality: Float,
-        keyframeQuality: Float,
-        width: Int,
-        height: Int,
-        targetBitrateBps: Int,
-        frameRate: Int
-    ) -> LowLatencyHighResolutionQualityBoost {
-        guard lowLatencyHighResolutionCompressionBoostEnabled,
-              !mediaPathProfile.usesAwdlRadioPolicy,
-              latencyMode == .lowestLatency || latencyMode == .balanced else {
-            return LowLatencyHighResolutionQualityBoost(
-                frameQuality: frameQuality,
-                keyframeQuality: keyframeQuality,
-                applied: false,
-                drop: 0
-            )
-        }
-
-        let pixelCount = Double(width * height)
-        guard pixelCount > Self.lowLatencyHighResolutionBoostStartPixels else {
-            return LowLatencyHighResolutionQualityBoost(
-                frameQuality: frameQuality,
-                keyframeQuality: keyframeQuality,
-                applied: false,
-                drop: 0
-            )
-        }
-
-        let range = max(
-            1.0,
-            Self.lowLatencyHighResolutionBoostFullPixels - Self.lowLatencyHighResolutionBoostStartPixels
-        )
-        let progress = max(0.0, min(1.0, (pixelCount - Self.lowLatencyHighResolutionBoostStartPixels) / range))
-        let easedProgress = pow(progress, 0.70)
-        let qualityDrop = Self.lowLatencyHighResolutionBoostMinDrop +
-            Float(easedProgress) *
-            (Self.lowLatencyHighResolutionBoostMaxDrop - Self.lowLatencyHighResolutionBoostMinDrop)
-        let bitratePressureScale: Float = if let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
-            targetBitrateBps: targetBitrateBps,
-            width: width,
-            height: height,
-            frameRate: MirageBitrateQualityMapper.qualityReferenceFrameRate(for: frameRate)
-        ) {
-            max(
-                Self.lowLatencyHighResolutionBoostMinimumPressureScale,
-                Float(MirageBitrateQualityMapper.compressionPressure(for: bpp))
-            )
-        } else {
-            1.0
-        }
-        let effectiveQualityDrop = qualityDrop * bitratePressureScale
-        guard effectiveQualityDrop > 0.0001 else {
-            return LowLatencyHighResolutionQualityBoost(
-                frameQuality: frameQuality,
-                keyframeQuality: keyframeQuality,
-                applied: false,
-                drop: 0
-            )
-        }
-
-        let boostedFrameQuality = max(Self.mapperMinimumQuality, frameQuality - effectiveQualityDrop)
-        let keyframeRatio: Float
-        if frameQuality > 0 {
-            keyframeRatio = max(0.1, min(1.0, keyframeQuality / frameQuality))
-        } else {
-            keyframeRatio = 0.72
-        }
-        let boostedKeyframeQuality = max(
-            Self.mapperMinimumQuality,
-            min(boostedFrameQuality, boostedFrameQuality * keyframeRatio)
-        )
-
-        return LowLatencyHighResolutionQualityBoost(
-            frameQuality: boostedFrameQuality,
-            keyframeQuality: boostedKeyframeQuality,
-            applied: true,
-            drop: effectiveQualityDrop
-        )
-    }
-
     private func derivedQualityTargets(
         targetBitrateBps: Int,
         outputSize: CGSize
@@ -322,19 +227,11 @@ extension StreamContext {
             height: height,
             frameRate: currentFrameRate
         )
-        let qualityBoost = applyLowLatencyHighResolutionCompressionBoost(
-            frameQuality: derived.frameQuality,
-            keyframeQuality: derived.keyframeQuality,
-            width: width,
-            height: height,
-            targetBitrateBps: targetBitrateBps,
-            frameRate: currentFrameRate
-        )
         let cappedFrameQuality = awdlBoundedInteractiveFrameQuality(
-            min(qualityBoost.frameQuality, compressionQualityCeiling)
+            min(derived.frameQuality, compressionQualityCeiling)
         )
         let cappedKeyframeQuality = awdlBoundedInteractiveKeyframeQuality(
-            min(qualityBoost.keyframeQuality, cappedFrameQuality),
+            min(derived.keyframeQuality, cappedFrameQuality),
             frameQuality: cappedFrameQuality
         )
         let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
@@ -348,8 +245,7 @@ extension StreamContext {
             keyframeQuality: cappedKeyframeQuality,
             bpp: bpp,
             frameRateScale: MirageBitrateQualityMapper.frameRateScale(frameRate: currentFrameRate, bpp: bpp),
-            qualityReferenceFrameRate: qualityReferenceFrameRate,
-            boostDrop: qualityBoost.applied ? qualityBoost.drop : nil
+            qualityReferenceFrameRate: qualityReferenceFrameRate
         )
     }
 
@@ -503,16 +399,9 @@ extension StreamContext {
             }
             let scaleText = targets.frameRateScale.formatted(.number.precision(.fractionLength(2)))
             let referenceFrameRate = targets.qualityReferenceFrameRate
-            let boostText: String
-            if let boostDrop = targets.boostDrop {
-                let dropText = boostDrop.formatted(.number.precision(.fractionLength(2)))
-                boostText = ", llHighResBoostDrop \(dropText)"
-            } else {
-                boostText = ""
-            }
             MirageLogger
                 .stream(
-                    "\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText) (cap \(capText)), bpp \(bppText), fps=\(currentFrameRate), qualityRefFPS=\(referenceFrameRate), fpsScale \(scaleText)\(boostText)"
+                    "\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText) (cap \(capText)), bpp \(bppText), fps=\(currentFrameRate), qualityRefFPS=\(referenceFrameRate), fpsScale \(scaleText)"
                 )
         }
     }

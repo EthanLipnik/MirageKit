@@ -143,8 +143,8 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.maxInFlightFrames == 3)
     }
 
-    @Test("AWDL 30 fps demoted desktop keeps bounded host pipeline")
-    func awdl30FPSDemotedDesktopKeepsBoundedHostPipeline() async {
+    @Test("AWDL fixed-cadence desktop keeps stability host pipeline")
+    func awdlFixedCadenceDesktopKeepsStabilityHostPipeline() async {
         let context = makeContext(
             latencyMode: .balanced,
             targetFrameRate: 30,
@@ -152,10 +152,11 @@ struct DesktopLowLatencyInFlightTests {
             mediaPathProfile: .awdlRadio
         )
 
-        #expect(await context.minInFlightFrames == 1)
-        #expect(await context.maxInFlightFrames == 1)
-        #expect(await context.maxInFlightFramesCap == 2)
-        #expect(await context.frameBufferDepth == 2)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
+        #expect(await context.minInFlightFrames == 2)
+        #expect(await context.maxInFlightFrames == 2)
+        #expect(await context.maxInFlightFramesCap == 3)
+        #expect(await context.frameBufferDepth == 3)
     }
 
     @Test("120 Hz desktop smoothest keeps enough host pipeline depth")
@@ -197,7 +198,6 @@ struct DesktopLowLatencyInFlightTests {
             encoderConfig: encoderConfig,
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: false,
-            lowLatencyHighResolutionCompressionBoostEnabled: false,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             mediaPathProfile: mediaPathProfile

@@ -150,7 +150,6 @@ struct ClarityFirstGovernorTests {
             encoderConfig: encoderConfig,
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
-            lowLatencyHighResolutionCompressionBoostEnabled: true,
             latencyMode: .lowestLatency,
             transportPathKind: .unknown,
             mediaPathProfile: mediaPathProfile

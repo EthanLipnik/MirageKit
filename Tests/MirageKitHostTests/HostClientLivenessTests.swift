@@ -81,7 +81,23 @@ struct HostClientLivenessTests {
 
         #expect(
             hostHasActiveBackgroundLease(
-                timedExpiration: nil,
+                timedExpiration: now.addingTimeInterval(1),
+                hasSuspendedLease: true,
+                hasActiveStreams: true,
+                now: now
+            )
+        )
+        #expect(
+            !hostHasActiveBackgroundLease(
+                timedExpiration: now.addingTimeInterval(1),
+                hasSuspendedLease: true,
+                hasActiveStreams: false,
+                now: now
+            )
+        )
+        #expect(
+            !hostHasActiveBackgroundLease(
+                timedExpiration: now.addingTimeInterval(-1),
                 hasSuspendedLease: true,
                 hasActiveStreams: true,
                 now: now
@@ -91,7 +107,7 @@ struct HostClientLivenessTests {
             !hostHasActiveBackgroundLease(
                 timedExpiration: nil,
                 hasSuspendedLease: true,
-                hasActiveStreams: false,
+                hasActiveStreams: true,
                 now: now
             )
         )

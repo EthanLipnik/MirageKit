@@ -49,6 +49,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     private static let fallbackMinimumFloorBps = 4_000_000
     private static let highResolutionManualStartupPixels = 10_500_000.0
     private static let highResolutionManualFloorFraction = 0.60
+    private static let awdlStartupBitrateBps = 24_000_000
     private static let awdlStartupReadabilityFrameQuality: Float = 0.28
     private static let awdlStartupReadabilityCapBps = 72_000_000
     private static let automaticStartupReadabilityFrameQuality: Float = 0.60
@@ -136,7 +137,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         if usesAwdlInteractiveBudget {
             startupBitrate = max(
                 startupBitrate,
-                min(maximumCeiling, pathBudget.minimumFloorBps)
+                min(maximumCeiling, awdlStartupBitrateBps)
             )
         }
         let automaticHostStartupLimit = max(hostStartup, automaticReadabilityFloor ?? hostStartup)

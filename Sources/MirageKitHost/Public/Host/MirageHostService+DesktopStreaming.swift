@@ -39,7 +39,6 @@ func startDesktopStream(
     hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
     allowRuntimeQualityAdjustment: Bool?,
     allowEncoderCatchUpQualityAdjustment: Bool?,
-    lowLatencyHighResolutionCompressionBoost: Bool,
     disableResolutionCap: Bool,
     streamScale: CGFloat?,
     audioConfiguration: MirageAudioConfiguration,
@@ -252,7 +251,6 @@ async throws {
             mediaMaxPacketSize: mediaMaxPacketSize,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
             allowEncoderCatchUpQualityAdjustment: allowEncoderCatchUpQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
@@ -280,8 +278,7 @@ async throws {
     logDesktopStartStep("stream context created (\(streamID))")
     logDesktopStreamRuntimeOptions(
         streamID: streamID,
-        allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
-        lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost
+        allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment
     )
     await configureDesktopMetricsHandler(streamContext, clientContext: clientContext)
 

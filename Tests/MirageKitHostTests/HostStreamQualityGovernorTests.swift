@@ -331,6 +331,38 @@ struct HostStreamQualityGovernorTests {
         #expect(governor.latestDecision.blockedLeverReason == "recent-runtime-reduction")
     }
 
+    @Test("Recent VPN runtime reduction allows readability floor frame-intent raise")
+    func recentVPNRuntimeReductionAllowsReadabilityFloorFrameIntentRaise() {
+        var governor = HostStreamQualityGovernor()
+        let contract = makeContract(mediaPathProfile: .vpnOrOverlay)
+        _ = governor.evaluateRuntimeDecision(
+            makeBudgetDecision(
+                targetBitrateBps: 32_000_000,
+                quality: 0.14,
+                state: .severe,
+                reason: .receiverLoss
+            ),
+            snapshot: makeSnapshot(
+                mediaPathProfile: .vpnOrOverlay,
+                receiverState: .severe,
+                receiverLossHoldActive: true
+            ),
+            contract: contract,
+            currentBitrateBps: 75_000_000,
+            allowsLocalBulkReductionOverride: false,
+            now: 20
+        )
+
+        let allowed = governor.allowsFrameIntentQualityWrite(
+            targetQuality: contract.nonLocalReadabilityQualityFloor,
+            currentQuality: 0.14,
+            contract: contract,
+            now: 20.25
+        )
+
+        #expect(allowed)
+    }
+
     @Test("Recent proximity motion pressure blocks frame intent above motion target")
     func recentProximityMotionPressureBlocksFrameIntentAboveMotionTarget() {
         var governor = HostStreamQualityGovernor()

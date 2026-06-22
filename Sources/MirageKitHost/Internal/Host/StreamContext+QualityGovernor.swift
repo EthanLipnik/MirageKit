@@ -77,33 +77,42 @@ extension StreamContext {
         return motionFloor
     }
 
+    private static func reasonSupportsNonLocalReadabilityRecovery(
+        _ reason: HostAdaptivePFrameController.Reason
+    ) -> Bool {
+        switch reason {
+        case .encoderLag,
+             .pFrameLatency,
+             .transportBacklog,
+             .receiverFreshness,
+             .receiverBacklog,
+             .receiverLoss,
+             .clientRecovery,
+             .adaptiveRepair:
+            return true
+        case .startup,
+             .healthy,
+             .encodedFrame,
+             .motionOnset,
+             .senderDeadline:
+            return false
+        }
+    }
+
     func adaptiveRuntimeQualityFloor(for decision: HostFrameBudgetDecision) -> Float {
-        guard decision.state != .observing,
-              encoderConfig.codec != .proRes4444 else {
+        guard encoderConfig.codec != .proRes4444 else {
             return 0
         }
         let contract = currentStreamQualityContract()
         if !mediaPathProfile.usesLocalBulkTransportPolicy {
-            switch decision.reason {
-            case .encoderLag:
-                guard decision.state == .pressured || readabilityFloorRecoveryState.isProtecting else {
-                    return 0
-                }
-                return contract.effectiveReadabilityQualityFloor
-            case .startup,
-                 .healthy,
-                 .encodedFrame,
-                 .motionOnset,
-                 .pFrameLatency,
-                 .transportBacklog,
-                 .receiverFreshness,
-                 .receiverBacklog,
-                 .receiverLoss,
-                 .senderDeadline,
-                 .clientRecovery,
-                 .adaptiveRepair:
+            guard Self.reasonSupportsNonLocalReadabilityRecovery(decision.reason),
+                  decision.state == .pressured || readabilityFloorRecoveryState.isProtecting else {
                 return 0
             }
+            return contract.effectiveReadabilityQualityFloor
+        }
+        guard decision.state != .observing else {
+            return 0
         }
         if senderDeadlineRecoveryQualityCeiling != nil {
             return contract.localMotionQualityFloor
@@ -174,8 +183,8 @@ extension StreamContext {
               encoderCatchUpQualityAdjustmentEnabled,
               encoderConfig.codec != .proRes4444,
               !mediaPathProfile.usesLocalBulkTransportPolicy,
-              decision.reason == .encoderLag,
-              decision.state == .severe else {
+              Self.reasonSupportsNonLocalReadabilityRecovery(decision.reason),
+              decision.state != .observing else {
             return nil
         }
 
@@ -184,7 +193,7 @@ extension StreamContext {
             return nil
         }
 
-        return "still-severe-encoder-lag"
+        return "still-\(decision.state.rawValue)-\(decision.reason.rawValue)"
     }
 
     private func shouldHoldReadabilityFloorRecoveryState(
@@ -198,23 +207,15 @@ extension StreamContext {
             return false
         }
 
-        switch decision.reason {
-        case .encoderLag,
-             .encodedFrame:
+        if Self.reasonSupportsNonLocalReadabilityRecovery(decision.reason) {
             return decision.state != .observing
-        case .startup,
-             .healthy,
-             .motionOnset,
-             .pFrameLatency,
-             .transportBacklog,
-             .receiverFreshness,
-             .receiverBacklog,
-             .receiverLoss,
-             .senderDeadline,
-             .clientRecovery,
-             .adaptiveRepair:
-            return false
         }
+
+        if decision.reason == .encodedFrame {
+            return decision.state != .observing
+        }
+
+        return false
     }
 
     private func readabilityFloorRecoveryEnvironmentAllows(
@@ -231,8 +232,6 @@ extension StreamContext {
 
         guard !pressureSnapshot.startupProtectionActive,
               !pressureSnapshot.frameChainRepairActive,
-              pressureSnapshot.receiverState != .severe,
-              !pressureSnapshot.receiverLossHoldActive,
               !pressureSnapshot.senderDropHoldActive,
               pressureSnapshot.senderQueuedBytes < pressureSnapshot.queuePressureBytes,
               pressureSnapshot.unstartedPFrameCount <= 1,

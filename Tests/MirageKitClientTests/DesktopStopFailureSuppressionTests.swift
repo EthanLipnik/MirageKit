@@ -75,8 +75,8 @@ struct DesktopStopFailureSuppressionTests {
     }
 
     @MainActor
-    @Test("AWDL desktop restart disables low latency high resolution compression boost")
-    func awdlDesktopRestartDisablesLowLatencyHighResolutionCompressionBoost() throws {
+    @Test("AWDL desktop restart applies fixed realtime policy")
+    func awdlDesktopRestartAppliesFixedRealtimePolicy() throws {
         let service = MirageClientService(deviceName: "Test Device")
         let previousContractID = try #require(UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789"))
         service.handleControlPathUpdate(Self.manualSnapshot(kind: .awdl, mediaProfile: .awdlRadio))
@@ -101,7 +101,6 @@ struct DesktopStopFailureSuppressionTests {
         )
         request.latencyMode = .lowestLatency
         request.hostBufferingPolicy = .freshestFrame
-        request.lowLatencyHighResolutionCompressionBoost = true
         request.encoderMaxWidth = 2752
         request.encoderMaxHeight = 2064
 
@@ -109,7 +108,6 @@ struct DesktopStopFailureSuppressionTests {
 
         #expect(rebuilt.latencyMode == .balanced)
         #expect(rebuilt.hostBufferingPolicy == .stability)
-        #expect(rebuilt.lowLatencyHighResolutionCompressionBoost == false)
         #expect(rebuilt.desktopGeometryContractID == previousContractID)
         #expect(rebuilt.targetFrameRate == 60)
     }

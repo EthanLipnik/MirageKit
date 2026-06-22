@@ -135,8 +135,8 @@ struct HostStreamTransportControllerTests {
         #expect(pressure?.awdlPacingTrigger == .clientJitter)
         #expect(pressure?.awdlPolicyState == .stressed)
         #expect(pressure?.awdlPolicyTrigger == .jitter)
-        #expect(pressure?.awdlSelectedLever == .frameRate)
-        #expect(pressure?.awdlTargetFrameRate == 45)
+        #expect(pressure?.awdlSelectedLever == .playout)
+        #expect(pressure?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(pressure?.awdlResolutionScale == nil)
         #expect(pressure?.awdlPlayoutDelayMs == 64)
 
@@ -168,7 +168,7 @@ struct HostStreamTransportControllerTests {
         #expect(decision?.awdlPacingTrigger == .clientRecovery)
         #expect(decision?.awdlPolicyState == .awaitingFirstFrame)
         #expect(decision?.awdlPolicyTrigger == .startup)
-        #expect(decision?.awdlTargetFrameRate == 45)
+        #expect(decision?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision?.awdlResolutionScale == nil)
     }
 
@@ -230,7 +230,9 @@ struct HostStreamTransportControllerTests {
             now: 71.5
         )
 
-        #expect(smoothed == nil)
+        #expect(smoothed?.pressureTrigger == .clear)
+        #expect(smoothed?.awdlPolicyTrigger == .stable)
+        #expect(smoothed?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(controller.latestAwdlMediaDecision?.trigger == .stable)
 
         let firstLateSample = controller.update(
@@ -324,7 +326,9 @@ struct HostStreamTransportControllerTests {
             mediaPathProfile: .awdlRadio,
             now: 75
         )
-        #expect(healthyQueue == nil)
+        #expect(healthyQueue?.pressureTrigger == .clear)
+        #expect(healthyQueue?.awdlPolicyTrigger == .stable)
+        #expect(healthyQueue?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(backlogController.latestAwdlMediaDecision?.trigger == .stable)
 
         _ = backlogController.update(
@@ -347,7 +351,7 @@ struct HostStreamTransportControllerTests {
         #expect(backlogDecision?.awdlPacingTrigger == .clientPresentationBacklog)
         #expect(backlogController.latestAwdlMediaDecision?.state == .stressed)
         #expect(backlogController.latestAwdlMediaDecision?.trigger == .presentationBacklog)
-        #expect(backlogDecision?.awdlTargetFrameRate == 45)
+        #expect(backlogDecision?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(backlogDecision?.awdlResolutionScale == nil)
 
         var underfillController = HostStreamTransportController()
@@ -366,7 +370,9 @@ struct HostStreamTransportControllerTests {
             now: 77.5
         )
 
-        #expect(underfillDecision == nil)
+        #expect(underfillDecision?.pressureTrigger == .clear)
+        #expect(underfillDecision?.awdlPolicyTrigger == .stable)
+        #expect(underfillDecision?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(underfillController.latestAwdlMediaDecision?.trigger == .stable)
 
         var fillDeficitController = HostStreamTransportController()
@@ -388,7 +394,10 @@ struct HostStreamTransportControllerTests {
         #expect(fillDeficitDecision?.awdlPacingTrigger == .clientPresentationFillDeficit)
         #expect(fillDeficitDecision?.awdlSelectedLever == .playout)
         #expect(fillDeficitController.latestAwdlMediaDecision?.trigger == .presentationFillDeficit)
-        #expect(fillDeficitController.latestAwdlMediaDecision?.targetFrameRate == 60)
+        #expect(
+            fillDeficitController.latestAwdlMediaDecision?.targetFrameRate ==
+                MirageAwdlMediaController.awdlRadioFrameRate
+        )
 
         var visibleUnderflowController = HostStreamTransportController()
         _ = visibleUnderflowController.update(
@@ -411,7 +420,7 @@ struct HostStreamTransportControllerTests {
         #expect(visibleUnderflowDecision?.awdlPacingTrigger == .clientPresentationUnderflow)
         #expect(visibleUnderflowController.latestAwdlMediaDecision?.state == .stressed)
         #expect(visibleUnderflowController.latestAwdlMediaDecision?.trigger == .presentationUnderflow)
-        #expect(visibleUnderflowDecision?.awdlTargetFrameRate == 45)
+        #expect(visibleUnderflowDecision?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(visibleUnderflowDecision?.awdlResolutionScale == nil)
 
         var notReadyUnderflowController = HostStreamTransportController()
@@ -434,7 +443,7 @@ struct HostStreamTransportControllerTests {
         #expect(notReadyUnderflowDecision?.awdlPacingTrigger == .clientPresentationUnderflow)
         #expect(notReadyUnderflowController.latestAwdlMediaDecision?.state == .stressed)
         #expect(notReadyUnderflowController.latestAwdlMediaDecision?.trigger == .presentationUnderflow)
-        #expect(notReadyUnderflowDecision?.awdlTargetFrameRate == 45)
+        #expect(notReadyUnderflowDecision?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(notReadyUnderflowDecision?.awdlResolutionScale == nil)
     }
 
@@ -516,9 +525,9 @@ struct HostStreamTransportControllerTests {
         #expect(stressed?.awdlPolicyState == .stressed)
         #expect(stressed?.awdlResolutionScale == nil)
         #expect(demoted?.awdlPolicyState == .demoted)
-        #expect(demoted?.awdlTargetFrameRate == 45)
+        #expect(demoted?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(demoted?.awdlResolutionScale == nil)
-        #expect(cadenceDemote?.awdlTargetFrameRate == 30)
+        #expect(cadenceDemote?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(cadenceDemote?.awdlResolutionScale == nil)
         #expect(resolutionDemote?.awdlPolicyState == .demoted)
         #expect(resolutionDemote?.awdlResolutionScale == 0.875)
@@ -528,8 +537,8 @@ struct HostStreamTransportControllerTests {
         #expect(restored?.awdlResolutionScale == 1.0)
     }
 
-    @Test("AWDL demoted feedback restores using host requested frame-rate ceiling after sustained stability")
-    func awdlDemotedFeedbackRestoresUsingHostRequestedFrameRateCeilingAfterSustainedStability() {
+    @Test("AWDL demoted feedback keeps fixed frame rate after sustained stability")
+    func awdlDemotedFeedbackKeepsFixedFrameRateAfterSustainedStability() {
         var controller = HostStreamTransportController()
 
         for sequence in 1...4 {
@@ -542,7 +551,10 @@ struct HostStreamTransportControllerTests {
                 now: 90 + Double(sequence) * 0.1
             )
         }
-        #expect(controller.latestAwdlMediaDecision?.targetFrameRate == 45)
+        #expect(
+            controller.latestAwdlMediaDecision?.targetFrameRate ==
+                MirageAwdlMediaController.awdlRadioFrameRate
+        )
 
         let restoring = controller.update(
             with: feedback(sequence: 5, targetFPS: 45),
@@ -553,7 +565,10 @@ struct HostStreamTransportControllerTests {
             now: 91
         )
 
-        #expect(restoring == nil)
+        #expect(restoring?.pressureTrigger == .clear)
+        #expect(restoring?.awdlPolicyTrigger == .stable)
+        #expect(restoring?.awdlPolicyState == .demoted)
+        #expect(restoring?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         _ = controller.update(
             with: feedback(sequence: 6, targetFPS: 45),
@@ -574,7 +589,7 @@ struct HostStreamTransportControllerTests {
 
         #expect(restored?.awdlPolicyTrigger == .stable)
         #expect(restored?.awdlPolicyState == .steady)
-        #expect(restored?.awdlTargetFrameRate == 60)
+        #expect(restored?.awdlTargetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(restored?.awdlResolutionScale == nil)
     }
 

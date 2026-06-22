@@ -78,14 +78,10 @@ extension MirageHostService {
     /// Records runtime feature toggles that affect desktop stream quality.
     nonisolated func logDesktopStreamRuntimeOptions(
         streamID: StreamID,
-        allowRuntimeQualityAdjustment: Bool?,
-        lowLatencyHighResolutionCompressionBoost: Bool
+        allowRuntimeQualityAdjustment: Bool?
     ) {
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for desktop stream \(streamID)")
-        }
-        if !lowLatencyHighResolutionCompressionBoost {
-            MirageLogger.host("Low-latency high-res compression boost disabled for desktop stream \(streamID)")
         }
     }
 
@@ -108,7 +104,6 @@ extension MirageHostService {
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: request.allowRuntimeQualityAdjustment ?? true,
             encoderCatchUpQualityAdjustmentEnabled: request.allowEncoderCatchUpQualityAdjustment ?? true,
-            lowLatencyHighResolutionCompressionBoostEnabled: request.lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: request.disableResolutionCap,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: request.capturePressureProfile,

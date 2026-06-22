@@ -67,7 +67,6 @@ public extension MirageHostService {
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             allowBestEffortRemap: allowBestEffortRemap,
             audioConfiguration: audioConfiguration,
@@ -98,7 +97,6 @@ public extension MirageHostService {
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         allowRuntimeQualityAdjustment: Bool? = nil,
-        lowLatencyHighResolutionCompressionBoost: Bool = false,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -220,7 +218,6 @@ public extension MirageHostService {
             maxPacketSize: mediaMaxPacketSize,
             mediaSecurityContext: nil,
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
-            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
@@ -244,8 +241,7 @@ public extension MirageHostService {
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             disableResolutionCap: disableResolutionCap,
-            allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost
+            allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment
         )
         // Reserve stream/window ownership before the first await after binding resolution.
         // This closes a startup race where concurrent starts could otherwise bind the same
@@ -446,8 +442,7 @@ public extension MirageHostService {
         latencyMode: MirageStreamLatencyMode,
         hostBufferingPolicy: MirageHostBufferingPolicy,
         disableResolutionCap: Bool,
-        allowRuntimeQualityAdjustment: Bool?,
-        lowLatencyHighResolutionCompressionBoost: Bool
+        allowRuntimeQualityAdjustment: Bool?
     ) {
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
@@ -456,9 +451,6 @@ public extension MirageHostService {
         MirageLogger.host("Host buffering policy for stream \(streamID): \(hostBufferingPolicy.rawValue)")
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
-        }
-        if !lowLatencyHighResolutionCompressionBoost {
-            MirageLogger.host("Low-latency high-res compression boost disabled for stream \(streamID)")
         }
     }
 

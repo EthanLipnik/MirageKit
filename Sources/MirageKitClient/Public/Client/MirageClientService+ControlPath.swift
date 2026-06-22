@@ -274,15 +274,6 @@ extension MirageClientService {
         return .stability
     }
 
-    func effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-        _ enabled: Bool?
-    ) -> Bool? {
-        guard currentMediaPathUsesAwdlRadioPolicy, enabled == true else {
-            return enabled
-        }
-        return false
-    }
-
     func effectiveFrameRateForCurrentMediaPath(_ requestedFrameRate: Int) -> Int {
         guard let mediaPathProfile = effectiveMediaPathProfileForCurrentPath else {
             return max(1, requestedFrameRate)

@@ -88,7 +88,7 @@ package struct StartStreamMessage: Codable {
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
-    /// Client-requested compression boost for highest-resolution lowest-latency streams.
+    /// Legacy compatibility field. Current hosts ignore this value.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
 
     /// Client-requested override to bypass host/client resolution caps.

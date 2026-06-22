@@ -108,7 +108,7 @@ struct HostFrameFreshnessPolicyTests {
             presentationBacklogFrames: 2,
             latestPresentedFrameAgeMs: 150,
             receiverPlayoutDelayTargetMs: 120,
-            receiverAckLagMs: 170,
+            receiverAckLagMs: 245,
             lastReceiverAckTime: 99.8
         )
 

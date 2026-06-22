@@ -424,12 +424,15 @@ extension StreamContext {
             for: keyframeQualityCeiling
         )
         let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
+        let floorProtectedQuality = governorQualityFloor > 0
+            ? max(min(previousQuality, qualityCeiling), qualityFloor)
+            : min(previousQuality, qualityCeiling)
         activeQuality = if decision.state == .observing {
             if decision.reason == .healthy {
                 if allowsHealthyQualityRaise {
                     max(min(previousQuality, qualityCeiling), decisionQuality)
                 } else {
-                    min(previousQuality, qualityCeiling)
+                    floorProtectedQuality
                 }
             } else if decision.reason == .motionOnset {
                 decisionQuality
@@ -453,7 +456,9 @@ extension StreamContext {
         decision: HostFrameBudgetDecision,
         now: CFAbsoluteTime
     ) {
-        guard decision.state == .observing, decision.reason == .healthy else { return }
+        let admitsHealthyRefresh = decision.state == .observing && decision.reason == .healthy
+        let admitsReadabilityRefresh = readabilityFloorRecoveryState.isProtecting
+        guard admitsHealthyRefresh || admitsReadabilityRefresh else { return }
         let policy = activeFrameFreshnessPolicy
         guard sourceIsStill(now: now, policy: policy),
               !inputIsActive(now: now, policy: policy) else {

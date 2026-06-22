@@ -40,7 +40,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         case observe
         case playout
         case pacing
-        case frameRate
         case resolution
         case quality
         case recovery
@@ -229,6 +228,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     package static let maximumReceiverHardResetDebtMs = 240.0
     package static let decodeQueueWindowMs = 250.0
     package static let pacingHoldSeconds = 2.0
+    package static let awdlRadioFrameRate = 20
 
     private static let stressSamplesRequired = 2
     private static let stableSamplesForSteady = 3
@@ -263,7 +263,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         mediaPathProfile: MirageMediaPathProfile
     ) -> Int {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return max(1, requestedFrameRate) }
-        return min(max(1, requestedFrameRate), 60)
+        return awdlRadioFrameRate
     }
 
     package static func continuityWindowMs(
@@ -541,9 +541,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             signal.targetFrameRate
         )
         let targetFrameRate = interactiveDisplayTargetFrameRate(
-            state: state,
-            trigger: trigger,
-            currentFrameRate: signal.currentFrameRate,
             requestedFrameRate: requestedFrameRate,
             mediaPathProfile: signal.mediaPathProfile
         )
@@ -579,8 +576,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             selectedLever: selectedLever(
                 state: state,
                 trigger: trigger,
-                targetFrameRate: targetFrameRate,
-                requestedFrameRate: requestedFrameRate,
                 resolutionScale: clampedResolutionScale,
                 playoutDelayMs: playoutDelayMs,
                 qualityReductionAllowed: qualityReductionAllowed,
@@ -592,8 +587,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     private static func selectedLever(
         state: State,
         trigger: Trigger,
-        targetFrameRate: Int,
-        requestedFrameRate: Int,
         resolutionScale: Double,
         playoutDelayMs: Double,
         qualityReductionAllowed: Bool,
@@ -613,9 +606,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         if resolutionScale < 1.0 {
             return .resolution
         }
-        if targetFrameRate < min(max(1, requestedFrameRate), 60) {
-            return .frameRate
-        }
         if playoutDelayMs > basePlayoutDelayMs {
             return .playout
         }
@@ -626,42 +616,11 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     }
 
     private static func interactiveDisplayTargetFrameRate(
-        state: State,
-        trigger: Trigger,
-        currentFrameRate: Int,
         requestedFrameRate: Int,
         mediaPathProfile: MirageMediaPathProfile
     ) -> Int {
         guard mediaPathProfile.usesAwdlRadioPolicy else { return max(1, requestedFrameRate) }
-        let ceiling = min(max(1, requestedFrameRate), 60)
-        switch state {
-        case .failed:
-            return min(30, ceiling)
-        case .demoted:
-            if trigger == .stable {
-                return min(max(1, currentFrameRate), ceiling)
-            }
-            return min(max(30, currentFrameRate > 45 ? 45 : 30), ceiling)
-        case .recovering, .awaitingFirstFrame:
-            return min(45, ceiling)
-        case .stressed:
-            switch trigger {
-            case .decodePressure,
-                 .presentationBacklog,
-                 .presentationUnderflow,
-                 .pFrameLatency,
-                 .reassemblyBacklog:
-                return min(max(30, currentFrameRate > 45 ? 45 : 30), ceiling)
-            case .loss,
-                 .jitter:
-                return min(max(30, currentFrameRate > 45 ? 45 : 30), ceiling)
-            case .presentationFillDeficit,
-                 .startup, .stable, .recovery, .demote, .nonAwdl:
-                return ceiling
-            }
-        case .starting, .steady:
-            return ceiling
-        }
+        return awdlRadioFrameRate
     }
 
     private static func trigger(for signal: Signal) -> Trigger {

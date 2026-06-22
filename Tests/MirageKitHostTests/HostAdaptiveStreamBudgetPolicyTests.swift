@@ -1199,23 +1199,23 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.configureRunningForRealtimeBudgetTest()
         await context.updateCaptureSizesIfNeeded(outputSize)
         await context.applyDerivedQuality(for: outputSize, logLabel: nil)
-        await context.setEncodeBacklogForCatchUpTest(70)
+        await context.setEncodeBacklogForCatchUpTest(90)
 
         await context.applyEncoderThroughputBudgetIfNeeded(
-            averageEncodeMs: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 30,
+            averageEncodeMs: 70,
+            captureFPS: 20,
+            encodeAttemptFPS: 20,
+            encodedFPS: 10,
             at: 10
         )
 
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
     }
 
-    @Test("AWDL encoder throughput preserves FPS and resolution while allowing quality recovery")
-    func awdlEncoderThroughputPreservesFPSAndResolutionWhileAllowingQualityRecovery() async {
+    @Test("AWDL encoder throughput keeps fixed FPS and resolution while allowing quality recovery")
+    func awdlEncoderThroughputKeepsFixedFPSAndResolutionWhileAllowingQualityRecovery() async {
         let context = makeContext(
             bitrate: 32_000_000,
             transportPathKind: .awdl,
@@ -1229,52 +1229,52 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.setEncodeBacklogForCatchUpTest(1_200)
 
         await context.applyEncoderThroughputBudgetIfNeeded(
-            averageEncodeMs: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 30,
+            averageEncodeMs: 70,
+            captureFPS: 20,
+            encodeAttemptFPS: 20,
+            encodedFPS: 10,
             at: 10
         )
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
 
         await context.applyEncoderThroughputBudgetIfNeeded(
-            averageEncodeMs: 60,
-            captureFPS: 45,
-            encodeAttemptFPS: 45,
-            encodedFPS: 24,
+            averageEncodeMs: 70,
+            captureFPS: 20,
+            encodeAttemptFPS: 20,
+            encodedFPS: 12,
             at: 11.2
         )
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 70,
-            captureFPS: 30,
-            encodeAttemptFPS: 30,
-            encodedFPS: 18,
+            captureFPS: 20,
+            encodeAttemptFPS: 20,
+            encodedFPS: 12,
             at: 12.4
         )
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
 
         await context.applyEncoderThroughputBudgetIfNeeded(
             averageEncodeMs: 70,
-            captureFPS: 30,
-            encodeAttemptFPS: 30,
-            encodedFPS: 15,
+            captureFPS: 20,
+            encodeAttemptFPS: 20,
+            encodedFPS: 10,
             at: 16.6
         )
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
     }
 
-    @Test("AWDL encoded P-frame oversize preserves FPS and resolution while allowing quality")
-    func awdlEncodedPFrameOversizePreservesFPSAndResolutionWhileAllowingQuality() async {
+    @Test("AWDL encoded P-frame oversize keeps fixed FPS and resolution while allowing quality")
+    func awdlEncodedPFrameOversizeKeepsFixedFPSAndResolutionWhileAllowingQuality() async {
         let context = makeContext(
             bitrate: 60_000_000,
             transportPathKind: .awdl,
@@ -1293,7 +1293,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         #expect(decision.admission == .send)
         #expect(decision.budgetDecision == nil)
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
     }
@@ -1333,8 +1333,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision.byteRatio > 1.0)
     }
 
-    @Test("AWDL receiver P-frame timing preserves FPS and resolution while allowing quality")
-    func awdlReceiverPFrameTimingPreservesFPSAndResolutionWhileAllowingQuality() async {
+    @Test("AWDL receiver P-frame timing keeps fixed FPS and resolution while allowing quality")
+    func awdlReceiverPFrameTimingKeepsFixedFPSAndResolutionWhileAllowingQuality() async {
         let context = makeContext(
             bitrate: 32_000_000,
             transportPathKind: .awdl,
@@ -1358,7 +1358,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(abs((await context.streamScale) - 1.0) < 0.001)
         #expect(await context.currentAwdlQualityReductionAllowed())
     }
@@ -1441,12 +1441,12 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.applyDerivedQuality(for: outputSize, logLabel: nil)
 
         let settings = await context.encoderSettings
-        #expect(settings.bitrate == 32_000_000)
-        #expect(context.currentTargetBitrateBps == 32_000_000)
-        #expect(await context.startupBitrate == 32_000_000)
+        #expect(settings.bitrate == 24_000_000)
+        #expect(context.currentTargetBitrateBps == 24_000_000)
+        #expect(await context.startupBitrate == 24_000_000)
         #expect(await context.bitrateAdaptationCeiling == 32_000_000)
-        #expect(await context.realtimeRuntimeBitrateCeilingBps == 32_000_000)
-        #expect(await context.realtimeSenderPacingBitrateBps == 32_000_000)
+        #expect(await context.realtimeRuntimeBitrateCeilingBps == 24_000_000)
+        #expect(await context.realtimeSenderPacingBitrateBps == 24_000_000)
     }
 
     @Test("AWDL realtime sender pacing can drop below readability floor")
@@ -1619,7 +1619,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.mediaPathProfile == .awdlRadio)
         #expect(await context.latencyMode == .balanced)
         #expect(await context.hostBufferingPolicy == .stability)
-        #expect(context.currentFrameRate == 60)
+        #expect(context.currentFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
     }
 
     @Test("Stream context trusts resolved AWDL proximity wired profile")

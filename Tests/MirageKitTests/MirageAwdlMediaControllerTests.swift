@@ -27,7 +27,7 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .starting)
         #expect(decision.trigger == .stable)
-        #expect(decision.targetFrameRate == 60)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.hostPacingBudgetBps == 32_000_000)
         #expect(decision.keyframePacingBudgetBps == 48_000_000)
         #expect(decision.pFramePacketBurst == 2)
@@ -43,6 +43,18 @@ struct MirageAwdlMediaControllerTests {
                 requestedLatencyMode: .smoothest,
                 mediaPathProfile: .awdlRadio
             ) == .balanced
+        )
+        #expect(
+            MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+                requestedFrameRate: 120,
+                mediaPathProfile: .awdlRadio
+            ) == MirageAwdlMediaController.awdlRadioFrameRate
+        )
+        #expect(
+            MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+                requestedFrameRate: 120,
+                mediaPathProfile: .localWiFi
+            ) == 120
         )
     }
 
@@ -63,6 +75,34 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.trigger == .stable)
     }
 
+    @Test("Only AWDL radio profile uses fixed frame rate")
+    func onlyAwdlRadioProfileUsesFixedFrameRate() {
+        let requestedFrameRate = 120
+
+        #expect(
+            MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+                requestedFrameRate: requestedFrameRate,
+                mediaPathProfile: .awdlRadio
+            ) == MirageAwdlMediaController.awdlRadioFrameRate
+        )
+
+        for profile in [
+            MirageMediaPathProfile.localWiFi,
+            .wired,
+            .proximityWiredLike,
+            .vpnOrOverlay,
+            .other,
+            .unknown,
+        ] {
+            #expect(
+                MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+                    requestedFrameRate: requestedFrameRate,
+                    mediaPathProfile: profile
+                ) == requestedFrameRate
+            )
+        }
+    }
+
     @Test("AWDL jitter grows playout")
     func awdlJitterGrowsPlayout() {
         var controller = MirageAwdlMediaController()
@@ -78,9 +118,9 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .stressed)
         #expect(decision.trigger == .jitter)
-        #expect(decision.targetFrameRate == 45)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.playoutDelayMs == 64)
-        #expect(decision.selectedLever == .frameRate)
+        #expect(decision.selectedLever == .playout)
     }
 
     @Test("AWDL completed receive gaps alone do not become radio jitter")
@@ -98,7 +138,7 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .steady)
         #expect(decision.trigger == .stable)
-        #expect(decision.targetFrameRate == 60)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.playoutDelayMs == MirageAwdlMediaController.basePlayoutDelayMs)
         #expect(decision.selectedLever == .observe)
     }
@@ -119,7 +159,7 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.state == .stressed)
         #expect(decision.trigger == .jitter)
         #expect(decision.playoutDelayMs == MirageAwdlMediaController.stableMaximumPlayoutDelayMs)
-        #expect(decision.selectedLever == .frameRate)
+        #expect(decision.selectedLever == .playout)
     }
 
     @Test("AWDL recovery playout can briefly use maximum window")
@@ -156,10 +196,10 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(cadenceDecision.state == .demoted)
         #expect(cadenceDecision.trigger == .jitter)
-        #expect(cadenceDecision.targetFrameRate == 45)
+        #expect(cadenceDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(cadenceDecision.resolutionScale == 1.0)
         #expect(!cadenceDecision.qualityReductionAllowed)
-        #expect(cadenceDecision.selectedLever == .frameRate)
+        #expect(cadenceDecision.selectedLever == .playout)
 
         let fortyFiveFPSPressure = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
@@ -169,10 +209,10 @@ struct MirageAwdlMediaControllerTests {
         )
         let secondCadenceDecision = controller.update(with: fortyFiveFPSPressure)
 
-        #expect(secondCadenceDecision.targetFrameRate == 30)
+        #expect(secondCadenceDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(secondCadenceDecision.resolutionScale == 1.0)
         #expect(!secondCadenceDecision.qualityReductionAllowed)
-        #expect(secondCadenceDecision.selectedLever == .frameRate)
+        #expect(secondCadenceDecision.selectedLever == .playout)
 
         let thirtyFPSPressure = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
@@ -182,7 +222,7 @@ struct MirageAwdlMediaControllerTests {
         )
         let resolutionDecision = controller.update(with: thirtyFPSPressure)
 
-        #expect(resolutionDecision.targetFrameRate == 30)
+        #expect(resolutionDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(resolutionDecision.resolutionScale == 0.875)
         #expect(!resolutionDecision.qualityReductionAllowed)
         #expect(resolutionDecision.selectedLever == .resolution)
@@ -190,7 +230,7 @@ struct MirageAwdlMediaControllerTests {
         _ = controller.update(with: thirtyFPSPressure)
         let survivalDecision = controller.update(with: thirtyFPSPressure)
 
-        #expect(survivalDecision.targetFrameRate == 30)
+        #expect(survivalDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(survivalDecision.resolutionScale == 0.75)
         #expect(survivalDecision.qualityReductionAllowed)
         #expect(survivalDecision.selectedLever == .quality)
@@ -226,8 +266,8 @@ struct MirageAwdlMediaControllerTests {
         #expect(decayed.playoutDelayMs == MirageAwdlMediaController.basePlayoutDelayMs)
     }
 
-    @Test("AWDL stable samples restore to explicit frame-rate ceiling after sustained stability")
-    func awdlStableSamplesRestoreToExplicitFrameRateCeilingAfterSustainedStability() {
+    @Test("AWDL stable samples keep fixed frame rate after sustained stability")
+    func awdlStableSamplesKeepFixedFrameRateAfterSustainedStability() {
         var controller = MirageAwdlMediaController()
         let pressureSignal = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
@@ -241,25 +281,25 @@ struct MirageAwdlMediaControllerTests {
         _ = controller.update(with: pressureSignal)
         _ = controller.update(with: pressureSignal)
         let demoted = controller.update(with: pressureSignal)
-        #expect(demoted.targetFrameRate == 45)
+        #expect(demoted.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         let stableDemotedFeedback = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
-            currentFrameRate: 45,
-            targetFrameRate: 45,
+            currentFrameRate: MirageAwdlMediaController.awdlRadioFrameRate,
+            targetFrameRate: MirageAwdlMediaController.awdlRadioFrameRate,
             requestedFrameRateCeiling: 60
         )
         let restoring = controller.update(with: stableDemotedFeedback)
 
         #expect(restoring.trigger == .stable)
         #expect(restoring.state == .demoted)
-        #expect(restoring.targetFrameRate == 45)
+        #expect(restoring.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         _ = controller.update(with: stableDemotedFeedback)
         let restored = controller.update(with: stableDemotedFeedback)
 
         #expect(restored.state == .steady)
-        #expect(restored.targetFrameRate == 60)
+        #expect(restored.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(restored.resolutionScale == 1.0)
     }
 
@@ -297,7 +337,7 @@ struct MirageAwdlMediaControllerTests {
         let stableDecision = stableController.update(with: smoothedSignal)
 
         #expect(stableDecision.trigger == .stable)
-        #expect(stableDecision.targetFrameRate == 60)
+        #expect(stableDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         var stressedController = MirageAwdlMediaController()
         let lateSignal = MirageAwdlMediaController.Signal(
@@ -312,7 +352,7 @@ struct MirageAwdlMediaControllerTests {
         let stressedDecision = stressedController.update(with: lateSignal)
 
         #expect(stressedDecision.trigger == .pFrameLatency)
-        #expect(stressedDecision.targetFrameRate == 45)
+        #expect(stressedDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
     }
 
     @Test("Healthy AWDL presentation queue is not treated as backlog")
@@ -353,7 +393,7 @@ struct MirageAwdlMediaControllerTests {
         #expect(backlogSignal.presentationBacklogFrames == 4)
         #expect(backlogDecision.state == .stressed)
         #expect(backlogDecision.trigger == .presentationBacklog)
-        #expect(backlogDecision.targetFrameRate == 45)
+        #expect(backlogDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         let underfillSignal = MirageAwdlMediaController.Signal(
             feedback: receiverFeedback(presentationUnderfillFrames: 2),
@@ -365,7 +405,7 @@ struct MirageAwdlMediaControllerTests {
         let underfillDecision = underfillController.update(with: underfillSignal)
         #expect(underfillSignal.presentationBacklogFrames == 0)
         #expect(underfillDecision.trigger == .stable)
-        #expect(underfillDecision.targetFrameRate == 60)
+        #expect(underfillDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         let fillDeficitSignal = MirageAwdlMediaController.Signal(
             feedback: receiverFeedback(presentationFillDeficitFrames: 3),
@@ -379,7 +419,7 @@ struct MirageAwdlMediaControllerTests {
         #expect(fillDeficitDecision.state == .stressed)
         #expect(fillDeficitDecision.trigger == .presentationFillDeficit)
         #expect(fillDeficitDecision.selectedLever == .playout)
-        #expect(fillDeficitDecision.targetFrameRate == 60)
+        #expect(fillDeficitDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         let visibleUnderflowSignal = MirageAwdlMediaController.Signal(
             feedback: receiverFeedback(
@@ -394,7 +434,7 @@ struct MirageAwdlMediaControllerTests {
         let visibleUnderflowDecision = visibleUnderflowController.update(with: visibleUnderflowSignal)
         #expect(visibleUnderflowDecision.state == .stressed)
         #expect(visibleUnderflowDecision.trigger == .presentationUnderflow)
-        #expect(visibleUnderflowDecision.targetFrameRate == 45)
+        #expect(visibleUnderflowDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         let notReadyUnderflowSignal = MirageAwdlMediaController.Signal(
             feedback: receiverFeedback(pendingFrameNotReadyDisplayTickCount: 3),
@@ -406,7 +446,7 @@ struct MirageAwdlMediaControllerTests {
         let notReadyUnderflowDecision = notReadyUnderflowController.update(with: notReadyUnderflowSignal)
         #expect(notReadyUnderflowDecision.state == .stressed)
         #expect(notReadyUnderflowDecision.trigger == .presentationUnderflow)
-        #expect(notReadyUnderflowDecision.targetFrameRate == 45)
+        #expect(notReadyUnderflowDecision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
     }
 
     @Test("AWDL forward-gap timeout enters recovery without admission throttling")
@@ -448,7 +488,7 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .awaitingFirstFrame)
         #expect(decision.trigger == .startup)
-        #expect(decision.targetFrameRate == 45)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.pFrameFECBlockSize == 4)
         #expect(!decision.qualityReductionAllowed)
     }
@@ -467,13 +507,13 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .failed)
         #expect(decision.trigger == .recovery)
-        #expect(decision.targetFrameRate == 30)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.pFrameFECBlockSize == 4)
         #expect(!decision.qualityReductionAllowed)
     }
 
-    @Test("Sustained AWDL pressure demotes cadence and resolution before quality")
-    func sustainedAwdlPressureDemotesCadenceAndResolutionBeforeQuality() {
+    @Test("Sustained AWDL pressure demotes policy before quality")
+    func sustainedAwdlPressureDemotesPolicyBeforeQuality() {
         var controller = MirageAwdlMediaController()
         let signal = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
@@ -490,10 +530,10 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .demoted)
         #expect(decision.trigger == .pFrameLatency)
-        #expect(decision.targetFrameRate == 45)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.resolutionScale == 1.0)
         #expect(!decision.qualityReductionAllowed)
-        #expect(decision.selectedLever == .frameRate)
+        #expect(decision.selectedLever == .pacing)
     }
 
     @Test("AWDL survival requires sustained pressure after demotion")
@@ -531,7 +571,7 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .demoted)
         #expect(decision.trigger == .pFrameLatency)
-        #expect(decision.targetFrameRate == 30)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
         #expect(decision.resolutionScale == 0.75)
         #expect(decision.qualityReductionAllowed)
         #expect(decision.selectedLever == .quality)
@@ -555,7 +595,7 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .stressed)
         #expect(decision.trigger == .decodePressure)
-        #expect(decision.targetFrameRate == 45)
+        #expect(decision.targetFrameRate == MirageAwdlMediaController.awdlRadioFrameRate)
 
         let unsaturatedSignal = MirageAwdlMediaController.Signal(
             feedback: receiverFeedback(

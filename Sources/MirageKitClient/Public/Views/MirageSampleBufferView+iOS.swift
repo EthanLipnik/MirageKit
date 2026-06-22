@@ -150,7 +150,7 @@ public class MirageSampleBufferView: UIView {
             presentationPipeline.requestImmediateSubmission()
         } else {
             stopPresentationDisplayLink()
-            suspendRendering()
+            suspendRendering(clearCurrentFrame: false)
         }
     }
 

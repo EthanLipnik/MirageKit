@@ -84,6 +84,44 @@ package struct MirageSessionBootstrapRequest: Codable {
         self.adaptiveFeedbackClassesSupported = adaptiveFeedbackClassesSupported
         self.adaptiveLegacyFallbackMode = adaptiveLegacyFallbackMode
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case clientRequiresMediaEncryption
+        case requestTakeoverIfBusy
+        case connectionAttemptID
+        case adaptiveGovernorRevision
+        case hostOwnedRuntimeSupport
+        case adaptiveFeedbackClassesSupported
+        case adaptiveLegacyFallbackMode
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
+        clientRequiresMediaEncryption = try container.decode(Bool.self, forKey: .clientRequiresMediaEncryption)
+        requestTakeoverIfBusy = try container.decodeIfPresent(Bool.self, forKey: .requestTakeoverIfBusy) ?? false
+        connectionAttemptID = try container.decodeIfPresent(UUID.self, forKey: .connectionAttemptID)
+        adaptiveGovernorRevision = try container.decodeIfPresent(Int.self, forKey: .adaptiveGovernorRevision)
+        hostOwnedRuntimeSupport = try container.decodeIfPresent(Bool.self, forKey: .hostOwnedRuntimeSupport)
+        adaptiveFeedbackClassesSupported = try container.decodeIfPresent(
+            [String].self,
+            forKey: .adaptiveFeedbackClassesSupported
+        )
+        adaptiveLegacyFallbackMode = try container.decodeIfPresent(String.self, forKey: .adaptiveLegacyFallbackMode)
+    }
+
+    package func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(clientRequiresMediaEncryption, forKey: .clientRequiresMediaEncryption)
+        try container.encode(requestTakeoverIfBusy, forKey: .requestTakeoverIfBusy)
+        try container.encodeIfPresent(connectionAttemptID, forKey: .connectionAttemptID)
+        try container.encodeIfPresent(adaptiveGovernorRevision, forKey: .adaptiveGovernorRevision)
+        try container.encodeIfPresent(hostOwnedRuntimeSupport, forKey: .hostOwnedRuntimeSupport)
+        try container.encodeIfPresent(adaptiveFeedbackClassesSupported, forKey: .adaptiveFeedbackClassesSupported)
+        try container.encodeIfPresent(adaptiveLegacyFallbackMode, forKey: .adaptiveLegacyFallbackMode)
+    }
 }
 
 /// Host-to-client response for session bootstrap.
@@ -230,7 +268,7 @@ package enum ClientBackgroundLeaseMode: String, Codable, Equatable {
     /// Retain the session only until the supplied duration expires.
     case timed
 
-    /// Retain the paused stream session until the client foregrounds or the session ends.
+    /// Retain the paused stream session until the client foregrounds, the lease expires, or the session ends.
     case suspendedUntilForeground
 }
 

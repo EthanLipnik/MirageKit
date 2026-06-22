@@ -76,7 +76,7 @@ package struct StartDesktopStreamMessage: Codable {
     /// Client-requested quality reduction when host encoding falls behind.
     package var allowEncoderCatchUpQualityAdjustment: Bool?
 
-    /// Client-requested compression boost for highest-resolution lowest-latency streams.
+    /// Legacy compatibility field. Current hosts ignore this value.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
 
     /// Client-requested override to bypass host/client resolution caps.

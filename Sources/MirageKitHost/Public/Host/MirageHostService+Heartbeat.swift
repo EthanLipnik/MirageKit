@@ -64,10 +64,13 @@ func hostHasActiveBackgroundLease(
     hasActiveStreams: Bool,
     now: Date
 ) -> Bool {
-    if hasSuspendedLease, hasActiveStreams {
-        return true
+    guard let timedExpiration, timedExpiration > now else {
+        return false
     }
-    return timedExpiration.map { $0 > now } ?? false
+    if hasSuspendedLease {
+        return hasActiveStreams
+    }
+    return true
 }
 
 @MainActor
@@ -118,23 +121,18 @@ extension MirageHostService {
         _ lease: ClientBackgroundLeaseMessage,
         for clientContext: ClientContext
     ) {
-        if lease.mode == .suspendedUntilForeground {
-            let client = clientContext.client
-            backgroundLeaseExpirationsByClientID.removeValue(forKey: client.id)
-            backgroundLeaseTasksByClientID[client.id]?.cancel()
-            backgroundLeaseTasksByClientID.removeValue(forKey: client.id)
-            suspendedBackgroundLeaseIDsByClientID[client.id] = lease.leaseID
-            MirageLogger.host(
-                "Background suspended-stream lease armed for \(client.name) leaseID=\(lease.leaseID.uuidString)"
-            )
-            return
-        }
-
         let duration = Self.clampedBackgroundLeaseDuration(lease.durationSeconds)
         let expiration = Date().addingTimeInterval(duration)
         let client = clientContext.client
         let sessionID = clientContext.sessionID
-        suspendedBackgroundLeaseIDsByClientID.removeValue(forKey: client.id)
+        let isSuspendedLease = lease.mode == .suspendedUntilForeground
+
+        if isSuspendedLease {
+            suspendedBackgroundLeaseIDsByClientID[client.id] = lease.leaseID
+        } else {
+            suspendedBackgroundLeaseIDsByClientID.removeValue(forKey: client.id)
+        }
+
         backgroundLeaseExpirationsByClientID[client.id] = expiration
         backgroundLeaseTasksByClientID[client.id]?.cancel()
         backgroundLeaseTasksByClientID[client.id] = Task { @MainActor [weak self] in
@@ -146,6 +144,10 @@ extension MirageHostService {
 
             guard let self else { return }
             guard self.backgroundLeaseExpirationsByClientID[client.id] == expiration else { return }
+            if isSuspendedLease {
+                guard self.suspendedBackgroundLeaseIDsByClientID[client.id] == lease.leaseID else { return }
+                self.suspendedBackgroundLeaseIDsByClientID.removeValue(forKey: client.id)
+            }
             self.backgroundLeaseExpirationsByClientID.removeValue(forKey: client.id)
             self.backgroundLeaseTasksByClientID.removeValue(forKey: client.id)
 
@@ -154,7 +156,7 @@ extension MirageHostService {
             }
 
             MirageLogger.host(
-                "Background lease expired for \(client.name); freeing host slot"
+                "Background \(isSuspendedLease ? "suspended-stream " : "")lease expired for \(client.name); freeing host slot"
             )
             await self.disconnectClient(
                 client,
@@ -166,7 +168,7 @@ extension MirageHostService {
         }
 
         MirageLogger.host(
-            "Background lease armed for \(client.name) leaseID=\(lease.leaseID.uuidString) duration=\(duration)s"
+            "Background \(isSuspendedLease ? "suspended-stream " : "")lease armed for \(client.name) leaseID=\(lease.leaseID.uuidString) duration=\(duration)s"
         )
     }
 

@@ -214,7 +214,6 @@ extension MirageHostService {
                     mediaMaxPacketSize: replacementMediaMaxPacketSize,
                     allowRuntimeQualityAdjustment: restartSnapshot.runtimeQualityAdjustmentEnabled,
                     allowEncoderCatchUpQualityAdjustment: restartSnapshot.encoderCatchUpQualityAdjustmentEnabled,
-                    lowLatencyHighResolutionCompressionBoost: restartSnapshot.lowLatencyHighResolutionCompressionBoostEnabled,
                     disableResolutionCap: restartSnapshot.disableResolutionCap,
                     capturePressureProfile: restartSnapshot.capturePressureProfile,
                     latencyMode: restartSnapshot.requestedLatencyMode,

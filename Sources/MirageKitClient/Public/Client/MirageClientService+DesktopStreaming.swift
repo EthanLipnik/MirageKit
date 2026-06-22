@@ -155,10 +155,6 @@ public extension MirageClientService {
         }
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
         request.allowEncoderCatchUpQualityAdjustment = encoderRequest.allowEncoderCatchUpQualityAdjustment
-        request.lowLatencyHighResolutionCompressionBoost =
-            effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                encoderRequest.lowLatencyHighResolutionCompressionBoost
-            )
         request.disableResolutionCap = encoderRequest.disableResolutionCap
         request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth
@@ -540,11 +536,6 @@ extension MirageClientService {
             latencyMode = effectiveLatencyModeForCurrentMediaPath(latencyMode)
             hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(hostBufferingPolicy)
         }
-        let lowLatencyHighResolutionCompressionBoost =
-            effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                previousRequest.lowLatencyHighResolutionCompressionBoost
-            )
-
         var request = StartDesktopStreamMessage(
             startupRequestID: UUID(),
             scaleFactor: geometry.displayScaleFactor,
@@ -562,7 +553,6 @@ extension MirageClientService {
             hostBufferingPolicy: hostBufferingPolicy,
             allowRuntimeQualityAdjustment: previousRequest.allowRuntimeQualityAdjustment,
             allowEncoderCatchUpQualityAdjustment: previousRequest.allowEncoderCatchUpQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCapRequestValue,
             streamScale: geometry.resolvedStreamScale,
             audioConfiguration: previousRequest.audioConfiguration,

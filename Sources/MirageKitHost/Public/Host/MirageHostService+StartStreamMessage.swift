@@ -61,7 +61,6 @@ extension MirageHostService {
             let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
             let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
-            let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? false
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
             let audioConfiguration = request.audioConfiguration ?? .default
@@ -92,7 +91,6 @@ extension MirageHostService {
                 latencyMode: latencyMode,
                 hostBufferingPolicy: hostBufferingPolicy,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
-                lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,

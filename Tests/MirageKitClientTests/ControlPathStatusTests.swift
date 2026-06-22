@@ -69,10 +69,7 @@ struct ControlPathStatusTests {
         #expect(service.currentMediaPathUsesAwdlRadioPolicy)
         #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .balanced)
         #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .stability)
-        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(true) == false)
-        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(false) == false)
-        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(nil) == nil)
-        #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 60)
+        #expect(service.effectiveFrameRateForCurrentMediaPath(120) == MirageAwdlMediaController.awdlRadioFrameRate)
     }
 
     @MainActor
@@ -86,7 +83,6 @@ struct ControlPathStatusTests {
         #expect(!service.currentMediaPathUsesAwdlRadioPolicy)
         #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .lowestLatency)
         #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .freshestFrame)
-        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(true) == true)
         #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 120)
     }
 
@@ -102,7 +98,6 @@ struct ControlPathStatusTests {
         #expect(!service.currentMediaPathUsesAwdlRadioPolicy)
         #expect(service.effectiveLatencyModeForCurrentMediaPath(.lowestLatency) == .lowestLatency)
         #expect(service.effectiveHostBufferingPolicyForCurrentMediaPath(.freshestFrame) == .freshestFrame)
-        #expect(service.effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(true) == true)
         #expect(service.effectiveFrameRateForCurrentMediaPath(120) == 120)
     }
 

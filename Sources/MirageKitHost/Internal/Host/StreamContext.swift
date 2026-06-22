@@ -427,8 +427,6 @@ actor StreamContext {
     let clientRequestedBitrateAdaptationCeiling: Bool
     /// When true, encoder overload may temporarily lower quality below the manual readability floor.
     var encoderCatchUpQualityAdjustmentEnabled: Bool
-    /// When true, lowest-latency high-resolution streams use stronger compression.
-    let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
     /// Maximum encoded width in pixels for host-computed stream scaling.
@@ -473,7 +471,6 @@ actor StreamContext {
         additionalFrameFlags: FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
         encoderCatchUpQualityAdjustmentEnabled: Bool = true,
-        lowLatencyHighResolutionCompressionBoostEnabled: Bool = false,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
@@ -545,8 +542,6 @@ actor StreamContext {
         self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         clientRequestedBitrateAdaptationCeiling = bitrateAdaptationCeiling != nil
         self.encoderCatchUpQualityAdjustmentEnabled = encoderCatchUpQualityAdjustmentEnabled
-        self.lowLatencyHighResolutionCompressionBoostEnabled =
-            lowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight

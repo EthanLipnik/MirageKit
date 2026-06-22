@@ -57,10 +57,6 @@ public extension MirageClientService {
             let requestedLatency = request.latencyMode
             request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
             request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)
-            request.lowLatencyHighResolutionCompressionBoost =
-                effectiveLowLatencyHighResolutionCompressionBoostForCurrentMediaPath(
-                    request.lowLatencyHighResolutionCompressionBoost
-                )
             if requestedLatency != request.latencyMode {
                 MirageLogger.client(
                     "AWDL media policy overriding requested custom latency " +
