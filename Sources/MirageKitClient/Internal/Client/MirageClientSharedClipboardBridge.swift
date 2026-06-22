@@ -242,20 +242,20 @@ final class MirageClientSharedClipboardBridge {
     private var clipboardState = MirageSharedClipboardState()
     private var isActive = false
     #if canImport(UIKit)
-    private var pasteboardObserver: NSObjectProtocol?
+    private nonisolated(unsafe) var pasteboardObserver: NSObjectProtocol?
     #endif
 
     init() {}
 
-    deinit {
-        #if canImport(UIKit)
-        MainActor.assumeIsolated {
-            if let pasteboardObserver {
-                NotificationCenter.default.removeObserver(pasteboardObserver)
-            }
+    #if canImport(UIKit)
+    /// Removes the pasteboard observer without requiring the main actor so the bridge can be
+    /// released safely on any executor; `NotificationCenter.removeObserver(_:)` is thread-safe.
+    nonisolated deinit {
+        if let pasteboardObserver {
+            NotificationCenter.default.removeObserver(pasteboardObserver)
         }
-        #endif
     }
+    #endif
 
     func setActive(_ isActive: Bool) async {
         let wasActive = self.isActive

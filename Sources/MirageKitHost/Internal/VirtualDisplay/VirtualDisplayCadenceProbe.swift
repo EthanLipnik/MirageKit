@@ -18,7 +18,7 @@ final class VirtualDisplayCadenceProbe: NSObject, @unchecked Sendable {
     private let displayID: CGDirectDisplayID
     private let stateLock = NSLock()
 
-    private var displayLink: CADisplayLink?
+    private nonisolated(unsafe) var displayLink: CADisplayLink?
     private var isRunning = false
     private var measurementActive = false
     private var callbackCount: UInt64 = 0
@@ -39,9 +39,17 @@ final class VirtualDisplayCadenceProbe: NSObject, @unchecked Sendable {
         displayLink = screen.displayLink(target: self, selector: #selector(handleDisplayTick(_:)))
     }
 
-    /// Stops the display link before release.
-    isolated deinit {
-        stop()
+    /// Stops the display link before release. Tears down without requiring the main actor so the
+    /// probe can be released safely on any executor (including Swift's cooperative pool during
+    /// async stream recovery); the teardown only touches lock-guarded state and the thread-safe
+    /// `CADisplayLink.invalidate()`.
+    nonisolated deinit {
+        stateLock.lock()
+        let link = displayLink
+        displayLink = nil
+        isRunning = false
+        stateLock.unlock()
+        link?.invalidate()
     }
 
     /// Starts the display link used for measurement callbacks.

@@ -62,8 +62,15 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         self.displayLayer = displayLayer
     }
 
-    isolated deinit {
-        unregisterFrameListener(for: listenerStreamID)
+    /// Unregisters render-store callbacks without requiring the main actor so the presenter can be
+    /// released safely on any executor; `MirageRenderStreamStore` is internally synchronized.
+    nonisolated deinit {
+        guard let listenerStreamID else { return }
+        MirageRenderStreamStore.shared.unregisterFrameListener(for: listenerStreamID, owner: self)
+        MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(
+            for: listenerStreamID,
+            owner: self
+        )
     }
 
     var hasPendingFrameForCurrentPresenter: Bool {

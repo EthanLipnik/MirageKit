@@ -16,13 +16,23 @@ import QuartzCore
 @MainActor
 final class MirageMacDisplayClock: NSObject, @unchecked Sendable {
     private let lock = NSLock()
-    private var displayLink: CADisplayLink?
+    private nonisolated(unsafe) var displayLink: CADisplayLink?
     private var targetFPS: Int = 60
     private var lastEmittedTickTime: CFTimeInterval = 0
     private var tickHandler: (@Sendable (CFTimeInterval) -> Void)?
 
-    isolated deinit {
-        stop()
+    /// Tears down the display link without requiring the main actor so the clock can be released
+    /// safely on any executor; the teardown only touches lock-guarded state and the thread-safe
+    /// `CADisplayLink.invalidate()`.
+    nonisolated deinit {
+        let link: CADisplayLink?
+        lock.lock()
+        link = displayLink
+        displayLink = nil
+        tickHandler = nil
+        lastEmittedTickTime = 0
+        lock.unlock()
+        link?.invalidate()
     }
 
     func start(
