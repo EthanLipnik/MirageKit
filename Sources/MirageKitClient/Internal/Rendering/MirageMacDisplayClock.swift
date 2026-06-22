@@ -7,12 +7,12 @@
 //  CVDisplayLink adapter for macOS sample-buffer presentation pacing.
 //
 
+#if os(macOS)
 import AppKit
 import Foundation
 import MirageKit
 import QuartzCore
 
-#if os(macOS)
 @MainActor
 final class MirageMacDisplayClock: NSObject, @unchecked Sendable {
     private let lock = NSLock()
