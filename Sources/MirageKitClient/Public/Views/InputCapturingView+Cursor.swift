@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -68,7 +76,7 @@ extension InputCapturingView {
     /// - Parameters:
     ///   - type: The cursor type from the host
     ///   - isVisible: Whether the cursor is within the host window bounds
-    public func updateCursor(type: MirageCursorType, isVisible: Bool, force: Bool = false) {
+    public func updateCursor(type: MirageWire.MirageCursorType, isVisible: Bool, force: Bool = false) {
         let effectiveIsVisible = effectiveCursorVisibility(hostVisibility: isVisible)
         // Only update if something changed
         let typeChanged = type != currentCursorType

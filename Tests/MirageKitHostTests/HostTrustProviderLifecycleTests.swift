@@ -6,6 +6,9 @@
 //
 
 @testable import MirageKitHost
+import Loom
+import MirageIdentity
+import Foundation
 import Testing
 
 #if os(macOS)
@@ -53,6 +56,49 @@ struct HostTrustProviderLifecycleTests {
         #expect(evaluation?.decision == .trusted)
         #expect(provider.evaluatedPeers == [peer])
     }
+
+    @Test("Mirage trust provider bridges into Loom handshake wiring")
+    func mirageTrustProviderBridgesIntoLoomHandshakeWiring() async throws {
+        let host = MirageHostService()
+        let provider = RecordingMirageTrustProvider(
+            evaluation: MirageTrustEvaluationSnapshot(
+                decision: .unavailable,
+                shouldShowAutoTrustNotice: false,
+                unavailabilityReason: "offline"
+            )
+        )
+        host.mirageTrustProvider = provider
+
+        let deviceID = UUID()
+        let publicKey = Data([0x01, 0x02])
+        let peer = LoomPeerIdentity(
+            deviceID: deviceID,
+            name: "Altair",
+            deviceType: .iPad,
+            iCloudUserID: "icloud-user",
+            identityKeyID: "client-key",
+            identityPublicKey: publicKey,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
+        )
+
+        let evaluation = await host.loomNode.trustProvider?.evaluateTrustOutcome(for: peer)
+        try await host.loomNode.trustProvider?.grantTrust(to: peer)
+        try await host.loomNode.trustProvider?.revokeTrust(for: deviceID)
+
+        #expect(evaluation?.decision == .unavailable("offline"))
+        #expect(evaluation?.shouldShowAutoTrustNotice == false)
+        let evaluatedPeer = try #require(provider.evaluatedPeers.first)
+        #expect(evaluatedPeer.deviceID == deviceID)
+        #expect(evaluatedPeer.displayName == "Altair")
+        #expect(evaluatedPeer.iCloudUserID == "icloud-user")
+        #expect(evaluatedPeer.identityKeyID == "client-key")
+        #expect(evaluatedPeer.identityPublicKey == publicKey)
+        #expect(evaluatedPeer.isIdentityAuthenticated)
+        #expect(evaluatedPeer.endpointDescription == "127.0.0.1")
+        #expect(provider.grantedPeers.map(\.deviceID) == [deviceID])
+        #expect(provider.revokedPeerIDs == [MiragePeerID(deviceID: deviceID)])
+    }
 }
 
 @MainActor
@@ -79,5 +125,35 @@ private final class RecordingTrustProvider: LoomTrustProvider {
     }
 
     func revokeTrust(for _: UUID) async throws {}
+}
+
+@MainActor
+private final class RecordingMirageTrustProvider: MirageTrustProvider {
+    let evaluation: MirageTrustEvaluationSnapshot
+    private(set) var evaluatedPeers: [MirageAuthenticatedPeerIdentity] = []
+    private(set) var grantedPeers: [MirageAuthenticatedPeerIdentity] = []
+    private(set) var revokedPeerIDs: [MiragePeerID] = []
+
+    init(evaluation: MirageTrustEvaluationSnapshot) {
+        self.evaluation = evaluation
+    }
+
+    func evaluateTrust(for peer: MirageAuthenticatedPeerIdentity) async -> MirageTrustDecision {
+        evaluatedPeers.append(peer)
+        return evaluation.decision
+    }
+
+    func evaluateTrustOutcome(for peer: MirageAuthenticatedPeerIdentity) async -> MirageTrustEvaluationSnapshot {
+        evaluatedPeers.append(peer)
+        return evaluation
+    }
+
+    func grantTrust(to peer: MirageAuthenticatedPeerIdentity) async throws {
+        grantedPeers.append(peer)
+    }
+
+    func revokeTrust(for peerID: MiragePeerID) async throws {
+        revokedPeerIDs.append(peerID)
+    }
 }
 #endif

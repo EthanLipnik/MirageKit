@@ -5,46 +5,54 @@
 //  Created by Ethan Lipnik on 4/4/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 public extension MirageHostService {
     /// Sends a display-mode preference change to the connected client.
-    func setRemoteClientStreamOptionsDisplayMode(_ displayMode: MirageStreamOptionsDisplayMode) async {
+    func setRemoteClientStreamOptionsDisplayMode(_ displayMode: MirageWire.MirageStreamOptionsDisplayMode) async {
         remoteClientStreamOptionsDisplayMode = displayMode
-        let command = RemoteClientStreamOptionsCommandMessage(displayMode: displayMode)
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(displayMode: displayMode)
         await sendRemoteClientStreamOptionsCommand(command, operation: "stream options display mode update")
     }
 
     /// Sends a status-overlay preference change to the connected client.
     func setRemoteClientStreamStatusOverlayEnabled(_ isEnabled: Bool) async {
         remoteClientStreamStatusOverlayEnabled = isEnabled
-        let command = RemoteClientStreamOptionsCommandMessage(statusOverlayEnabled: isEnabled)
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(statusOverlayEnabled: isEnabled)
         await sendRemoteClientStreamOptionsCommand(command, operation: "status overlay update")
     }
 
     /// Sends an active desktop cursor presentation change to the connected client.
-    func applyRemoteClientDesktopCursorPresentation(_ presentation: MirageDesktopCursorPresentation) async {
+    func applyRemoteClientDesktopCursorPresentation(_ presentation: MirageWire.MirageDesktopCursorPresentation) async {
         guard desktopStreamID != nil else { return }
-        let command = RemoteClientStreamOptionsCommandMessage(
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(
             desktopCursorPresentation: presentation
         )
         await sendRemoteClientStreamOptionsCommand(command, operation: "desktop cursor update")
     }
 
     /// Sends an active desktop cursor lock mode change to the connected client.
-    func setRemoteClientDesktopCursorLockMode(_ mode: MirageDesktopCursorLockMode) async {
+    func setRemoteClientDesktopCursorLockMode(_ mode: MirageWire.MirageDesktopCursorLockMode) async {
         remoteClientDesktopCursorLockMode = mode
-        let command = RemoteClientStreamOptionsCommandMessage(desktopCursorLockMode: mode)
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(desktopCursorLockMode: mode)
         await sendRemoteClientStreamOptionsCommand(command, operation: "desktop cursor lock mode update")
     }
 
     /// Requests that the client stop the active app stream for the bundle identifier.
     func requestRemoteClientStopAppStream(bundleIdentifier: String) async {
         guard !bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let command = RemoteClientStreamOptionsCommandMessage(
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(
             stopAppBundleIdentifier: bundleIdentifier
         )
         await sendRemoteClientStreamOptionsCommand(command, operation: "app stream stop")
@@ -53,7 +61,7 @@ public extension MirageHostService {
     /// Requests that the client stop its active desktop stream.
     func requestRemoteClientStopDesktopStream() async {
         guard desktopStreamID != nil else { return }
-        let command = RemoteClientStreamOptionsCommandMessage(stopDesktopStream: true)
+        let command = MirageWire.RemoteClientStreamOptionsCommandMessage(stopDesktopStream: true)
         await sendRemoteClientStreamOptionsCommand(command, operation: "desktop stream stop")
     }
 }
@@ -61,11 +69,11 @@ public extension MirageHostService {
 extension MirageHostService {
     /// Handles the client's current stream-options state snapshot.
     func handleRemoteClientStreamOptionsState(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
         do {
-            let state = try message.decode(RemoteClientStreamOptionsStateMessage.self)
+            let state = try message.decode(MirageWire.RemoteClientStreamOptionsStateMessage.self)
             remoteClientStreamOptionsDisplayMode = state.displayMode
             remoteClientStreamStatusOverlayEnabled = state.statusOverlayEnabled
             remoteClientDesktopCursorLockAvailable = state.desktopCursorLockAvailable
@@ -88,7 +96,7 @@ extension MirageHostService {
 
     /// Sends a remote-client stream-options command over the active control channel.
     private func sendRemoteClientStreamOptionsCommand(
-        _ command: RemoteClientStreamOptionsCommandMessage,
+        _ command: MirageWire.RemoteClientStreamOptionsCommandMessage,
         operation: String
     ) async {
         guard let clientContext = desktopStreamClientContext ?? clientsBySessionID.values.first else { return }

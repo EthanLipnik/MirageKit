@@ -7,7 +7,7 @@
 //  Coverage for bootstrap daemon lifecycle state transitions.
 //
 
-import MirageHostBootstrapRuntime
+import MirageBootstrapShared
 import Testing
 
 @Suite("Bootstrap Daemon State Machine")

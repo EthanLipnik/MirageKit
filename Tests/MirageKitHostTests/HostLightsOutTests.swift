@@ -11,6 +11,7 @@ import CoreGraphics
 import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageInput
 
 @Suite("Host Lights Out")
 struct HostLightsOutTests {
@@ -83,14 +84,14 @@ struct HostLightsOutShortcutTests {
 
     @Test("Shortcut validation requires a modifier")
     func shortcutValidationRequiresModifier() {
-        let shortcut = MirageClientShortcutBinding(keyCode: 0x35, modifiers: [])
+        let shortcut = MirageInput.MirageClientShortcutBinding(keyCode: 0x35, modifiers: [])
 
         #expect(MirageHostLightsOutShortcut.validationError(for: shortcut) == .modifierRequired)
     }
 
     @Test("Shortcut validation rejects modifier-only keys")
     func shortcutValidationRejectsModifierOnlyKeys() {
-        let shortcut = MirageClientShortcutBinding(keyCode: 0x3B, modifiers: [.control])
+        let shortcut = MirageInput.MirageClientShortcutBinding(keyCode: 0x3B, modifiers: [.control])
 
         #expect(MirageHostLightsOutShortcut.validationError(for: shortcut) == .nonModifierKeyRequired)
     }
@@ -106,7 +107,7 @@ struct HostLightsOutShortcutTests {
 
     @Test("Registration request uses configured shortcut")
     func registrationRequestUsesConfiguredShortcut() {
-        let shortcut = MirageClientShortcutBinding(keyCode: 0x0C, modifiers: [.command, .shift])
+        let shortcut = MirageInput.MirageClientShortcutBinding(keyCode: 0x0C, modifiers: [.command, .shift])
         let request = HostLightsOutHotKeyRegistrar.registrationRequest(for: shortcut)
 
         #expect(request.keyCode == 0x0C)
@@ -115,7 +116,7 @@ struct HostLightsOutShortcutTests {
 
     @Test("Overlay message shows configured shortcut")
     func overlayMessageShowsConfiguredShortcut() {
-        let shortcut = MirageClientShortcutBinding(keyCode: 0x0C, modifiers: [.command, .shift])
+        let shortcut = MirageInput.MirageClientShortcutBinding(keyCode: 0x0C, modifiers: [.command, .shift])
         let message = HostLightsOutController.overlayMessage(for: shortcut)
 
         #expect(message == "Streaming with Mirage\nPress ⇧⌘Q to Force Stop Streams")

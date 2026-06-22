@@ -10,6 +10,9 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("App Window Removal Lifecycle")
 struct AppWindowRemovalLifecycleTests {
@@ -19,10 +22,10 @@ struct AppWindowRemovalLifecycleTests {
         let service = MirageClientService(deviceName: "Window Removal Test")
         let streamID: StreamID = 1
         let appSessionID = UUID()
-        let window = MirageWindow(
+        let window = MirageMedia.MirageWindow(
             id: 0,
             title: "Sign In",
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 0,
                 bundleIdentifier: "com.example.Editor",
                 name: "Editor"
@@ -31,7 +34,7 @@ struct AppWindowRemovalLifecycleTests {
             isOnScreen: true,
             windowLayer: 0
         )
-        var removedCallback: WindowRemovedFromStreamMessage?
+        var removedCallback: MirageWire.WindowRemovedFromStreamMessage?
 
         service.sessionStore.registerSession(
             streamID: streamID,
@@ -49,7 +52,7 @@ struct AppWindowRemovalLifecycleTests {
         service.fastPathState.addActiveStreamID(streamID)
         service.onWindowRemovedFromStream = { removedCallback = $0 }
 
-        let removed = WindowRemovedFromStreamMessage(
+        let removed = MirageWire.WindowRemovedFromStreamMessage(
             bundleIdentifier: "com.example.Editor",
             appSessionID: appSessionID,
             streamID: streamID,
@@ -57,7 +60,7 @@ struct AppWindowRemovalLifecycleTests {
             reason: .noLongerEligible
         )
         try await service.handleWindowRemovedFromStream(
-            ControlMessage(type: .windowRemovedFromStream, content: removed)
+            MirageWire.ControlMessage(type: .windowRemovedFromStream, content: removed)
         )
 
         #expect(removedCallback?.streamID == streamID)

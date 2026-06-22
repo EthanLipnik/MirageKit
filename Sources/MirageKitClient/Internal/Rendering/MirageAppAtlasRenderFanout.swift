@@ -7,15 +7,23 @@
 //  Per-logical-stream render fanout for shared app-atlas media streams.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 struct MirageAppAtlasRenderTarget: Equatable {
     let streamID: StreamID
-    let region: MirageAppAtlasRegion
+    let region: MirageMedia.MirageAppAtlasRegion
 }
 
 final class MirageAppAtlasRenderFanout: @unchecked Sendable {
@@ -23,10 +31,10 @@ final class MirageAppAtlasRenderFanout: @unchecked Sendable {
 
     private final class TargetState {
         let streamID: StreamID
-        var region: MirageAppAtlasRegion
+        var region: MirageMedia.MirageAppAtlasRegion
         let cropper = MiragePixelBufferCropper()
 
-        init(streamID: StreamID, region: MirageAppAtlasRegion) {
+        init(streamID: StreamID, region: MirageMedia.MirageAppAtlasRegion) {
             self.streamID = streamID
             self.region = region
         }

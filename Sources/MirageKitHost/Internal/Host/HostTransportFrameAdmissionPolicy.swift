@@ -7,7 +7,7 @@
 
 import CoreFoundation
 import Foundation
-import MirageKit
+import MirageMedia
 
 #if os(macOS)
 struct HostTransportFrameAdmissionPolicy: Sendable, Equatable {

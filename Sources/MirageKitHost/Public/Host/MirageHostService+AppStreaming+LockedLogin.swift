@@ -7,15 +7,23 @@
 //  Locked-session app stream login handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     func acceptLockedAppStreamIntent(
-        request: SelectAppMessage,
+        request: MirageWire.SelectAppMessage,
         clientContext: ClientContext,
         targetFrameRate: Int,
         mediaPathPolicy: MirageEffectiveMediaPathPolicy,
@@ -80,7 +88,7 @@ extension MirageHostService {
     }
 
     private func startLockedAppLoginStream(
-        request: SelectAppMessage,
+        request: MirageWire.SelectAppMessage,
         clientContext: ClientContext,
         targetFrameRate: Int,
         mediaPathPolicy: MirageEffectiveMediaPathPolicy,
@@ -88,7 +96,7 @@ extension MirageHostService {
     ) async throws -> StreamID {
         let clientID = clientContext.client.id
         guard mediaSecurityByClientID[clientID] != nil else {
-            throw MirageError.protocolError("Missing media security context for client")
+            throw MirageCore.MirageError.protocolError("Missing media security context for client")
         }
 
         let preset = request.sizePreset ?? .standard
@@ -151,7 +159,11 @@ extension MirageHostService {
                 compressionQualityCeiling: request.compressionQualityCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
-                captureShowsCursor: false
+                captureShowsCursor: false,
+                videoEncoderFactoryBackend: platformVideoEncoderFactoryBackend,
+                captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+                captureContentProviderBackend: platformCaptureContentProviderBackend,
+                virtualDisplayBackend: platformVirtualDisplayBackend
             )
             context = loginContext
             streamsByID[streamID] = loginContext
@@ -190,19 +202,20 @@ extension MirageHostService {
             let videoStream = try await clientContext.controlChannel.session.openStream(
                 label: "video/\(streamID)"
             )
-            loomVideoStreamsByStreamID[streamID] = videoStream
+            videoMediaStreamsByStreamID[streamID] = videoStream
             transportRegistry.registerVideoStream(videoStream, streamID: streamID)
             MirageLogger.host("Opened Loom locked-app login video stream \(streamID)")
 
             let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile(
                 resolvedMediaPathProfile: mediaPathPolicy.mediaPathProfile,
                 streamID: streamID,
-                phase: "locked_app_login_transport"
+                phase: "locked_app_login_transport",
+                logHostEvent: { message in MirageLogger.host(message) }
             )
             let mediaSendProfileReference = await loginContext.setMediaSendProfile(
                 mediaSendProfile,
                 diagnosticsProvider: { profile in
-                    await videoStream.consumeQueuedUnreliableSendDiagnostics(profile: profile)
+                    await videoStream.mirageQueuedUnreliableSendDiagnostics(profile: profile)
                 }
             )
             MirageLogger.host(
@@ -223,7 +236,7 @@ extension MirageHostService {
                     videoStream.sendUnreliableQueued(
                         packetData,
                         profile: activeMediaSendProfile,
-                        options: metadata.loomQueuedUnreliableSendOptions,
+                        options: metadata.mirageQueuedUnreliableSendOptions,
                         onComplete: onComplete
                     )
                 },
@@ -272,9 +285,14 @@ extension MirageHostService {
         fallbackDisplayID: CGDirectDisplayID
     ) async throws -> SCDisplayWrapper {
         do {
-            return try await SharedVirtualDisplayManager.shared.findSCDisplay(
+            let captureDisplay = try await platformVirtualDisplayBackend.findCaptureDisplay(
                 displayID: displayID,
-                maxAttempts: 12
+                maxAttempts: 12,
+                startupBudget: nil
+            )
+            return try await resolveSCDisplayWrapper(
+                for: captureDisplay,
+                label: "locked app login console display"
             )
         } catch {
             MirageLogger.error(
@@ -282,9 +300,14 @@ extension MirageHostService {
                 error: error,
                 message: "Failed to resolve console display \(displayID) for locked app login stream; falling back to shared app display: "
             )
-            return try await SharedVirtualDisplayManager.shared.findSCDisplay(
+            let fallbackDisplay = try await platformVirtualDisplayBackend.findCaptureDisplay(
                 displayID: fallbackDisplayID,
-                maxAttempts: 12
+                maxAttempts: 12,
+                startupBudget: nil
+            )
+            return try await resolveSCDisplayWrapper(
+                for: fallbackDisplay,
+                label: "locked app login shared app fallback display"
             )
         }
     }
@@ -295,7 +318,7 @@ extension MirageHostService {
     ) async throws {
         guard let streamID = intent.loginStreamID,
               let context = streamsByID[streamID] else {
-            throw MirageError.protocolError("Missing locked app login stream")
+            throw MirageCore.MirageError.protocolError("Missing locked app login stream")
         }
         try await sendLockedAppLoginStreamAnnouncements(
             request: intent.request,
@@ -306,7 +329,7 @@ extension MirageHostService {
     }
 
     private func sendLockedAppLoginStreamAnnouncements(
-        request: SelectAppMessage,
+        request: MirageWire.SelectAppMessage,
         streamID: StreamID,
         context: StreamContext,
         clientContext: ClientContext
@@ -317,7 +340,7 @@ extension MirageHostService {
             width: streamStart.encodedDimensions.width,
             height: streamStart.encodedDimensions.height
         )
-        let mediaUpdate = AppAtlasMediaUpdateMessage(
+        let mediaUpdate = MirageWire.AppAtlasMediaUpdateMessage(
             mediaStreamID: streamID,
             width: streamStart.encodedDimensions.width,
             height: streamStart.encodedDimensions.height,
@@ -330,13 +353,13 @@ extension MirageHostService {
             startupAttemptID: request.startupRequestID
         )
         try await clientContext.send(.appAtlasMediaUpdate, content: mediaUpdate)
-        let started = AppStreamStartedMessage(
+        let started = MirageWire.AppStreamStartedMessage(
             appSessionID: request.appSessionID,
             startupRequestID: request.startupRequestID,
             bundleIdentifier: request.bundleIdentifier,
             appName: lockedAppLoginAppName(for: request),
             windows: [
-                AppStreamStartedMessage.AppStreamWindow(
+                MirageWire.AppStreamStartedMessage.AppStreamWindow(
                     streamID: streamID,
                     mediaStreamID: streamID,
                     windowID: 0,
@@ -356,16 +379,16 @@ extension MirageHostService {
         streamID: StreamID,
         width: Int,
         height: Int
-    ) -> MirageAppAtlasLayout {
+    ) -> MirageMedia.MirageAppAtlasLayout {
         let encodedWidth = max(1, width)
         let encodedHeight = max(1, height)
-        return MirageAppAtlasLayout(
+        return MirageMedia.MirageAppAtlasLayout(
             mediaStreamID: streamID,
             layoutEpoch: 1,
             width: encodedWidth,
             height: encodedHeight,
             regions: [
-                MirageAppAtlasRegion(
+                MirageMedia.MirageAppAtlasRegion(
                     windowID: 0,
                     x: 0,
                     y: 0,
@@ -378,12 +401,12 @@ extension MirageHostService {
         )
     }
 
-    private func lockedAppLoginWindow(request: SelectAppMessage) -> MirageWindow {
+    private func lockedAppLoginWindow(request: MirageWire.SelectAppMessage) -> MirageMedia.MirageWindow {
         let logicalResolution = (request.sizePreset ?? .standard).logicalResolution
-        return MirageWindow(
+        return MirageMedia.MirageWindow(
             id: 0,
             title: "Sign In",
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: 0,
                 bundleIdentifier: request.bundleIdentifier,
                 name: lockedAppLoginAppName(for: request)
@@ -399,7 +422,7 @@ extension MirageHostService {
         )
     }
 
-    private func lockedAppLoginAppName(for request: SelectAppMessage) -> String {
+    private func lockedAppLoginAppName(for request: MirageWire.SelectAppMessage) -> String {
         request.bundleIdentifier
             .split(separator: ".")
             .last
@@ -422,7 +445,7 @@ extension MirageHostService {
             await cleanupFailedStreamStart(streamID: streamID, context: context, windowID: 0)
         } else {
             inputStreamCache.remove(streamID)
-            if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+            if let videoStream = videoMediaStreamsByStreamID.removeValue(forKey: streamID) {
                 closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
             }
             transportRegistry.unregisterVideoStream(streamID: streamID)
@@ -432,7 +455,7 @@ extension MirageHostService {
               let clientContext = findClientContext(sessionID: intent.clientSessionID) else {
             return
         }
-        let removed = WindowRemovedFromStreamMessage(
+        let removed = MirageWire.WindowRemovedFromStreamMessage(
             bundleIdentifier: intent.request.bundleIdentifier,
             appSessionID: intent.request.appSessionID,
             streamID: streamID,
@@ -461,7 +484,7 @@ extension MirageHostService {
         }
 
         let observedSize = session.window.frame.size
-        let result = AppWindowResizeResultMessage(
+        let result = MirageWire.AppWindowResizeResultMessage(
             streamID: streamID,
             mediaStreamID: streamID,
             windowID: session.window.id,
@@ -504,7 +527,7 @@ extension MirageHostService {
     }
 
     func resumePendingLockedAppStreamIntentsIfNeeded() async {
-        guard sessionState == .ready else { return }
+        guard mirageSessionAvailability == .ready else { return }
         let orderedIDs = pendingLockedAppStreamIntentOrder
         for appSessionID in orderedIDs {
             guard var intent = pendingLockedAppStreamIntentsByAppSessionID[appSessionID],
@@ -523,7 +546,7 @@ extension MirageHostService {
             intent.isResuming = true
             pendingLockedAppStreamIntentsByAppSessionID[appSessionID] = intent
             do {
-                let message = try ControlMessage(type: .selectApp, content: intent.request)
+                let message = try MirageWire.ControlMessage(type: .selectApp, content: intent.request)
                 await handleSelectApp(message, from: clientContext)
             } catch {
                 MirageLogger.error(.host, error: error, message: "Failed to resume locked app stream intent: ")

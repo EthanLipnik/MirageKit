@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Darwin
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -160,7 +168,7 @@ extension CGVirtualDisplayBridge {
     }
 
     private static func descriptorProfileDefaultsKey(
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -170,7 +178,7 @@ extension CGVirtualDisplayBridge {
     }
 
     private static func validationHintDefaultsKey(
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -180,7 +188,7 @@ extension CGVirtualDisplayBridge {
     }
 
     static func preferredDescriptorProfile(
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -205,7 +213,7 @@ extension CGVirtualDisplayBridge {
 
     static func storePreferredDescriptorProfile(
         _ profile: DescriptorProfile,
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -221,7 +229,7 @@ extension CGVirtualDisplayBridge {
         UserDefaults.standard.set(profile.rawValue, forKey: key)
     }
 
-    static func clearPreferredDescriptorProfile(for colorSpace: MirageColorSpace) {
+    static func clearPreferredDescriptorProfile(for colorSpace: MirageMedia.MirageColorSpace) {
         let defaults = UserDefaults.standard
         let profilePrefix = "\(descriptorProfileDefaultsPrefix).\(colorSpace.rawValue)."
         let hintPrefix = "\(validationHintDefaultsPrefix).\(colorSpace.rawValue)."
@@ -234,7 +242,7 @@ extension CGVirtualDisplayBridge {
     }
 
     static func clearPreferredDescriptorProfile(
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -262,7 +270,7 @@ extension CGVirtualDisplayBridge {
     }
 
     static func cachedValidationHint(
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -287,7 +295,7 @@ extension CGVirtualDisplayBridge {
 
     static func storeValidationHint(
         _ hint: CachedValidationHint,
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -311,7 +319,7 @@ extension CGVirtualDisplayBridge {
     }
 
     static func clearValidationHint(
-        for colorSpace: MirageColorSpace,
+        for colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -339,7 +347,7 @@ extension CGVirtualDisplayBridge {
     static func descriptorAttempts(
         persistentSerial: UInt32,
         hiDPI: Bool,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         width: Int,
         height: Int,
         refreshRate: Double,
@@ -415,11 +423,11 @@ extension CGVirtualDisplayBridge {
         return attempts
     }
 
-    private static func serialSlotDefaultsKey(for colorSpace: MirageColorSpace) -> String {
+    private static func serialSlotDefaultsKey(for colorSpace: MirageMedia.MirageColorSpace) -> String {
         "\(serialSlotDefaultsPrefix).\(colorSpace.rawValue)"
     }
 
-    private static func serialNumber(for colorSpace: MirageColorSpace, slot: SerialSlot) -> UInt32 {
+    private static func serialNumber(for colorSpace: MirageMedia.MirageColorSpace, slot: SerialSlot) -> UInt32 {
         switch (colorSpace, slot) {
         case (.displayP3, .primary):
             0x4D50_3330
@@ -432,7 +440,7 @@ extension CGVirtualDisplayBridge {
         }
     }
 
-    private static func currentSerialSlot(for colorSpace: MirageColorSpace) -> SerialSlot {
+    private static func currentSerialSlot(for colorSpace: MirageMedia.MirageColorSpace) -> SerialSlot {
         if let cached = cachedSerialSlots[colorSpace] {
             return cached
         }
@@ -445,7 +453,7 @@ extension CGVirtualDisplayBridge {
         return slot
     }
 
-    static func persistentSerialNumber(for colorSpace: MirageColorSpace) -> UInt32 {
+    static func persistentSerialNumber(for colorSpace: MirageMedia.MirageColorSpace) -> UInt32 {
         if let cached = cachedSerialNumbers[colorSpace] {
             return cached
         }
@@ -456,7 +464,7 @@ extension CGVirtualDisplayBridge {
         return serial
     }
 
-    static func invalidatePersistentSerial(for colorSpace: MirageColorSpace) {
+    static func invalidatePersistentSerial(for colorSpace: MirageMedia.MirageColorSpace) {
         var slot = currentSerialSlot(for: colorSpace)
         slot.toggle()
 
@@ -473,7 +481,7 @@ extension CGVirtualDisplayBridge {
     }
 
     static func invalidateAllPersistentSerials() {
-        for colorSpace in MirageColorSpace.allCases {
+        for colorSpace in MirageMedia.MirageColorSpace.allCases {
             invalidatePersistentSerial(for: colorSpace)
         }
     }

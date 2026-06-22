@@ -7,7 +7,8 @@
 
 import CoreFoundation
 import Foundation
-import MirageKit
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 extension HostAdaptiveFrameCoordinator {

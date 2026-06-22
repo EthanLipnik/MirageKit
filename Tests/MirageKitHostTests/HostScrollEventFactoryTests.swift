@@ -11,12 +11,13 @@ import AppKit
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageInput
 
 @Suite("Host Scroll Event Factory")
 struct HostScrollEventFactoryTests {
     @Test("Native precise scroll events expose AppKit scrolling deltas")
     func nativePreciseScrollEventsExposeAppKitScrollingDeltas() throws {
-        let event = MirageScrollEvent(
+        let event = MirageInput.MirageScrollEvent(
             deltaX: -2.5,
             deltaY: 4.75,
             phase: .changed,
@@ -43,7 +44,7 @@ struct HostScrollEventFactoryTests {
 
     @Test("Native sub-pixel scroll events preserve phase while waiting for integer movement")
     func nativeSubPixelScrollEventsPreservePhaseWhileWaitingForIntegerMovement() throws {
-        let event = MirageScrollEvent(
+        let event = MirageInput.MirageScrollEvent(
             deltaX: 0.25,
             deltaY: -0.5,
             phase: .changed,
@@ -66,7 +67,7 @@ struct HostScrollEventFactoryTests {
 
     @Test("Phase-less precise scroll events keep constructor movement fields")
     func phaseLessPreciseScrollEventsKeepConstructorMovementFields() throws {
-        let event = MirageScrollEvent(
+        let event = MirageInput.MirageScrollEvent(
             deltaX: -2.5,
             deltaY: 4.75,
             isPrecise: true
@@ -89,7 +90,7 @@ struct HostScrollEventFactoryTests {
 
     @Test("Phase-less precise sub-pixel scroll events wait for integer fallback")
     func phaseLessPreciseSubPixelScrollEventsWaitForIntegerFallback() {
-        let event = MirageScrollEvent(
+        let event = MirageInput.MirageScrollEvent(
             deltaX: 0.25,
             deltaY: -0.5,
             isPrecise: true
@@ -104,7 +105,7 @@ struct HostScrollEventFactoryTests {
 
     @Test("Boundary phase scroll events are preserved without movement")
     func boundaryPhaseScrollEventsArePreservedWithoutMovement() throws {
-        let event = MirageScrollEvent(
+        let event = MirageInput.MirageScrollEvent(
             deltaX: 0,
             deltaY: 0,
             phase: .ended,

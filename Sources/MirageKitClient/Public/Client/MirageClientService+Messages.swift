@@ -7,8 +7,16 @@
 //  Control message routing.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -49,7 +57,7 @@ extension MirageClientService {
             .hostWallpaper: .message { [weak self] in self?.handleHostWallpaper($0) },
             .hostSupportLogArchive: .message { [weak self] in self?.handleHostSupportLogArchive($0) },
             .ping: .empty { [weak self] in
-                self?.queueControlMessageBestEffort(ControlMessage(type: .pong))
+                self?.queueControlMessageBestEffort(MirageWire.ControlMessage(type: .pong))
             },
             .pong: .empty { [weak self] in
                 guard let self else { return }
@@ -76,7 +84,7 @@ extension MirageClientService {
         ]
     }
 
-    func routeControlMessage(_ message: ControlMessage) async {
+    func routeControlMessage(_ message: MirageWire.ControlMessage) async {
         guard let handler = controlMessageHandlers[message.type] else {
             MirageLogger.client("Unhandled control message: \(message.type)")
             return

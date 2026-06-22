@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/21/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import SwiftUI
@@ -128,7 +136,7 @@ private final class FocusTrackingView: NSView {
         guard let streamID else { return }
         clientService?.sendInputFireAndForget(.windowFocus, forStream: streamID)
 
-        let modifiers = MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags)
+        let modifiers = MirageInput.MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags)
         clientService?.sendInputFireAndForget(.flagsChanged(modifiers), forStream: streamID)
     }
 

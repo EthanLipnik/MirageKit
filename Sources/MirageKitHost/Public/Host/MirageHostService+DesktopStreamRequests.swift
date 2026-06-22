@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/11/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -28,7 +36,7 @@ func shouldAcceptStopDesktopStreamRequest(
 
 func shouldRejectAwdlDesktopStartupWithoutGeometryContract(
     usesHostResolution: Bool,
-    mediaPathProfile: MirageMediaPathProfile,
+    mediaPathProfile: MirageMedia.MirageMediaPathProfile,
     desktopGeometryContractID: UUID?
 ) -> Bool {
     let hasAwdlEvidence = mediaPathProfile.usesAwdlRadioPolicy
@@ -40,13 +48,13 @@ func shouldRejectAwdlDesktopStartupWithoutGeometryContract(
 extension MirageHostService {
     /// Handles a client request to start desktop streaming.
     func handleStartDesktopStream(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     )
     async {
         var pendingLightsOutSetup = false
         do {
-            let request = try message.decode(StartDesktopStreamMessage.self)
+            let request = try message.decode(MirageWire.StartDesktopStreamMessage.self)
             MirageLogger
                 .host(
                     "Client \(clientContext.client.name) requested desktop stream: " +
@@ -87,7 +95,7 @@ extension MirageHostService {
             let usesHostResolution = request.useHostResolution == true
 
             let displayResolution: CGSize = if usesHostResolution {
-                Self.hostMainDisplayLogicalResolution()
+                hostMainDisplayLogicalResolution()
                     ?? CGSize(width: request.displayWidth, height: request.displayHeight)
             } else {
                 CGSize(width: request.displayWidth, height: request.displayHeight)
@@ -102,7 +110,7 @@ extension MirageHostService {
                 mediaPathProfile: mediaPathPolicy.mediaPathProfile,
                 desktopGeometryContractID: request.desktopGeometryContractID
             ) {
-                throw MirageError.protocolError(
+                throw MirageCore.MirageError.protocolError(
                     "Desktop geometry contract required for AWDL desktop startup"
                 )
             }
@@ -171,7 +179,7 @@ extension MirageHostService {
                 MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
             }
             let errorPayload = Self.desktopStartErrorPayload(for: error)
-            let failedMessage = DesktopStreamFailedMessage(reason: errorPayload.message)
+            let failedMessage = MirageWire.DesktopStreamFailedMessage(reason: errorPayload.message)
             do {
                 try await clientContext.send(.desktopStreamFailed, content: failedMessage)
             } catch {
@@ -181,9 +189,9 @@ extension MirageHostService {
     }
 
     /// Handles a client request to stop desktop streaming.
-    func handleStopDesktopStream(_ message: ControlMessage) async {
+    func handleStopDesktopStream(_ message: MirageWire.ControlMessage) async {
         do {
-            let request = try message.decode(StopDesktopStreamMessage.self)
+            let request = try message.decode(MirageWire.StopDesktopStreamMessage.self)
             MirageLogger.host(
                 "Client requested stop desktop stream: stream=\(request.streamID), session=\(request.desktopSessionID.uuidString)"
             )
@@ -207,10 +215,10 @@ extension MirageHostService {
     }
 
     /// Handles a client request to cancel in-progress stream setup.
-    func handleCancelStreamSetup(_ message: ControlMessage, from clientContext: ClientContext) async {
-        let request: CancelStreamSetupMessage
+    func handleCancelStreamSetup(_ message: MirageWire.ControlMessage, from clientContext: ClientContext) async {
+        let request: MirageWire.CancelStreamSetupMessage
         do {
-            request = try message.decode(CancelStreamSetupMessage.self)
+            request = try message.decode(MirageWire.CancelStreamSetupMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode cancel stream setup request: ")
             return
@@ -245,8 +253,8 @@ extension MirageHostService {
 
     /// Returns whether desktop startup rejected a valid request for an expected runtime reason.
     private nonisolated static func isExpectedDesktopStartRejection(_ error: Error) -> Bool {
-        if error is MirageRuntimeConditionError { return true }
-        if case let MirageError.protocolError(message) = error {
+        if error is MirageCore.MirageRuntimeConditionError { return true }
+        if case let MirageCore.MirageError.protocolError(message) = error {
             if message.contains("Desktop stream already active") {
                 return true
             }
@@ -270,21 +278,21 @@ extension MirageHostService {
     }
 
     /// Builds the protocol error payload sent when desktop startup fails before acknowledgement.
-    private nonisolated static func desktopStartErrorPayload(for error: Error) -> ErrorMessage {
-        if let runtimeCondition = error as? MirageRuntimeConditionError {
-            return ErrorMessage(code: .init(runtimeCondition), message: runtimeCondition.message)
+    private nonisolated static func desktopStartErrorPayload(for error: Error) -> MirageWire.ErrorMessage {
+        if let runtimeCondition = error as? MirageCore.MirageRuntimeConditionError {
+            return MirageWire.ErrorMessage(code: .init(runtimeCondition), message: runtimeCondition.message)
         }
 
-        return ErrorMessage(
+        return MirageWire.ErrorMessage(
             code: isDesktopStartDecodeError(error) ? .invalidMessage : .virtualDisplayStartFailed,
             message: "Failed to start desktop stream: \(error.localizedDescription)"
         )
     }
 
     /// Queries the host's current main display resolution in logical points.
-    private static func hostMainDisplayLogicalResolution() -> CGSize? {
+    private func hostMainDisplayLogicalResolution() -> CGSize? {
         let mainDisplay = CGMainDisplayID()
-        if let modeLogicalResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(mainDisplay)?.logical,
+        if let modeLogicalResolution = platformVirtualDisplayBackend.currentDisplayModeSizes(mainDisplay)?.logical,
            modeLogicalResolution.width > 0,
            modeLogicalResolution.height > 0 {
             return modeLogicalResolution

@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import AVFAudio
 import Speech
@@ -36,7 +44,7 @@ public class InputCapturingView: UIView {
     }
 
     /// Callback for input events - set by the SwiftUI representable's coordinator
-    public var onInputEvent: ((MirageInputEvent) -> Void)? {
+    public var onInputEvent: ((MirageInput.MirageInputEvent) -> Void)? {
         didSet {
             guard onInputEvent != nil else { return }
             if oldValue == nil {
@@ -270,10 +278,10 @@ public class InputCapturingView: UIView {
     public var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
     /// Unified actions (navigation, local, custom) that can be triggered by shortcuts.
-    public var actions: [MirageAction] = []
+    public var actions: [MirageInput.MirageAction] = []
 
     /// Callback when a unified action is triggered (by shortcut, gesture, or control bar).
-    public var onActionTriggered: ((MirageAction) -> Void)?
+    public var onActionTriggered: ((MirageInput.MirageAction) -> Void)?
 
     /// Callback when a Pencil gesture maps to a client-side action.
     public var onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?
@@ -318,17 +326,17 @@ public class InputCapturingView: UIView {
     var dictationInputLevelGeneration: UInt64 = 0
 
     // Cursor state from host
-    var currentCursorType: MirageCursorType = .arrow
+    var currentCursorType: MirageWire.MirageCursorType = .arrow
     var cursorIsVisible: Bool = true
     var cursorHiddenForTyping: Bool = false
     var cursorHiddenForDirectTouch: Bool = false
     var pointerInteraction: UIPointerInteraction?
     var cursorSequence: UInt64 = 0
     var lastCursorRefreshTime: CFTimeInterval = 0
-    let cursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
+    let cursorRefreshInterval: CFTimeInterval = MirageMedia.MirageInteractionCadence.frameInterval120Seconds
     var lockedCursorSequence: UInt64 = 0
     var lastLockedCursorRefreshTime: CFTimeInterval = 0
-    let lockedCursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
+    let lockedCursorRefreshInterval: CFTimeInterval = MirageMedia.MirageInteractionCadence.frameInterval120Seconds
     // nonisolated(unsafe) allows access from deinit for cleanup
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
     var hardwareKeyboardPresent: Bool = false
@@ -446,14 +454,14 @@ public class InputCapturingView: UIView {
     var activePencilTouchID: ObjectIdentifier?
     var pencilButtonDown = false
     var pencilCurrentLocation: CGPoint = .zero
-    var pencilCurrentStylus: MirageStylusEvent?
+    var pencilCurrentStylus: MirageInput.MirageStylusEvent?
     var lastPencilPressure: CGFloat = 0
     var lastPencilMoveSampleTimestamp: TimeInterval = 0
     var lastPencilMoveSampleLocation: CGPoint?
     var lastPencilHoverForwardTime: CFTimeInterval = 0
     var lastPencilHoverForwardLocation: CGPoint?
     var lastPencilHoverLocation: CGPoint?
-    var lastPencilHoverStylus: MirageStylusEvent?
+    var lastPencilHoverStylus: MirageInput.MirageStylusEvent?
     #if os(iOS)
     var pencilInteraction: UIPencilInteraction?
     #endif
@@ -496,7 +504,7 @@ public class InputCapturingView: UIView {
     var isSoftwareKeyboardShown: Bool = false
     var isSoftwareKeyboardResponderActive: Bool = false
     var softwareKeyboardDismissalPending = false
-    var softwareHeldModifiers: MirageModifierFlags = []
+    var softwareHeldModifiers: MirageInput.MirageModifierFlags = []
     var suppressedOnInputEventRebindCount: UInt64 = 0
     var lastOnInputEventRebindLogTime: CFAbsoluteTime = 0
     let onInputEventRebindLogInterval: CFTimeInterval = 5.0
@@ -553,7 +561,7 @@ public class InputCapturingView: UIView {
     // Gesture events read modifiers directly from gesture.modifierFlags at event time
     var heldModifierKeys: Set<UIKeyboardHIDUsage> = []
     var capsLockEnabled: Bool = false
-    var lastSentModifiers: MirageModifierFlags = []
+    var lastSentModifiers: MirageInput.MirageModifierFlags = []
     var modifierRefreshTask: Task<Void, Never>?
     var hardwareRefreshFailureCount: Int = 0
     #if canImport(GameController)

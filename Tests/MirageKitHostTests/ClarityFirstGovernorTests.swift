@@ -9,6 +9,8 @@
 import CoreFoundation
 import CoreGraphics
 import Foundation
+import MirageCore
+import MirageMedia
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing

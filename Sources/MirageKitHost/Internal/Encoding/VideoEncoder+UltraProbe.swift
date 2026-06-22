@@ -5,11 +5,19 @@
 //  Created by Ethan Lipnik on 3/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -23,7 +31,7 @@ struct VideoEncoderUltraProbeResult {
     let encoderSessionCreated: Bool
 
     /// Chroma sampling detected from the encoded probe bitstream.
-    let encodedChromaSampling: MirageStreamChromaSampling?
+    let encodedChromaSampling: MirageMedia.MirageStreamChromaSampling?
 
     /// Whether the probe encoder reported hardware acceleration.
     let usingHardwareEncoder: Bool?
@@ -156,7 +164,7 @@ extension VideoEncoder {
         }
 
         let semaphore = DispatchSemaphore(value: 0)
-        let callbackState = Locked<MirageStreamChromaSampling?>(nil)
+        let callbackState = Locked<MirageMedia.MirageStreamChromaSampling?>(nil)
 
         let encodeStatus = VTCompressionSessionEncodeFrame(
             session,

@@ -5,33 +5,18 @@
 //  Created by Ethan Lipnik on 5/20/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
-
-public struct MirageClientControlSessionAttemptSummary: Sendable, Equatable {
-    public let observedAt: Date
-    public let connectionAttemptID: String?
-    public let phase: String
-    public let hostName: String
-    public let transport: String
-    public let endpoint: String
-    public let candidateKind: String
-    public let routeTier: String
-    public let endpointSource: String
-    public let requiredInterface: String
-    public let proximity: String
-    public let outcome: String
-
-    public var supportSummaryLine: String {
-        let attemptIDText = connectionAttemptID.map { "attempt=\($0) " } ?? ""
-        return "\(observedAt.ISO8601Format()) \(attemptIDText)phase=\(phase) host=\(hostName) " +
-            "transport=\(transport) candidate=\(candidateKind) endpoint=\(endpoint) " +
-            "route=\(routeTier) source=\(endpointSource) interface=\(requiredInterface) " +
-            "proximity=\(proximity) outcome=\(outcome)"
-    }
-}
 
 @MainActor
 extension MirageClientService {
@@ -164,7 +149,7 @@ extension MirageClientService {
         connectionAttemptID: UUID? = nil
     ) {
         recentControlSessionAttemptSummaries.append(
-            MirageClientControlSessionAttemptSummary(
+            MirageDiagnostics.MirageClientControlSessionAttemptSummary(
                 observedAt: Date(),
                 connectionAttemptID: connectionAttemptID?.uuidString.lowercased(),
                 phase: phase,

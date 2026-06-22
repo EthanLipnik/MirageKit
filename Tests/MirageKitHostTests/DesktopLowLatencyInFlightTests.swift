@@ -9,6 +9,7 @@
 @testable import MirageKitHost
 import MirageKit
 import Testing
+import MirageMedia
 
 @Suite("Desktop Low Latency In Flight")
 struct DesktopLowLatencyInFlightTests {
@@ -258,11 +259,11 @@ struct DesktopLowLatencyInFlightTests {
 
     private func makeContext(
         streamKind: VideoEncoder.StreamKind = .desktop,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
         targetFrameRate: Int = 60,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
-        hostBufferDepth: MirageHostBufferDepth = .standard,
-        mediaPathProfile: MirageMediaPathProfile? = nil
+        hostBufferingPolicy: MirageMedia.MirageHostBufferingPolicy = .stability,
+        hostBufferDepth: MirageMedia.MirageHostBufferDepth = .standard,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: targetFrameRate,

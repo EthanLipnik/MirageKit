@@ -7,10 +7,18 @@
 //  HEVC encoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -187,14 +195,14 @@ extension VideoEncoder {
         return result
     }
 
-    static func chromaSampling(from formatDescription: CMFormatDescription) -> MirageStreamChromaSampling? {
+    static func chromaSampling(from formatDescription: CMFormatDescription) -> MirageMedia.MirageStreamChromaSampling? {
         guard let sps = hevcParameterSetData(from: formatDescription, index: 1) else {
             return nil
         }
         return hevcChromaSampling(fromSPS: sps)
     }
 
-    static func hevcChromaSampling(fromSPS sps: Data) -> MirageStreamChromaSampling? {
+    static func hevcChromaSampling(fromSPS sps: Data) -> MirageMedia.MirageStreamChromaSampling? {
         let rbsp = hevcRBSP(fromParameterSet: sps)
         guard !rbsp.isEmpty else { return nil }
 

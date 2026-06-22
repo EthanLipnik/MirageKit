@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// Creates a shared clipboard item for the first regular file URL in a pasteboard URL list.
@@ -15,7 +22,7 @@ package func mirageSharedClipboardFileItem(from urls: [URL]) -> MirageSharedClip
           let byteCount = values.fileSize else {
         return nil
     }
-    let representation = SharedClipboardRepresentation(
+    let representation = MirageWire.SharedClipboardRepresentation(
         kind: .file,
         contentType: values.contentType?.identifier,
         filename: url.lastPathComponent,
@@ -34,12 +41,12 @@ package func mirageSharedClipboardFileItem(from urls: [URL]) -> MirageSharedClip
 
 /// Wraps a pasteboard payload in a shared clipboard item, dropping oversize payload bytes.
 package func mirageSharedClipboardItem(
-    kind: SharedClipboardRepresentationKind,
+    kind: MirageWire.SharedClipboardRepresentationKind,
     contentType: String?,
     filename: String?,
     payload: Data
 ) -> MirageSharedClipboardItem {
-    let representation = SharedClipboardRepresentation(
+    let representation = MirageWire.SharedClipboardRepresentation(
         kind: kind,
         contentType: contentType,
         filename: filename,

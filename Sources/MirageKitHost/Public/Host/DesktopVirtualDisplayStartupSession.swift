@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 3/31/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -163,7 +171,7 @@ struct DesktopVirtualDisplayStartupSession {
             return .readiness
         }
 
-        if let mirageError = error as? MirageError {
+        if let mirageError = error as? MirageCore.MirageError {
             switch mirageError {
             case .timeout, .captureSetupFailed:
                 return .readiness
@@ -196,7 +204,7 @@ struct DesktopVirtualDisplayStartupSession {
 
     /// Records a successful startup target when the runtime display matches the request.
     func persistIfPreferred(
-        from snapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        from snapshot: MirageHostVirtualDisplaySnapshot,
         attemptedRefreshRate: Int
     ) {
         let effectiveTier: DesktopVirtualDisplayStartupTargetTier = if snapshot.colorSpace == plan.request.requestedColorSpace,

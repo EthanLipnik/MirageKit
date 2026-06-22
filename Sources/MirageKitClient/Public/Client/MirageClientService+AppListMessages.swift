@@ -5,19 +5,27 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
     /// Merges an app-list progress page into the ordered app accumulator.
-    func handleAppListProgress(_ message: ControlMessage) async {
+    func handleAppListProgress(_ message: MirageWire.ControlMessage) async {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsAppListRefresh = true
             return
         }
         do {
-            let progress = try message.decode(AppListProgressMessage.self)
+            let progress = try message.decode(MirageWire.AppListProgressMessage.self)
             guard activeAppListRequestID == progress.requestID else {
                 MirageLogger.client(
                     "Ignoring app-list progress for stale requestID=\(progress.requestID.uuidString)"
@@ -61,13 +69,13 @@ extension MirageClientService {
     }
 
     /// Finalizes an app-list request and publishes the completed ordered app list.
-    func handleAppListComplete(_ message: ControlMessage) {
+    func handleAppListComplete(_ message: MirageWire.ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsAppListRefresh = true
             return
         }
         do {
-            let complete = try message.decode(AppListCompleteMessage.self)
+            let complete = try message.decode(MirageWire.AppListCompleteMessage.self)
             guard activeAppListRequestID == complete.requestID else {
                 MirageLogger.client(
                     "Ignoring app-list completion for stale requestID=\(complete.requestID.uuidString)"

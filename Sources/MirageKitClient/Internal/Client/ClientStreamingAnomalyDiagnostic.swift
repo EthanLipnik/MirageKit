@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 4/15/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 struct ClientStreamingAnomalySample {
     let streamID: StreamID
@@ -69,8 +77,8 @@ struct ClientStreamingAnomalySample {
     let targetFrameRate: Int
     let sourceTargetFrameRate: Int
     let displayTargetFrameRate: Int
-    let hostMetrics: StreamMetricsMessage?
-    let videoIngressMetrics: ClientVideoIngressMetricsSnapshot?
+    let hostMetrics: MirageWire.StreamMetricsMessage?
+    let videoIngressMetrics: MirageClientVideoIngressMetricsSnapshot?
 
     init(
         streamID: StreamID,
@@ -84,12 +92,9 @@ struct ClientStreamingAnomalySample {
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
         presentedFPS: Double = 0,
-        layerEnqueueFPS: Double? = nil,
-        uniqueLayerEnqueueFPS: Double? = nil,
-        visibleFrameFPS: Double? = nil,
-        visibleFrameCadenceKnown: Bool = true,
         submittedFPS: Double? = nil,
         uniqueSubmittedFPS: Double? = nil,
+        visibleFrameFPS: Double? = nil,
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         pendingFrameAgeP95Ms: Double = 0,
@@ -137,8 +142,8 @@ struct ClientStreamingAnomalySample {
         targetFrameRate: Int,
         sourceTargetFrameRate: Int? = nil,
         displayTargetFrameRate: Int? = nil,
-        hostMetrics: StreamMetricsMessage?,
-        videoIngressMetrics: ClientVideoIngressMetricsSnapshot? = nil
+        hostMetrics: MirageWire.StreamMetricsMessage?,
+        videoIngressMetrics: MirageClientVideoIngressMetricsSnapshot? = nil
     ) {
         self.streamID = streamID
         self.trigger = trigger
@@ -151,9 +156,8 @@ struct ClientStreamingAnomalySample {
         self.submitAttemptFPS = submitAttemptFPS
         self.layerAcceptedFPS = layerAcceptedFPS
         self.visibleFrameFPS = visibleFrameFPS ?? presentedFPS
-        _ = visibleFrameCadenceKnown
-        self.submittedFPS = submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
-        self.uniqueSubmittedFPS = uniqueSubmittedFPS ?? uniqueLayerEnqueueFPS ?? submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
+        self.submittedFPS = submittedFPS ?? submitAttemptFPS
+        self.uniqueSubmittedFPS = uniqueSubmittedFPS ?? submittedFPS ?? submitAttemptFPS
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.pendingFrameAgeP95Ms = pendingFrameAgeP95Ms
@@ -208,7 +212,7 @@ struct ClientStreamingAnomalySample {
 }
 
 struct ClientStreamingAnomalyDiagnostic: Equatable {
-    let bottleneckKind: MirageStreamBottleneckKind
+    let bottleneckKind: MirageDiagnostics.MirageStreamBottleneckKind
     let label: String
     let message: String
 
@@ -220,8 +224,8 @@ struct ClientStreamingAnomalyDiagnostic: Equatable {
 func clientStreamingAnomalyDiagnostic(
     sample: ClientStreamingAnomalySample
 ) -> ClientStreamingAnomalyDiagnostic {
-    let hostCadencePressure: HostCadencePressureDiagnostic? = if let hostMetrics = sample.hostMetrics {
-        hostCadencePressureDiagnostic(sample: HostCadencePressureDiagnosticSample(metrics: hostMetrics))
+    let hostCadencePressure: MirageHostCadencePressureDiagnostic? = if let hostMetrics = sample.hostMetrics {
+        hostCadencePressureDiagnostic(sample: MirageHostCadencePressureDiagnosticSample(metrics: hostMetrics))
     } else {
         nil
     }
@@ -262,8 +266,8 @@ func clientStreamingAnomalyDiagnostic(
         "displayTick=\(formattedFPS(sample.displayTickFPS))fps tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
         "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
         "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
-        "layerEnqueueFPS=\(formattedFPS(sample.submittedFPS))fps " +
-        "uniqueLayerEnqueueFPS=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
+        "submittedFPS=\(formattedFPS(sample.submittedFPS))fps " +
+        "uniqueSubmittedFPS=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "visibleFrameFPS=\(formattedFPS(sample.visibleFrameFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
@@ -353,8 +357,8 @@ func clientStreamingAnomalyDiagnostic(
 
 private func resolvedAnomalyBottleneckKind(
     sample: ClientStreamingAnomalySample,
-    hostCadencePressure: HostCadencePressureDiagnostic?
-) -> MirageStreamBottleneckKind {
+    hostCadencePressure: MirageHostCadencePressureDiagnostic?
+) -> MirageDiagnostics.MirageStreamBottleneckKind {
     if let hostCadencePressure {
         switch hostCadencePressure.kind {
         case .captureAdmissionPressure,
@@ -368,8 +372,8 @@ private func resolvedAnomalyBottleneckKind(
 
     let targetFPS = Double(max(1, sample.targetFrameRate))
     if let hostMetrics = sample.hostMetrics {
-        let transportAssessment = MirageTransportPressure.assess(
-            sample: MirageTransportPressureSample(
+        let transportAssessment = MirageDiagnostics.MirageTransportPressure.assess(
+            sample: MirageDiagnostics.MirageTransportPressureSample(
                 queueBytes: max(0, hostMetrics.sendQueueBytes ?? 0),
                 queueStressBytes: 800_000,
                 packetPacerAverageSleepMs: max(0, hostMetrics.packetPacerAverageSleepMs ?? 0),
@@ -444,8 +448,8 @@ private func resolvedAnomalyBottleneckKind(
 }
 
 private func anomalyLabel(
-    bottleneckKind: MirageStreamBottleneckKind,
-    hostCadencePressure: HostCadencePressureDiagnostic?
+    bottleneckKind: MirageDiagnostics.MirageStreamBottleneckKind,
+    hostCadencePressure: MirageHostCadencePressureDiagnostic?
 ) -> String {
     switch bottleneckKind {
     case .captureBound,

@@ -8,6 +8,8 @@
 #if os(macOS)
 @testable import MirageKitHost
 import MirageKit
+import MirageMedia
+import MirageWire
 import Testing
 
 @Suite("Host Adaptive Frame Coordinator")

@@ -7,9 +7,17 @@
 //  Root state for client video frame reassembly.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 /// Reassembles video frames from network packets.
 /// Uses lock-based synchronization to avoid per-packet Task overhead.
@@ -172,9 +180,9 @@ final class FrameReassembler: @unchecked Sendable {
     let pFrameCompletionLatencySampleWindow: TimeInterval = 5.0
     let pFrameLateCompletionThresholdMs: Double = 180
     var targetFrameRate: Int = 60
-    var latencyMode: MirageStreamLatencyMode = .lowestLatency
-    var transportPathKind: MirageNetworkPathKind = .unknown
-    var mediaPathProfile: MirageMediaPathProfile = .unknown
+    var latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency
+    var transportPathKind: MirageCore.MirageNetworkPathKind = .unknown
+    var mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token; frames with mismatched tokens are silently discarded.

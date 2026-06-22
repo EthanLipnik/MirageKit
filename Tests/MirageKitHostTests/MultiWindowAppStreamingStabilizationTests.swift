@@ -12,6 +12,8 @@ import CoreGraphics
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
 #if os(macOS)
 @Suite("Multi-Window App Streaming Stabilization")
@@ -426,11 +428,11 @@ struct MultiWindowAppStreamingStabilizationTests {
         size: CGSize = CGSize(width: 960, height: 720),
         pid: Int32 = 4242,
         bundleID: String = "com.example.app"
-    ) -> MirageWindow {
-        MirageWindow(
+    ) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: title,
-            application: MirageApplication(
+            application: MirageMedia.MirageApplication(
                 id: pid,
                 bundleIdentifier: bundleID,
                 name: "Example App"

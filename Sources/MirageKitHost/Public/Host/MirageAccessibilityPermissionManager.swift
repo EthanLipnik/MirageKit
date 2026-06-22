@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/21/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 @preconcurrency import ApplicationServices
 import Foundation

@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 /// Source of a client-side stream recovery request.
 enum MirageClientStreamRecoveryTrigger {
@@ -96,7 +104,7 @@ extension MirageClientService {
     /// The snapshot is local to the client process; it does not query the host or wait for network I/O.
     public func foregroundStreamHealthSnapshot(
         for streamID: StreamID
-    ) async -> ForegroundStreamHealthSnapshot {
+    ) async -> MirageDiagnostics.MirageForegroundStreamHealthSnapshot {
         let controller = controllersByStream[streamID]
         let reassembler = controller?.reassembler
         let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
@@ -105,7 +113,7 @@ extension MirageClientService {
             consumesCounters: false
         )
 
-        return ForegroundStreamHealthSnapshot(
+        return MirageDiagnostics.MirageForegroundStreamHealthSnapshot(
             streamID: streamID,
             hasController: controller != nil,
             hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
@@ -139,7 +147,7 @@ extension MirageClientService {
     /// being sent. Passing no non-`nil` settings is treated as a no-op.
     public func sendStreamEncoderSettingsChange(
         streamID: StreamID,
-        colorDepth: MirageStreamColorDepth? = nil,
+        colorDepth: MirageMedia.MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         streamScale: CGFloat? = nil,
@@ -147,7 +155,7 @@ extension MirageClientService {
     )
     async throws {
         guard case .connected = connectionState else {
-            throw MirageError.protocolError("Not connected")
+            throw MirageCore.MirageError.protocolError("Not connected")
         }
         guard colorDepth != nil ||
             bitrate != nil ||
@@ -157,7 +165,7 @@ extension MirageClientService {
             return
         }
 
-        let clampedScale = streamScale.map(MirageStreamGeometry.clampStreamScale)
+        let clampedScale = streamScale.map(MirageMedia.MirageStreamGeometry.clampStreamScale)
         let clampedBitrateAdaptationCeiling = bitrateAdaptationCeiling.map { max(1, $0) }
         let clampedFrameRate = targetFrameRate.map {
             Self.runtimeWorkloadSafetyCappedFrameRate(
@@ -165,7 +173,7 @@ extension MirageClientService {
                 cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
             )
         }
-        let request = StreamEncoderSettingsChangeMessage(
+        let request = MirageWire.StreamEncoderSettingsChangeMessage(
             streamID: streamID,
             colorDepth: colorDepth,
             bitrate: bitrate,
@@ -205,7 +213,7 @@ extension MirageClientService {
 
     func configureDecoderColorDepthBaseline(
         for streamID: StreamID,
-        colorDepth: MirageStreamColorDepth?
+        colorDepth: MirageMedia.MirageStreamColorDepth?
     ) {
         if let colorDepth {
             decoderCompatibilityCurrentColorDepthByStream[streamID] = colorDepth

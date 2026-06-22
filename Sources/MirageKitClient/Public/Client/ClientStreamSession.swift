@@ -1,3 +1,13 @@
+import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  ClientStreamSession.swift
 //  MirageKit
@@ -7,7 +17,6 @@
 //  Stream session metadata for client-side UI coordination.
 //
 
-import MirageKit
 
 /// Logical client-side target represented by a stream session.
 ///
@@ -57,8 +66,8 @@ public struct MirageStreamLogicalTarget: Hashable, Sendable, Codable {
     /// the desktop stream itself; app and custom streams keep the window identity.
     public init(
         streamID: StreamID,
-        window: MirageWindow,
-        streamKind: MirageStreamKind,
+        window: MirageMedia.MirageWindow,
+        streamKind: MirageMedia.MirageStreamKind,
         appSessionID: UUID? = nil
     ) {
         let kind: Kind = switch streamKind {
@@ -89,13 +98,13 @@ public struct ClientStreamSession: Identifiable, Sendable {
     /// Physical media stream ID used for decoded frame presentation.
     public let mediaStreamID: StreamID
     /// Last known host window metadata for this stream.
-    public let window: MirageWindow
+    public let window: MirageMedia.MirageWindow
     /// Host stream category.
-    public let kind: MirageStreamKind
+    public let kind: MirageMedia.MirageStreamKind
     /// Stable target used for focus, input, and scene coordination.
     public let logicalTarget: MirageStreamLogicalTarget
     /// Optional atlas slice when this logical stream is rendered from shared media.
-    public let atlasRegion: MirageAppAtlasRegion?
+    public let atlasRegion: MirageMedia.MirageAppAtlasRegion?
 
     /// Creates a client stream session.
     ///
@@ -103,11 +112,11 @@ public struct ClientStreamSession: Identifiable, Sendable {
     /// the logical stream ID, window metadata, and stream kind.
     public init(
         id: StreamID,
-        window: MirageWindow,
-        kind: MirageStreamKind = .app,
+        window: MirageMedia.MirageWindow,
+        kind: MirageMedia.MirageStreamKind = .app,
         mediaStreamID: StreamID,
         logicalTarget: MirageStreamLogicalTarget? = nil,
-        atlasRegion: MirageAppAtlasRegion? = nil
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil
     ) {
         self.id = id
         self.mediaStreamID = mediaStreamID

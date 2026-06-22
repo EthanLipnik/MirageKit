@@ -10,6 +10,8 @@
 import CoreFoundation
 import MirageKit
 import Testing
+import MirageMedia
+import MirageWire
 
 @Suite("Host Adaptive P-Frame Controller")
 struct HostAdaptivePFrameControllerTests {
@@ -1044,7 +1046,7 @@ struct HostAdaptivePFrameControllerTests {
 
     @Test("All latency modes admit fresh oversize frames that fit motion target")
     func allLatencyModesAdmitFreshOversizeFramesThatFitMotionTarget() {
-        for mode in [MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
+        for mode in [MirageMedia.MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
             var controller = HostAdaptivePFrameController()
             let decision = controller.evaluateEncodedFrame(
                 byteCount: 180 * 1024,
@@ -1251,7 +1253,7 @@ struct HostAdaptivePFrameControllerTests {
         let operatingFrameBytes = 20 * 1024 * 1024
         let oversizedFrameBytes = 60 * 1024 * 1024
 
-        for mode in [MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
+        for mode in [MirageMedia.MirageStreamLatencyMode.lowestLatency, .balanced, .smoothest] {
             var controller = HostAdaptivePFrameController()
             let decision = controller.evaluateEncodedFrame(
                 byteCount: oversizedFrameBytes,
@@ -2244,8 +2246,8 @@ private func recordDelivery(
     packetSpanMs: Double,
     completionGapMs: Double,
     currentQuality: Float = 0.60,
-    latencyMode: MirageStreamLatencyMode = .lowestLatency,
-    mediaPathProfile: MirageMediaPathProfile = .unknown,
+    latencyMode: MirageMedia.MirageStreamLatencyMode = .lowestLatency,
+    mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown,
     receiverPlayoutDelayTargetMs: Double? = nil,
     awdlQualityReductionAllowed: Bool = true,
     currentFrameRate: Int = 60,
@@ -2302,9 +2304,9 @@ private func receiverFeedback(
     discardedPacketCount: UInt64 = 0,
     reassemblyBacklogFrames: Int = 0,
     reassemblyBacklogBytes: Int = 0,
-    recoveryState: MirageMediaFeedbackRecoveryState = .idle
-) -> ReceiverMediaFeedbackMessage {
-    ReceiverMediaFeedbackMessage(
+    recoveryState: MirageWire.MirageMediaFeedbackRecoveryState = .idle
+) -> MirageWire.ReceiverMediaFeedbackMessage {
+    MirageWire.ReceiverMediaFeedbackMessage(
         streamID: 1,
         sequence: sequence,
         sentAtUptime: 0,

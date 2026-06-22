@@ -11,6 +11,8 @@ import CoreGraphics
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageMedia
+import MirageWire
 
 @Suite("Host Frame Freshness Policy")
 struct HostFrameFreshnessPolicyTests {
@@ -345,8 +347,8 @@ struct HostFrameFreshnessPolicyTests {
     }
 
     private func makeContext(
-        latencyMode: MirageStreamLatencyMode,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        latencyMode: MirageMedia.MirageStreamLatencyMode,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
@@ -371,8 +373,8 @@ struct HostFrameFreshnessPolicyTests {
         presentationQueueDepth: Int? = nil,
         presentationTargetFrames: Int? = nil,
         presentationStallCount: UInt64? = nil
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 1,
             sequence: 1,
             sentAtUptime: 0,

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/10/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension StreamController {
     /// Time window for counting repeated decode failures before escalating recovery.

@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/24/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package enum MirageCursorLatencyProbe {
@@ -18,7 +25,7 @@ package enum MirageCursorLatencyProbe {
 
     package static func hostCursorSample(
         streamID: StreamID,
-        cursorType: MirageCursorType,
+        cursorType: MirageWire.MirageCursorType,
         isVisible: Bool,
         didChange: Bool,
         source: String,
@@ -70,7 +77,7 @@ package enum MirageCursorLatencyProbe {
 
     package static func updateCursorImage(
         streamID: StreamID?,
-        cursorType: MirageCursorType,
+        cursorType: MirageWire.MirageCursorType,
         durationMilliseconds: Double
     ) {
         let streamDescription = streamID.map(String.init) ?? "none"
@@ -83,7 +90,7 @@ package enum MirageCursorLatencyProbe {
     package static func pointerInteractionInvalidate(
         reason: String,
         streamID: StreamID?,
-        cursorType: MirageCursorType,
+        cursorType: MirageWire.MirageCursorType,
         durationMilliseconds: Double
     ) {
         let streamDescription = streamID.map(String.init) ?? "none"

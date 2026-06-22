@@ -7,8 +7,16 @@
 //  Touch behavior options for touch-capable clients.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Determines how screen touches are translated into host input.
 public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable {

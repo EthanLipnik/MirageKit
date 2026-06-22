@@ -10,7 +10,11 @@
 @testable import MirageKit
 @testable import MirageKitHost
 import Foundation
+import Loom
 import Testing
+import MirageIdentity
+import MirageKit
+import MirageWire
 
 #if os(macOS)
 @Suite("Host Single-Client")
@@ -19,7 +23,7 @@ struct HostSingleClientTests {
     @MainActor
     func boundDirectTransportPortsStayInHostAdvertisement() {
         let baseAdvertisement = LoomPeerAdvertisement(
-            protocolVersion: Int(MirageKit.protocolVersion),
+            protocolVersion: Int(MirageKit.discoveryProtocolVersion),
             deviceID: UUID(),
             identityKeyID: "identity-key",
             deviceType: .mac,
@@ -150,15 +154,14 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "existing-key"
         )
-        let incomingPeer = LoomPeerIdentity(
+        let incomingPeer = MirageAuthenticatedPeerIdentity(
             deviceID: clientID,
-            name: "Incoming iPad",
-            deviceType: .iPad,
+            displayName: "Incoming iPad",
             iCloudUserID: nil,
             identityKeyID: "different-key",
             identityPublicKey: nil,
             isIdentityAuthenticated: true,
-            endpoint: "127.0.0.1"
+            endpointDescription: "127.0.0.1"
         )
 
         #expect(host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
@@ -176,15 +179,14 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "shared-key"
         )
-        let incomingPeer = LoomPeerIdentity(
+        let incomingPeer = MirageAuthenticatedPeerIdentity(
             deviceID: UUID(),
-            name: "Incoming Mac",
-            deviceType: .mac,
+            displayName: "Incoming Mac",
             iCloudUserID: nil,
             identityKeyID: "shared-key",
             identityPublicKey: nil,
             isIdentityAuthenticated: true,
-            endpoint: "127.0.0.1"
+            endpointDescription: "127.0.0.1"
         )
 
         #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
@@ -202,15 +204,14 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "existing-key"
         )
-        let incomingPeer = LoomPeerIdentity(
+        let incomingPeer = MirageAuthenticatedPeerIdentity(
             deviceID: UUID(),
-            name: "Incoming iPad",
-            deviceType: .iPad,
+            displayName: "Incoming iPad",
             iCloudUserID: nil,
             identityKeyID: "incoming-key",
             identityPublicKey: nil,
             isIdentityAuthenticated: true,
-            endpoint: "127.0.0.1"
+            endpointDescription: "127.0.0.1"
         )
 
         #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
@@ -227,25 +228,24 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "shared-key"
         )
-        let incomingPeer = LoomPeerIdentity(
+        let incomingPeer = MirageAuthenticatedPeerIdentity(
             deviceID: UUID(),
-            name: "Incoming iPhone",
-            deviceType: .iPhone,
+            displayName: "Incoming iPhone",
             iCloudUserID: nil,
             identityKeyID: "shared-key",
             identityPublicKey: nil,
             isIdentityAuthenticated: true,
-            endpoint: "127.0.0.1"
+            endpointDescription: "127.0.0.1"
         )
-        let request = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let request = MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: false,
             requestTakeoverIfBusy: true
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
             for: request,
-            trustEvaluation: LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false),
+            trustEvaluation: MirageTrustEvaluationSnapshot(decision: .trusted, shouldShowAutoTrustNotice: false),
             existingClient: existingClient,
             incomingPeerIdentity: incomingPeer
         )
@@ -264,24 +264,23 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "shared-key"
         )
-        let incomingPeer = LoomPeerIdentity(
+        let incomingPeer = MirageAuthenticatedPeerIdentity(
             deviceID: UUID(),
-            name: "Incoming iPhone",
-            deviceType: .iPhone,
+            displayName: "Incoming iPhone",
             iCloudUserID: nil,
             identityKeyID: "shared-key",
             identityPublicKey: nil,
             isIdentityAuthenticated: true,
-            endpoint: "127.0.0.1"
+            endpointDescription: "127.0.0.1"
         )
-        let request = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let request = MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: false
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
             for: request,
-            trustEvaluation: LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false),
+            trustEvaluation: MirageTrustEvaluationSnapshot(decision: .trusted, shouldShowAutoTrustNotice: false),
             existingClient: existingClient,
             incomingPeerIdentity: incomingPeer
         )
@@ -301,25 +300,24 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "old-key"
         )
-        let incomingPeer = LoomPeerIdentity(
+        let incomingPeer = MirageAuthenticatedPeerIdentity(
             deviceID: clientID,
-            name: "Incoming iPad",
-            deviceType: .iPad,
+            displayName: "Incoming iPad",
             iCloudUserID: nil,
             identityKeyID: "new-key",
             identityPublicKey: nil,
             isIdentityAuthenticated: true,
-            endpoint: "127.0.0.1"
+            endpointDescription: "127.0.0.1"
         )
-        let request = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let request = MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: false,
             requestTakeoverIfBusy: false
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
             for: request,
-            trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false),
+            trustEvaluation: MirageTrustEvaluationSnapshot(decision: .requiresApproval, shouldShowAutoTrustNotice: false),
             existingClient: existingClient,
             incomingPeerIdentity: incomingPeer
         )
@@ -331,15 +329,15 @@ struct HostSingleClientTests {
     @MainActor
     func untrustedExplicitTakeoverRequiresTrustedRequester() {
         let host = MirageHostService()
-        let request = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let request = MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: false,
             requestTakeoverIfBusy: true
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
             for: request,
-            trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
+            trustEvaluation: MirageTrustEvaluationSnapshot(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
         )
 
         #expect(rejectionReason == .takeoverRequiresTrustedRequester)

@@ -8,10 +8,12 @@
 @testable import MirageKitClient
 #if os(macOS)
 import AppKit
+import Darwin
 #endif
 import Foundation
 @testable import MirageKit
 import Testing
+import MirageWire
 
 @Suite("Client Shared Clipboard", .serialized)
 struct ClientSharedClipboardTests {
@@ -66,9 +68,9 @@ struct ClientSharedClipboardTests {
 
     @Test("Status handler updates runtime state")
     func sharedClipboardStatusHandlerUpdatesRuntimeState() async throws {
-        let enabledMessage = try ControlMessage(
+        let enabledMessage = try MirageWire.ControlMessage(
             type: .sharedClipboardStatus,
-            content: SharedClipboardStatusMessage(enabled: true)
+            content: MirageWire.SharedClipboardStatusMessage(enabled: true)
         )
 
         let service = await MainActor.run {
@@ -86,6 +88,8 @@ struct ClientSharedClipboardTests {
     @MainActor
     @Test("macOS client applies host text updates to the pasteboard")
     func macOSClientAppliesHostTextUpdatesToPasteboard() async {
+        let pasteboardLock = await PasteboardTestLock.acquire()
+        defer { pasteboardLock.release() }
         let pasteboardSnapshot = PasteboardSnapshot.capture()
         defer { pasteboardSnapshot.restore() }
 
@@ -111,6 +115,8 @@ struct ClientSharedClipboardTests {
     @MainActor
     @Test("macOS client reads local pasteboard for paste-time sync")
     func macOSClientReadsLocalPasteboardForPasteTimeSync() async {
+        let pasteboardLock = await PasteboardTestLock.acquire()
+        defer { pasteboardLock.release() }
         let pasteboardSnapshot = PasteboardSnapshot.capture()
         defer { pasteboardSnapshot.restore() }
 
@@ -138,6 +144,8 @@ struct ClientSharedClipboardTests {
     @MainActor
     @Test("macOS client does not send unsupported pasteboard contents during paste")
     func macOSClientDoesNotSendUnsupportedPasteboardContentsDuringPaste() async {
+        let pasteboardLock = await PasteboardTestLock.acquire()
+        defer { pasteboardLock.release() }
         let pasteboardSnapshot = PasteboardSnapshot.capture()
         defer { pasteboardSnapshot.restore() }
 
@@ -155,6 +163,40 @@ struct ClientSharedClipboardTests {
 }
 
 #if os(macOS)
+private final class PasteboardTestLock {
+    private var fileDescriptor: CInt = -1
+
+    private init(fileDescriptor: CInt) {
+        self.fileDescriptor = fileDescriptor
+    }
+
+    static func acquire() async -> PasteboardTestLock {
+        let path = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("mirage-pasteboard-tests.lock")
+            .path
+        while true {
+            let fileDescriptor = open(path, O_CREAT | O_RDWR, 0o600)
+            precondition(fileDescriptor >= 0, "Unable to open pasteboard test lock")
+            if flock(fileDescriptor, LOCK_EX | LOCK_NB) == 0 {
+                return PasteboardTestLock(fileDescriptor: fileDescriptor)
+            }
+            close(fileDescriptor)
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func release() {
+        guard fileDescriptor >= 0 else { return }
+        flock(fileDescriptor, LOCK_UN)
+        close(fileDescriptor)
+        fileDescriptor = -1
+    }
+
+    deinit {
+        release()
+    }
+}
+
 private struct PasteboardSnapshot {
     private let items: [[NSPasteboard.PasteboardType: Data]]
 
@@ -197,8 +239,8 @@ private func sharedClipboardTextItem(_ text: String) -> MirageSharedClipboardIte
     )
 }
 
-private func sharedClipboardOrderingToken(logicalVersion: UInt64) -> MirageSharedClipboardOrderingToken {
-    MirageSharedClipboardOrderingToken(
+private func sharedClipboardOrderingToken(logicalVersion: UInt64) -> MirageWire.MirageSharedClipboardOrderingToken {
+    MirageWire.MirageSharedClipboardOrderingToken(
         logicalVersion: logicalVersion,
         changeID: UUID()
     )

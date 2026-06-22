@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 4/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 import Observation
 
 @Observable
@@ -85,8 +93,8 @@ final class DesktopResizeCoordinator {
                 )
         }
 
-        private var resolvedGeometry: MirageStreamGeometry {
-            MirageStreamGeometry.resolve(
+        private var resolvedGeometry: MirageMedia.MirageStreamGeometry {
+            MirageMedia.MirageStreamGeometry.resolve(
                 logicalSize: logicalResolution,
                 displayScaleFactor: displayScaleFactor,
                 requestedStreamScale: requestedStreamScale,
@@ -96,8 +104,8 @@ final class DesktopResizeCoordinator {
             )
         }
 
-        private var contract: DesktopGeometryContract {
-            DesktopGeometryContract(
+        private var contract: MirageMedia.DesktopGeometryContract {
+            MirageMedia.DesktopGeometryContract(
                 contractID: contractID,
                 sceneIdentity: sceneIdentity,
                 refreshTargetHz: refreshTargetHz,

@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 2/20/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
 import Network
-import MirageKit
 
 #if os(macOS)
 /// Per-connection receive loop that keeps input ingestion independent from control handling.
@@ -30,24 +38,24 @@ final class HostReceiveLoop: @unchecked Sendable {
     /// Lifecycle events that should bypass normal control-message queueing.
     enum LifecycleSignal {
         /// Client requested disconnect.
-        case disconnect(ControlMessage)
+        case disconnect(MirageWire.ControlMessage)
         /// Client cancelled an in-flight stream setup.
-        case cancelStreamSetup(ControlMessage)
+        case cancelStreamSetup(MirageWire.ControlMessage)
         /// Client acknowledged stream startup readiness.
-        case streamReady(ControlMessage)
+        case streamReady(MirageWire.ControlMessage)
         /// Receive loop reached a terminal state.
         case terminal(TerminalReason)
     }
 
     /// Internal queue entry used to preserve ordering while coalescing noisy control updates.
     private enum QueueEntry {
-        case direct(ControlMessage)
+        case direct(MirageWire.ControlMessage)
         case coalesced(CoalescedKey)
-        case input(ControlMessage)
+        case input(MirageWire.ControlMessage)
     }
 
     private struct CoalescedKey: Hashable, CustomStringConvertible {
-        let type: ControlMessageType
+        let type: MirageWire.ControlMessageType
         let streamID: StreamID?
 
         var description: String {
@@ -63,14 +71,14 @@ final class HostReceiveLoop: @unchecked Sendable {
     private struct State {
         var receiveBuffer = Data()
         var entries: [QueueEntry] = []
-        var coalesced: [CoalescedKey: ControlMessage] = [:]
+        var coalesced: [CoalescedKey: MirageWire.ControlMessage] = [:]
         var controlInFlight = false
         var clipboardInputBarrierDepth = 0
         var stopped = false
         var firstErrorTime: CFAbsoluteTime?
     }
 
-    private static let coalescedTypes: Set<ControlMessageType> = [
+    private static let coalescedTypes: Set<MirageWire.ControlMessageType> = [
         .displayResolutionChange,
         .streamScaleChange,
         .streamRefreshRateChange,
@@ -78,7 +86,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         .receiverMediaFeedback,
     ]
 
-    private static let highPriorityDirectTypes: Set<ControlMessageType> = [
+    private static let highPriorityDirectTypes: Set<MirageWire.ControlMessageType> = [
         .disconnect,
         .cancelStreamSetup,
         .hostSupportLogArchiveRequest,
@@ -93,25 +101,25 @@ final class HostReceiveLoop: @unchecked Sendable {
     private let errorTimeoutSeconds: CFAbsoluteTime
     private let state = Locked(State())
 
-    private let onInputMessage: @Sendable (ControlMessage) -> Void
+    private let onInputMessage: @Sendable (MirageWire.ControlMessage) -> Void
     private let onPingMessage: @Sendable () -> Void
     private let onLifecycleSignal: @Sendable (LifecycleSignal) -> Void
-    private let dispatchControlMessage: @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void
+    private let dispatchControlMessage: @Sendable (MirageWire.ControlMessage, @escaping @Sendable () -> Void) -> Void
     private let onTerminal: @Sendable (TerminalReason) -> Void
     private let isFatalError: @Sendable (NWError) -> Bool
 
     init(
         clientName: String,
         maxControlBacklog: Int = 256,
-        maxReceiveBufferBytes: Int = LoomMessageLimits.maxReceiveBufferBytes,
+        maxReceiveBufferBytes: Int = MirageControlMessageLimits.maxReceiveBufferBytes,
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         receiveChunk: @escaping @Sendable (
             @escaping @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void
         ) -> Void,
-        onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onInputMessage: @escaping @Sendable (MirageWire.ControlMessage) -> Void,
         onPingMessage: @escaping @Sendable () -> Void,
         onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
-        dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
+        dispatchControlMessage: @escaping @Sendable (MirageWire.ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
         isFatalError: @escaping @Sendable (NWError) -> Bool
     ) {
@@ -224,14 +232,14 @@ final class HostReceiveLoop: @unchecked Sendable {
 
     /// Parses buffered bytes into immediate input, ping callbacks, and queued control messages.
     private func parseBufferedMessages() {
-        var immediateInputMessages: [ControlMessage] = []
+        var immediateInputMessages: [MirageWire.ControlMessage] = []
         var pingMessageCount = 0
         var violationReason: String?
 
         state.withLock { state in
             var parseOffset = 0
             while true {
-                switch ControlMessage.deserialize(from: state.receiveBuffer, offset: parseOffset) {
+                switch MirageWire.ControlMessage.deserialize(from: state.receiveBuffer, offset: parseOffset) {
                 case let .success(message, consumed):
                     parseOffset += consumed
                     if message.type == .inputEvent || message.type == .priorityInputEvent {
@@ -282,7 +290,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     }
 
     /// Enqueues a control message, coalescing noisy update types when possible.
-    private func enqueueControl(_ message: ControlMessage, state: inout State) -> Bool {
+    private func enqueueControl(_ message: MirageWire.ControlMessage, state: inout State) -> Bool {
         let type = message.type
         if Self.coalescedTypes.contains(type) {
             let key = Self.coalescedKey(for: message)
@@ -311,7 +319,7 @@ final class HostReceiveLoop: @unchecked Sendable {
 
     /// Emits signals for control messages that need immediate host-side handling.
     /// Returns whether the message should still enter the ordered control queue.
-    private func publishLifecycleSignalIfNeeded(for message: ControlMessage) -> Bool {
+    private func publishLifecycleSignalIfNeeded(for message: MirageWire.ControlMessage) -> Bool {
         switch message.type {
         case .disconnect:
             onLifecycleSignal(.disconnect(message))
@@ -328,7 +336,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     }
 
     /// Queues input behind a clipboard barrier while preserving newer input under backlog pressure.
-    private func enqueueInput(_ message: ControlMessage, state: inout State) {
+    private func enqueueInput(_ message: MirageWire.ControlMessage, state: inout State) {
         if state.entries.count >= maxControlBacklog {
             discardQueuedMessageToPreserveInput(state: &state)
         }
@@ -388,7 +396,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     }
 
     private func discardQueuedMessageToPreserveHighPriorityControl(
-        _ type: ControlMessageType,
+        _ type: MirageWire.ControlMessageType,
         state: inout State
     ) {
         if let index = state.entries.firstIndex(where: {
@@ -444,8 +452,8 @@ final class HostReceiveLoop: @unchecked Sendable {
     /// Starts dispatching the next queued control or delayed input message when idle.
     private func scheduleNextControlIfNeeded() {
         enum ScheduledEntry {
-            case control(ControlMessage)
-            case input(ControlMessage)
+            case control(MirageWire.ControlMessage)
+            case input(MirageWire.ControlMessage)
         }
 
         let nextEntry: ScheduledEntry? = state.withLock { state in
@@ -483,7 +491,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     }
 
     /// Marks the current queued item complete and advances the queue.
-    private func finishScheduledEntry(controlType: ControlMessageType?) {
+    private func finishScheduledEntry(controlType: MirageWire.ControlMessageType?) {
         state.withLock { state in
             state.controlInFlight = false
             if controlType == .sharedClipboardUpdate, state.clipboardInputBarrierDepth > 0 {
@@ -493,9 +501,9 @@ final class HostReceiveLoop: @unchecked Sendable {
         scheduleNextControlIfNeeded()
     }
 
-    private static func coalescedKey(for message: ControlMessage) -> CoalescedKey {
+    private static func coalescedKey(for message: MirageWire.ControlMessage) -> CoalescedKey {
         guard message.type == .receiverMediaFeedback,
-              let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self) else {
+              let feedback = try? message.decode(MirageWire.ReceiverMediaFeedbackMessage.self) else {
             return CoalescedKey(type: message.type, streamID: nil)
         }
         return CoalescedKey(type: message.type, streamID: feedback.streamID)

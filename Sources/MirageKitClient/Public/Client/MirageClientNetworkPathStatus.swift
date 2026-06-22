@@ -5,15 +5,23 @@
 //  Created by Ethan Lipnik on 4/1/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Public snapshot of the current control-channel network path.
 public struct MirageClientNetworkPathStatus: Sendable, Equatable {
     /// High-level path kind inferred from Network.framework state and interface hints.
-    public let kind: MirageNetworkPathKind
+    public let kind: MirageCore.MirageNetworkPathKind
     /// Internal media behavior profile derived from the path kind and concrete interface hints.
-    package let mediaProfile: MirageMediaPathProfile
+    package let mediaProfile: MirageMedia.MirageMediaPathProfile
     /// Raw path status label.
     public let status: String
     /// Interface names observed on the active path.
@@ -43,7 +51,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
     /// Creates a public control-channel path snapshot.
     public init(
-        kind: MirageNetworkPathKind,
+        kind: MirageCore.MirageNetworkPathKind,
         status: String,
         interfaceNames: [String],
         isExpensive: Bool,
@@ -59,7 +67,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         remoteEndpointDescription: String? = nil
     ) {
         self.kind = kind
-        mediaProfile = MirageMediaPathProfile.classify(
+        mediaProfile = MirageMedia.MirageMediaPathProfile.classify(
             pathKind: kind,
             interfaceNames: interfaceNames,
             usesWiFi: usesWiFi,
@@ -208,22 +216,23 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         }
     }
 
-    package init(snapshot: MirageNetworkPathSnapshot) {
-        kind = snapshot.kind
-        mediaProfile = snapshot.mediaProfile
-        status = snapshot.status
-        interfaceNames = snapshot.interfaceNames
-        isExpensive = snapshot.isExpensive
-        isConstrained = snapshot.isConstrained
-        supportsIPv4 = snapshot.supportsIPv4
-        supportsIPv6 = snapshot.supportsIPv6
-        usesWiFi = snapshot.usesWiFi
-        usesWired = snapshot.usesWired
-        usesCellular = snapshot.usesCellular
-        usesLoopback = snapshot.usesLoopback
-        usesOther = snapshot.usesOther
-        localEndpointDescription = snapshot.localEndpointDescription
-        remoteEndpointDescription = snapshot.remoteEndpointDescription
+    package init(snapshot: MirageConnectivity.MirageNetworkPathSnapshot) {
+        self.init(
+            kind: snapshot.kind,
+            status: snapshot.status,
+            interfaceNames: snapshot.interfaceNames,
+            isExpensive: snapshot.isExpensive,
+            isConstrained: snapshot.isConstrained,
+            supportsIPv4: snapshot.supportsIPv4,
+            supportsIPv6: snapshot.supportsIPv6,
+            usesWiFi: snapshot.usesWiFi,
+            usesWired: snapshot.usesWired,
+            usesCellular: snapshot.usesCellular,
+            usesLoopback: snapshot.usesLoopback,
+            usesOther: snapshot.usesOther,
+            localEndpointDescription: snapshot.localEndpointDescription,
+            remoteEndpointDescription: snapshot.remoteEndpointDescription
+        )
     }
 
     /// Interface names can be more specific than `NWPath` interface categories.

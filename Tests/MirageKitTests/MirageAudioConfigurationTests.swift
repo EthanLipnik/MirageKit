@@ -8,6 +8,7 @@
 import Foundation
 @testable import MirageKit
 import Testing
+import MirageMedia
 
 @Suite("Mirage Audio Configuration")
 struct MirageAudioConfigurationTests {
@@ -23,7 +24,7 @@ struct MirageAudioConfigurationTests {
             """.utf8
         )
 
-        let configuration = try JSONDecoder().decode(MirageAudioConfiguration.self, from: data)
+        let configuration = try JSONDecoder().decode(MirageMedia.MirageAudioConfiguration.self, from: data)
 
         #expect(configuration.enabled)
         #expect(configuration.channelLayout == .stereo)
@@ -35,7 +36,7 @@ struct MirageAudioConfigurationTests {
 
     @Test("Lossless audio ignores compressed adaptive budget")
     func losslessAudioIgnoresCompressedAdaptiveBudget() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .lossless,
@@ -52,14 +53,14 @@ struct MirageAudioConfigurationTests {
 
     @Test("Compressed audio budget is floored by channel layout")
     func compressedAudioBudgetIsFlooredByChannelLayout() {
-        let stereo = MirageAudioConfiguration(
+        let stereo = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,
             compressedBitrateBps: 16_000,
             adaptiveCompressionEnabled: true
         )
-        let surround = MirageAudioConfiguration(
+        let surround = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .surround51,
             quality: .high,
@@ -73,7 +74,7 @@ struct MirageAudioConfigurationTests {
 
     @Test("Compressed audio ceiling is floored by channel layout")
     func compressedAudioCeilingIsFlooredByChannelLayout() {
-        let configuration = MirageAudioConfiguration(
+        let configuration = MirageMedia.MirageAudioConfiguration(
             enabled: true,
             channelLayout: .stereo,
             quality: .high,

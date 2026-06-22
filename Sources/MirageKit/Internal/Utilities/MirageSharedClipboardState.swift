@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package enum MirageSharedClipboard {
@@ -19,13 +26,13 @@ package enum MirageSharedClipboard {
     /// Time window for attributing platform pasteboard change-count advances to a remote clipboard update.
     package static let hostOriginAttributionWindowMilliseconds: Int64 = 8000
 
-    package static func maximumPayloadBytes(for representation: SharedClipboardRepresentation) -> Int {
+    package static func maximumPayloadBytes(for representation: MirageWire.SharedClipboardRepresentation) -> Int {
         representation.kind == .text ? maximumTextPayloadBytes : maximumBinaryPayloadBytes
     }
 
     package static func validatedPayload(
         _ payload: Data?,
-        representation: SharedClipboardRepresentation
+        representation: MirageWire.SharedClipboardRepresentation
     ) -> Data? {
         guard let payload, !payload.isEmpty else { return nil }
         guard payload.count <= maximumPayloadBytes(for: representation) else { return nil }
@@ -53,7 +60,7 @@ package enum MirageSharedClipboard {
         localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64,
         mediaSecurityContext: MirageMediaSecurityContext
-    ) throws -> [ControlMessage] {
+    ) throws -> [MirageWire.ControlMessage] {
         let payload = validatedPayload(
             localSend.item.payload,
             representation: localSend.item.representation
@@ -68,7 +75,7 @@ package enum MirageSharedClipboard {
                     context: mediaSecurityContext
                 )
             }
-            let update = SharedClipboardUpdateMessage(
+            let update = MirageWire.SharedClipboardUpdateMessage(
                 changeID: localSend.orderingToken.changeID,
                 logicalVersion: localSend.orderingToken.logicalVersion,
                 sentAtMs: sentAtMs,
@@ -77,38 +84,23 @@ package enum MirageSharedClipboard {
                 chunkIndex: index,
                 chunkCount: chunks.count
             )
-            return try ControlMessage(type: .sharedClipboardUpdate, content: update)
+            return try MirageWire.ControlMessage(type: .sharedClipboardUpdate, content: update)
         }
-    }
-}
-
-package struct MirageSharedClipboardOrderingToken: Equatable, Comparable {
-    package let logicalVersion: UInt64
-    package let changeID: UUID
-
-    package static func < (
-        lhs: MirageSharedClipboardOrderingToken,
-        rhs: MirageSharedClipboardOrderingToken
-    ) -> Bool {
-        if lhs.logicalVersion != rhs.logicalVersion {
-            return lhs.logicalVersion < rhs.logicalVersion
-        }
-        return lhs.changeID.uuidString < rhs.changeID.uuidString
     }
 }
 
 package struct MirageSharedClipboardItem: Equatable {
-    package let representation: SharedClipboardRepresentation
+    package let representation: MirageWire.SharedClipboardRepresentation
     package let payload: Data?
 
-    package init(representation: SharedClipboardRepresentation, payload: Data?) {
+    package init(representation: MirageWire.SharedClipboardRepresentation, payload: Data?) {
         self.representation = representation
         self.payload = payload
     }
 
     package static func unsupported(byteCount: Int = 0) -> MirageSharedClipboardItem {
         MirageSharedClipboardItem(
-            representation: SharedClipboardRepresentation(
+            representation: MirageWire.SharedClipboardRepresentation(
                 kind: .unsupported,
                 contentType: nil,
                 filename: nil,
@@ -121,16 +113,16 @@ package struct MirageSharedClipboardItem: Equatable {
 
 package struct MirageSharedClipboardLocalSend: Equatable {
     package let item: MirageSharedClipboardItem
-    package let orderingToken: MirageSharedClipboardOrderingToken
+    package let orderingToken: MirageWire.MirageSharedClipboardOrderingToken
 }
 
 package struct MirageSharedClipboardState {
     package private(set) var isActive = false
     package private(set) var lastObservedChangeCount: Int?
-    package private(set) var latestOrderingToken: MirageSharedClipboardOrderingToken?
+    package private(set) var latestOrderingToken: MirageWire.MirageSharedClipboardOrderingToken?
     package private(set) var maxKnownLogicalVersion: UInt64 = 0
     package private(set) var suppressLocalSendUntilChangeCount: Int?
-    package private(set) var latestRemoteClipboardObservationToken: MirageSharedClipboardOrderingToken?
+    package private(set) var latestRemoteClipboardObservationToken: MirageWire.MirageSharedClipboardOrderingToken?
     package private(set) var latestRemoteClipboardObservedAtMs: Int64?
     package private(set) var remoteOriginAttributionBaselineChangeCount: Int?
     package private(set) var remoteOriginAttributionDeadlineMs: Int64?
@@ -165,7 +157,7 @@ package struct MirageSharedClipboardState {
     }
 
     package func shouldApplyRemoteUpdate(
-        orderingToken: MirageSharedClipboardOrderingToken
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken
     ) -> Bool {
         guard let latestOrderingToken else { return true }
         return latestOrderingToken < orderingToken
@@ -173,7 +165,7 @@ package struct MirageSharedClipboardState {
 
     package mutating func recordRemoteDeclaration(
         changeCount: Int,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         observedAtMs: Int64? = nil
     ) {
         lastObservedChangeCount = changeCount
@@ -191,7 +183,7 @@ package struct MirageSharedClipboardState {
 
     package mutating func recordRemoteTransferObservation(
         changeCount: Int,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         observedAtMs: Int64 = MirageSharedClipboard.currentTimestampMs()
     ) -> Bool {
         guard isActive else { return false }
@@ -214,7 +206,7 @@ package struct MirageSharedClipboardState {
 
     package mutating func recordRemoteWrite(
         changeCount: Int,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         observedAtMs: Int64 = MirageSharedClipboard.currentTimestampMs()
     ) {
         lastObservedChangeCount = changeCount
@@ -324,7 +316,7 @@ package struct MirageSharedClipboardState {
 
     private mutating func recordRemoteOriginAttributionWindow(
         changeCount: Int,
-        orderingToken: MirageSharedClipboardOrderingToken,
+        orderingToken: MirageWire.MirageSharedClipboardOrderingToken,
         observedAtMs: Int64
     ) {
         latestRemoteClipboardObservationToken = orderingToken
@@ -351,9 +343,9 @@ package struct MirageSharedClipboardState {
         }
     }
 
-    private mutating func mintLocalOrderingToken() -> MirageSharedClipboardOrderingToken {
+    private mutating func mintLocalOrderingToken() -> MirageWire.MirageSharedClipboardOrderingToken {
         maxKnownLogicalVersion &+= 1
-        return MirageSharedClipboardOrderingToken(
+        return MirageWire.MirageSharedClipboardOrderingToken(
             logicalVersion: maxKnownLogicalVersion,
             changeID: UUID()
         )

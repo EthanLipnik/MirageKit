@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 @MainActor
 extension MirageClientService {
@@ -136,7 +144,7 @@ extension MirageClientService {
         return packetProgressFreshThreshold(for: snapshot.transportPathKind)
     }
 
-    private func packetProgressFreshThreshold(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+    private func packetProgressFreshThreshold(for pathKind: MirageCore.MirageNetworkPathKind) -> CFAbsoluteTime {
         switch pathKind {
         case .vpn, .cellular:
             6.0
@@ -160,7 +168,7 @@ extension MirageClientService {
         return hardRecoveryNoProgressFloor(for: snapshot.transportPathKind)
     }
 
-    private func hardRecoveryNoProgressFloor(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+    private func hardRecoveryNoProgressFloor(for pathKind: MirageCore.MirageNetworkPathKind) -> CFAbsoluteTime {
         switch pathKind {
         case .vpn, .cellular:
             20.0

@@ -8,15 +8,19 @@
 #if os(macOS)
 @testable import MirageKit
 import Foundation
+import Loom
 import Network
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageWire
 
 func nextControlMessage(
     from channel: MirageControlChannel,
     timeout: Duration = .seconds(1),
-    matching predicate: @escaping @Sendable (ControlMessage) -> Bool = { _ in true }
-) async throws -> ControlMessage {
-    try await withThrowingTaskGroup(of: ControlMessage.self) { group in
+    matching predicate: @escaping @Sendable (MirageWire.ControlMessage) -> Bool = { _ in true }
+) async throws -> MirageWire.ControlMessage {
+    try await withThrowingTaskGroup(of: MirageWire.ControlMessage.self) { group in
         group.addTask {
             var buffer = Data()
             for await chunk in channel.incomingBytes {
@@ -25,7 +29,7 @@ func nextControlMessage(
 
                 parseLoop:
                 while true {
-                    switch ControlMessage.deserialize(from: buffer) {
+                    switch MirageWire.ControlMessage.deserialize(from: buffer) {
                     case let .success(message, consumed):
                         buffer.removeFirst(consumed)
                         if predicate(message) {
@@ -34,20 +38,20 @@ func nextControlMessage(
                     case .needMoreData:
                         break parseLoop
                     case let .invalidFrame(reason):
-                        throw MirageError.protocolError("Invalid control frame: \(reason)")
+                        throw MirageCore.MirageError.protocolError("Invalid control frame: \(reason)")
                     }
                 }
             }
 
-            throw MirageError.protocolError("Control stream closed before receiving a Mirage control message")
+            throw MirageCore.MirageError.protocolError("Control stream closed before receiving a Mirage control message")
         }
         group.addTask {
             try await Task.sleep(for: timeout)
-            throw MirageError.timeout
+            throw MirageCore.MirageError.timeout
         }
 
         guard let message = try await group.next() else {
-            throw MirageError.timeout
+            throw MirageCore.MirageError.timeout
         }
         group.cancelAll()
         return message

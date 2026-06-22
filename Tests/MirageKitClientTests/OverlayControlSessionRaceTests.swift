@@ -8,6 +8,7 @@
 @testable import MirageKitClient
 import Foundation
 import Loom
+@testable import MirageConnectivity
 import Testing
 
 @Suite("Overlay Control Session Race")
@@ -53,7 +54,7 @@ struct OverlayControlSessionRaceTests {
         let state = OverlayControlSessionRaceState()
         await state.recordLaunched(.udp)
         await state.recordProgress(
-            LoomAuthenticatedSessionBootstrapProgress(phase: .remoteHelloReceived),
+            .remoteHelloReceived,
             transportKind: .udp
         )
 
@@ -69,7 +70,7 @@ struct OverlayControlSessionRaceTests {
         let state = OverlayControlSessionRaceState()
         await state.recordLaunched(.tcp)
         await state.recordProgress(
-            LoomAuthenticatedSessionBootstrapProgress(phase: .localHelloSent),
+            .localHelloSent,
             transportKind: .tcp
         )
 
@@ -84,7 +85,7 @@ struct OverlayControlSessionRaceTests {
         #expect(await state.shouldLaunch(.tcp))
 
         await state.recordProgress(
-            LoomAuthenticatedSessionBootstrapProgress(phase: .remoteHelloReceived),
+            .remoteHelloReceived,
             transportKind: .udp
         )
 

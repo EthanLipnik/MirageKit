@@ -7,17 +7,25 @@
 //  Stream control message handling.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 @MainActor
 extension MirageClientService {
     /// Handles host confirmation that a window stream is ready and prepares the matching decoder path.
-    func handleStreamStarted(_ message: ControlMessage) async {
-        let started: StreamStartedMessage
+    func handleStreamStarted(_ message: MirageWire.ControlMessage) async {
+        let started: MirageWire.StreamStartedMessage
         do {
-            started = try message.decode(StreamStartedMessage.self)
+            started = try message.decode(MirageWire.StreamStartedMessage.self)
         } catch {
             MirageLogger.error(
                 .client, error: error, message: "Failed to decode stream started message: "
@@ -160,10 +168,10 @@ extension MirageClientService {
     }
 
     /// Applies host stream metrics to diagnostics, cadence control, and refresh-rate fallback state.
-    func handleStreamMetricsUpdate(_ message: ControlMessage) {
-        let metrics: StreamMetricsMessage
+    func handleStreamMetricsUpdate(_ message: MirageWire.ControlMessage) {
+        let metrics: MirageWire.StreamMetricsMessage
         do {
-            metrics = try message.decode(StreamMetricsMessage.self)
+            metrics = try message.decode(MirageWire.StreamMetricsMessage.self)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode stream metrics: ")
             return
@@ -229,9 +237,9 @@ extension MirageClientService {
     }
 
     /// Responds to host transport-refresh requests by asking active streams for fresh keyframes.
-    func handleTransportRefreshRequest(_ message: ControlMessage) {
+    func handleTransportRefreshRequest(_ message: MirageWire.ControlMessage) {
         do {
-            let request = try message.decode(TransportRefreshRequestMessage.self)
+            let request = try message.decode(MirageWire.TransportRefreshRequestMessage.self)
             transportRefreshRequests &+= 1
             MirageLogger.client(
                 "Host transport refresh request received: reason=\(request.reason), stream=\(request.streamID.map(String.init) ?? "all"), count=\(transportRefreshRequests)"
@@ -256,8 +264,8 @@ extension MirageClientService {
     /// Inserts or refreshes the client-side session record for an active stream.
     func upsertActiveStreamSession(
         streamID: StreamID,
-        window: MirageWindow,
-        kind: MirageStreamKind = .app
+        window: MirageMedia.MirageWindow,
+        kind: MirageMedia.MirageStreamKind = .app
     ) {
         let session = ClientStreamSession(
             id: streamID, window: window, kind: kind, mediaStreamID: streamID
@@ -275,8 +283,8 @@ private extension MirageClientService {
     /// Resolves the window metadata associated with a newly started app stream.
     func resolveWindowForStartedStream(
         streamID: StreamID,
-        started: StreamStartedMessage
-    ) -> MirageWindow {
+        started: MirageWire.StreamStartedMessage
+    ) -> MirageMedia.MirageWindow {
         let fallbackFrame = CGRect(
             x: 0,
             y: 0,
@@ -290,7 +298,7 @@ private extension MirageClientService {
                 )?.window ?? availableWindows.first(where: { $0.id == started.windowID })
 
         guard let template = windowTemplate else {
-            return MirageWindow(
+            return MirageMedia.MirageWindow(
                 id: started.windowID,
                 title: nil,
                 application: nil,
@@ -308,7 +316,7 @@ private extension MirageClientService {
             height: CGFloat(max(1, started.height))
         )
 
-        return MirageWindow(
+        return MirageMedia.MirageWindow(
             id: started.windowID,
             title: template.title,
             application: template.application,

@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/6/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
-import MirageKit
 
 /// Presentation timing decision for one decoded stream frame.
 struct MirageStreamFrameTiming: Sendable, Equatable {
@@ -27,12 +35,12 @@ struct MirageStreamCadenceClock: Sendable {
     private var lastStreamPresentationTime: CMTime = .invalid
 
     init(targetFPS: Int) {
-        self.targetFPS = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
+        self.targetFPS = MirageMedia.MirageStreamCadenceTarget.normalizedFPS(targetFPS)
     }
 
     mutating func reset(targetFPS: Int? = nil) {
         if let targetFPS {
-            self.targetFPS = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
+            self.targetFPS = MirageMedia.MirageStreamCadenceTarget.normalizedFPS(targetFPS)
         }
         lastFrameNumber = nil
         lastRemotePresentationTime = .invalid
@@ -40,7 +48,7 @@ struct MirageStreamCadenceClock: Sendable {
     }
 
     mutating func updateTargetFPS(_ targetFPS: Int) {
-        let normalized = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
+        let normalized = MirageMedia.MirageStreamCadenceTarget.normalizedFPS(targetFPS)
         guard normalized != self.targetFPS else { return }
         self.targetFPS = normalized
         lastFrameNumber = nil

@@ -5,19 +5,27 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Handles a client request to swap a visible app-stream slot with a hidden window.
     func handleAppWindowSwapRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
         do {
-            let request = try message.decode(AppWindowSwapRequestMessage.self)
+            let request = try message.decode(MirageWire.AppWindowSwapRequestMessage.self)
             let result = await performAppWindowSwap(
                 bundleIdentifier: request.bundleIdentifier,
                 targetSlotStreamID: request.targetSlotStreamID,
@@ -27,7 +35,7 @@ extension MirageHostService {
             clientContext.queueBestEffort(.appWindowSwapResult, content: result)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle app window swap request: ")
-            let fallback = AppWindowSwapResultMessage(
+            let fallback = MirageWire.AppWindowSwapResultMessage(
                 bundleIdentifier: "",
                 targetSlotStreamID: 0,
                 mediaStreamID: 0,
@@ -45,7 +53,7 @@ extension MirageHostService {
         targetSlotStreamID: StreamID,
         targetWindowID: WindowID,
         clientID: UUID,
-        failure: (String) -> AppWindowSwapResultMessage
+        failure: (String) -> MirageWire.AppWindowSwapResultMessage
     ) async -> AppWindowSwapContextResult {
         guard let appSession = await appStreamManager.session(bundleIdentifier: bundleIdentifier) else {
             return .failure(failure("App session not found"))
@@ -92,9 +100,9 @@ extension MirageHostService {
         targetSlotStreamID: StreamID,
         targetWindowID: WindowID,
         clientID: UUID
-    ) async -> AppWindowSwapResultMessage {
-        let failure: (String) -> AppWindowSwapResultMessage = { reason in
-            AppWindowSwapResultMessage(
+    ) async -> MirageWire.AppWindowSwapResultMessage {
+        let failure: (String) -> MirageWire.AppWindowSwapResultMessage = { reason in
+            MirageWire.AppWindowSwapResultMessage(
                 bundleIdentifier: bundleIdentifier,
                 targetSlotStreamID: targetSlotStreamID,
                 mediaStreamID: targetSlotStreamID,
@@ -125,7 +133,7 @@ extension MirageHostService {
         let clientContext = swapContext.clientContext
 
         if currentWindowID == targetWindowID {
-            return AppWindowSwapResultMessage(
+            return MirageWire.AppWindowSwapResultMessage(
                 bundleIdentifier: bundleIdentifier,
                 targetSlotStreamID: targetSlotStreamID,
                 mediaStreamID: previousWindowInfo.mediaStreamID,
@@ -169,7 +177,7 @@ extension MirageHostService {
             width: CGFloat(max(1, hiddenInfo.width)),
             height: CGFloat(max(1, hiddenInfo.height))
         )
-        let targetWindow = MirageWindow(
+        let targetWindow = MirageMedia.MirageWindow(
             id: targetWindowID,
             title: hiddenInfo.title,
             application: activeSessionByStreamID[targetSlotStreamID]?.window.application,
@@ -186,7 +194,7 @@ extension MirageHostService {
             )
         )
         inputStreamCache.set(targetSlotStreamID, window: targetWindow, client: streamSession.client)
-        activateWindow(targetWindow)
+        await activateWindow(targetWindow)
 
         let processID = targetWindow.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(processID: processID)
@@ -215,7 +223,7 @@ extension MirageHostService {
             let minSize = await resolvedMinimumSize(for: targetWindow)
             let minWidth = Int(minSize.width)
             let minHeight = Int(minSize.height)
-            let started = StreamStartedMessage(
+            let started = MirageWire.StreamStartedMessage(
                 streamID: targetSlotStreamID,
                 windowID: targetWindowID,
                 width: streamStart.encodedDimensions.width,
@@ -237,7 +245,7 @@ extension MirageHostService {
         await sendAppWindowInventoryUpdate(bundleIdentifier: bundleIdentifier, clientID: clientID)
         await recomputeAppSessionBitrateBudget(bundleIdentifier: bundleIdentifier, reason: "slot swap")
 
-        return AppWindowSwapResultMessage(
+        return MirageWire.AppWindowSwapResultMessage(
             bundleIdentifier: bundleIdentifier,
             targetSlotStreamID: targetSlotStreamID,
             mediaStreamID: previousWindowInfo.mediaStreamID,

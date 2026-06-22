@@ -8,15 +8,16 @@
 @testable import MirageKit
 import Foundation
 import Testing
+import MirageWire
 
 extension SharedClipboardTests {
     @Test("Shared clipboard control types are recognized")
     func sharedClipboardControlTypeRegistration() {
-        for type in [ControlMessageType.sharedClipboardStatus, .sharedClipboardUpdate] {
+        for type in [MirageWire.ControlMessageType.sharedClipboardStatus, .sharedClipboardUpdate] {
             var data = Data([type.rawValue])
             withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
 
-            switch ControlMessage.deserialize(from: data) {
+            switch MirageWire.ControlMessage.deserialize(from: data) {
             case let .success(message, consumed):
                 #expect(consumed == data.count)
                 #expect(message.type == type)
@@ -28,23 +29,23 @@ extension SharedClipboardTests {
 
     @Test("Shared clipboard messages serialize metadata and payload")
     func sharedClipboardMessageSerialization() throws {
-        let statusEnvelope = try ControlMessage(
+        let statusEnvelope = try MirageWire.ControlMessage(
             type: .sharedClipboardStatus,
-            content: SharedClipboardStatusMessage(enabled: true)
+            content: MirageWire.SharedClipboardStatusMessage(enabled: true)
         )
         let (decodedStatusEnvelope, _) = try requireParsedControlMessage(from: statusEnvelope.serialize())
-        let decodedStatus = try decodedStatusEnvelope.decode(SharedClipboardStatusMessage.self)
+        let decodedStatus = try decodedStatusEnvelope.decode(MirageWire.SharedClipboardStatusMessage.self)
         #expect(decodedStatus.enabled)
 
-        let representation = SharedClipboardRepresentation(
+        let representation = MirageWire.SharedClipboardRepresentation(
             kind: .file,
             contentType: "public.data",
             filename: "Support.txt",
             byteCount: 3
         )
-        let updateEnvelope = try ControlMessage(
+        let updateEnvelope = try MirageWire.ControlMessage(
             type: .sharedClipboardUpdate,
-            content: SharedClipboardUpdateMessage(
+            content: MirageWire.SharedClipboardUpdateMessage(
                 changeID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
                 logicalVersion: 42,
                 sentAtMs: 1_234_567,
@@ -55,7 +56,7 @@ extension SharedClipboardTests {
             )
         )
         let (decodedUpdateEnvelope, _) = try requireParsedControlMessage(from: updateEnvelope.serialize())
-        let decodedUpdate = try decodedUpdateEnvelope.decode(SharedClipboardUpdateMessage.self)
+        let decodedUpdate = try decodedUpdateEnvelope.decode(MirageWire.SharedClipboardUpdateMessage.self)
         #expect(decodedUpdate.logicalVersion == 42)
         #expect(decodedUpdate.sentAtMs == 1_234_567)
         #expect(decodedUpdate.representation == representation)
@@ -80,13 +81,13 @@ extension SharedClipboardTests {
         let oversized = Data(repeating: 0x61, count: MirageSharedClipboard.maximumBinaryPayloadBytes + 1)
         let maxText = Data(repeating: 0x61, count: MirageSharedClipboard.maximumTextPayloadBytes)
         let oversizedText = Data(repeating: 0x61, count: MirageSharedClipboard.maximumTextPayloadBytes + 1)
-        let textRepresentation = SharedClipboardRepresentation(
+        let textRepresentation = MirageWire.SharedClipboardRepresentation(
             kind: .text,
             contentType: "public.utf8-plain-text",
             filename: nil,
             byteCount: maxText.count
         )
-        let imageRepresentation = SharedClipboardRepresentation(
+        let imageRepresentation = MirageWire.SharedClipboardRepresentation(
             kind: .image,
             contentType: "public.png",
             filename: nil,
@@ -102,7 +103,7 @@ extension SharedClipboardTests {
     func sharedClipboardChunksLargeTextPayloads() throws {
         let payload = Data(repeating: 0x61, count: MirageSharedClipboard.maximumTextPayloadBytes)
         let item = MirageSharedClipboardItem(
-            representation: SharedClipboardRepresentation(
+            representation: MirageWire.SharedClipboardRepresentation(
                 kind: .text,
                 contentType: "public.utf8-plain-text",
                 filename: nil,
@@ -112,7 +113,7 @@ extension SharedClipboardTests {
         )
         let localSend = MirageSharedClipboardLocalSend(
             item: item,
-            orderingToken: MirageSharedClipboardOrderingToken(
+            orderingToken: MirageWire.MirageSharedClipboardOrderingToken(
                 logicalVersion: 1,
                 changeID: UUID(uuidString: "00000000-0000-0000-0000-00000000CAFE")!
             )

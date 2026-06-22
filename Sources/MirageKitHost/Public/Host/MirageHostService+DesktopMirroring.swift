@@ -5,10 +5,17 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
-import Loom
-import Network
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Network
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -16,29 +23,17 @@ import ScreenCaptureKit
 extension MirageHostService {
     func resolvePrimaryPhysicalDisplayID() -> CGDirectDisplayID? {
         let mainDisplayID = CGMainDisplayID()
-        if !CGVirtualDisplayBridge.isVirtualDisplay(mainDisplayID) { return mainDisplayID }
+        if !platformVirtualDisplayBackend.isVirtualDisplay(mainDisplayID) { return mainDisplayID }
 
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return nil }
-
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
-
-        return displays.first { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
+        return platformVirtualDisplayBackend.onlineDisplayIDs()
+            .first { !platformVirtualDisplayBackend.isVirtualDisplay($0) }
     }
 
     func resolvePrimaryNonMirageDisplayID() -> CGDirectDisplayID? {
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return nil }
-
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
-
         return primaryNonMirageDisplayID(
             mainDisplayID: CGMainDisplayID(),
-            onlineDisplayIDs: Array(displays.prefix(Int(displayCount)))
+            onlineDisplayIDs: platformVirtualDisplayBackend.onlineDisplayIDs(),
+            isMirageDisplay: { platformVirtualDisplayBackend.isMirageDisplay($0) }
         )
     }
 
@@ -46,15 +41,17 @@ extension MirageHostService {
     -> [CGDirectDisplayID: CGDirectDisplayID] {
         var snapshot: [CGDirectDisplayID: CGDirectDisplayID] = [:]
         for displayID in displayIDs {
-            snapshot[displayID] = CGDisplayMirrorsDisplay(displayID)
+            snapshot[displayID] = platformVirtualDisplayBackend.mirroredDisplay(displayID)
         }
         return snapshot
     }
 
     func isDisplayMirroringRestored(targetDisplayID: CGDirectDisplayID) -> Bool {
-        let displaysToMirror = CGVirtualDisplayBridge.displaysToMirror(excludingDisplayID: targetDisplayID)
+        let displaysToMirror = platformVirtualDisplayBackend.displaysToMirror(excludingDisplayID: targetDisplayID)
         guard !displaysToMirror.isEmpty else { return true }
-        let mirroredCount = displaysToMirror.count(where: { CGDisplayMirrorsDisplay($0) == targetDisplayID })
+        let mirroredCount = displaysToMirror.count(
+            where: { platformVirtualDisplayBackend.mirroredDisplay($0) == targetDisplayID }
+        )
         return mirroredCount == displaysToMirror.count
     }
 
@@ -126,8 +123,10 @@ extension MirageHostService {
                 return true
             }
 
-            let displaysToMirror = CGVirtualDisplayBridge.displaysToMirror(excludingDisplayID: targetDisplayID)
-            let mirroredCount = displaysToMirror.count(where: { CGDisplayMirrorsDisplay($0) == targetDisplayID })
+            let displaysToMirror = platformVirtualDisplayBackend.displaysToMirror(excludingDisplayID: targetDisplayID)
+            let mirroredCount = displaysToMirror.count(
+                where: { platformVirtualDisplayBackend.mirroredDisplay($0) == targetDisplayID }
+            )
 
             if attempt < maxAttempts {
                 MirageLogger
@@ -156,18 +155,14 @@ extension MirageHostService {
         targetDisplayID: CGDirectDisplayID? = nil
     )
     async {
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return }
-
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
+        let displays = platformVirtualDisplayBackend.onlineDisplayIDs()
+        guard !displays.isEmpty else { return }
 
         let physicalDisplaysMirroringVirtual = displays.compactMap { displayID -> CGDirectDisplayID? in
-            guard !CGVirtualDisplayBridge.isVirtualDisplay(displayID) else { return nil }
-            let mirroredDisplayID = CGDisplayMirrorsDisplay(displayID)
+            guard !platformVirtualDisplayBackend.isVirtualDisplay(displayID) else { return nil }
+            let mirroredDisplayID = platformVirtualDisplayBackend.mirroredDisplay(displayID)
             guard mirroredDisplayID != kCGNullDirectDisplay,
-                  CGVirtualDisplayBridge.isVirtualDisplay(mirroredDisplayID) else {
+                  platformVirtualDisplayBackend.isVirtualDisplay(mirroredDisplayID) else {
                 return nil
             }
             if let targetDisplayID, mirroredDisplayID != targetDisplayID {
@@ -178,35 +173,23 @@ extension MirageHostService {
 
         guard !physicalDisplaysMirroringVirtual.isEmpty else { return }
 
-        await withHostDisplayMutation(kind: .displayMirroring) {
-            var configRef: CGDisplayConfigRef?
-            guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-                MirageLogger.host("Physical display unmirror unavailable: failed to begin display configuration")
-                return
-            }
-
-            var unmirroredCount = 0
-            for displayID in physicalDisplaysMirroringVirtual {
-                let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
-                if result == .success {
-                    unmirroredCount += 1
-                } else {
-                    MirageLogger.host("Physical display unmirror skipped display \(displayID): \(result)")
-                }
-            }
-
-            guard unmirroredCount > 0 else {
-                CGCancelDisplayConfiguration(config)
-                return
-            }
-
-            let completion = CGCompleteDisplayConfiguration(config, .forSession)
-            if completion == .success {
-                MirageLogger.host("Unmirrored \(unmirroredCount) physical displays from virtual displays")
-            } else {
-                MirageLogger.host("Physical display unmirror unavailable: failed to complete configuration \(completion)")
-            }
+        let requests = physicalDisplaysMirroringVirtual.map {
+            MirageHostDisplayMirroringRequest(
+                displayID: $0,
+                mirroredDisplayID: kCGNullDirectDisplay
+            )
         }
+        let result = await platformVirtualDisplayBackend.applyDisplayMirroring(requests)
+        for (displayID, error) in result.failedDisplayErrors {
+            MirageLogger.host("Physical display unmirror skipped display \(displayID): \(error)")
+        }
+        guard result.completed else {
+            MirageLogger.host(
+                "Physical display unmirror unavailable: \(result.failureDescription ?? "no displays accepted unmirroring configuration")"
+            )
+            return
+        }
+        MirageLogger.host("Unmirrored \(result.committedDisplayIDs.count) physical displays from virtual displays")
     }
 
     /// Set up display mirroring so every non-Mirage display mirrors the target display.
@@ -217,7 +200,7 @@ extension MirageHostService {
         requiresResidualMirageDisplaysClear: Bool = true
     )
     async -> Bool {
-        let displaysToMirror = CGVirtualDisplayBridge.displaysToMirror(excludingDisplayID: targetDisplayID)
+        let displaysToMirror = platformVirtualDisplayBackend.displaysToMirror(excludingDisplayID: targetDisplayID)
 
         guard !displaysToMirror.isEmpty else {
             MirageLogger.host("No displays found to mirror")
@@ -237,7 +220,9 @@ extension MirageHostService {
 
         captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: false)
 
-        let mirroredDisplayIDs = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
+        let mirroredDisplayIDs = displaysToMirror.filter {
+            platformVirtualDisplayBackend.mirroredDisplay($0) == targetDisplayID
+        }
         if mirroredDisplayIDs.count == displaysToMirror.count {
             if desktopMirroringSnapshot.isEmpty {
                 desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
@@ -256,58 +241,44 @@ extension MirageHostService {
 
         MirageLogger.host("Setting up mirroring for \(displaysToMirror.count) displays")
 
-        return await withHostDisplayMutation(kind: .displayMirroring) {
-            var configRef: CGDisplayConfigRef?
-            guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-                MirageLogger.host("Display mirroring setup unavailable: failed to begin display configuration")
-                return false
-            }
-
-            var successfullyMirrored: Set<CGDirectDisplayID> = []
-
-            for displayID in displaysToMirror {
-                // Skip if already mirroring the target
-                if CGDisplayMirrorsDisplay(displayID) == targetDisplayID {
-                    successfullyMirrored.insert(displayID)
-                    continue
-                }
-
-                let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, targetDisplayID)
-                if result == .success {
-                    successfullyMirrored.insert(displayID)
-                    MirageLogger.host("Configured display \(displayID) to mirror target display \(targetDisplayID)")
-                } else {
-                    MirageLogger.host("Display mirroring setup skipped display \(displayID): \(result)")
-                }
-            }
-
-            guard !successfullyMirrored.isEmpty else {
-                MirageLogger.host("Display mirroring setup unavailable: no displays accepted mirroring configuration")
-                CGCancelDisplayConfiguration(config)
-                return false
-            }
-
-            let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
-            if completeResult != .success {
-                MirageLogger.host("Display mirroring setup unavailable: failed to complete configuration \(completeResult)")
-                CGCancelDisplayConfiguration(config)
-                return false
-            }
-
-            mirroredDesktopDisplayIDs = successfullyMirrored
-            MirageLogger
-                .host(
-                    "Display mirroring enabled for \(successfullyMirrored.count) displays → target display \(targetDisplayID)"
+        let alreadyMirrored = Set(mirroredDisplayIDs)
+        let mirrorRequests = displaysToMirror
+            .filter { !alreadyMirrored.contains($0) }
+            .map {
+                MirageHostDisplayMirroringRequest(
+                    displayID: $0,
+                    mirroredDisplayID: targetDisplayID
                 )
-            _ = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup")
-            return successfullyMirrored.count == displaysToMirror.count
+            }
+        let result = await platformVirtualDisplayBackend.applyDisplayMirroring(mirrorRequests)
+        for (displayID, error) in result.failedDisplayErrors {
+            MirageLogger.host("Display mirroring setup skipped display \(displayID): \(error)")
         }
+        guard result.completed else {
+            MirageLogger.host(
+                "Display mirroring setup unavailable: \(result.failureDescription ?? "no displays accepted mirroring configuration")"
+            )
+            return false
+        }
+
+        for displayID in result.committedDisplayIDs {
+            MirageLogger.host("Configured display \(displayID) to mirror target display \(targetDisplayID)")
+        }
+
+        let successfullyMirrored = alreadyMirrored.union(result.committedDisplayIDs)
+        mirroredDesktopDisplayIDs = successfullyMirrored
+        MirageLogger
+            .host(
+                "Display mirroring enabled for \(successfullyMirrored.count) displays → target display \(targetDisplayID)"
+            )
+        _ = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup")
+        return successfullyMirrored.count == displaysToMirror.count
     }
 
     /// Temporarily suspend desktop mirroring before a virtual-display resize.
     /// This keeps resize transactions deterministic and avoids resize+mirror contention.
     func suspendDisplayMirroringForResize(targetDisplayID: CGDirectDisplayID) async {
-        let displaysToMirror = CGVirtualDisplayBridge.displaysToMirror(excludingDisplayID: targetDisplayID)
+        let displaysToMirror = platformVirtualDisplayBackend.displaysToMirror(excludingDisplayID: targetDisplayID)
         guard !displaysToMirror.isEmpty else { return }
 
         captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: true)
@@ -317,40 +288,30 @@ extension MirageHostService {
             MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
         }
 
-        let mirroredToTarget = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
+        let mirroredToTarget = displaysToMirror.filter {
+            platformVirtualDisplayBackend.mirroredDisplay($0) == targetDisplayID
+        }
         guard !mirroredToTarget.isEmpty else { return }
 
-        await withHostDisplayMutation(kind: .displayMirroring) {
-            var configRef: CGDisplayConfigRef?
-            guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-                MirageLogger.host("Display mirroring suspend unavailable: failed to begin display configuration")
-                return
-            }
-
-            var suspendedCount = 0
-            for displayID in mirroredToTarget {
-                let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
-                if result == .success {
-                    suspendedCount += 1
-                } else {
-                    MirageLogger.host("Display mirroring suspend skipped display \(displayID): \(result)")
-                }
-            }
-
-            guard suspendedCount > 0 else {
-                CGCancelDisplayConfiguration(config)
-                return
-            }
-
-            let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
-            if completeResult != .success {
-                MirageLogger.host("Display mirroring suspend unavailable: failed to complete configuration \(completeResult)")
-                return
-            }
-
-            mirroredDesktopDisplayIDs.removeAll()
-            MirageLogger.host("Temporarily suspended mirroring for \(suspendedCount) displays before resize")
+        let requests = mirroredToTarget.map {
+            MirageHostDisplayMirroringRequest(
+                displayID: $0,
+                mirroredDisplayID: kCGNullDirectDisplay
+            )
         }
+        let result = await platformVirtualDisplayBackend.applyDisplayMirroring(requests)
+        for (displayID, error) in result.failedDisplayErrors {
+            MirageLogger.host("Display mirroring suspend skipped display \(displayID): \(error)")
+        }
+        guard result.completed else {
+            MirageLogger.host(
+                "Display mirroring suspend unavailable: \(result.failureDescription ?? "no displays accepted suspend configuration")"
+            )
+            return
+        }
+
+        mirroredDesktopDisplayIDs.removeAll()
+        MirageLogger.host("Temporarily suspended mirroring for \(result.committedDisplayIDs.count) displays before resize")
     }
 
     /// Restore display mirroring to the pre-stream configuration.
@@ -373,70 +334,61 @@ extension MirageHostService {
         MirageLogger
             .host("Restoring \(desktopMirroringSnapshot.count) displays from mirroring (virtual display \(displayID))")
 
-        return await withHostDisplayMutation(kind: .displayMirroring) {
-            var configRef: CGDisplayConfigRef?
-            guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-                MirageLogger.host("Display mirroring restore unavailable: failed to begin display configuration")
-                return false
+        let onlineDisplays = Set(platformVirtualDisplayBackend.onlineDisplayIDs())
+        let requests = desktopMirroringSnapshot.compactMap { displayID, mirroredDisplayID -> MirageHostDisplayMirroringRequest? in
+            guard onlineDisplays.contains(displayID) else {
+                MirageLogger.host("Skipping mirroring restore for offline display \(displayID)")
+                return nil
             }
 
-            var successfullyRestored = 0
-
-            var onlineIDs = [CGDirectDisplayID](repeating: 0, count: 16)
-            var onlineCount: UInt32 = 0
-            CGGetOnlineDisplayList(16, &onlineIDs, &onlineCount)
-            let onlineDisplays = Set(onlineIDs.prefix(Int(onlineCount)))
-            for (displayID, mirroredDisplayID) in desktopMirroringSnapshot {
-                guard onlineDisplays.contains(displayID) else {
-                    MirageLogger.host("Skipping mirroring restore for offline display \(displayID)")
-                    continue
-                }
-                let targetMirrorID: CGDirectDisplayID
-                if mirroredDisplayID == 0 {
-                    targetMirrorID = kCGNullDirectDisplay
-                } else if onlineDisplays.contains(mirroredDisplayID) {
-                    targetMirrorID = mirroredDisplayID
-                } else {
-                    targetMirrorID = kCGNullDirectDisplay
-                    MirageLogger.host(
-                        "Skipping restore to offline mirror target \(mirroredDisplayID); unmirroring display \(displayID) instead"
-                    )
-                }
-                guard CGDisplayMirrorsDisplay(displayID) != targetMirrorID else { continue }
-
-                let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, targetMirrorID)
-                if result == .success { successfullyRestored += 1 } else {
-                    MirageLogger.host("Failed to restore mirroring for display \(displayID): \(result)")
-                }
-            }
-
-            if successfullyRestored > 0 {
-                let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
-                if completeResult != .success {
-                    MirageLogger.host("Display mirroring restore unavailable: failed to complete configuration \(completeResult)")
-                    CGCancelDisplayConfiguration(config)
-                    return false
-                } else {
-                    MirageLogger.host("Display mirroring disabled for \(successfullyRestored) displays")
-                    let restored = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable")
-                    mirroredDesktopDisplayIDs.removeAll()
-                    desktopMirroringSnapshot.removeAll()
-                    if restored {
-                        desktopDisplaySpaceSnapshot.removeAll()
-                    }
-                    return restored
-                }
+            let targetMirrorID: CGDirectDisplayID
+            if mirroredDisplayID == 0 {
+                targetMirrorID = kCGNullDirectDisplay
+            } else if onlineDisplays.contains(mirroredDisplayID) {
+                targetMirrorID = mirroredDisplayID
             } else {
-                CGCancelDisplayConfiguration(config)
-                let restored = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable_noop")
-                mirroredDesktopDisplayIDs.removeAll()
-                desktopMirroringSnapshot.removeAll()
-                if restored {
-                    desktopDisplaySpaceSnapshot.removeAll()
-                }
-                return restored
+                targetMirrorID = kCGNullDirectDisplay
+                MirageLogger.host(
+                    "Skipping restore to offline mirror target \(mirroredDisplayID); unmirroring display \(displayID) instead"
+                )
             }
+            guard platformVirtualDisplayBackend.mirroredDisplay(displayID) != targetMirrorID else { return nil }
+
+            return MirageHostDisplayMirroringRequest(
+                displayID: displayID,
+                mirroredDisplayID: targetMirrorID
+            )
         }
+
+        guard !requests.isEmpty else {
+            let restored = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable_noop")
+            mirroredDesktopDisplayIDs.removeAll()
+            desktopMirroringSnapshot.removeAll()
+            if restored {
+                desktopDisplaySpaceSnapshot.removeAll()
+            }
+            return restored
+        }
+
+        let result = await platformVirtualDisplayBackend.applyDisplayMirroring(requests)
+        for (displayID, error) in result.failedDisplayErrors {
+            MirageLogger.host("Failed to restore mirroring for display \(displayID): \(error)")
+        }
+        guard result.completed else {
+            MirageLogger.host(
+                "Display mirroring restore unavailable: \(result.failureDescription ?? "no displays accepted restore configuration")"
+            )
+            return false
+        }
+
+        MirageLogger.host("Display mirroring disabled for \(result.committedDisplayIDs.count) displays")
+        let restored = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable")
+        mirroredDesktopDisplayIDs.removeAll()
+        desktopMirroringSnapshot.removeAll()
+        if restored {
+            desktopDisplaySpaceSnapshot.removeAll()
+        }
+        return restored
     }
 
 }

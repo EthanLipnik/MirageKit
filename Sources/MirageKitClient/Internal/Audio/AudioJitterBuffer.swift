@@ -7,14 +7,22 @@
 //  Timestamp-aware audio frame assembly with startup buffering.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Fully assembled encoded audio frame ready for decode or playback scheduling.
 struct AudioEncodedFrame {
     let frameNumber: UInt32
     let timestampNs: UInt64
-    let codec: MirageAudioCodec
+    let codec: MirageMedia.MirageAudioCodec
     let sampleRate: Int
     let channelCount: Int
     let samplesPerFrame: Int
@@ -30,7 +38,7 @@ actor AudioJitterBuffer {
     private struct PendingFrame {
         let frameNumber: UInt32
         let timestampNs: UInt64
-        let codec: MirageAudioCodec
+        let codec: MirageMedia.MirageAudioCodec
         let sampleRate: Int
         let channelCount: Int
         let samplesPerFrame: Int
@@ -61,7 +69,7 @@ actor AudioJitterBuffer {
         lastEmittedFrameNumber = nil
     }
 
-    func ingest(header: AudioPacketHeader, payload: Data) -> [AudioEncodedFrame] {
+    func ingest(header: MirageWire.AudioPacketHeader, payload: Data) -> [AudioEncodedFrame] {
         if header.flags.contains(.discontinuity) { clearQueuedFramesForDiscontinuity() }
 
         let fragmentCount = max(1, Int(header.fragmentCount))

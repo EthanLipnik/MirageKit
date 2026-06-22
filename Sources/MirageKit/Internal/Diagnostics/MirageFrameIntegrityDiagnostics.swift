@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/3/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
@@ -74,7 +81,7 @@ package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
     private let configuration: Configuration
     private let startTime: CFAbsoluteTime
     private let queue = DispatchQueue(label: "com.mirage.frame-integrity-diagnostics", qos: .utility)
-    private let state = MirageDiagnosticsLocked(State())
+    private let state = MirageDiagnostics.MirageDiagnosticsLocked(State())
     private let sink: @Sendable (String) -> Void
 
     package init(
@@ -146,7 +153,7 @@ package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
         frameBytes: Data,
         expectedBytes: Int? = nil
     ) -> String {
-        let crc = CRC32.calculate(frameBytes)
+        let crc = MirageWire.CRC32.calculate(frameBytes)
         let header = frameBytes.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
         let expectedText = expectedBytes.map { ", expected=\($0)" } ?? ""
         return "\(source.rawValue) CRC=\(String(format: "%08X", crc)), stream=\(streamID), frame=\(frameNumber), size=\(frameBytes.count)\(expectedText), header: \(header)"

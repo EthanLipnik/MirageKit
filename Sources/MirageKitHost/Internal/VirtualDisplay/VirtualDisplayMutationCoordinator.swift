@@ -7,8 +7,16 @@
 //  Serializes WindowServer-facing virtual display mutations.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 enum VirtualDisplayMutationKind: String, Sendable {

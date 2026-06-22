@@ -10,6 +10,7 @@
 import Loom
 import Network
 import Testing
+import MirageCore
 
 @Suite("Client Control Session Failure Classification")
 struct ClientControlSessionFailureClassificationTests {
@@ -18,52 +19,42 @@ struct ClientControlSessionFailureClassificationTests {
     func controlSessionFailureClassificationRecognizesRetryableTransportErrors() {
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(NWError.posix(.ENETUNREACH))
+                MirageCore.MirageError.connectionFailed(NWError.posix(.ENETUNREACH))
             ) == .transportLoss
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(NWError.posix(.ECONNREFUSED))
+                MirageCore.MirageError.connectionFailed(NWError.posix(.ECONNREFUSED))
             ) == .connectionRefused
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(NWError.posix(.EADDRNOTAVAIL))
+                MirageCore.MirageError.connectionFailed(NWError.posix(.EADDRNOTAVAIL))
             ) == .addressUnavailable
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(
+                MirageCore.MirageError.connectionFailed(
                     NWError.dns(-65554)
                 )
             ) == .addressUnavailable
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(
-                    LoomConnectionFailure(
-                        reason: .timedOut,
-                        detail: "Reliable UDP transport timed out awaiting acknowledgement."
-                    )
-                )
+                MirageCore.MirageError.connectionFailed(NWError.posix(.ETIMEDOUT))
             ) == .timeout
         )
         #expect(
-            MirageClientService.classifyControlSessionFailure(MirageError.timeout) == .timeout
+            MirageClientService.classifyControlSessionFailure(MirageCore.MirageError.timeout) == .timeout
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                LoomError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
+                MirageCore.MirageError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
             ) == .addressUnavailable
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
-            ) == .addressUnavailable
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError(
+                MirageCore.MirageError.protocolError(
                     "Pre-bootstrap udp control session failed for zephir-m3 endpoint=zephir-m3.local:51024 " +
                         "interface=wifi classification=other error=Protocol error: Failed to resolve " +
                         "zephir-m3.local: nodename nor servname provided, or not known"
@@ -72,17 +63,17 @@ struct ClientControlSessionFailureClassificationTests {
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError("Timed out waiting for host bootstrap response from Altair")
+                MirageCore.MirageError.protocolError("Timed out waiting for host bootstrap response from Altair")
             ) == .timeout
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError("Control stream closed before receiving bootstrap response")
+                MirageCore.MirageError.protocolError("Control stream closed before receiving bootstrap response")
             ) == .transportLoss
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError(
+                MirageCore.MirageError.protocolError(
                     "Proximity path validation failed for Altair expected=anpi0 actual=status=satisfied|kind=wifi|if=en0"
                 )
             ) == .transportLoss

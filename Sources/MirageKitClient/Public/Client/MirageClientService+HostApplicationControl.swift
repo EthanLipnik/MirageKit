@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+HostApplicationControl.swift
 //  MirageKit
@@ -7,12 +16,11 @@
 //  Client host-application control requests.
 //
 
-import MirageKit
 
 @MainActor
 public extension MirageClientService {
     /// Requests that the connected host relaunch the Mirage Host app.
     func requestHostApplicationRestart() async throws {
-        try await sendControlMessage(ControlMessage(type: .hostApplicationRestartRequest))
+        try await sendControlMessage(MirageWire.ControlMessage(type: .hostApplicationRestartRequest))
     }
 }

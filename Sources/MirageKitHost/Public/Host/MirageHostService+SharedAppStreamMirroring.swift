@@ -7,20 +7,29 @@
 //  Shared virtual-display mirroring for app and window streams.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Acquires the shared virtual display used for app streams and mirrors it into the desktop arrangement.
     func ensureSharedAppStreamMirroring(
-        preset: MirageDisplaySizePreset,
+        preset: MirageMedia.MirageDisplaySizePreset,
         refreshRate: Int,
-        colorSpace: MirageColorSpace,
+        colorSpace: MirageMedia.MirageColorSpace,
         mirrorPhysicalDisplays: Bool = true
     )
-    async throws -> SharedVirtualDisplayManager.DisplaySnapshot {
+    async throws -> MirageHostVirtualDisplaySnapshot {
         var virtualDisplaySetupGuardToken: UUID?
         defer {
             if let token = virtualDisplaySetupGuardToken {
@@ -36,11 +45,14 @@ extension MirageHostService {
         virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
             reason: "app_stream_shared_display"
         )
-        let snapshot = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+        let snapshot = try await platformVirtualDisplayBackend.acquireDisplayForConsumer(
             .appStream,
             resolution: preset.pixelResolution,
             refreshRate: refreshRate,
-            colorSpace: colorSpace
+            colorSpace: colorSpace,
+            allowActiveUpdate: false,
+            creationPolicy: .adaptiveRetinaThenFallback1xAndColor,
+            startupBudget: nil
         )
         if mirrorPhysicalDisplays {
             _ = await setupDisplayMirroring(
@@ -66,12 +78,12 @@ extension MirageHostService {
     /// Releases the app-stream shared display and restores mirroring when no app streams remain.
     func teardownSharedAppStreamMirroringIfIdle(displayID: CGDirectDisplayID?) async {
         guard activeStreams.isEmpty else { return }
-        let sharedDisplaySnapshot = await SharedVirtualDisplayManager.shared.displaySnapshot
+        let sharedDisplaySnapshot = await platformVirtualDisplayBackend.displaySnapshot
         let mirroredDisplayID = displayID ?? sharedDisplaySnapshot?.displayID
         if desktopStreamID == nil, let mirroredDisplayID {
             _ = await disableDisplayMirroring(displayID: mirroredDisplayID)
         }
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.appStream)
+        await platformVirtualDisplayBackend.releaseDisplayForConsumer(.appStream)
     }
 }
 #endif

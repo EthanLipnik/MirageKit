@@ -7,7 +7,16 @@
 //  Host software update coordination contract.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Loom
 
 #if os(macOS)
 
@@ -291,6 +300,15 @@ public protocol MirageHostSoftwareUpdateController: AnyObject, Sendable {
     @MainActor
     func performSoftwareUpdateInstall(
         for peer: LoomPeerIdentity
+    ) async -> MirageHostSoftwareUpdateInstallResult
+}
+
+/// Host software update coordinator that accepts Mirage-owned authenticated peer identities.
+public protocol MirageHostSoftwareUpdateIdentityController: MirageHostSoftwareUpdateController {
+    /// Starts an immediate host software update install for an authenticated peer.
+    @MainActor
+    func performSoftwareUpdateInstall(
+        for peer: MirageAuthenticatedPeerIdentity
     ) async -> MirageHostSoftwareUpdateInstallResult
 }
 

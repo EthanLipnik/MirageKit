@@ -9,7 +9,15 @@
 
 import CoreGraphics
 import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 
 #if os(macOS)
 import AppKit
@@ -20,7 +28,7 @@ extension MirageHostInputController {
 
     /// Injects a scroll event at the resolved host-window location.
     func injectScrollEvent(
-        _ event: MirageScrollEvent,
+        _ event: MirageInput.MirageScrollEvent,
         _ windowFrame: CGRect,
         windowID: WindowID
     ) {

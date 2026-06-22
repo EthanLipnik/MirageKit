@@ -10,6 +10,7 @@ import MirageKit
 @testable import MirageKitClient
 import Testing
 import UIKit
+import MirageInput
 
 @Suite("Scroll Physics Capturing View")
 struct ScrollPhysicsCapturingViewTests {
@@ -398,7 +399,7 @@ struct ScrollPhysicsCapturingViewTests {
     func normalDirectScrollBeginMovesHostCursorImmediately() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .normal
-        var events: [MirageInputEvent] = []
+        var events: [MirageInput.MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
         events.removeAll()
 
@@ -702,7 +703,7 @@ struct ScrollPhysicsCapturingViewTests {
     func simulatedTrackpadScrollBeginDoesNotEmitDirectCursorMove() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .dragCursor
-        var events: [MirageInputEvent] = []
+        var events: [MirageInput.MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
         events.removeAll()
 
@@ -717,7 +718,7 @@ struct ScrollPhysicsCapturingViewTests {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .normal
         view.cursorLockEnabled = true
-        var events: [MirageInputEvent] = []
+        var events: [MirageInput.MirageInputEvent] = []
         view.onInputEvent = { events.append($0) }
         events.removeAll()
 

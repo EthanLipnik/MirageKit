@@ -5,22 +5,30 @@
 //  Created by Ethan Lipnik on 2/28/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 import AppKit
 import ApplicationServices
 
 /// Result of attempting to close a host window.
-enum HostWindowCloseAttemptResult {
+enum HostWindowCloseAttemptResult: Sendable {
     case closed
     case blocked(HostWindowCloseAlertSnapshot)
     case notClosed
 }
 
 /// Snapshot of a blocking close-confirmation alert.
-struct HostWindowCloseAlertSnapshot {
+struct HostWindowCloseAlertSnapshot: Sendable {
     /// Alert title reported by Accessibility, when available.
     let title: String?
 
@@ -32,7 +40,7 @@ struct HostWindowCloseAlertSnapshot {
 }
 
 /// Snapshot of one action in a blocking close-confirmation alert.
-struct HostWindowCloseAlertActionSnapshot {
+struct HostWindowCloseAlertActionSnapshot: Sendable {
     /// Zero-based action index used when the client asks the host to press this button.
     let index: Int
 
@@ -56,7 +64,7 @@ extension MirageHostInputController {
     /// Attempts to close a window and extracts any blocking confirmation alert.
     func attemptCloseWindowAndExtractBlockingAlert(
         windowID: WindowID,
-        app: MirageApplication?
+        app: MirageMedia.MirageApplication?
     ) async -> HostWindowCloseAttemptResult {
         await withCheckedContinuation { continuation in
             accessibilityQueue.async { [weak self] in
@@ -104,7 +112,7 @@ extension MirageHostInputController {
     /// Presses a previously reported blocking alert action.
     func pressBlockingAlertAction(
         windowID: WindowID,
-        app: MirageApplication?,
+        app: MirageMedia.MirageApplication?,
         actionIndex: Int,
         fallbackTitle: String
     ) async -> Bool {

@@ -7,23 +7,31 @@
 //  Stream controller extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 extension StreamController {
     // MARK: - Private Helpers
 
-    func updateHostMetrics(_ metrics: StreamMetricsMessage?) {
+    func updateHostMetrics(_ metrics: MirageWire.StreamMetricsMessage?) {
         latestHostMetricsMessage = metrics
         latestHostMetricsTime = metrics == nil ? 0 : currentTime
-        latestHostCadencePressureSample = metrics.map(HostCadencePressureDiagnosticSample.init(metrics:))
+        latestHostCadencePressureSample = metrics.map(MirageHostCadencePressureDiagnosticSample.init(metrics:))
         if let targetFrameRate = metrics?.targetFrameRate {
             reassembler.setTargetFrameRate(targetFrameRate)
         }
     }
 
-    func handleKeyframeRecoveryAck(_ ack: KeyframeRecoveryAckMessage) {
+    func handleKeyframeRecoveryAck(_ ack: MirageWire.KeyframeRecoveryAckMessage) {
         recoveryCoordinator.recordHostAck(ack, now: currentTime)
     }
 
@@ -51,9 +59,9 @@ extension StreamController {
                 displayTickFPS: renderTelemetry.displayTickFPS,
                 submitAttemptFPS: renderTelemetry.submitAttemptFPS,
                 layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
-                visibleFrameFPS: renderTelemetry.visibleFrameFPS,
                 submittedFPS: renderTelemetry.submittedFPS,
                 uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
+                visibleFrameFPS: renderTelemetry.visibleFrameFPS,
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 pendingFrameAgeP95Ms: renderTelemetry.pendingFrameAgeP95Ms,
@@ -308,13 +316,13 @@ extension StreamController {
         adaptivePresentationSmoothingLastChangeTime = currentTime
     }
 
-    func setTransportPathKind(_ kind: MirageNetworkPathKind) {
+    func setTransportPathKind(_ kind: MirageCore.MirageNetworkPathKind) {
         receiverTransportPathKind = kind
         reassembler.setTransportPathKind(kind)
         updateAwdlTransportActive()
     }
 
-    func setMediaPathProfile(_ profile: MirageMediaPathProfile) {
+    func setMediaPathProfile(_ profile: MirageMedia.MirageMediaPathProfile) {
         receiverMediaPathProfile = profile
         reassembler.setMediaPathProfile(profile)
         updateAwdlTransportActive()
@@ -322,7 +330,7 @@ extension StreamController {
 
     private func updateAwdlTransportActive() {
         setAwdlTransportActive(
-            MirageMediaPathProfile.resolveRealtimeProfile(
+            MirageMedia.MirageMediaPathProfile.resolveRealtimeProfile(
                 pathKind: receiverTransportPathKind,
                 mediaPathProfile: receiverMediaPathProfile
             ).usesAwdlRadioPolicy

@@ -7,20 +7,29 @@
 //  Host software update request handling.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
+import Loom
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Handles a client request for the latest host software-update status.
     func handleHostSoftwareUpdateStatusRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
-        let request: HostSoftwareUpdateStatusRequestMessage
+        let request: MirageWire.HostSoftwareUpdateStatusRequestMessage
         do {
-            request = try message.decode(HostSoftwareUpdateStatusRequestMessage.self)
+            request = try message.decode(MirageWire.HostSoftwareUpdateStatusRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode host software update status request: ")
             return
@@ -118,7 +127,7 @@ extension MirageHostService {
     ) {
         guard !clientsBySessionID.isEmpty else { return }
 
-        let message = HostSoftwareUpdateStatusMessage(snapshot: snapshot)
+        let message = MirageWire.HostSoftwareUpdateStatusMessage(snapshot: snapshot)
         for clientContext in clientsBySessionID.values {
             guard clientContext.sendBestEffort(.hostSoftwareUpdateStatus, content: message) else {
                 MirageLogger.host("Failed to encode host software update status for \(clientContext.client.name)")
@@ -128,20 +137,20 @@ extension MirageHostService {
     }
 
     /// Resolves the current software-update status payload.
-    func resolveHostSoftwareUpdateStatus(forceRefresh: Bool) async -> HostSoftwareUpdateStatusMessage {
+    func resolveHostSoftwareUpdateStatus(forceRefresh: Bool) async -> MirageWire.HostSoftwareUpdateStatusMessage {
         guard let softwareUpdateController else {
             return fallbackHostSoftwareUpdateStatusMessage()
         }
         let snapshot = await softwareUpdateController.softwareUpdateStatus(
             forceRefresh: forceRefresh
         )
-        return HostSoftwareUpdateStatusMessage(snapshot: snapshot)
+        return MirageWire.HostSoftwareUpdateStatusMessage(snapshot: snapshot)
     }
 
     /// Resolves the install result payload for a client-initiated update request.
     func resolveHostSoftwareUpdateInstallResult(
         for peer: LoomPeerIdentity?
-    ) async -> HostSoftwareUpdateInstallResultMessage {
+    ) async -> MirageWire.HostSoftwareUpdateInstallResultMessage {
         guard let softwareUpdateController else {
             return fallbackHostSoftwareUpdateInstallResultMessage(
                 message: "Host update service unavailable.",
@@ -158,8 +167,15 @@ extension MirageHostService {
             )
         }
 
-        let result = await softwareUpdateController.performSoftwareUpdateInstall(for: peer)
-        return HostSoftwareUpdateInstallResultMessage(result: result)
+        let result: MirageHostSoftwareUpdateInstallResult
+        if let identityController = softwareUpdateController as? any MirageHostSoftwareUpdateIdentityController {
+            result = await identityController.performSoftwareUpdateInstall(
+                for: MirageAuthenticatedPeerIdentity(loomPeerIdentity: peer)
+            )
+        } else {
+            result = await softwareUpdateController.performSoftwareUpdateInstall(for: peer)
+        }
+        return MirageWire.HostSoftwareUpdateInstallResultMessage(result: result)
     }
 }
 
@@ -167,10 +183,10 @@ private extension MirageHostService {
     /// Builds a software-update install-result payload when installation cannot reach the updater.
     func fallbackHostSoftwareUpdateInstallResultMessage(
         message: String,
-        resultCode: HostSoftwareUpdateInstallResultCode,
-        blockReason: HostSoftwareUpdateBlockReason
-    ) -> HostSoftwareUpdateInstallResultMessage {
-        HostSoftwareUpdateInstallResultMessage(
+        resultCode: MirageWire.HostSoftwareUpdateInstallResultCode,
+        blockReason: MirageWire.HostSoftwareUpdateBlockReason
+    ) -> MirageWire.HostSoftwareUpdateInstallResultMessage {
+        MirageWire.HostSoftwareUpdateInstallResultMessage(
             message: message,
             resultCode: resultCode,
             blockReason: blockReason,
@@ -180,9 +196,9 @@ private extension MirageHostService {
     }
 
     /// Builds a software-update status payload for hosts without an update controller.
-    func fallbackHostSoftwareUpdateStatusMessage() -> HostSoftwareUpdateStatusMessage {
+    func fallbackHostSoftwareUpdateStatusMessage() -> MirageWire.HostSoftwareUpdateStatusMessage {
         let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        return HostSoftwareUpdateStatusMessage(
+        return MirageWire.HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: false,
             isCheckingForUpdates: false,
             isInstallInProgress: false,
@@ -208,7 +224,7 @@ private extension MirageHostService {
     }
 }
 
-private extension HostSoftwareUpdateStatusMessage {
+private extension MirageWire.HostSoftwareUpdateStatusMessage {
     /// Converts a host updater snapshot into the software-update status wire payload.
     init(snapshot: MirageHostSoftwareUpdateStatusSnapshot) {
         self.init(
@@ -237,7 +253,7 @@ private extension HostSoftwareUpdateStatusMessage {
     }
 }
 
-private extension HostSoftwareUpdateInstallResultMessage {
+private extension MirageWire.HostSoftwareUpdateInstallResultMessage {
     /// Converts a host updater install result into the install-result wire payload.
     init(result: MirageHostSoftwareUpdateInstallResult) {
         self.init(
@@ -245,7 +261,7 @@ private extension HostSoftwareUpdateInstallResultMessage {
             resultCode: mirageMappedEnum(result.code),
             blockReason: result.blockReason.map { mirageMappedEnum($0) },
             remediationHint: result.remediationHint,
-            status: HostSoftwareUpdateStatusMessage(snapshot: result.status)
+            status: MirageWire.HostSoftwareUpdateStatusMessage(snapshot: result.status)
         )
     }
 }

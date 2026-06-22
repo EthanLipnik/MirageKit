@@ -7,10 +7,17 @@
 //  Packet fragmentation and transport submission.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
-import Loom
-import MirageKit
 
 #if os(macOS)
 
@@ -144,7 +151,7 @@ extension StreamPacketSender {
     }
 
     /// Builds per-fragment flags from frame-level flags and fragment position.
-    private func fragmentFlags(index: Int, context: FragmentSendContext) -> FrameFlags {
+    private func fragmentFlags(index: Int, context: FragmentSendContext) -> MirageWire.FrameFlags {
         var flags = context.item.additionalFlags
         if index > 0, flags.contains(.discontinuity) { flags.remove(.discontinuity) }
         if context.item.isKeyframe { flags.insert(.keyframe) }
@@ -191,12 +198,12 @@ extension StreamPacketSender {
         if mediaSecurityKey != nil { payloadFlags.insert(.encryptedPayload) }
         let checksum: UInt32 = if mediaSecurityKey == nil {
             item.encodedData.withUnsafeBytes { frameBytes in
-                CRC32.calculate(UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]))
+                MirageWire.CRC32.calculate(UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]))
             }
         } else {
             0
         }
-        let header = FrameHeader(
+        let header = MirageWire.FrameHeader(
             flags: payloadFlags,
             streamID: item.streamID,
             sequenceNumber: sequenceNumber,
@@ -237,7 +244,7 @@ extension StreamPacketSender {
         }
 
         let packetPayloadLength = wirePayload?.count ?? fragmentSize
-        let packetLength = mirageHeaderSize + packetPayloadLength
+        let packetLength = MirageWire.mirageHeaderSize + packetPayloadLength
         guard let pacingResult = await paceFragmentSend(
             packetBytes: packetLength,
             context: context,
@@ -256,7 +263,7 @@ extension StreamPacketSender {
             }
             header.serialize(into: UnsafeMutableRawBufferPointer(
                 start: baseAddress,
-                count: min(packetBytes.count, mirageHeaderSize)
+                count: min(packetBytes.count, MirageWire.mirageHeaderSize)
             ))
             if let wirePayload {
                 copyPayload(wirePayload, to: baseAddress)
@@ -264,7 +271,7 @@ extension StreamPacketSender {
                 item.encodedData.withUnsafeBytes { frameBytes in
                     let fragmentBytes = UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end])
                     guard let fragmentBase = fragmentBytes.baseAddress else { return }
-                    baseAddress.advanced(by: mirageHeaderSize).copyMemory(
+                    baseAddress.advanced(by: MirageWire.mirageHeaderSize).copyMemory(
                         from: fragmentBase,
                         byteCount: fragmentSize
                     )
@@ -363,8 +370,8 @@ extension StreamPacketSender {
         var parityFlags = fragmentFlags(index: fragmentIndex, context: context)
         parityFlags.insert(.fecParity)
         if mediaSecurityKey != nil { parityFlags.insert(.encryptedPayload) }
-        let checksum: UInt32 = mediaSecurityKey == nil ? CRC32.calculate(parityData) : 0
-        let header = FrameHeader(
+        let checksum: UInt32 = mediaSecurityKey == nil ? MirageWire.CRC32.calculate(parityData) : 0
+        let header = MirageWire.FrameHeader(
             flags: parityFlags,
             streamID: item.streamID,
             sequenceNumber: sequenceNumber,
@@ -404,7 +411,7 @@ extension StreamPacketSender {
             wirePayload = parityData
         }
 
-        let packetLength = mirageHeaderSize + wirePayload.count
+        let packetLength = MirageWire.mirageHeaderSize + wirePayload.count
         guard let pacingResult = await paceFragmentSend(
             packetBytes: packetLength,
             context: context,
@@ -422,7 +429,7 @@ extension StreamPacketSender {
             }
             header.serialize(into: UnsafeMutableRawBufferPointer(
                 start: baseAddress,
-                count: min(packetBytes.count, mirageHeaderSize)
+                count: min(packetBytes.count, MirageWire.mirageHeaderSize)
             ))
             copyPayload(wirePayload, to: baseAddress)
         }
@@ -456,7 +463,7 @@ extension StreamPacketSender {
         sendPacket(packet, metadata) { error in
             packetBuffer.release()
             self.reduceQueuedBytes(accountedPayloadBytes)
-            if let drop = error as? LoomQueuedUnreliableSendDrop {
+            if let drop = MirageQueuedUnreliableSendDrop(error: error) {
                 self.logQueuedUnreliableTransportDrop(
                     drop,
                     metadata: metadata,
@@ -488,7 +495,7 @@ extension StreamPacketSender {
     ) {
         context.transportCompletionTracker.registerSubmission()
         sendPacket(packet, metadata) { error in
-            if let drop = error as? LoomQueuedUnreliableSendDrop {
+            if let drop = MirageQueuedUnreliableSendDrop(error: error) {
                 self.logQueuedUnreliableTransportDrop(
                     drop,
                     metadata: metadata,
@@ -537,7 +544,7 @@ extension StreamPacketSender {
     }
 
     private nonisolated func logQueuedUnreliableTransportDrop(
-        _ drop: LoomQueuedUnreliableSendDrop,
+        _ drop: MirageQueuedUnreliableSendDrop,
         metadata: TransportPacketMetadata,
         accountedPayloadBytes: Int
     ) {
@@ -562,7 +569,7 @@ extension StreamPacketSender {
     private nonisolated func copyPayload(_ payload: Data, to baseAddress: UnsafeMutableRawPointer) {
         payload.withUnsafeBytes { payloadBytes in
             guard let payloadBase = payloadBytes.baseAddress else { return }
-            baseAddress.advanced(by: mirageHeaderSize).copyMemory(
+            baseAddress.advanced(by: MirageWire.mirageHeaderSize).copyMemory(
                 from: payloadBase,
                 byteCount: payload.count
             )

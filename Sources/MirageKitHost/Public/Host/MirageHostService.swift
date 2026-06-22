@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Dispatch
 import Foundation
@@ -12,7 +21,6 @@ import Loom
 import MirageBootstrapShared
 import Network
 import Observation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -24,7 +32,7 @@ import ScreenCaptureKit
 @MainActor
 public final class MirageHostService {
     /// Available windows for streaming
-    public internal(set) var availableWindows: [MirageWindow] = []
+    public internal(set) var availableWindows: [MirageMedia.MirageWindow] = []
 
     /// Currently active streams
     public internal(set) var activeStreams: [MirageStreamSession] = []
@@ -38,6 +46,16 @@ public final class MirageHostService {
     /// Current session state (locked, unlocked, sleeping, etc.)
     public internal(set) var sessionState: LoomSessionAvailability = .ready
 
+    /// Mirage-owned projection of the host login-session availability for product policy.
+    var mirageSessionAvailability: MirageWire.MirageHostSessionAvailability {
+        get {
+            MirageWire.MirageHostSessionAvailability(loomAvailability: sessionState)
+        }
+        set {
+            sessionState = newValue.loomAvailability
+        }
+    }
+
     /// Whether shared clipboard sync is enabled for eligible active sessions.
     public var sharedClipboardEnabled: Bool = false {
         didSet {
@@ -50,7 +68,7 @@ public final class MirageHostService {
     public var closeHostWindowOnClientWindowClose: Bool = false
 
     /// Preferred low-power policy for host encoder sessions.
-    public var encoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto {
+    public var encoderLowPowerModePreference: MirageMedia.MirageCodecLowPowerModePreference = .auto {
         didSet {
             guard oldValue != encoderLowPowerModePreference else { return }
             scheduleEncoderLowPowerPolicyApply(reason: "preference_change")
@@ -64,19 +82,19 @@ public final class MirageHostService {
     public internal(set) var isEncoderLowPowerModeActive: Bool = false
 
     /// Effective cursor presentation for the active desktop stream.
-    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor
+    public internal(set) var desktopCursorPresentation: MirageWire.MirageDesktopCursorPresentation = .simulatedCursor
 
     /// Latest client-owned stream-option state mirrored back to the host UI.
     public internal(set) var remoteClientStreamStatusOverlayEnabled = false
 
     /// Latest client-owned stream-options display mode mirrored back to the host UI.
-    public internal(set) var remoteClientStreamOptionsDisplayMode: MirageStreamOptionsDisplayMode = .inStream
+    public internal(set) var remoteClientStreamOptionsDisplayMode: MirageWire.MirageStreamOptionsDisplayMode = .inStream
 
     /// Whether the connected client currently exposes desktop cursor lock controls.
     public internal(set) var remoteClientDesktopCursorLockAvailable = false
 
     /// Latest client-owned desktop cursor lock mode mirrored back to the host UI.
-    public internal(set) var remoteClientDesktopCursorLockMode: MirageDesktopCursorLockMode = .off
+    public internal(set) var remoteClientDesktopCursorLockMode: MirageWire.MirageDesktopCursorLockMode = .off
 
     /// Callback fired when host battery-policy support changes.
     public var onEncoderLowPowerBatteryPolicySupportChanged: ((Bool) -> Void)?
@@ -91,9 +109,34 @@ public final class MirageHostService {
     /// owner that wraps it, not in the host delegate.
     public weak var trustProvider: (any LoomTrustProvider)? {
         didSet {
+            if let adapter = mirageTrustProviderAdapter,
+               trustProvider !== adapter {
+                mirageTrustProvider = nil
+                mirageTrustProviderAdapter = nil
+            }
             loomNode.trustProvider = trustProvider
         }
     }
+
+    /// Mirage-owned trust provider consulted through a Loom adapter during the authenticated session handshake.
+    @ObservationIgnored public var mirageTrustProvider: (any MirageTrustProvider)? {
+        didSet {
+            guard let mirageTrustProvider else {
+                if let adapter = mirageTrustProviderAdapter,
+                   trustProvider === adapter {
+                    trustProvider = nil
+                }
+                mirageTrustProviderAdapter = nil
+                return
+            }
+
+            let adapter = MirageTrustProviderLoomAdapter(provider: mirageTrustProvider)
+            mirageTrustProviderAdapter = adapter
+            trustProvider = adapter
+        }
+    }
+
+    @ObservationIgnored private var mirageTrustProviderAdapter: MirageTrustProviderLoomAdapter?
 
     /// Software update controller used for client-initiated host update status and install requests.
     public weak var softwareUpdateController: (any MirageHostSoftwareUpdateController)?
@@ -157,7 +200,7 @@ public final class MirageHostService {
         !softwareUpdateMaintenanceModeActive && singleClientSessionID == nil
     }
 
-    var advertisedConnectionAvailabilityReason: MiragePeerAdvertisementMetadata.AvailabilityReason {
+    var advertisedConnectionAvailabilityReason: MirageConnectivity.MiragePeerAdvertisementMetadata.AvailabilityReason {
         if softwareUpdateMaintenanceModeActive {
             return .softwareUpdate
         }
@@ -179,7 +222,7 @@ public final class MirageHostService {
     /// Called when host should resize a window before streaming begins.
     /// The callback receives the window and the target size in points.
     /// This allows the app to resize and center the window via Accessibility API.
-    public var onResizeWindowForStream: ((MirageWindow, CGSize) -> Void)?
+    public var onResizeWindowForStream: ((MirageMedia.MirageWindow, CGSize) -> Void)?
 
     /// Loom node that owns host discovery, control sessions, and media streams.
     public let loomNode: LoomNode
@@ -200,7 +243,7 @@ public final class MirageHostService {
     /// Stable host identifier advertised during discovery and bootstrap.
     var hostID: UUID = .init()
     /// Color-depth modes the host currently advertises to clients.
-    public internal(set) var supportedColorDepths: [MirageStreamColorDepth] = [.standard, .pro]
+    public internal(set) var supportedColorDepths: [MirageMedia.MirageStreamColorDepth] = [.standard, .pro]
     /// Whether the host currently advertises ProRes 4444 app/window stream support.
     public internal(set) var supportsProRes4444 = false
     let localNetworkMonitor = MirageLocalNetworkMonitor(label: "host")
@@ -258,26 +301,26 @@ public final class MirageHostService {
         qos: .userInteractive
     )
 
-    /// Loom multiplexed video streams by stream ID.
-    var loomVideoStreamsByStreamID: [StreamID: LoomMultiplexedStream] = [:]
+    /// Active video media streams by stream ID.
+    var videoMediaStreamsByStreamID: [StreamID: any MirageQueuedUnreliableMediaStream] = [:]
     /// Client-side route evidence captured at media stream startup.
     var mediaPathClientEvidenceByStreamID: [StreamID: HostStreamMediaPathClientEvidence] = [:]
     /// Per-client media registration authentication context.
     var mediaSecurityByClientID: [UUID: MirageMediaSecurityContext] = [:]
     /// Per-client media payload encryption policy.
     var mediaEncryptionEnabledByClientID: [UUID: Bool] = [:]
-    /// Loom multiplexed audio streams by client ID.
-    var loomAudioStreamsByClientID: [UUID: LoomMultiplexedStream] = [:]
+    /// Active audio media streams by client ID.
+    var audioMediaStreamsByClientID: [UUID: any MirageQueuedUnreliableMediaStream] = [:]
     /// Active host audio pipelines by client ID.
     var audioPipelinesByClientID: [UUID: HostAudioPipeline] = [:]
     /// Selected source stream for client audio capture.
     var audioSourceStreamByClientID: [UUID: StreamID] = [:]
     /// Latest requested audio configuration by client.
-    var audioConfigurationByClientID: [UUID: MirageAudioConfiguration] = [:]
+    var audioConfigurationByClientID: [UUID: MirageMedia.MirageAudioConfiguration] = [:]
     /// Last audio streamStarted payload sent to each client.
-    var audioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
+    var audioStartedMessageByClientID: [UUID: MirageWire.AudioStreamStartedMessage] = [:]
     /// Last audio streamStarted payload acknowledged onto the control channel.
-    var sentAudioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
+    var sentAudioStartedMessageByClientID: [UUID: MirageWire.AudioStreamStartedMessage] = [:]
     /// Clients whose current audio transport send failure has already been logged.
     var audioSendErrorReportedByClientID: Set<UUID> = []
     /// First-sample watchdogs for newly activated host audio capture.
@@ -303,7 +346,7 @@ public final class MirageHostService {
     /// Active custom-stream source sessions by stream ID.
     var customStreamSessionsByStreamID: [StreamID: any MirageCustomStreamSession] = [:]
     /// Custom-stream descriptors advertised for active custom streams.
-    var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
+    var customStreamDescriptorsByStreamID: [StreamID: MirageMedia.MirageCustomStreamDescriptor] = [:]
     /// Owning client session for each custom stream.
     var customStreamClientSessionIDByStreamID: [StreamID: UUID] = [:]
     /// Startup request IDs for active or starting custom streams.
@@ -386,9 +429,9 @@ public final class MirageHostService {
     /// Whether the desktop stream should use host-native resolution.
     var desktopUsesHostResolution: Bool = false
     /// Capture source selected for the active desktop stream.
-    var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
+    var desktopCaptureSource: MirageWire.MirageDesktopCaptureSource = .virtualDisplay
     /// Desktop stream mode selected for the active desktop stream.
-    var desktopStreamMode: MirageDesktopStreamMode = .unified
+    var desktopStreamMode: MirageMedia.MirageDesktopStreamMode = .unified
     /// Resize request currently being applied by the host.
     var activeDesktopResizeRequest: DesktopResizeRequestState?
     /// Latest desktop resize request queued behind an active resize.
@@ -533,8 +576,32 @@ public final class MirageHostService {
     /// Menu bar passthrough monitor for forwarding host app menu state.
     let menuBarMonitor = MenuBarMonitor()
 
-    /// Window activation (robust multi-method for headless Macs)
-    @ObservationIgnored let windowActivator: WindowActivator = .forCurrentEnvironment()
+    /// Platform backend used for host window and application catalog operations.
+    @ObservationIgnored var platformWindowCatalogBackend: any MirageHostWindowCatalogBackend = MacOSHostWindowCatalogBackend()
+
+    /// Platform backend used for host input injection and close-alert actions.
+    @ObservationIgnored nonisolated(unsafe) var platformInputInjectionBackend: any MirageHostInputInjectionBackend =
+        MacOSHostInputInjectionBackend()
+
+    /// Platform backend used for host video encoder construction.
+    @ObservationIgnored var platformVideoEncoderFactoryBackend: any MirageHostVideoEncoderFactoryBackend =
+        MacOSHostVideoEncoderFactoryBackend()
+
+    /// Platform backend used for host capture engine construction.
+    @ObservationIgnored var platformCaptureEngineFactoryBackend: any MirageHostCaptureEngineFactoryBackend =
+        MacOSHostCaptureEngineFactoryBackend()
+
+    /// Platform backend used for host capture content discovery.
+    @ObservationIgnored var platformCaptureContentProviderBackend: any MirageHostCaptureContentProviderBackend =
+        MacOSHostCaptureContentProviderBackend()
+
+    /// Platform backend used for host audio pipeline construction.
+    @ObservationIgnored var platformAudioPipelineFactoryBackend: any MirageHostAudioPipelineFactoryBackend =
+        MacOSHostAudioPipelineFactoryBackend()
+
+    /// Platform backend used for shared host virtual display management.
+    @ObservationIgnored var platformVirtualDisplayBackend: any MirageHostVirtualDisplayBackend =
+        MacOSHostVirtualDisplayBackend()
 
     /// Lights Out (curtain) preference for app/window and desktop streams.
     public var lightsOutEnabled: Bool = false {
@@ -546,7 +613,7 @@ public final class MirageHostService {
     }
 
     /// Host-side shortcut that force stops streams and locks the Mac while Lights Out is active.
-    public var lightsOutEmergencyShortcut: MirageClientShortcutBinding =
+    public var lightsOutEmergencyShortcut: MirageInput.MirageClientShortcutBinding =
         MirageHostLightsOutShortcut.defaultEmergencyShortcut {
         didSet {
             guard oldValue != lightsOutEmergencyShortcut else { return }
@@ -599,14 +666,14 @@ public final class MirageHostService {
 
     /// Fast input handler called on `inputQueue`, outside the main actor, for lowest-latency event delivery.
     @ObservationIgnored public nonisolated(unsafe) var onInputEvent: ((
-        _ event: MirageInputEvent,
-        _ window: MirageWindow,
+        _ event: MirageInput.MirageInputEvent,
+        _ window: MirageMedia.MirageWindow,
         _ client: MirageConnectedClient
     )
         -> Void)?
 
-    var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
-    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
+    var controlMessageHandlers: [MirageWire.ControlMessageType: ControlMessageHandler] = [:]
+    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
 
     /// Creates a host service with optional identity and transport configuration overrides.
     public init(
@@ -638,13 +705,13 @@ public final class MirageHostService {
         let supportedColorDepths = Self.detectSupportedColorDepths()
         let supportsProRes4444 = Self.detectProRes4444Support()
         let resolvedDeviceID = deviceID ?? UUID()
-        let peerAdvertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
+        let peerAdvertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.makeHostAdvertisement(
             deviceID: resolvedDeviceID,
             identityKeyID: identityKeyID,
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName,
             machineFamily: hardwareMachineFamily,
-            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
+            hostName: MirageConnectivity.MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
             supportedColorDepths: supportedColorDepths,
             supportsProRes4444: supportsProRes4444
         )
@@ -666,6 +733,7 @@ public final class MirageHostService {
         windowController.hostService = self
         inputController.hostService = self
         inputController.windowController = windowController
+        platformInputInjectionBackend = MacOSHostInputInjectionBackend(inputController: inputController)
 
         onResizeWindowForStream = { [weak windowController] window, size in
             windowController?.resizeAndCenterWindowForStream(window, targetSize: size)
@@ -697,7 +765,7 @@ public final class MirageHostService {
         }
         guard let diagnosticsContextProviderToken else { return }
         Task {
-            await LoomDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
+            await MirageDiagnosticsContextRegistry.unregisterContextProvider(diagnosticsContextProviderToken)
         }
     }
 }

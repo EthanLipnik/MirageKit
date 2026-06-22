@@ -7,8 +7,16 @@
 //  Media session key derivation, registration authentication, and packet AEAD helpers.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import CryptoKit
 import Foundation
+import Loom
 
 package enum MirageMediaDirection: UInt8, Sendable {
     case hostToClient = 1
@@ -52,7 +60,7 @@ package enum MirageMediaSecurity {
 
     package static let sessionKeyLength = 32
     package static let registrationTokenLength = 32
-    package static let authTagLength = mirageMediaAuthTagSize
+    package static let authTagLength = MirageWire.mirageMediaAuthTagSize
 
     package static func makeRegistrationToken() -> Data {
         let key = SymmetricKey(size: .bits256)
@@ -118,7 +126,7 @@ package enum MirageMediaSecurity {
 
     package static func encryptVideoPayload(
         _ plaintext: UnsafeRawBufferPointer,
-        header: FrameHeader,
+        header: MirageWire.FrameHeader,
         key: MirageMediaPacketKey,
         direction: MirageMediaDirection
     ) throws -> Data {
@@ -131,7 +139,7 @@ package enum MirageMediaSecurity {
 
     package static func decryptVideoPayload<Payload: DataProtocol>(
         _ wirePayload: Payload,
-        header: FrameHeader,
+        header: MirageWire.FrameHeader,
         key: MirageMediaPacketKey,
         direction: MirageMediaDirection
     ) throws -> Data {
@@ -144,7 +152,7 @@ package enum MirageMediaSecurity {
 
     package static func encryptAudioPayload(
         _ plaintext: UnsafeRawBufferPointer,
-        header: AudioPacketHeader,
+        header: MirageWire.AudioPacketHeader,
         key: MirageMediaPacketKey,
         direction: MirageMediaDirection
     ) throws -> Data {
@@ -157,7 +165,7 @@ package enum MirageMediaSecurity {
 
     package static func decryptAudioPayload<Payload: DataProtocol>(
         _ wirePayload: Payload,
-        header: AudioPacketHeader,
+        header: MirageWire.AudioPacketHeader,
         key: MirageMediaPacketKey,
         direction: MirageMediaDirection
     ) throws -> Data {
@@ -166,6 +174,36 @@ package enum MirageMediaSecurity {
             key: key.symmetricKey,
             nonce: audioNonce(for: header, direction: direction)
         )
+    }
+
+    package static func videoNonceInputBytes(
+        for header: MirageWire.FrameHeader,
+        direction: MirageMediaDirection
+    ) -> Data {
+        var nonce = [UInt8](repeating: 0, count: 12)
+        nonce[0] = 1
+        nonce[1] = direction.rawValue
+        nonce[2] = 1
+        nonce[3] = UInt8(truncatingIfNeeded: header.epoch)
+        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
+        writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
+        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
+        return Data(nonce)
+    }
+
+    package static func audioNonceInputBytes(
+        for header: MirageWire.AudioPacketHeader,
+        direction: MirageMediaDirection
+    ) -> Data {
+        var nonce = [UInt8](repeating: 0, count: 12)
+        nonce[0] = 1
+        nonce[1] = direction.rawValue
+        nonce[2] = 2
+        nonce[3] = 0
+        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
+        writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
+        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
+        return Data(nonce)
     }
 
     package static func encryptClipboardPayload(
@@ -238,36 +276,20 @@ package enum MirageMediaSecurity {
     }
 
     private static func videoNonce(
-        for header: FrameHeader,
+        for header: MirageWire.FrameHeader,
         direction: MirageMediaDirection
     ) throws -> AES.GCM.Nonce {
-        var nonce = [UInt8](repeating: 0, count: 12)
-        nonce[0] = 1
-        nonce[1] = direction.rawValue
-        nonce[2] = 1
-        nonce[3] = UInt8(truncatingIfNeeded: header.epoch)
-        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
-        writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
-        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
-        return try nonceFromBytes(nonce)
+        try nonceFromBytes(videoNonceInputBytes(for: header, direction: direction))
     }
 
     private static func audioNonce(
-        for header: AudioPacketHeader,
+        for header: MirageWire.AudioPacketHeader,
         direction: MirageMediaDirection
     ) throws -> AES.GCM.Nonce {
-        var nonce = [UInt8](repeating: 0, count: 12)
-        nonce[0] = 1
-        nonce[1] = direction.rawValue
-        nonce[2] = 2
-        nonce[3] = 0
-        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
-        writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
-        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
-        return try nonceFromBytes(nonce)
+        try nonceFromBytes(audioNonceInputBytes(for: header, direction: direction))
     }
 
-    private static func nonceFromBytes(_ bytes: [UInt8]) throws -> AES.GCM.Nonce {
+    private static func nonceFromBytes<Bytes: DataProtocol>(_ bytes: Bytes) throws -> AES.GCM.Nonce {
         do {
             return try AES.GCM.Nonce(data: Data(bytes))
         } catch {

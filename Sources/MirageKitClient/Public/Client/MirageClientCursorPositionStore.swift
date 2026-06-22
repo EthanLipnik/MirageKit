@@ -7,9 +7,17 @@
 //  Thread-safe cursor position snapshots for streamed sessions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 /// Latest normalized cursor position and visibility received for a streamed display.
 public struct MirageCursorPositionSnapshot: Sendable, Equatable {

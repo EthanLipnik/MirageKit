@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import Foundation
 
@@ -20,8 +28,8 @@ actor MenuBarMonitor {
     private struct MonitoredStream {
         let pid: pid_t
         let bundleIdentifier: String
-        let onChange: @Sendable (MirageMenuBar) -> Void
-        var lastMenuBar: MirageMenuBar?
+        let onChange: @Sendable (MirageWire.MirageMenuBar) -> Void
+        var lastMenuBar: MirageWire.MirageMenuBar?
     }
 
     // MARK: - Properties
@@ -60,7 +68,7 @@ actor MenuBarMonitor {
         streamID: StreamID,
         pid: pid_t,
         bundleIdentifier: String,
-        onChange: @escaping @Sendable (MirageMenuBar) -> Void
+        onChange: @escaping @Sendable (MirageWire.MirageMenuBar) -> Void
     )
     async {
         let initialMenuBar = await extractor.extractMenuBar(for: pid, bundleIdentifier: bundleIdentifier)
@@ -149,21 +157,21 @@ actor MenuBarMonitor {
     ///
     /// This performs a structural comparison rather than relying on version numbers,
     /// as we generate version numbers ourselves.
-    private func hasMenuBarChanged(old: MirageMenuBar?, new: MirageMenuBar) -> Bool {
+    private func hasMenuBarChanged(old: MirageWire.MirageMenuBar?, new: MirageWire.MirageMenuBar) -> Bool {
         guard let old else { return true }
         if old.menus.count != new.menus.count { return true }
         return zip(old.menus, new.menus).contains { menuHasChanged(old: $0, new: $1) }
     }
 
     /// Checks if a menu has changed.
-    private func menuHasChanged(old: MirageMenu, new: MirageMenu) -> Bool {
+    private func menuHasChanged(old: MirageWire.MirageMenu, new: MirageWire.MirageMenu) -> Bool {
         if old.title != new.title { return true }
         if old.items.count != new.items.count { return true }
         return zip(old.items, new.items).contains { menuItemHasChanged(old: $0, new: $1) }
     }
 
     /// Checks if a menu item has changed.
-    private func menuItemHasChanged(old: MirageMenuItem, new: MirageMenuItem) -> Bool {
+    private func menuItemHasChanged(old: MirageWire.MirageMenuItem, new: MirageWire.MirageMenuItem) -> Bool {
         if old.title != new.title ||
             old.isEnabled != new.isEnabled ||
             old.isChecked != new.isChecked ||

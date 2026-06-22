@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 3/1/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreVideo
 import Foundation
 import Metal
-import MirageKit
 
 #if os(macOS)
 final class HostTrafficLightCloneStampCompositor: @unchecked Sendable {

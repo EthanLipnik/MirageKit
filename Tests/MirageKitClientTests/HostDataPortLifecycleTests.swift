@@ -7,7 +7,10 @@
 
 import CoreMedia
 @testable import MirageKitClient
+import MirageKitClientPresentation
+import Foundation
 import Testing
+import MirageCore
 
 @Suite("Media Stream Lifecycle")
 struct HostDataPortLifecycleTests {

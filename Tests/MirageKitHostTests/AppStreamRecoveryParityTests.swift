@@ -11,6 +11,9 @@ import CoreGraphics
 import Foundation
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("App Stream Recovery Parity")
 struct AppStreamRecoveryParityTests {
@@ -40,7 +43,7 @@ struct AppStreamRecoveryParityTests {
         host.streamsByID[77] = context
 
         await host.handleStreamEncoderSettingsChange(
-            StreamEncoderSettingsChangeMessage(
+            MirageWire.StreamEncoderSettingsChangeMessage(
                 streamID: 77,
                 streamScale: 0.8
             )
@@ -110,7 +113,7 @@ struct AppStreamRecoveryParityTests {
     private func makeContext(
         streamID: StreamID,
         runtimeQualityAdjustmentEnabled: Bool = true,
-        mediaPathProfile: MirageMediaPathProfile? = nil
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil
     ) -> StreamContext {
         StreamContext(
             streamID: streamID,
@@ -129,8 +132,8 @@ struct AppStreamRecoveryParityTests {
         )
     }
 
-    private func makeDisplaySnapshot() -> SharedVirtualDisplayManager.DisplaySnapshot {
-        SharedVirtualDisplayManager.DisplaySnapshot(
+    private func makeDisplaySnapshot() -> MirageHostVirtualDisplaySnapshot {
+        MirageHostVirtualDisplaySnapshot(
             displayID: 47,
             spaceID: 1,
             resolution: CGSize(width: 3_200, height: 2_080),
@@ -156,8 +159,8 @@ struct AppStreamRecoveryParityTests {
         sequence: UInt64,
         pFrameCompletionLatencyP95Ms: Double? = nil,
         latePFrameCount: UInt64? = nil
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 81,
             sequence: sequence,
             sentAtUptime: 0,
@@ -224,7 +227,7 @@ private extension StreamContext {
     func configureForDedicatedVirtualDisplayTest(
         baseCaptureSize: CGSize,
         windowFrame: CGRect,
-        displaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        displaySnapshot: MirageHostVirtualDisplaySnapshot,
         visibleBounds: CGRect
     ) {
         isRunning = true

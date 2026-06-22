@@ -5,19 +5,27 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Executes a client-selected action from a close-blocked app-window alert.
     func handleAppWindowCloseAlertActionRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
         do {
-            let request = try message.decode(AppWindowCloseAlertActionRequestMessage.self)
+            let request = try message.decode(MirageWire.AppWindowCloseAlertActionRequestMessage.self)
             let result = await performAppWindowCloseAlertAction(
                 alertToken: request.alertToken,
                 actionID: request.actionID,
@@ -26,7 +34,7 @@ extension MirageHostService {
             )
             clientContext.queueBestEffort(.appWindowCloseAlertActionResult, content: result)
         } catch {
-            let fallback = AppWindowCloseAlertActionResultMessage(
+            let fallback = MirageWire.AppWindowCloseAlertActionResultMessage(
                 alertToken: "",
                 actionID: "",
                 success: false,

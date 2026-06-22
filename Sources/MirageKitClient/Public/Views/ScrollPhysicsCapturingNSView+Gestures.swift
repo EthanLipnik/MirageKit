@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -19,8 +27,8 @@ extension ScrollPhysicsCapturingNSView {
         let usesNativeScrollEventMetadata = UserDefaults.standard.bool(
             forKey: MirageNativeScrollEventMetadataPreference.defaultsKey
         )
-        let phase = usesNativeScrollEventMetadata ? MirageScrollPhase(from: event.phase) : .none
-        let momentumPhase = usesNativeScrollEventMetadata ? MirageScrollPhase(from: event.momentumPhase) : .none
+        let phase = usesNativeScrollEventMetadata ? MirageInput.MirageScrollPhase(from: event.phase) : .none
+        let momentumPhase = usesNativeScrollEventMetadata ? MirageInput.MirageScrollPhase(from: event.momentumPhase) : .none
         let isPrecise = event.hasPreciseScrollingDeltas
 
         if cursorLockEnabled {
@@ -37,7 +45,7 @@ extension ScrollPhysicsCapturingNSView {
         let deltaX = event.scrollingDeltaX
         let deltaY = event.scrollingDeltaY
         if deltaX != 0 || deltaY != 0 || phase != .none || momentumPhase != .none {
-            let modifiers = MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            let modifiers = MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
             onScroll?(deltaX, deltaY, lastMouseLocation, phase, momentumPhase, modifiers, isPrecise)
         }
     }
@@ -45,45 +53,45 @@ extension ScrollPhysicsCapturingNSView {
     override func magnify(with event: NSEvent) {
         guard isInputProcessingActive else { return }
         updateGestureLocation(from: event)
-        onMouseEvent?(.magnify(MirageMagnifyEvent(
+        onMouseEvent?(.magnify(MirageInput.MirageMagnifyEvent(
             magnification: event.magnification,
             location: lastMouseLocation,
-            phase: MirageScrollPhase(from: event.phase),
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            phase: MirageInput.MirageScrollPhase(from: event.phase),
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )))
     }
 
     override func smartMagnify(with event: NSEvent) {
         guard isInputProcessingActive else { return }
         updateGestureLocation(from: event)
-        onMouseEvent?(.magnify(MirageMagnifyEvent(
+        onMouseEvent?(.magnify(MirageInput.MirageMagnifyEvent(
             magnification: 1,
             location: lastMouseLocation,
             phase: .changed,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )))
     }
 
     override func rotate(with event: NSEvent) {
         guard isInputProcessingActive else { return }
         updateGestureLocation(from: event)
-        onMouseEvent?(.rotate(MirageRotateEvent(
+        onMouseEvent?(.rotate(MirageInput.MirageRotateEvent(
             rotation: CGFloat(event.rotation),
             location: lastMouseLocation,
-            phase: MirageScrollPhase(from: event.phase),
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            phase: MirageInput.MirageScrollPhase(from: event.phase),
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )))
     }
 
     override func swipe(with event: NSEvent) {
         guard isInputProcessingActive else { return }
         updateGestureLocation(from: event)
-        onMouseEvent?(.swipe(MirageSwipeEvent(
+        onMouseEvent?(.swipe(MirageInput.MirageSwipeEvent(
             deltaX: event.deltaX,
             deltaY: event.deltaY,
             location: lastMouseLocation,
-            phase: MirageScrollPhase(from: event.phase),
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            phase: MirageInput.MirageScrollPhase(from: event.phase),
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )))
     }
 

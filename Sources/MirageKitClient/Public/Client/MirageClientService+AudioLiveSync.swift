@@ -7,9 +7,17 @@
 //  Decoded audio buffering and live video sync.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
-import MirageKit
 
 @MainActor
 extension MirageClientService {

@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/3/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 package enum MirageSteadyStateDiagnostics {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MirageWire
 @testable import MirageKit
 
 private enum ControlMessageTestParseError: Error {
@@ -14,8 +15,8 @@ private enum ControlMessageTestParseError: Error {
 }
 
 /// Parses a complete control message for serialization tests that do not exercise streaming receive buffers.
-func requireParsedControlMessage(from data: Data, offset: Int = 0) throws -> (ControlMessage, Int) {
-    switch ControlMessage.deserialize(from: data, offset: offset) {
+func requireParsedControlMessage(from data: Data, offset: Int = 0) throws -> (MirageWire.ControlMessage, Int) {
+    switch MirageWire.ControlMessage.deserialize(from: data, offset: offset) {
     case let .success(message, bytesConsumed):
         return (message, bytesConsumed)
     case .needMoreData:

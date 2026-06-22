@@ -7,7 +7,7 @@
 
 import CoreGraphics
 import Foundation
-import MirageKit
+import MirageMedia
 
 #if os(macOS)
 

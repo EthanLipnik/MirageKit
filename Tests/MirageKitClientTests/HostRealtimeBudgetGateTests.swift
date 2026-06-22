@@ -9,6 +9,7 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageDiagnostics
 
 #if os(macOS)
 @Suite("Host Realtime Budget Gate")
@@ -19,7 +20,7 @@ struct HostRealtimeBudgetGateTests {
         // state from stream init onward. That must NOT be treated as the host
         // actively throttling, otherwise the client permanently delegates and
         // never probes the bitrate upward.
-        let snapshot = MirageClientMetricsSnapshot(
+        let snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(
             hostRealtimeBitrateCeiling: 32_000_000,
             hostRealtimePressureState: "observing"
         )
@@ -28,14 +29,14 @@ struct HostRealtimeBudgetGateTests {
 
     @Test("Missing host pressure state is not active throttling")
     func nilStateIsNotActive() {
-        let snapshot = MirageClientMetricsSnapshot()
+        let snapshot = MirageDiagnostics.MirageClientMetricsSnapshot()
         #expect(snapshot.hostRealtimeBudgetIsActivelyThrottling == false)
     }
 
     @Test("Active host pressure states count as throttling")
     func activeStatesAreThrottling() {
         for state in ["pressured", "severe", "recovery"] {
-            let snapshot = MirageClientMetricsSnapshot(
+            let snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(
                 hostRealtimeBitrateCeiling: 16_000_000,
                 hostRealtimePressureState: state
             )
@@ -48,10 +49,10 @@ struct HostRealtimeBudgetGateTests {
 
     @Test("Realtime adaptation ownership follows host capability revisions")
     func realtimeAdaptationOwnershipFollowsCapabilityRevisions() {
-        #expect(MirageClientMetricsSnapshot().hostOwnsRealtimeAdaptation == false)
-        #expect(MirageClientMetricsSnapshot(hostRealtimeControlRevision: 0).hostOwnsRealtimeAdaptation == false)
-        #expect(MirageClientMetricsSnapshot(hostRealtimeControlRevision: 1).hostOwnsRealtimeAdaptation)
-        #expect(MirageClientMetricsSnapshot(hostAdaptiveGovernorRevision: 2).hostOwnsRealtimeAdaptation)
+        #expect(MirageDiagnostics.MirageClientMetricsSnapshot().hostOwnsRealtimeAdaptation == false)
+        #expect(MirageDiagnostics.MirageClientMetricsSnapshot(hostRealtimeControlRevision: 0).hostOwnsRealtimeAdaptation == false)
+        #expect(MirageDiagnostics.MirageClientMetricsSnapshot(hostRealtimeControlRevision: 1).hostOwnsRealtimeAdaptation)
+        #expect(MirageDiagnostics.MirageClientMetricsSnapshot(hostAdaptiveGovernorRevision: 2).hostOwnsRealtimeAdaptation)
     }
 }
 
@@ -59,7 +60,7 @@ struct HostRealtimeBudgetGateTests {
 struct HostProductionCadenceGateTests {
     @Test("Host producing at target is at cadence")
     func producingAtTargetIsAtCadence() {
-        var snapshot = MirageClientMetricsSnapshot(hostTargetFrameRate: 60)
+        var snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(hostTargetFrameRate: 60)
         snapshot.hostEncodedFPS = 60
         #expect(snapshot.hostIsProducingAtCadence == true)
     }
@@ -68,7 +69,7 @@ struct HostProductionCadenceGateTests {
     func lowProductionIsNotAtCadence() {
         // SCK delivered ~20fps because the screen was mostly static — the gaps
         // this produces must not be read as a network ingress burst.
-        var snapshot = MirageClientMetricsSnapshot(hostTargetFrameRate: 60)
+        var snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(hostTargetFrameRate: 60)
         snapshot.hostEncodedFPS = 20
         snapshot.hostEncodeAttemptFPS = 20
         snapshot.hostCaptureFPS = 20
@@ -77,7 +78,7 @@ struct HostProductionCadenceGateTests {
 
     @Test("Capture FPS without encoded output is not production cadence")
     func captureFPSWithoutEncodedOutputIsNotProductionCadence() {
-        var snapshot = MirageClientMetricsSnapshot(hostTargetFrameRate: 60)
+        var snapshot = MirageDiagnostics.MirageClientMetricsSnapshot(hostTargetFrameRate: 60)
         snapshot.hostEncodedFPS = 0
         snapshot.hostCaptureFPS = 58
         snapshot.hostEncodeAttemptFPS = 58

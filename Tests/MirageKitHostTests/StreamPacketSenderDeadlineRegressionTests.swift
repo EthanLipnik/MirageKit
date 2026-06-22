@@ -10,6 +10,7 @@
 import Foundation
 import MirageKit
 import Testing
+import MirageWire
 
 extension StreamPacketSenderRegressionTests {
     @Test("Past-deadline non-keyframes before enqueue still send")
@@ -19,7 +20,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -65,7 +66,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -138,7 +139,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 1200,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -185,7 +186,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 1200,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -230,7 +231,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -273,7 +274,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -333,7 +334,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -393,7 +394,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -447,7 +448,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return
@@ -512,7 +513,7 @@ extension StreamPacketSenderRegressionTests {
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacketWithMetadata: { packet, _, onComplete in
-                guard let header = FrameHeader.deserialize(from: packet) else {
+                guard let header = MirageWire.FrameHeader.deserialize(from: packet) else {
                     Issue.record("Failed to deserialize submitted packet")
                     onComplete(nil)
                     return

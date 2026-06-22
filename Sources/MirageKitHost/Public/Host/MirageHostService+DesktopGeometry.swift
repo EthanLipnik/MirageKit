@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
 
@@ -116,7 +125,7 @@ extension MirageHostService {
         desktopPrimaryPhysicalDisplayID = displayID
         desktopPrimaryPhysicalBounds = fullBounds
 
-        var visibleBounds = CGVirtualDisplayBridge.displayVisibleBounds(
+        var visibleBounds = platformVirtualDisplayBackend.displayVisibleBounds(
             displayID,
             knownBounds: fullBounds
         )
@@ -342,10 +351,8 @@ extension MirageHostService {
             )
         }
 
-        let bounds = CGDisplayBounds(displayID)
-        let displayModeSize = CGDisplayCopyDisplayMode(displayID).map {
-            CGSize(width: CGFloat($0.width), height: CGFloat($0.height))
-        }
+        let bounds = platformVirtualDisplayBackend.displayBounds(displayID)
+        let displayModeSize = platformVirtualDisplayBackend.currentDisplayModeSizes(displayID)?.logical
         let resolvedBounds = resolvedDesktopDisplayBounds(
             cachedBounds: desktopDisplayBounds,
             liveBounds: bounds,
@@ -362,10 +369,10 @@ extension MirageHostService {
         if let displayID = desktopVirtualDisplayID,
            let screen = NSScreen.screens.first(where: {
                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
-           }) {
+            }) {
             resolvedBounds = screen.frame
         } else if let displayID = desktopVirtualDisplayID {
-            let cgBounds = CGDisplayBounds(displayID)
+            let cgBounds = platformVirtualDisplayBackend.displayBounds(displayID)
             let primaryDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
             resolvedBounds = resolvedDesktopDisplayBounds(
                 cachedBounds: desktopDisplayBounds,
@@ -436,7 +443,7 @@ extension MirageHostService {
             cachedBounds: desktopPrimaryPhysicalBounds,
             resolvedPrimaryDisplayID: resolvePrimaryPhysicalDisplayID(),
             mainDisplayID: CGMainDisplayID(),
-            boundsProvider: { CGDisplayBounds($0) }
+            boundsProvider: { platformVirtualDisplayBackend.displayBounds($0) }
         )
         desktopPrimaryPhysicalDisplayID = snapshot.displayID
         if let bounds = snapshot.bounds {

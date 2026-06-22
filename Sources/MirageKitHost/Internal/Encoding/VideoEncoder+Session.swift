@@ -7,10 +7,18 @@
 //  HEVC encoder extensions.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import Foundation
 import VideoToolbox
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -119,7 +127,7 @@ extension VideoEncoder {
             key: kVTCompressionPropertyKey_DataRateLimits,
             value: rateLimits as CFArray
         )
-        let strategy: MirageEncoderRateControlStrategy = (averageApplied && rateLimitApplied)
+        let strategy: MirageMedia.MirageEncoderRateControlStrategy = (averageApplied && rateLimitApplied)
             ? .averageBitRateDataRateLimits
             : .none
         encodedOutputTelemetry.updateRateControl(
@@ -251,7 +259,7 @@ extension VideoEncoder {
     static func dataRateLimit(
         targetBitrateBps: Int,
         targetFrameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile = .unknown
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
     ) -> (bytes: Int, windowSeconds: Double) {
         let clampedFrameRate = max(1, targetFrameRate)
         let windowSeconds: Double
@@ -267,7 +275,7 @@ extension VideoEncoder {
         return (bytes: bytes, windowSeconds: windowSeconds)
     }
 
-    static func lowLatencyUsesDataRateLimits(mediaPathProfile: MirageMediaPathProfile) -> Bool {
+    static func lowLatencyUsesDataRateLimits(mediaPathProfile: MirageMedia.MirageMediaPathProfile) -> Bool {
         mediaPathProfile.usesAwdlRadioPolicy || mediaPathProfile == .localWiFi
     }
 

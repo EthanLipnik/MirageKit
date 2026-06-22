@@ -7,9 +7,16 @@
 //  Control message receiving loop.
 //
 
-import Foundation
-import Loom
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -74,9 +81,9 @@ extension MirageHostService {
                             notifyClient: false
                         )
                     case let .cancelStreamSetup(message):
-                        let request: CancelStreamSetupMessage
+                        let request: MirageWire.CancelStreamSetupMessage
                         do {
-                            request = try message.decode(CancelStreamSetupMessage.self)
+                            request = try message.decode(MirageWire.CancelStreamSetupMessage.self)
                         } catch {
                             MirageLogger.error(.host, error: error, message: "Failed to decode cancel stream setup signal: ")
                             return
@@ -129,7 +136,7 @@ extension MirageHostService {
                     case .complete:
                         MirageLogger.host("Client disconnected")
                     case let .fatalError(error):
-                        if LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                        if MirageConnectionErrorClassifier.isLikelyUserDependent(error: error) {
                             MirageLogger.host(
                                 "Client \(clientContext.client.name) disconnected after fatal transport error: \(error)"
                             )
@@ -140,7 +147,7 @@ extension MirageHostService {
                             )
                         }
                     case let .persistentError(error):
-                        if LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                        if MirageConnectionErrorClassifier.isLikelyUserDependent(error: error) {
                             MirageLogger.host(
                                 "Client \(clientContext.client.name) disconnected after persistent transport errors: \(error)"
                             )

@@ -8,7 +8,10 @@
 @testable import MirageKitClient
 import Testing
 import CoreGraphics
+import MirageCore
 import MirageKit
+import MirageMedia
+import MirageWire
 
 @Suite("App Resize Acknowledgement")
 struct AppResizeAcknowledgementTests {
@@ -20,7 +23,7 @@ struct AppResizeAcknowledgementTests {
         let sessionID = store.createSession(
             streamID: 101,
             mediaStreamID: 100,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 10101,
                 title: "Logical App Window",
                 application: nil,
@@ -56,7 +59,7 @@ struct AppResizeAcknowledgementTests {
         let sessionID = store.createSession(
             streamID: 111,
             mediaStreamID: 110,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 11101,
                 title: "Logical App Window",
                 application: nil,
@@ -91,7 +94,7 @@ struct AppResizeAcknowledgementTests {
         )
         service.appStreamStartAcknowledgementByStreamID[200] = mediaAcknowledgement
         service.appDimensionTokenByStream[200] = 12
-        let result = AppWindowResizeResultMessage(
+        let result = MirageWire.AppWindowResizeResultMessage(
             streamID: 201,
             mediaStreamID: 200,
             windowID: 20101,
@@ -105,7 +108,7 @@ struct AppResizeAcknowledgementTests {
             reason: nil
         )
 
-        service.handleAppWindowResizeResult(try ControlMessage(type: .appWindowResizeResult, content: result))
+        service.handleAppWindowResizeResult(try MirageWire.ControlMessage(type: .appWindowResizeResult, content: result))
 
         #expect(service.appStreamStartAcknowledgementByStreamID[200] == mediaAcknowledgement)
         #expect(service.appStreamStartAcknowledgementByStreamID[201]?.width == 1156)
@@ -123,7 +126,7 @@ struct AppResizeAcknowledgementTests {
         let sessionID = store.createSession(
             streamID: 121,
             mediaStreamID: 120,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 12101,
                 title: "Logical App Window",
                 application: nil,
@@ -144,7 +147,7 @@ struct AppResizeAcknowledgementTests {
         view.appResizeDispatchState.enqueue(CGSize(width: 900, height: 700))
         _ = view.appResizeDispatchState.beginNextDispatch(now: 0)
         view.beginAppResizeAwaitingAck()
-        let result = AppWindowResizeResultMessage(
+        let result = MirageWire.AppWindowResizeResultMessage(
             streamID: 121,
             mediaStreamID: 120,
             windowID: 12101,

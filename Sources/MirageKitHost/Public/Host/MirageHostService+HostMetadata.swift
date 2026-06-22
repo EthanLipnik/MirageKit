@@ -7,20 +7,28 @@
 //  Host metadata request handling.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Handles a client request for the host hardware icon payload.
     func handleHostHardwareIconRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
-        let request: HostHardwareIconRequestMessage
+        let request: MirageWire.HostHardwareIconRequestMessage
         do {
-            request = try message.decode(HostHardwareIconRequestMessage.self)
+            request = try message.decode(MirageWire.HostHardwareIconRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode host hardware icon request: ")
             return
@@ -87,7 +95,7 @@ extension MirageHostService {
             }
             guard !Task.isCancelled else { return }
 
-            let response = HostHardwareIconMessage(
+            let response = MirageWire.HostHardwareIconMessage(
                 pngData: payload.pngData,
                 iconName: payload.iconName,
                 hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
@@ -120,12 +128,12 @@ extension MirageHostService {
 
     /// Handles a client request for the host wallpaper payload.
     func handleHostWallpaperRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
-        let request: HostWallpaperRequestMessage
+        let request: MirageWire.HostWallpaperRequestMessage
         do {
-            request = try message.decode(HostWallpaperRequestMessage.self)
+            request = try message.decode(MirageWire.HostWallpaperRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode host wallpaper request: ")
             return
@@ -174,10 +182,12 @@ extension MirageHostService {
 
             guard let payload = await MirageHostWallpaperResolver.payload(
                 preferredMaxPixelWidth: width,
-                preferredMaxPixelHeight: height
+                preferredMaxPixelHeight: height,
+                virtualDisplayBackend: platformVirtualDisplayBackend,
+                captureContentProviderBackend: platformCaptureContentProviderBackend
             ) else {
                 MirageLogger.host("Host wallpaper request failed: no wallpaper payload")
-                let response = HostWallpaperMessage(
+                let response = MirageWire.HostWallpaperMessage(
                     requestID: requestID,
                     pixelWidth: 0,
                     pixelHeight: 0,
@@ -197,7 +207,7 @@ extension MirageHostService {
             }
             guard !Task.isCancelled else { return }
 
-            let response = HostWallpaperMessage(
+            let response = MirageWire.HostWallpaperMessage(
                 requestID: requestID,
                 imageData: payload.imageData,
                 pixelWidth: payload.pixelWidth,

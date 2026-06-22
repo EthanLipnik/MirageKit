@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 1/15/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 /// Controls the lifecycle and state of a single stream.
 /// Owned by MirageClientService, not by views. This ensures:
@@ -113,7 +121,7 @@ actor StreamController {
     var lastSoftRecoveryRequestTime: CFAbsoluteTime = 0
     var lastHardRecoveryStartTime: CFAbsoluteTime = 0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
-    var streamCadenceTarget = MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
+    var streamCadenceTarget = MirageMedia.MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
     var streamCadenceClock = MirageStreamCadenceClock(targetFPS: 60)
     var decodeSchedulerTargetFPS: Int = 60
     var decodeSubmissionBaselineLimit: Int = 2
@@ -122,9 +130,9 @@ actor StreamController {
     var currentDecodeSubmissionLimit: Int = 2
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var lastSourceBoundDiagnosticSignature: String?
-    var latestHostMetricsMessage: StreamMetricsMessage?
+    var latestHostMetricsMessage: MirageWire.StreamMetricsMessage?
     var latestHostMetricsTime: CFAbsoluteTime = 0
-    var latestHostCadencePressureSample: HostCadencePressureDiagnosticSample?
+    var latestHostCadencePressureSample: MirageHostCadencePressureDiagnosticSample?
     var latestRenderTelemetrySnapshot: RenderTelemetrySnapshot?
     var renderCadenceMissStreak: Int = 0
     var lastRenderCadenceMissLogTime: CFAbsoluteTime = 0
@@ -141,8 +149,8 @@ actor StreamController {
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
     var awdlTransportActive: Bool = false
-    var receiverTransportPathKind: MirageNetworkPathKind = .unknown
-    var receiverMediaPathProfile: MirageMediaPathProfile = .unknown
+    var receiverTransportPathKind: MirageCore.MirageNetworkPathKind = .unknown
+    var receiverMediaPathProfile: MirageMedia.MirageMediaPathProfile = .unknown
 
     var lastPresentedSequenceObserved: UInt64 = 0
     var lastPresentedProgressTime: CFAbsoluteTime = 0
@@ -168,7 +176,7 @@ actor StreamController {
     /// Does NOT pass the pixel buffer (CVPixelBuffer isn't Sendable).
     /// The delegate should read from MirageRenderStreamStore if it needs the actual frame.
     var onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)?
-    var videoIngressMetricsProvider: (@Sendable (StreamID) -> ClientVideoIngressMetricsSnapshot?)?
+    var videoIngressMetricsProvider: (@Sendable (StreamID) -> MirageClientVideoIngressMetricsSnapshot?)?
 
     /// Called when the first frame is decoded for a stream.
     var onFirstFrameDecoded: (@MainActor @Sendable () -> Void)?
@@ -197,7 +205,7 @@ actor StreamController {
         onKeyframeNeeded: (@MainActor @Sendable () -> Bool)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
-        videoIngressMetricsProvider: (@Sendable (StreamID) -> ClientVideoIngressMetricsSnapshot?)? = nil,
+        videoIngressMetricsProvider: (@Sendable (StreamID) -> MirageClientVideoIngressMetricsSnapshot?)? = nil,
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)? = nil,

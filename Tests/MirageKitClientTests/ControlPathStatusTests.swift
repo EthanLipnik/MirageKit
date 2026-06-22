@@ -7,8 +7,12 @@
 
 @testable import MirageKit
 @testable import MirageKitClient
-import Loom
+import MirageDiagnostics
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("Control Path Status")
 struct ControlPathStatusTests {
@@ -105,7 +109,7 @@ struct ControlPathStatusTests {
     func hostMetricsPreserveUnsupportedRealtimeTransportDrops() throws {
         let store = MirageClientMetricsStore()
         let streamID: StreamID = 42
-        store.updateHostPipelineMetrics(StreamMetricsMessage(
+        store.updateHostPipelineMetrics(MirageWire.StreamMetricsMessage(
             streamID: streamID,
             encodedFPS: 60,
             idleEncodedFPS: 0,
@@ -136,20 +140,21 @@ struct ControlPathStatusTests {
         ))
 
         let snapshot = try #require(store.snapshot(for: streamID))
-        #expect(snapshot.hostQueuedUnreliableDeadlineExpiredDrops == 2)
-        #expect(snapshot.hostQueuedUnreliableQueueLimitDrops == 3)
-        #expect(snapshot.hostQueuedUnreliableSupersededDrops == 5)
-        #expect(snapshot.hostQueuedUnreliableUnsupportedTransportDrops == 7)
-        #expect(snapshot.hostQueuedUnreliableClosedDrops == 11)
-        #expect(snapshot.hostQueuedUnreliableDropCount == 28)
-        #expect(snapshot.hostTransportPressureDropCount == 52)
+        let queuedDrops = try #require(snapshot.hostQueuedUnreliableDropCounts)
+        #expect(queuedDrops.deadlineExpired == 2)
+        #expect(queuedDrops.queueLimit == 3)
+        #expect(queuedDrops.superseded == 5)
+        #expect(queuedDrops.unsupportedTransport == 7)
+        #expect(queuedDrops.closed == 11)
+        #expect(queuedDrops.total == 28)
+        #expect((snapshot.hostStalePacketDrops ?? 0) + (snapshot.hostSenderLocalDeadlineDrops ?? 0) + queuedDrops.total == 52)
     }
 
     @Test("Host metrics preserve AWDL policy telemetry")
     func hostMetricsPreserveAwdlPolicyTelemetry() throws {
         let store = MirageClientMetricsStore()
         let streamID: StreamID = 43
-        store.updateHostMetrics(StreamMetricsMessage(
+        store.updateHostMetrics(MirageWire.StreamMetricsMessage(
             streamID: streamID,
             encodedFPS: 45,
             idleEncodedFPS: 0,
@@ -219,7 +224,7 @@ struct ControlPathStatusTests {
         let service = MirageClientService(deviceName: "Control Path Diagnostics Test")
         let streamID: StreamID = 44
         service.desktopStreamID = streamID
-        service.metricsStore.updateHostPipelineMetrics(StreamMetricsMessage(
+        service.metricsStore.updateHostPipelineMetrics(MirageWire.StreamMetricsMessage(
             streamID: streamID,
             encodedFPS: 60,
             idleEncodedFPS: 0,
@@ -281,8 +286,8 @@ struct ControlPathStatusTests {
         usesCellular: Bool = false,
         usesLoopback: Bool = false,
         usesOther: Bool = false
-    ) -> MirageNetworkPathSnapshot {
-        MirageNetworkPathClassifier.classify(
+    ) -> MirageConnectivity.MirageNetworkPathSnapshot {
+        MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: interfaceNames,
             usesWiFi: usesWiFi,
             usesWired: usesWired,
@@ -298,10 +303,10 @@ struct ControlPathStatusTests {
     }
 
     private static func manualSnapshot(
-        kind: MirageNetworkPathKind,
-        mediaProfile: MirageMediaPathProfile
-    ) -> MirageNetworkPathSnapshot {
-        MirageNetworkPathSnapshot(
+        kind: MirageCore.MirageNetworkPathKind,
+        mediaProfile: MirageMedia.MirageMediaPathProfile
+    ) -> MirageConnectivity.MirageNetworkPathSnapshot {
+        MirageConnectivity.MirageNetworkPathSnapshot(
             kind: kind,
             mediaProfile: mediaProfile,
             status: "satisfied",

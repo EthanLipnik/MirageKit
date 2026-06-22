@@ -7,10 +7,18 @@
 //  Auxiliary overlay capture and composition for app-atlas media streams.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreMedia
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 /// Auxiliary window capture, routing, and overlay composition for app-atlas streams.
@@ -37,16 +45,16 @@ extension AppAtlasMediaCoordinator {
         guard !isStopped else { throw CancellationError() }
         guard let parentWindowID = windowIDByStreamID[parentStreamID],
               logicalWindowsByWindowID[parentWindowID] != nil else {
-            throw MirageError.protocolError("App-atlas parent stream \(parentStreamID) is not bound to a logical window")
+            throw MirageCore.MirageError.protocolError("App-atlas parent stream \(parentStreamID) is not bound to a logical window")
         }
 
         let auxiliaryWindowID = WindowID(windowWrapper.window.windowID)
-        let auxiliaryApplication = MirageApplication(
+        let auxiliaryApplication = MirageMedia.MirageApplication(
             id: applicationWrapper.application.processID,
             bundleIdentifier: applicationWrapper.application.bundleIdentifier,
             name: applicationWrapper.application.applicationName
         )
-        let auxiliaryWindow = MirageWindow(
+        let auxiliaryWindow = MirageMedia.MirageWindow(
             id: auxiliaryWindowID,
             title: windowWrapper.window.title ?? candidate.window.title,
             application: auxiliaryApplication,
@@ -68,6 +76,8 @@ extension AppAtlasMediaCoordinator {
                     hostBufferingPolicy: hostBufferingPolicy,
                     capturePressureProfile: capturePressureProfile,
                     targetFrameRate: targetFrameRate,
+                    captureEngineFactoryBackend: captureEngineFactoryBackend,
+                    captureContentProviderBackend: captureContentProviderBackend,
                     onFrame: { [weak self] frame in
                         Task(priority: .userInitiated) {
                             await self?.setLatestAuxiliaryFrame(frame, windowID: auxiliaryWindowID)
@@ -125,7 +135,7 @@ extension AppAtlasMediaCoordinator {
         parentStreamID: StreamID,
         parentWindowID: WindowID,
         candidate: AppStreamWindowCandidate,
-        auxiliaryWindow: MirageWindow
+        auxiliaryWindow: MirageMedia.MirageWindow
     ) -> AppAtlasAuxiliaryOverlay {
         let parent = logicalWindowsByWindowID[parentWindowID]
         let destinationRect = parent.map { parent in

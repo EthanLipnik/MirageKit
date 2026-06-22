@@ -7,9 +7,17 @@
 //  Internal result carriers for frame reassembly completion.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 extension FrameReassembler {
     /// Freshness marker for the best pending keyframe while recovering from keyframe starvation.
@@ -33,8 +41,8 @@ extension FrameReassembler {
         let latestAcceptedPacketReceivedTime: CFAbsoluteTime
         let packetAcceptanceSnapshot: PacketAcceptanceSnapshot
         let latestPendingKeyframeProgress: PendingKeyframeProgress?
-        let transportPathKind: MirageNetworkPathKind
-        let mediaPathProfile: MirageMediaPathProfile
+        let transportPathKind: MirageCore.MirageNetworkPathKind
+        let mediaPathProfile: MirageMedia.MirageMediaPathProfile
         let pendingFrameCount: Int
         let pendingKeyframeCount: Int
         let incompleteFrameTimeouts: UInt64
@@ -49,8 +57,8 @@ extension FrameReassembler {
             latestAcceptedPacketReceivedTime: CFAbsoluteTime? = nil,
             packetAcceptanceSnapshot: PacketAcceptanceSnapshot? = nil,
             latestPendingKeyframeProgress: PendingKeyframeProgress?,
-            transportPathKind: MirageNetworkPathKind,
-            mediaPathProfile: MirageMediaPathProfile,
+            transportPathKind: MirageCore.MirageNetworkPathKind,
+            mediaPathProfile: MirageMedia.MirageMediaPathProfile,
             pendingFrameCount: Int,
             pendingKeyframeCount: Int,
             incompleteFrameTimeouts: UInt64,

@@ -7,9 +7,17 @@
 //  Buffered audio playback for stream packets.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AVFAudio
 import Foundation
-import MirageKit
 
 /// Buffers and plays decoded host audio frames for the client.
 @MainActor

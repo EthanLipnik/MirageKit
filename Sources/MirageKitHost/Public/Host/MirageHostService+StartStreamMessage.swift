@@ -1,24 +1,32 @@
 //
-//  MirageHostService+StartStreamMessage.swift
+//  MirageHostService+MirageWire.StartStreamMessage.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     /// Decodes and validates an app-window stream request before starting capture for the selected window.
     func handleStartStreamMessage(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     ) async {
         var pendingLightsOutSetup = false
         do {
-            let request = try message.decode(StartStreamMessage.self)
+            let request = try message.decode(MirageWire.StartStreamMessage.self)
             guard !disconnectingClientIDs.contains(clientContext.client.id),
                   clientsByID[clientContext.client.id] != nil else {
                 MirageLogger.host("Ignoring startStream from disconnected client \(clientContext.client.name)")
@@ -27,8 +35,8 @@ extension MirageHostService {
             MirageLogger.host("Client requested stream for window \(request.windowID)")
 
             await refreshSessionStateIfNeeded()
-            guard sessionState == .ready else {
-                MirageLogger.host("Rejecting startStream while session is \(sessionState)")
+            guard mirageSessionAvailability == .ready else {
+                MirageLogger.host("Rejecting startStream while session is \(mirageSessionAvailability.rawValue)")
                 await sendSessionState(to: clientContext)
                 return
             }
@@ -113,7 +121,7 @@ extension MirageHostService {
                 await endPendingAppStreamLightsOutSetup()
             }
             MirageLogger.error(.host, error: error, message: "Failed to handle startStream: ")
-            let errorCode: ErrorMessage.ErrorCode = if error is WindowStreamStartError {
+            let errorCode: MirageWire.ErrorMessage.ErrorCode = if error is WindowStreamStartError {
                 .virtualDisplayStartFailed
             } else {
                 .encodingError

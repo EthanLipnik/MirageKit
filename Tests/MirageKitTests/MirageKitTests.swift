@@ -9,6 +9,9 @@ import Foundation
 import Loom
 @testable import MirageKit
 import Testing
+import MirageKit
+import MirageMedia
+import MirageWire
 
 @Suite("MirageKit Tests")
 struct MirageKitTests {
@@ -23,13 +26,13 @@ struct MirageKitTests {
     @Test("AWDL media packet sizing reserves Loom transport overhead")
     func awdlMediaPacketSizingReservesLoomTransportOverhead() {
         #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == mirageDirectProximityMaxPacketSize)
-        #expect(mirageDirectProximityMaxPacketSize < mirageDefaultMaxPacketSize)
+        #expect(mirageDirectProximityMaxPacketSize < MirageWire.mirageDefaultMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(
-            for: MirageMediaPathProfile.awdlRadio,
+            for: MirageMedia.MirageMediaPathProfile.awdlRadio,
             pathKind: .awdl
         ) == mirageDirectProximityMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(
-            for: MirageMediaPathProfile.proximityWiredLike,
+            for: MirageMedia.MirageMediaPathProfile.proximityWiredLike,
             pathKind: .awdl
         ) == mirageDirectLocalMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(for: .wifi) == mirageDirectWiFiMaxPacketSize)
@@ -45,7 +48,7 @@ struct MirageKitTests {
 
         #expect(throws: DecodingError.self) {
             _ = try JSONDecoder().decode(
-                ClientBackgroundLeaseMessage.self,
+                MirageWire.ClientBackgroundLeaseMessage.self,
                 from: payload
             )
         }
@@ -53,14 +56,14 @@ struct MirageKitTests {
 
     @Test("Background timed lease payload round trips mode")
     func backgroundTimedLeasePayloadRoundTripsMode() throws {
-        let lease = ClientBackgroundLeaseMessage(
+        let lease = MirageWire.ClientBackgroundLeaseMessage(
             leaseID: UUID(uuidString: "AC5DC09D-FA66-48BB-89C9-5EC4702CB6A0")!,
             durationSeconds: 120,
             mode: .timed
         )
         let encoded = try JSONEncoder().encode(lease)
         let decoded = try JSONDecoder().decode(
-            ClientBackgroundLeaseMessage.self,
+            MirageWire.ClientBackgroundLeaseMessage.self,
             from: encoded
         )
 
@@ -69,7 +72,7 @@ struct MirageKitTests {
 
     @Test("Background suspended lease payload round trips mode")
     func backgroundSuspendedLeasePayloadRoundTripsMode() throws {
-        let lease = ClientBackgroundLeaseMessage(
+        let lease = MirageWire.ClientBackgroundLeaseMessage(
             leaseID: UUID(uuidString: "3079EC2B-4240-464A-92BB-2BDE2746E990")!,
             durationSeconds: 120,
             mode: .suspendedUntilForeground
@@ -77,7 +80,7 @@ struct MirageKitTests {
 
         let encoded = try JSONEncoder().encode(lease)
         let decoded = try JSONDecoder().decode(
-            ClientBackgroundLeaseMessage.self,
+            MirageWire.ClientBackgroundLeaseMessage.self,
             from: encoded
         )
 
@@ -86,7 +89,7 @@ struct MirageKitTests {
 
     @Test("Default stream cadence uses lowest latency")
     func defaultStreamCadenceUsesLowestLatency() {
-        let target = MirageStreamCadenceTarget(sourceFPS: 60)
+        let target = MirageMedia.MirageStreamCadenceTarget(sourceFPS: 60)
 
         #expect(target.latencyMode == .lowestLatency)
         #expect(target.playoutDelayFrames == 0)
@@ -94,7 +97,7 @@ struct MirageKitTests {
 
     @Test("Protocol header serialization")
     func frameHeaderSerialization() {
-        let header = FrameHeader(
+        let header = MirageWire.FrameHeader(
             flags: [.keyframe, .endOfFrame],
             streamID: 1,
             sequenceNumber: 100,
@@ -108,55 +111,58 @@ struct MirageKitTests {
         )
 
         let data = header.serialize()
-        #expect(data.count == mirageHeaderSize)
+        #expect(data.count == MirageWire.mirageHeaderSize)
 
-        let deserialized = FrameHeader.deserialize(from: data)
+        let deserialized = MirageWire.FrameHeader.deserialize(from: data)
         #expect(deserialized != nil)
         #expect(deserialized?.version == 260604)
-        #expect(deserialized?.version == MirageKit.protocolVersion)
+        #expect(deserialized?.version == MirageKit.mediaPacketProtocolVersion)
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
         #expect(deserialized?.frameNumber == 50)
-        #expect(deserialized?.flags.contains(FrameFlags.keyframe) == true)
+        #expect(deserialized?.flags.contains(MirageWire.FrameFlags.keyframe) == true)
     }
 
     @Test("Control message serialization")
     func controlMessageSerialization() throws {
         let connectionAttemptID = try #require(UUID(uuidString: "4DF97645-633E-4D7B-987C-6F0E40B7D295"))
-        let bootstrap = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let bootstrap = MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: true,
             connectionAttemptID: connectionAttemptID,
             adaptiveGovernorRevision: 2,
             hostOwnedRuntimeSupport: true,
             adaptiveFeedbackClassesSupported: ["hard", "soft", "diagnostic"],
-            adaptiveLegacyFallbackMode: "legacy-passive-fallback"
+            adaptiveLegacyFallbackMode: "legacy-passive-fallback",
+            clientCapabilities: .currentFullFrameBaseline
         )
 
-        let message = try ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
+        let message = try MirageWire.ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
         let data = message.serialize()
 
         let (deserialized, consumed) = try requireParsedControlMessage(from: data)
         #expect(consumed == data.count)
         #expect(deserialized.type == .sessionBootstrapRequest)
 
-        let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
-        #expect(MirageKit.protocolVersion == 260604)
-        #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
+        let decodedBootstrap = try deserialized.decode(MirageWire.MirageSessionBootstrapRequest.self)
+        #expect(MirageKit.controlProtocolVersion == 260604)
+        #expect(MirageKit.controlProtocolVersion == MirageKit.controlProtocolVersion)
+        #expect(decodedBootstrap.protocolVersion == Int(MirageKit.controlProtocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
         #expect(decodedBootstrap.connectionAttemptID == connectionAttemptID)
         #expect(decodedBootstrap.adaptiveGovernorRevision == 2)
         #expect(decodedBootstrap.hostOwnedRuntimeSupport == true)
         #expect(decodedBootstrap.adaptiveFeedbackClassesSupported == ["hard", "soft", "diagnostic"])
         #expect(decodedBootstrap.adaptiveLegacyFallbackMode == "legacy-passive-fallback")
+        #expect(decodedBootstrap.clientCapabilities?.mediaPacketFamilies == [.fixedHeaderFullFrame])
 
-        let legacyBootstrap = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let legacyBootstrap = MirageWire.MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.controlProtocolVersion),
             clientRequiresMediaEncryption: true
         )
-        let legacyMessage = try ControlMessage(type: .sessionBootstrapRequest, content: legacyBootstrap)
+        let legacyMessage = try MirageWire.ControlMessage(type: .sessionBootstrapRequest, content: legacyBootstrap)
         let (decodedLegacyMessage, _) = try requireParsedControlMessage(from: legacyMessage.serialize())
-        let decodedLegacyBootstrap = try decodedLegacyMessage.decode(MirageSessionBootstrapRequest.self)
+        let decodedLegacyBootstrap = try decodedLegacyMessage.decode(MirageWire.MirageSessionBootstrapRequest.self)
         #expect(decodedLegacyBootstrap.connectionAttemptID == nil)
     }
 
@@ -166,7 +172,7 @@ struct MirageKitTests {
         {"protocolVersion":260604,"clientRequiresMediaEncryption":true}
         """.data(using: .utf8)!
 
-        let decoded = try JSONDecoder().decode(MirageSessionBootstrapRequest.self, from: payload)
+        let decoded = try JSONDecoder().decode(MirageWire.MirageSessionBootstrapRequest.self, from: payload)
 
         #expect(decoded.protocolVersion == 260604)
         #expect(decoded.clientRequiresMediaEncryption)
@@ -176,12 +182,12 @@ struct MirageKitTests {
     @Test("Legacy quality-test control message IDs remain parseable")
     func legacyQualityTestControlMessageIDsRemainParseable() throws {
         for type in [
-            ControlMessageType.qualityTestRequest,
+            MirageWire.ControlMessageType.qualityTestRequest,
             .qualityTestResult,
             .qualityTestStageComplete,
             .qualityTestCancel
         ] {
-            let message = ControlMessage(type: type)
+            let message = MirageWire.ControlMessage(type: type)
             let (decoded, consumed) = try requireParsedControlMessage(from: message.serialize())
             #expect(consumed == message.serialize().count)
             #expect(decoded.type == type)
@@ -190,14 +196,14 @@ struct MirageKitTests {
 
     @Test("Keyframe recovery ack serializes on control channel")
     func keyframeRecoveryAckSerialization() throws {
-        let ack = KeyframeRecoveryAckMessage(
+        let ack = MirageWire.KeyframeRecoveryAckMessage(
             streamID: 9,
             deadlineMilliseconds: 350
         )
 
-        let message = try ControlMessage(type: .keyframeRecoveryAck, content: ack)
+        let message = try MirageWire.ControlMessage(type: .keyframeRecoveryAck, content: ack)
         let (parsed, consumed) = try requireParsedControlMessage(from: message.serialize())
-        let decoded = try parsed.decode(KeyframeRecoveryAckMessage.self)
+        let decoded = try parsed.decode(MirageWire.KeyframeRecoveryAckMessage.self)
 
         #expect(consumed == message.serialize().count)
         #expect(parsed.type == .keyframeRecoveryAck)
@@ -229,7 +235,7 @@ struct MirageKitTests {
         )
 
         #expect(throws: Error.self) {
-            try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
+            try JSONDecoder().decode(MirageWire.StartDesktopStreamMessage.self, from: payload)
         }
     }
 
@@ -248,7 +254,7 @@ struct MirageKitTests {
         )
 
         #expect(throws: Error.self) {
-            try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
+            try JSONDecoder().decode(MirageWire.StartDesktopStreamMessage.self, from: payload)
         }
     }
 
@@ -257,14 +263,14 @@ struct MirageKitTests {
         let payload = Data(#""auto""#.utf8)
 
         #expect(throws: Error.self) {
-            try JSONDecoder().decode(MirageStreamLatencyMode.self, from: payload)
+            try JSONDecoder().decode(MirageMedia.MirageStreamLatencyMode.self, from: payload)
         }
     }
 
     @Test("Balanced latency mode round trips")
     func balancedLatencyModeRoundTrips() throws {
-        let encoded = try JSONEncoder().encode(MirageStreamLatencyMode.balanced)
-        let decoded = try JSONDecoder().decode(MirageStreamLatencyMode.self, from: encoded)
+        let encoded = try JSONEncoder().encode(MirageMedia.MirageStreamLatencyMode.balanced)
+        let decoded = try JSONDecoder().decode(MirageMedia.MirageStreamLatencyMode.self, from: encoded)
 
         #expect(decoded == .balanced)
     }
@@ -274,7 +280,7 @@ struct MirageKitTests {
         var data = Data([0x06])
         withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
 
-        switch ControlMessage.deserialize(from: data) {
+        switch MirageWire.ControlMessage.deserialize(from: data) {
         case .invalidFrame:
             break
         default:
@@ -285,7 +291,7 @@ struct MirageKitTests {
     @Test("Display-resolution change serializes desktop resize transition metadata")
     func displayResolutionChangeSerializesDesktopResizeTransitionMetadata() throws {
         let transitionID = UUID()
-        let payload = DisplayResolutionChangeMessage(
+        let payload = MirageWire.DisplayResolutionChangeMessage(
             streamID: 41,
             displayWidth: 1440,
             displayHeight: 900,
@@ -295,11 +301,11 @@ struct MirageKitTests {
             encoderMaxWidth: 2360,
             encoderMaxHeight: 1640
         )
-        let envelope = try ControlMessage(type: .displayResolutionChange, content: payload)
+        let envelope = try MirageWire.ControlMessage(type: .displayResolutionChange, content: payload)
 
         let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(consumed == envelope.serialize().count)
-        let decodedPayload = try decodedEnvelope.decode(DisplayResolutionChangeMessage.self)
+        let decodedPayload = try decodedEnvelope.decode(MirageWire.DisplayResolutionChangeMessage.self)
 
         #expect(decodedPayload.streamID == 41)
         #expect(decodedPayload.displayWidth == 1440)
@@ -315,7 +321,7 @@ struct MirageKitTests {
     func desktopStreamStartedSerializesResizeTransitionMetadata() throws {
         let desktopSessionID = UUID()
         let transitionID = UUID()
-        let payload = DesktopStreamStartedMessage(
+        let payload = MirageWire.DesktopStreamStartedMessage(
             streamID: 71,
             desktopSessionID: desktopSessionID,
             width: 3024,
@@ -329,11 +335,11 @@ struct MirageKitTests {
             transitionPhase: .resize,
             transitionOutcome: .rolledBack
         )
-        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: payload)
 
         let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(consumed == envelope.serialize().count)
-        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+        let decodedPayload = try decodedEnvelope.decode(MirageWire.DesktopStreamStartedMessage.self)
 
         #expect(decodedPayload.streamID == 71)
         #expect(decodedPayload.desktopSessionID == desktopSessionID)
@@ -372,7 +378,7 @@ struct MirageKitTests {
 
     @Test("Desktop-stream started serializes fallback capture policy")
     func desktopStreamStartedSerializesFallbackCapturePolicy() throws {
-        let payload = DesktopStreamStartedMessage(
+        let payload = MirageWire.DesktopStreamStartedMessage(
             streamID: 72,
             desktopSessionID: UUID(),
             width: 5120,
@@ -386,10 +392,10 @@ struct MirageKitTests {
             presentationWidth: 2732,
             presentationHeight: 1537
         )
-        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: payload)
 
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+        let decodedPayload = try decodedEnvelope.decode(MirageWire.DesktopStreamStartedMessage.self)
 
         #expect(decodedPayload.captureSource == .mainDisplayFallback)
         #expect(decodedPayload.allowsClientResize == false)
@@ -401,7 +407,7 @@ struct MirageKitTests {
     func desktopStreamStartedSerializesAppPlaceholderMetadata() throws {
         let appSessionID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000A11"))
         let startupRequestID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000A12"))
-        let payload = DesktopStreamStartedMessage(
+        let payload = MirageWire.DesktopStreamStartedMessage(
             streamID: 73,
             desktopSessionID: UUID(),
             width: 2732,
@@ -415,9 +421,9 @@ struct MirageKitTests {
             associatedBundleIdentifier: "com.apple.mail"
         )
 
-        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: payload)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+        let decodedPayload = try decodedEnvelope.decode(MirageWire.DesktopStreamStartedMessage.self)
 
         #expect(decodedPayload.presentationRole == .appStreamPlaceholder)
         #expect(decodedPayload.associatedAppSessionID == appSessionID)
@@ -429,24 +435,24 @@ struct MirageKitTests {
     func desktopStreamStopMessagesSerializeDesktopSessionIdentifiers() throws {
         let desktopSessionID = UUID()
 
-        let stopRequest = StopDesktopStreamMessage(
+        let stopRequest = MirageWire.StopDesktopStreamMessage(
             streamID: 33,
             desktopSessionID: desktopSessionID
         )
-        let stopRequestEnvelope = try ControlMessage(type: .stopDesktopStream, content: stopRequest)
+        let stopRequestEnvelope = try MirageWire.ControlMessage(type: .stopDesktopStream, content: stopRequest)
         let (decodedStopRequestEnvelope, _) = try requireParsedControlMessage(from: stopRequestEnvelope.serialize())
-        let decodedStopRequest = try decodedStopRequestEnvelope.decode(StopDesktopStreamMessage.self)
+        let decodedStopRequest = try decodedStopRequestEnvelope.decode(MirageWire.StopDesktopStreamMessage.self)
         #expect(decodedStopRequest.streamID == 33)
         #expect(decodedStopRequest.desktopSessionID == desktopSessionID)
 
-        let stopped = DesktopStreamStoppedMessage(
+        let stopped = MirageWire.DesktopStreamStoppedMessage(
             streamID: 33,
             desktopSessionID: desktopSessionID,
             reason: .clientRequested
         )
-        let stoppedEnvelope = try ControlMessage(type: .desktopStreamStopped, content: stopped)
+        let stoppedEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStopped, content: stopped)
         let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
-        let decodedStopped = try decodedStoppedEnvelope.decode(DesktopStreamStoppedMessage.self)
+        let decodedStopped = try decodedStoppedEnvelope.decode(MirageWire.DesktopStreamStoppedMessage.self)
         #expect(decodedStopped.streamID == 33)
         #expect(decodedStopped.desktopSessionID == desktopSessionID)
         #expect(decodedStopped.reason == .clientRequested)
@@ -454,11 +460,11 @@ struct MirageKitTests {
 
     @Test("Control parser returns needMoreData for truncated payload")
     func controlParserReturnsNeedMoreDataForTruncatedPayload() {
-        var data = Data([ControlMessageType.sessionBootstrapRequest.rawValue])
+        var data = Data([MirageWire.ControlMessageType.sessionBootstrapRequest.rawValue])
         withUnsafeBytes(of: UInt32(8).littleEndian) { data.append(contentsOf: $0) }
         data.append(contentsOf: [0x01, 0x02, 0x03])
 
-        switch ControlMessage.deserialize(from: data) {
+        switch MirageWire.ControlMessage.deserialize(from: data) {
         case .needMoreData:
             break
         default:
@@ -468,11 +474,11 @@ struct MirageKitTests {
 
     @Test("Control parser rejects oversized app-list progress payload")
     func controlParserRejectsOversizedAppListProgressPayload() {
-        var data = Data([ControlMessageType.appListProgress.rawValue])
+        var data = Data([MirageWire.ControlMessageType.appListProgress.rawValue])
         let oversizedLength = UInt32(LoomMessageLimits.maxLargeMetadataPayloadBytes + 1)
         withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
 
-        switch ControlMessage.deserialize(from: data) {
+        switch MirageWire.ControlMessage.deserialize(from: data) {
         case .invalidFrame:
             break
         default:
@@ -482,11 +488,11 @@ struct MirageKitTests {
 
     @Test("Control parser rejects oversized host wallpaper payload")
     func controlParserRejectsOversizedHostWallpaperPayload() {
-        var data = Data([ControlMessageType.hostWallpaper.rawValue])
+        var data = Data([MirageWire.ControlMessageType.hostWallpaper.rawValue])
         let oversizedLength = UInt32(LoomMessageLimits.maxInlineAssetPayloadBytes + 1)
         withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
 
-        switch ControlMessage.deserialize(from: data) {
+        switch MirageWire.ControlMessage.deserialize(from: data) {
         case .invalidFrame:
             break
         default:
@@ -497,19 +503,19 @@ struct MirageKitTests {
     @Test("Host wallpaper message serialization")
     func hostWallpaperMessageSerialization() throws {
         let imageData = Data([0xFF, 0xD8, 0xFF, 0xD9])
-        let wallpaper = HostWallpaperMessage(
+        let wallpaper = MirageWire.HostWallpaperMessage(
             requestID: UUID(),
             imageData: imageData,
             pixelWidth: 854,
             pixelHeight: 480
         )
 
-        let envelope = try ControlMessage(type: .hostWallpaper, content: wallpaper)
+        let envelope = try MirageWire.ControlMessage(type: .hostWallpaper, content: wallpaper)
         let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(consumed == envelope.serialize().count)
         #expect(decodedEnvelope.type == .hostWallpaper)
 
-        let decoded = try decodedEnvelope.decode(HostWallpaperMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.HostWallpaperMessage.self)
         #expect(decoded.requestID == wallpaper.requestID)
         #expect(decoded.imageData == imageData)
         #expect(decoded.pixelWidth == 854)
@@ -518,7 +524,7 @@ struct MirageKitTests {
 
     @Test("Bootstrap response mismatch metadata serialization")
     func bootstrapResponseMismatchMetadataSerialization() throws {
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
@@ -529,9 +535,9 @@ struct MirageKitTests {
             protocolMismatchClientVersion: 2
         )
 
-        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
+        let envelope = try MirageWire.ControlMessage(type: .sessionBootstrapResponse, content: response)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.MirageSessionBootstrapResponse.self)
         #expect(decoded.rejectionReason == .protocolVersionMismatch)
         #expect(decoded.protocolMismatchHostVersion == 1)
         #expect(decoded.protocolMismatchClientVersion == 2)
@@ -539,7 +545,7 @@ struct MirageKitTests {
 
     @Test("Accepted bootstrap response off-LAN access metadata serialization")
     func bootstrapResponseRemoteAccessMetadataSerialization() throws {
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: true,
             hostID: UUID(),
             hostName: "Host",
@@ -555,9 +561,9 @@ struct MirageKitTests {
             adaptiveLegacyFallbackMode: "legacy-passive-fallback"
         )
 
-        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
+        let envelope = try MirageWire.ControlMessage(type: .sessionBootstrapResponse, content: response)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.MirageSessionBootstrapResponse.self)
 
         #expect(decoded.accepted == true)
         #expect(decoded.remoteAccessAllowed == true)
@@ -569,7 +575,7 @@ struct MirageKitTests {
 
     @Test("Bootstrap response authorization failure metadata serialization")
     func bootstrapResponseAuthorizationFailureMetadataSerialization() throws {
-        let response = MirageSessionBootstrapResponse(
+        let response = MirageWire.MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
@@ -579,9 +585,9 @@ struct MirageKitTests {
             authorizationFailureReason: .remoteAccessDisabled
         )
 
-        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
+        let envelope = try MirageWire.ControlMessage(type: .sessionBootstrapResponse, content: response)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.MirageSessionBootstrapResponse.self)
 
         #expect(decoded.rejectionReason == .unauthorized)
         #expect(decoded.authorizationFailureReason == .remoteAccessDisabled)
@@ -589,36 +595,36 @@ struct MirageKitTests {
 
     @Test("Audio control message serialization")
     func audioControlMessageSerialization() throws {
-        let started = AudioStreamStartedMessage(
+        let started = MirageWire.AudioStreamStartedMessage(
             streamID: 42,
             codec: .aacLC,
             sampleRate: 48000,
             channelCount: 2
         )
-        let startedEnvelope = try ControlMessage(type: .audioStreamStarted, content: started)
+        let startedEnvelope = try MirageWire.ControlMessage(type: .audioStreamStarted, content: started)
         let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
         #expect(decodedStartedEnvelope.type == .audioStreamStarted)
-        let decodedStarted = try decodedStartedEnvelope.decode(AudioStreamStartedMessage.self)
+        let decodedStarted = try decodedStartedEnvelope.decode(MirageWire.AudioStreamStartedMessage.self)
         #expect(decodedStarted == started)
 
-        let stopped = AudioStreamStoppedMessage(streamID: 42, reason: .sourceStopped)
-        let stoppedEnvelope = try ControlMessage(type: .audioStreamStopped, content: stopped)
+        let stopped = MirageWire.AudioStreamStoppedMessage(streamID: 42, reason: .sourceStopped)
+        let stoppedEnvelope = try MirageWire.ControlMessage(type: .audioStreamStopped, content: stopped)
         let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
         #expect(decodedStoppedEnvelope.type == .audioStreamStopped)
-        let decodedStopped = try decodedStoppedEnvelope.decode(AudioStreamStoppedMessage.self)
+        let decodedStopped = try decodedStoppedEnvelope.decode(MirageWire.AudioStreamStoppedMessage.self)
         #expect(decodedStopped == stopped)
     }
 
     @Test("Transport refresh request message serialization")
     func transportRefreshRequestMessageSerialization() throws {
-        let refresh = TransportRefreshRequestMessage(
+        let refresh = MirageWire.TransportRefreshRequestMessage(
             streamID: 7,
             reason: "send-error-burst"
         )
-        let envelope = try ControlMessage(type: .transportRefreshRequest, content: refresh)
+        let envelope = try MirageWire.ControlMessage(type: .transportRefreshRequest, content: refresh)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(decodedEnvelope.type == .transportRefreshRequest)
-        let decoded = try decodedEnvelope.decode(TransportRefreshRequestMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageWire.TransportRefreshRequestMessage.self)
         #expect(decoded.streamID == 7)
         #expect(decoded.reason == "send-error-burst")
     }

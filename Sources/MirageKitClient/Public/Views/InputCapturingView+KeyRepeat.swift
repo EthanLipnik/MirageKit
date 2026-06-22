@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
-import MirageKit
 #if canImport(GameController)
 import GameController
 #endif
@@ -61,18 +69,18 @@ extension InputCapturingView {
 
     func hardwareKeyEvent(
         for press: UIPress,
-        modifiers: MirageModifierFlags,
+        modifiers: MirageInput.MirageModifierFlags,
         isRepeat: Bool = false
-    ) -> MirageKeyEvent {
+    ) -> MirageInput.MirageKeyEvent {
         guard let key = press.key else {
-            return MirageKeyEvent(
-                keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
+            return MirageInput.MirageKeyEvent(
+                keyCode: MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode,
                 modifiers: modifiers,
                 isRepeat: isRepeat
             )
         }
         return MirageClientKeyEventBuilder.hardwareKeyEvent(
-            keyCode: MirageKeyEvent.hidToMacKeyCode(key.keyCode),
+            keyCode: MirageInput.MirageKeyEvent.hidToMacKeyCode(key.keyCode),
             characters: key.characters,
             charactersIgnoringModifiers: key.charactersIgnoringModifiers,
             modifiers: modifiers,
@@ -94,8 +102,8 @@ extension InputCapturingView {
 
     // MARK: - Modified Key Repeat
 
-    static func modifiedKeyRepeatEvent(for keyEvent: MirageKeyEvent) -> MirageKeyEvent {
-        MirageKeyEvent(
+    static func modifiedKeyRepeatEvent(for keyEvent: MirageInput.MirageKeyEvent) -> MirageInput.MirageKeyEvent {
+        MirageInput.MirageKeyEvent(
             keyCode: keyEvent.keyCode,
             characters: keyEvent.characters,
             charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
@@ -105,10 +113,10 @@ extension InputCapturingView {
     }
 
     static func modifiedKeyRepeatKeyUpEvent(
-        for keyEvent: MirageKeyEvent,
-        modifiers: MirageModifierFlags
-    ) -> MirageKeyEvent {
-        MirageKeyEvent(
+        for keyEvent: MirageInput.MirageKeyEvent,
+        modifiers: MirageInput.MirageModifierFlags
+    ) -> MirageInput.MirageKeyEvent {
+        MirageInput.MirageKeyEvent(
             keyCode: keyEvent.keyCode,
             characters: keyEvent.characters,
             charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
@@ -119,8 +127,8 @@ extension InputCapturingView {
 
     static func shouldContinueModifiedKeyRepeat(
         keyIsPressed: Bool,
-        currentModifiers: MirageModifierFlags,
-        requiredModifiers: MirageModifierFlags
+        currentModifiers: MirageInput.MirageModifierFlags,
+        requiredModifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         keyIsPressed &&
             currentModifiers.normalizedForShortcutMatching
@@ -130,8 +138,8 @@ extension InputCapturingView {
     #if canImport(GameController)
     func startModifiedKeyRepeat(
         keyCode: GCKeyCode,
-        keyEvent: MirageKeyEvent,
-        requiredModifiers: MirageModifierFlags
+        keyEvent: MirageInput.MirageKeyEvent,
+        requiredModifiers: MirageInput.MirageModifierFlags
     ) {
         let normalizedRequiredModifiers = requiredModifiers.normalizedForShortcutMatching
         if let existing = modifiedKeyRepeatState,
@@ -214,7 +222,7 @@ extension InputCapturingView {
 
     func isModifiedKeyRepeatHeld(
         keyCode: GCKeyCode,
-        requiredModifiers: MirageModifierFlags
+        requiredModifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         guard let keyboardInput = GCKeyboard.coalesced?.keyboardInput else { return false }
         let keyIsPressed = keyboardInput.button(forKeyCode: keyCode)?.isPressed == true
@@ -226,8 +234,8 @@ extension InputCapturingView {
         )
     }
 
-    func hardwareModifiers(from keyboardInput: GCKeyboardInput) -> MirageModifierFlags {
-        var modifiers: MirageModifierFlags = []
+    func hardwareModifiers(from keyboardInput: GCKeyboardInput) -> MirageInput.MirageModifierFlags {
+        var modifiers: MirageInput.MirageModifierFlags = []
         if keyboardInput.button(forKeyCode: .leftShift)?.isPressed == true ||
             keyboardInput.button(forKeyCode: .rightShift)?.isPressed == true {
             modifiers.insert(.shift)
@@ -324,7 +332,7 @@ extension InputCapturingView {
 
     func sendPassthroughShortcutKeyDown(
         shortcut: MirageInterceptedShortcut,
-        baseModifiers: MirageModifierFlags,
+        baseModifiers: MirageInput.MirageModifierFlags,
         isRepeat: Bool
     ) {
         hideCursorForTypingUntilPointerMovement()
@@ -333,14 +341,14 @@ extension InputCapturingView {
 
     func sendPassthroughShortcutKeyUp(
         shortcut: MirageInterceptedShortcut,
-        baseModifiers: MirageModifierFlags
+        baseModifiers: MirageInput.MirageModifierFlags
     ) {
         onInputEvent?(.keyUp(shortcut.keyUpEvent(baseModifiers: baseModifiers)))
     }
 
     func startPassthroughShortcutRepeatIfNeeded(
         shortcut: MirageInterceptedShortcut,
-        baseModifiers: MirageModifierFlags
+        baseModifiers: MirageInput.MirageModifierFlags
     ) -> Bool {
         guard shortcut.deliveryBehavior == .repeatable else { return false }
         #if canImport(GameController)

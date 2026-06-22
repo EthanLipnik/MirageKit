@@ -5,18 +5,16 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
-@_exported import Foundation
-@_exported import Loom
-@_exported import LoomCloudKit
-
-/// Stable identifier for a host window in Mirage protocol messages.
-public typealias WindowID = UInt32
-
-/// Stable identifier for a media stream within a Mirage session.
-public typealias StreamID = UInt16
-
-/// Stable identifier for a logical stream session across control messages.
-public typealias StreamSessionID = UUID
+@_exported import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
+import Foundation
+import Loom
+import LoomCloudKit
 
 // MARK: - Version
 
@@ -25,8 +23,14 @@ public enum MirageKit {
     /// MirageKit package version exposed to hosts, clients, and diagnostics.
     public static let version = "1.1.6"
 
-    /// Current Mirage wire protocol version required by both hosts and clients, encoded as YYMMDD.
-    public static let protocolVersion: UInt32 = mirageProtocolVersion
+    /// Current Mirage discovery compatibility version advertised through peer metadata.
+    public static let discoveryProtocolVersion: UInt32 = MirageWireProtocol.currentDiscoveryVersion
+
+    /// Current Mirage control protocol version required by both hosts and clients, encoded as YYMMDD.
+    public static let controlProtocolVersion: UInt32 = MirageWireProtocol.currentControlVersion
+
+    /// Current Mirage media packet version used by fixed-layout video and audio packet headers.
+    public static let mediaPacketProtocolVersion: UInt32 = MirageWireProtocol.currentMediaPacketVersion
 
     /// MirageKit default Bonjour service type used for peer discovery on the local network.
     public static let serviceType = "_miragekit._tcp"
@@ -47,22 +51,22 @@ public enum MirageKit {
     public static let directQUICPort: UInt16 = 38555
 
     /// Bonjour service type used by the Mirage app for production peer discovery.
-    public static let mirageAppServiceType = "_mirage._tcp"
+    public static let mirageAppServiceType = MirageNetworkDefaults.serviceType
 
     /// Bootstrap control port used by the Mirage app.
     public static let mirageAppBootstrapControlPort: Int = 9851
 
     /// Overlay probe port used by the Mirage app.
-    public static let mirageAppOverlayProbePort: UInt16 = 9852
+    public static let mirageAppOverlayProbePort = MirageNetworkDefaults.overlayProbePort
 
     /// Direct TCP listener port used by the Mirage app.
-    public static let mirageAppDirectTCPPort: UInt16 = 9853
+    public static let mirageAppDirectTCPPort = MirageNetworkDefaults.directTCPPort
 
     /// Direct UDP listener port used by the Mirage app.
-    public static let mirageAppDirectUDPPort: UInt16 = 9854
+    public static let mirageAppDirectUDPPort = MirageNetworkDefaults.directUDPPort
 
     /// Mirage app QUIC port constant kept for packages that still reference the public API.
-    public static let mirageAppDirectQUICPort: UInt16 = 9855
+    public static let mirageAppDirectQUICPort = MirageNetworkDefaults.directQUICPort
 
     /// Direct transports enabled by the Mirage app.
     public static let mirageAppDirectTransports: Set<LoomTransportKind> = [.tcp, .udp]
@@ -70,18 +74,17 @@ public enum MirageKit {
     /// Preferred direct transport order used by the Mirage app.
     public static let mirageAppPreferredDirectTransportOrder: [LoomTransportKind] = [.udp, .tcp]
 
-    /// Stable user-visible substring emitted when bounded first-frame recovery is exhausted.
-    public static let firstFramePresentationFailureTerminalMessage =
-        "Stream failed to present its first frame after bounded recovery."
-
     /// Keychain service name for the user's Loom-backed Mirage identity.
-    public static let identityService = "com.mirage.identity.account.v2"
+    public static let identityService = MirageIdentityConfiguration.identityService
 
     /// Shared app-group key for the stable Mirage device identifier.
-    public static let sharedDeviceIDKey = "com.mirage.shared.deviceID"
+    public static let sharedDeviceIDKey = MirageIdentityConfiguration.sharedDeviceIDKey
 
     /// App-group suite used by Mirage targets that share the device identifier.
-    public static let sharedDeviceIDSuiteName = "group.com.ethanlipnik.Mirage"
+    public static let sharedDeviceIDSuiteName = MirageIdentityConfiguration.sharedDeviceIDSuiteName
+
+    /// Shared-device identifier storage configuration for Mirage apps.
+    public static let sharedDeviceIDConfiguration = MirageIdentityConfiguration.sharedDeviceIDConfiguration
 
     /// Process-wide identity manager configured for Mirage's identity service.
     @MainActor
@@ -89,22 +92,20 @@ public enum MirageKit {
         service: identityService
     )
 
-    /// Builds the CloudKit configuration used by Mirage's peer identity sync.
-    public static func makeCloudKitConfiguration(containerIdentifier: String) -> LoomCloudKitConfiguration {
-        LoomCloudKitConfiguration(
-            containerIdentifier: containerIdentifier,
-            deviceRecordType: "MirageDevice",
-            peerRecordType: "MiragePeer",
-            peerZoneName: "MiragePeerZone",
-            participantIdentityRecordType: "MirageParticipantIdentity",
-            deviceIDKey: sharedDeviceIDKey,
-            deviceIDSuiteName: sharedDeviceIDSuiteName
+    /// Builds the Mirage-owned CloudKit identity configuration used by peer identity sync.
+    public static func makeMirageCloudKitIdentityConfiguration(
+        containerIdentifier: String
+    ) -> MirageCloudKitIdentityConfiguration {
+        MirageIdentityConfiguration.cloudKitIdentityConfiguration(
+            containerIdentifier: containerIdentifier
         )
     }
 
-    /// Returns whether a user-visible error or disconnect reason represents terminal first-frame failure.
-    public static func isFirstFramePresentationTerminalFailure(_ message: String) -> Bool {
-        message.contains(firstFramePresentationFailureTerminalMessage)
+    /// Builds the CloudKit configuration used by Mirage's peer identity sync.
+    public static func makeCloudKitConfiguration(containerIdentifier: String) -> LoomCloudKitConfiguration {
+        makeMirageCloudKitIdentityConfiguration(
+            containerIdentifier: containerIdentifier
+        ).loomCloudKitConfiguration
     }
 
     /// Returns Mirage's canonical shared device identifier, creating it when needed.
@@ -113,6 +114,28 @@ public enum MirageKit {
         LoomSharedDeviceID.getOrCreate(
             suiteName: suiteName,
             key: sharedDeviceIDKey
+        )
+    }
+
+    /// Returns Mirage's canonical shared device identifier for the supplied storage configuration.
+    public static func getOrCreateSharedDeviceID(configuration: MirageSharedDeviceIDConfiguration) -> UUID {
+        LoomSharedDeviceID.getOrCreate(
+            suiteName: configuration.suiteName,
+            key: configuration.key
+        )
+    }
+}
+
+private extension MirageCloudKitIdentityConfiguration {
+    var loomCloudKitConfiguration: LoomCloudKitConfiguration {
+        LoomCloudKitConfiguration(
+            containerIdentifier: containerIdentifier,
+            deviceRecordType: deviceRecordType,
+            peerRecordType: peerRecordType,
+            peerZoneName: peerZoneName,
+            participantIdentityRecordType: participantIdentityRecordType,
+            deviceIDKey: sharedDeviceIDConfiguration.key,
+            deviceIDSuiteName: sharedDeviceIDConfiguration.suiteName
         )
     }
 }

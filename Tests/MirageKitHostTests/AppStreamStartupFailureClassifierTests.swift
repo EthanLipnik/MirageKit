@@ -10,6 +10,8 @@
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
+import Foundation
+import MirageCore
 
 #if os(macOS)
 @Suite("App Stream Startup Failure Classifier")
@@ -70,13 +72,13 @@ struct AppStreamStartupFailureClassifierTests {
 
     @Test("Window-not-found and timeout remain retryable")
     func windowNotFoundAndTimeoutAreRetryable() {
-        #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(MirageError.windowNotFound))
-        #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(MirageError.timeout))
+        #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(MirageCore.MirageError.windowNotFound))
+        #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(MirageCore.MirageError.timeout))
     }
 
     @Test("Protocol errors are non-retryable")
     func protocolErrorsAreNonRetryable() {
-        let error = MirageError.protocolError("invalid app selection")
+        let error = MirageCore.MirageError.protocolError("invalid app selection")
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
         #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))

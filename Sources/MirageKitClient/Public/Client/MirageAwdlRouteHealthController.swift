@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/21/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Tracks active AWDL stream health and decides when the stream should reconnect on a lower route tier.
 public struct MirageAwdlRouteHealthController: Sendable {
@@ -56,8 +64,8 @@ public struct MirageAwdlRouteHealthController: Sendable {
 
     /// Advances AWDL health using the latest active stream snapshots.
     public mutating func advance(
-        snapshots: [MirageClientMetricsSnapshot],
-        currentPathKind: MirageNetworkPathKind?,
+        snapshots: [MirageDiagnostics.MirageClientMetricsSnapshot],
+        currentPathKind: MirageCore.MirageNetworkPathKind?,
         currentBitrateBps: Int?,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Decision? {
@@ -135,7 +143,7 @@ public struct MirageAwdlRouteHealthController: Sendable {
 
     private static func assess(
         sample: ReceiverHealthSample,
-        snapshot: MirageClientMetricsSnapshot,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot,
         currentBitrateBps: Int?,
         startupBitrateBps: Int?,
         localStartupFailure: Bool
@@ -194,7 +202,7 @@ public struct MirageAwdlRouteHealthController: Sendable {
     /// otherwise-healthy AWDL link. The decode backlog is instantaneous and is
     /// evaluated as-is.
     private mutating func registerEarlyStartupFailure(
-        _ snapshot: MirageClientMetricsSnapshot
+        _ snapshot: MirageDiagnostics.MirageClientMetricsSnapshot
     ) -> Bool {
         let newDrops = Self.newlyAccrued(
             snapshot.clientDroppedFrames,
@@ -208,7 +216,7 @@ public struct MirageAwdlRouteHealthController: Sendable {
         previousPresentationStallCount = snapshot.clientPresentationStallCount
         return newStalls > 0 ||
             newDrops > 0 ||
-            snapshot.clientDecodeBacklogFrames >= Self.earlyDecodeBacklogFrameThreshold
+            snapshot.clientDecodeBacklogFrameCount >= Self.earlyDecodeBacklogFrameThreshold
     }
 
     /// Increase of a monotonic counter since the previous sample, resetting
@@ -244,8 +252,8 @@ public struct MirageAwdlRouteHealthController: Sendable {
     }
 
     private static func worstAwdlSnapshot(
-        from snapshots: [MirageClientMetricsSnapshot]
-    ) -> MirageClientMetricsSnapshot {
+        from snapshots: [MirageDiagnostics.MirageClientMetricsSnapshot]
+    ) -> MirageDiagnostics.MirageClientMetricsSnapshot {
         MirageReceiverHealthController.worstSnapshot(
             from: snapshots,
             minimumHealthyFrameRate: nil

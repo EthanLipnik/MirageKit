@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 1/5/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 
@@ -73,17 +81,17 @@ func framesAreNearlyIdentical(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 5) 
 
 /// Collapses tabbed windows and filters by visibility.
 func detectAndCollapseTabGroups(
-    _ windows: [MirageWindow],
+    _ windows: [MirageMedia.MirageWindow],
     metadata: [CGWindowID: WindowListMetadata]
 )
--> [MirageWindow] {
-    var windowsByApp: [Int32: [MirageWindow]] = [:]
+-> [MirageMedia.MirageWindow] {
+    var windowsByApp: [Int32: [MirageMedia.MirageWindow]] = [:]
     for window in windows {
         guard let app = window.application else { continue }
         windowsByApp[app.id, default: []].append(window)
     }
 
-    var collapsedWindows: [MirageWindow] = []
+    var collapsedWindows: [MirageMedia.MirageWindow] = []
 
     for (_, appWindows) in windowsByApp {
         if appWindows.count == 1, let appWindow = appWindows.first {
@@ -123,13 +131,13 @@ func detectAndCollapseTabGroups(
         }
     }
 
-    var finalWindowsByApp: [Int32: [MirageWindow]] = [:]
+    var finalWindowsByApp: [Int32: [MirageMedia.MirageWindow]] = [:]
     for window in collapsedWindows {
         guard let app = window.application else { continue }
         finalWindowsByApp[app.id, default: []].append(window)
     }
 
-    var result: [MirageWindow] = []
+    var result: [MirageMedia.MirageWindow] = []
 
     for (_, appWindows) in finalWindowsByApp {
         let onScreenWindows = appWindows.filter { w in

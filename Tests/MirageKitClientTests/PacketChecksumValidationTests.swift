@@ -12,6 +12,7 @@
 import CoreGraphics
 import Foundation
 import Testing
+import MirageWire
 
 #if os(macOS)
 @Suite("Client Packet Checksum Validation")
@@ -65,12 +66,12 @@ struct PacketChecksumValidationTests {
     }
 
     private func makeVideoHeader(
-        flags: FrameFlags,
+        flags: MirageWire.FrameFlags,
         frameNumber: UInt32,
         payload: Data,
         checksum: UInt32
-    ) -> FrameHeader {
-        FrameHeader(
+    ) -> MirageWire.FrameHeader {
+        MirageWire.FrameHeader(
             flags: flags,
             streamID: 1,
             sequenceNumber: frameNumber,

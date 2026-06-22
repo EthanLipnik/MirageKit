@@ -7,9 +7,17 @@
 //  Accessibility window lookup and caching for host window control.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import AppKit
@@ -19,7 +27,7 @@ extension MirageHostWindowController {
     // MARK: - AX Window Caching
 
     /// Returns a cached AX window element or looks it up if needed.
-    func cachedAXWindow(for window: MirageWindow) -> AXUIElement? {
+    func cachedAXWindow(for window: MirageMedia.MirageWindow) -> AXUIElement? {
         if let cached = cachedAXWindows[window.id] { return cached }
 
         guard let axWindow = findAXWindow(for: window) else { return nil }
@@ -28,7 +36,7 @@ extension MirageHostWindowController {
         return axWindow
     }
 
-    private func findAXWindow(for window: MirageWindow) -> AXUIElement? {
+    private func findAXWindow(for window: MirageMedia.MirageWindow) -> AXUIElement? {
         guard let app = window.application else { return nil }
 
         guard NSRunningApplication(processIdentifier: app.id) != nil else {

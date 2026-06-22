@@ -7,8 +7,16 @@
 //  Deferred local recovery after memory-budget frame drops.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension StreamController {
     /// Schedules a bounded local recovery check after memory pressure has time to settle.

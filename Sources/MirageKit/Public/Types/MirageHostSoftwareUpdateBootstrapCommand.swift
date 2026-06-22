@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 5/25/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 
@@ -46,17 +53,44 @@ public struct MirageHostSoftwareUpdateBootstrapCommand: Codable, Equatable, Send
         )
     }
 
-    public func peerIdentity(authenticatedBy peer: LoomBootstrapControlPeer) -> LoomPeerIdentity {
-        LoomPeerIdentity(
+    public func authenticatedPeerIdentity(
+        authenticatedBy peer: MirageBootstrapAuthenticatedPeer
+    ) -> MirageAuthenticatedPeerIdentity {
+        MirageAuthenticatedPeerIdentity(
             deviceID: clientDeviceID,
-            name: clientName,
-            deviceType: clientDeviceType,
+            displayName: clientName,
             iCloudUserID: clientICloudUserID,
             identityKeyID: peer.keyID,
             identityPublicKey: peer.publicKey,
             isIdentityAuthenticated: true,
+            endpointDescription: peer.endpointDescription
+        )
+    }
+
+    public func authenticatedPeerIdentity(
+        authenticatedBy peer: LoomBootstrapControlPeer
+    ) -> MirageAuthenticatedPeerIdentity {
+        authenticatedPeerIdentity(
+            authenticatedBy: MirageBootstrapAuthenticatedPeer(
+                keyID: peer.keyID,
+                publicKey: peer.publicKey,
+                endpointDescription: peer.endpoint
+            )
+        )
+    }
+
+    public func peerIdentity(authenticatedBy peer: LoomBootstrapControlPeer) -> LoomPeerIdentity {
+        let authenticatedIdentity = authenticatedPeerIdentity(authenticatedBy: peer)
+        return LoomPeerIdentity(
+            deviceID: authenticatedIdentity.deviceID,
+            name: authenticatedIdentity.displayName,
+            deviceType: clientDeviceType,
+            iCloudUserID: authenticatedIdentity.iCloudUserID,
+            identityKeyID: authenticatedIdentity.identityKeyID,
+            identityPublicKey: authenticatedIdentity.identityPublicKey,
+            isIdentityAuthenticated: true,
             advertisementMetadata: advertisementMetadata,
-            endpoint: peer.endpoint
+            endpoint: authenticatedIdentity.endpointDescription ?? peer.endpoint
         )
     }
 }

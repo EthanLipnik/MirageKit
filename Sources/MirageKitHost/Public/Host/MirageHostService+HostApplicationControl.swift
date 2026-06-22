@@ -7,8 +7,16 @@
 //  Host Mirage-app control request handling.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 @MainActor
 extension MirageHostService {
@@ -16,7 +24,7 @@ extension MirageHostService {
         from clientContext: ClientContext
     ) async {
         guard let restartHandler = hostApplicationRestartHandler else {
-            let response = HostApplicationRestartResultMessage(
+            let response = MirageWire.HostApplicationRestartResultMessage(
                 accepted: false,
                 message: "Host app restart is unavailable."
             )
@@ -37,7 +45,7 @@ extension MirageHostService {
         if let authorizer = hostApplicationRestartAuthorizer {
             let isAuthorized = await authorizer(clientContext.client)
             guard isAuthorized else {
-                let response = HostApplicationRestartResultMessage(
+                let response = MirageWire.HostApplicationRestartResultMessage(
                     accepted: false,
                     message: "Local authorization is required to restart Mirage Host."
                 )
@@ -56,7 +64,7 @@ extension MirageHostService {
             }
         }
 
-        let response = HostApplicationRestartResultMessage(
+        let response = MirageWire.HostApplicationRestartResultMessage(
             accepted: true,
             message: "Restarting Mirage Host."
         )

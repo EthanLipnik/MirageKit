@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(iOS) || os(visionOS)
 import UIKit
 
@@ -251,8 +259,8 @@ extension InputCapturingView {
 
     func clearDirectTouchScrollAnchorIfNeeded(
         source: ScrollPhysicsCapturingView.InputSource,
-        phase: MirageScrollPhase,
-        momentumPhase: MirageScrollPhase
+        phase: MirageInput.MirageScrollPhase,
+        momentumPhase: MirageInput.MirageScrollPhase
     ) {
         guard case .directTouch = source else { return }
         updateDirectTouchScrollMomentumState(phase: phase, momentumPhase: momentumPhase)
@@ -308,12 +316,12 @@ extension InputCapturingView {
         deltaX: CGFloat,
         deltaY: CGFloat,
         location: CGPoint?,
-        phase: MirageScrollPhase = .none,
-        momentumPhase: MirageScrollPhase = .none,
-        modifiers: MirageModifierFlags,
+        phase: MirageInput.MirageScrollPhase = .none,
+        momentumPhase: MirageInput.MirageScrollPhase = .none,
+        modifiers: MirageInput.MirageModifierFlags,
         isPrecise: Bool,
         preservePhaseMetadata: Bool = false
-    ) -> MirageScrollEvent? {
+    ) -> MirageInput.MirageScrollEvent? {
         let shouldPreservePhaseMetadata = usesNativeScrollEventMetadata || preservePhaseMetadata
         let resolvedPhase = shouldPreservePhaseMetadata ? phase : .none
         let resolvedMomentumPhase = shouldPreservePhaseMetadata ? momentumPhase : .none
@@ -321,7 +329,7 @@ extension InputCapturingView {
             return nil
         }
 
-        return MirageScrollEvent(
+        return MirageInput.MirageScrollEvent(
             deltaX: deltaX,
             deltaY: deltaY,
             location: location,
@@ -379,13 +387,13 @@ extension InputCapturingView {
         }
     }
 
-    func sendTrackpadMovementEvent(modifiers: MirageModifierFlags) {
+    func sendTrackpadMovementEvent(modifiers: MirageInput.MirageModifierFlags) {
         let location = if virtualPointerButtonDown {
             trackpadCursorActionPosition()
         } else {
             trackpadCursorPosition()
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             modifiers: modifiers

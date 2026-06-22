@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 
@@ -102,7 +110,7 @@ enum DesktopResizeMirroringPlan: Equatable {
 }
 
 /// Returns the mirroring strategy for a desktop stream mode.
-func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopResizeMirroringPlan {
+func desktopResizeMirroringPlan(for mode: MirageMedia.MirageDesktopStreamMode) -> DesktopResizeMirroringPlan {
     if mode == .unified { return .suspendAndRestore }
     return .unchanged
 }
@@ -110,7 +118,7 @@ func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopRes
 /// Returns whether mirroring should be suspended before a desktop resize mutation.
 func desktopResizeShouldSuspendMirroring(
     plan: DesktopResizeMirroringPlan,
-    updateOutcome: SharedVirtualDisplayManager.DisplayResolutionUpdateOutcome
+    updateOutcome: MirageHostDisplayResolutionUpdateOutcome
 ) -> Bool {
     plan == .suspendAndRestore && updateOutcome != .noChange
 }
@@ -126,7 +134,7 @@ func desktopResizeShouldDisableResidualMirroring(
 
 /// Returns whether rollback must prove mirroring was restored before continuing.
 func desktopResizeRequiresMirroringRestoreSuccess(
-    desktopStreamMode: MirageDesktopStreamMode
+    desktopStreamMode: MirageMedia.MirageDesktopStreamMode
 ) -> Bool {
     desktopStreamMode == .unified
 }
@@ -158,7 +166,7 @@ func desktopResizeTransactionContinuationDecision(
 
 /// Chooses the recovery strategy for a failed desktop resize.
 func desktopResizeFailureRecoveryPlan(
-    desktopStreamMode: MirageDesktopStreamMode,
+    desktopStreamMode: MirageMedia.MirageDesktopStreamMode,
     hasPreResizeSnapshot: Bool
 ) -> DesktopResizeFailureRecoveryPlan {
     if desktopStreamMode == .unified {
@@ -184,7 +192,7 @@ struct DesktopResizeLogContext {
 /// Outcome of desktop resize failure handling.
 struct DesktopResizeFailureHandlingResult {
     let completionContext: StreamContext?
-    let outcome: MirageDesktopTransitionOutcome
+    let outcome: MirageWire.MirageDesktopTransitionOutcome
     let shouldStopStreamWithError: Bool
     let shouldRestoreMirroring: Bool
 }
@@ -194,7 +202,7 @@ func resolvedDesktopBackingScaleResolution(
     logicalResolution: CGSize,
     defaultScaleFactor: CGFloat
 ) -> DesktopBackingScaleResolution {
-    let geometry = MirageStreamGeometry.resolve(
+    let geometry = MirageMedia.MirageStreamGeometry.resolve(
         logicalSize: logicalResolution,
         displayScaleFactor: defaultScaleFactor
     )
@@ -231,8 +239,8 @@ func windowResizeNoOpDecision(
 )
 -> WindowResizeNoOpDecision {
     guard requestedVisibleResolution.width > 0, requestedVisibleResolution.height > 0 else { return .noOp }
-    let canonicalRequestedResolution = MirageStreamGeometry.alignedEncodedSize(requestedVisibleResolution)
-    let canonicalRequestedEncodedResolution = requestedEncodedResolution.map(MirageStreamGeometry.alignedEncodedSize)
+    let canonicalRequestedResolution = MirageMedia.MirageStreamGeometry.alignedEncodedSize(requestedVisibleResolution)
+    let canonicalRequestedEncodedResolution = requestedEncodedResolution.map(MirageMedia.MirageStreamGeometry.alignedEncodedSize)
         ?? canonicalRequestedResolution
     if let currentEncodedResolution,
        !virtualDisplayResolutionMatches(currentEncodedResolution, canonicalRequestedEncodedResolution) {

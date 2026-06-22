@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 1/5/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 #if os(macOS)
 
@@ -20,8 +28,8 @@ struct ClientContext {
     let client: MirageConnectedClient
     /// Ordered control transport used for host-to-client messages.
     let controlChannel: MirageControlChannel
-    /// Session-scoped Loom transfer engine for bulk objects on this client session.
-    let transferEngine: LoomTransferEngine
+    /// Session-scoped transfer engine for bulk objects on this client session.
+    let transferEngine: MirageTransferEngine
     /// Loom network-path metadata captured when the session was accepted.
     let pathSnapshot: LoomSessionNetworkPathSnapshot?
 
@@ -29,7 +37,7 @@ struct ClientContext {
         sessionID: UUID,
         client: MirageConnectedClient,
         controlChannel: MirageControlChannel,
-        transferEngine: LoomTransferEngine,
+        transferEngine: MirageTransferEngine,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
     ) {
         self.sessionID = sessionID
@@ -102,37 +110,37 @@ struct ClientContext {
     }
 
     /// Sends an encoded control payload over the reliable control channel.
-    func send(_ type: ControlMessageType, content: some Encodable) async throws {
-        let message = try ControlMessage(type: type, content: content)
+    func send(_ type: MirageWire.ControlMessageType, content: some Encodable) async throws {
+        let message = try MirageWire.ControlMessage(type: type, content: content)
         try await controlChannel.send(message)
     }
 
     /// Sends a prebuilt control message over the reliable control channel.
-    func send(_ message: ControlMessage) async throws {
+    func send(_ message: MirageWire.ControlMessage) async throws {
         try await controlChannel.send(message)
     }
 
     /// Queues an encoded control payload without waiting for transport completion.
     /// Preferred for high-frequency real-time interaction updates where latest-state wins.
     /// Returns false when the message cannot be encoded.
-    func sendBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
-        guard let message = try? ControlMessage(type: type, content: content) else { return false }
+    func sendBestEffort(_ type: MirageWire.ControlMessageType, content: some Encodable) -> Bool {
+        guard let message = try? MirageWire.ControlMessage(type: type, content: content) else { return false }
         controlChannel.sendBestEffort(message)
         return true
     }
 
     /// Queues an encoded control payload when the caller does not need send eligibility.
-    func queueBestEffort(_ type: ControlMessageType, content: some Encodable) {
+    func queueBestEffort(_ type: MirageWire.ControlMessageType, content: some Encodable) {
         _ = sendBestEffort(type, content: content)
     }
 
     /// Queues a no-payload control message without waiting for transport completion.
-    func sendBestEffort(_ type: ControlMessageType) {
+    func sendBestEffort(_ type: MirageWire.ControlMessageType) {
         controlChannel.sendBestEffort(type)
     }
 
     /// Queues a prebuilt control message without waiting for transport completion.
-    func sendBestEffort(_ message: ControlMessage) {
+    func sendBestEffort(_ message: MirageWire.ControlMessage) {
         controlChannel.sendBestEffort(message)
     }
 }

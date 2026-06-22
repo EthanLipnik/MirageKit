@@ -7,6 +7,15 @@
 //  Local keyboard occlusion helpers for client-side presentation-only resizing.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 
 func hasLocalKeyboardOcclusion(

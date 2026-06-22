@@ -5,19 +5,27 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 extension StreamContext {
     func streamCaptureCadenceMetrics(
         telemetry: CaptureStreamOutput.TelemetrySnapshot?,
         policy: WindowCaptureEngine.CapturePolicySnapshot?
-    ) -> StreamCaptureCadenceMetrics? {
+    ) -> MirageWire.StreamCaptureCadenceMetrics? {
         guard let telemetry else { return nil }
         let cadence = telemetry.cadenceMetrics
         let virtualDisplay = virtualDisplayContext
-        let metrics = StreamCaptureCadenceMetrics(
+        let metrics = MirageWire.StreamCaptureCadenceMetrics(
             sampleDurationSeconds: telemetry.sampleDurationSeconds,
             rawScreenCallbackCount: telemetry.rawScreenCallbackCount,
             completeFrameCount: telemetry.completeFrameCount,

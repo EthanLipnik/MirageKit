@@ -10,6 +10,7 @@ import CoreGraphics
 import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageInput
 
 @Suite("Host keyboard injection")
 struct HostKeyboardInjectionTests {
@@ -52,7 +53,7 @@ struct HostKeyboardInjectionTests {
 
     @Test("Physical A key stays on the virtual-key injection path")
     func physicalAKeyStaysOnVirtualKeyInjectionPath() throws {
-        let event = MirageKeyEvent(
+        let event = MirageInput.MirageKeyEvent(
             keyCode: 0x00,
             characters: "a",
             charactersIgnoringModifiers: "a",
@@ -97,8 +98,8 @@ struct HostKeyboardInjectionTests {
 
     @Test("Unicode fallback sentinel injects the provided string")
     func unicodeFallbackSentinelInjectsTheProvidedString() throws {
-        let event = MirageKeyEvent(
-            keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
+        let event = MirageInput.MirageKeyEvent(
+            keyCode: MirageInput.MirageKeyEvent.unicodeScalarFallbackKeyCode,
             characters: "🙂",
             charactersIgnoringModifiers: "🙂"
         )
@@ -114,7 +115,7 @@ struct HostKeyboardInjectionTests {
 
     @Test("Repeat key down sets autorepeat without mutating modifier tracking")
     func repeatKeyDownSetsAutorepeatWithoutMutatingModifierTracking() throws {
-        let event = MirageKeyEvent(
+        let event = MirageInput.MirageKeyEvent(
             keyCode: 0x04,
             characters: "h",
             charactersIgnoringModifiers: "h",

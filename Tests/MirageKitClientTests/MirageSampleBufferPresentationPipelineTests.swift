@@ -13,6 +13,7 @@ import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Testing
+import MirageCore
 
 @MainActor
 @Suite("Sample Buffer Presentation Pipeline")

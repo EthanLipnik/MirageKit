@@ -7,10 +7,18 @@
 //  Audio format conversion helpers for host audio encoding.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import AVFAudio
 import CoreMedia
 import Foundation
-import MirageKit
 
 #if os(macOS)
 
@@ -159,11 +167,11 @@ extension AudioEncoder {
     }
 
     static func aacBitrate(
-        quality: MirageAudioQuality,
+        quality: MirageMedia.MirageAudioQuality,
         channels: Int,
         budgetBps: Int? = nil
     ) -> Int {
-        let fallbackLayout: MirageAudioChannelLayout = switch channels {
+        let fallbackLayout: MirageMedia.MirageAudioChannelLayout = switch channels {
         case 1:
             .mono
         case 2:

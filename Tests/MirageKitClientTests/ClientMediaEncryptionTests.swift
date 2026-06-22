@@ -9,7 +9,9 @@
 
 @testable import MirageKit
 @testable import MirageKitClient
+import Foundation
 import Testing
+import MirageCore
 
 @Suite("Client Media Encryption")
 struct ClientMediaEncryptionTests {

@@ -11,6 +11,8 @@
 import CoreGraphics
 import MirageKit
 import Testing
+import MirageCore
+import MirageMedia
 
 @Suite("Session Recovery Status")
 struct SessionRecoveryStatusTests {
@@ -81,8 +83,8 @@ struct SessionRecoveryStatusTests {
     }
 
     @MainActor
-    private func testWindow(id: WindowID) -> MirageWindow {
-        MirageWindow(
+    private func testWindow(id: WindowID) -> MirageMedia.MirageWindow {
+        MirageMedia.MirageWindow(
             id: id,
             title: "Test Window",
             application: nil,

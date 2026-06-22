@@ -5,6 +5,13 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// Runtime statistics for an active media stream.

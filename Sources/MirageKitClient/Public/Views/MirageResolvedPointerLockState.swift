@@ -5,6 +5,15 @@
 //  Created by Ethan Lipnik on 4/1/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 
 /// Current pointer-lock capability and lock state for the active client scene.

@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 @MainActor
@@ -17,7 +25,7 @@ extension MirageHostService {
         reason: String
     ) {
         MirageLogger.host("Rejecting malformed app list request from \(clientContext.client.name): \(reason)")
-        let payload = ErrorMessage(
+        let payload = MirageWire.ErrorMessage(
             code: .invalidMessage,
             message: "Invalid app list request payload"
         )
@@ -58,12 +66,12 @@ extension MirageHostService {
 
     /// Handles a client's app-list request and defers delivery when interactive streaming work is active.
     func handleAppListRequest(
-        _ message: ControlMessage,
+        _ message: MirageWire.ControlMessage,
         from clientContext: ClientContext
     )
     async {
         do {
-            let request = try message.decode(AppListRequestMessage.self)
+            let request = try message.decode(MirageWire.AppListRequestMessage.self)
             MirageLogger.host(
                 "Client \(clientContext.client.name) requested app list (requestID: \(request.requestID.uuidString), forceRefresh: \(request.forceRefresh), forceIconReset: \(request.forceIconReset), priorityCount: \(request.priorityBundleIdentifiers.count), knownIconCount: \(request.knownIconBundleIdentifiers.count))"
             )

@@ -8,7 +8,9 @@
 @testable import MirageKitClient
 import CoreGraphics
 import MirageKit
+import MirageKitClientPresentation
 import Testing
+import MirageCore
 
 #if os(macOS)
 private final class PendingFrameState: @unchecked Sendable {
@@ -107,6 +109,7 @@ struct RenderPresentationSchedulerTests {
         let scheduler = MirageRenderPresentationScheduler(
             referenceTimeProvider: { 99 },
             submit: { _ in
+                guard pendingState.hasPendingAfterFirstSubmit else { return .noPendingFrame }
                 submitCount += 1
                 pendingState.hasPendingAfterFirstSubmit = false
                 return .submitted
@@ -863,15 +866,6 @@ struct RenderPresentationSchedulerTests {
         #expect(MirageMacDisplayClock.shouldEmitTick(lastEmittedTickTime: 10, now: 10.008, targetFPS: 120))
         #expect(!MirageMacDisplayClock.shouldEmitTick(lastEmittedTickTime: 10, now: 10.0084, targetFPS: 60))
         #expect(MirageMacDisplayClock.shouldEmitTick(lastEmittedTickTime: 10, now: 10.0150, targetFPS: 60))
-    }
-
-    @Test("macOS display clock restarts only when display ID changes")
-    func macOSDisplayClockRestartDecisionUsesDisplayID() {
-        #expect(!MirageMacDisplayClock.shouldRestartDisplayLink(currentDisplayID: nil, newDisplayID: nil))
-        #expect(MirageMacDisplayClock.shouldRestartDisplayLink(currentDisplayID: nil, newDisplayID: CGDirectDisplayID(1)))
-        #expect(MirageMacDisplayClock.shouldRestartDisplayLink(currentDisplayID: CGDirectDisplayID(1), newDisplayID: nil))
-        #expect(!MirageMacDisplayClock.shouldRestartDisplayLink(currentDisplayID: CGDirectDisplayID(1), newDisplayID: CGDirectDisplayID(1)))
-        #expect(MirageMacDisplayClock.shouldRestartDisplayLink(currentDisplayID: CGDirectDisplayID(1), newDisplayID: CGDirectDisplayID(2)))
     }
 
     @Test("macOS display tick relay coalesces callbacks into latest main delivery")

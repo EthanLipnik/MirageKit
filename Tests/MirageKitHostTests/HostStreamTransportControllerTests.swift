@@ -10,6 +10,7 @@ import CoreFoundation
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing
+import MirageWire
 
 @Suite("Host Stream Transport Controller")
 struct HostStreamTransportControllerTests {
@@ -646,7 +647,7 @@ struct HostStreamTransportControllerTests {
         reassemblyBacklogFrames: Int = 0,
         reassemblyBacklogKeyframes: Int = 0,
         reassemblyBacklogBytes: Int = 0,
-        recoveryState: MirageMediaFeedbackRecoveryState = .idle,
+        recoveryState: MirageWire.MirageMediaFeedbackRecoveryState = .idle,
         pFrameCompletionLatencyP95Ms: Double? = nil,
         playoutDelayTargetMs: Double? = nil,
         latePFrameCount: UInt64? = nil,
@@ -656,8 +657,8 @@ struct HostStreamTransportControllerTests {
         presentationUnderfillFrames: Int? = nil,
         displayTickNoFrameCount: UInt64? = nil,
         pendingFrameNotReadyDisplayTickCount: UInt64? = nil
-    ) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
+    ) -> MirageWire.ReceiverMediaFeedbackMessage {
+        MirageWire.ReceiverMediaFeedbackMessage(
             streamID: 1,
             sequence: sequence,
             sentAtUptime: 0,

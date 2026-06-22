@@ -8,7 +8,9 @@
 #if os(macOS)
 @testable import MirageKitHost
 import CoreFoundation
+import MirageCore
 import MirageKit
+import MirageMedia
 import Testing
 
 @Suite("Host Stream Quality Governor")

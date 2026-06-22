@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 1/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import ApplicationServices
 import Foundation
@@ -24,7 +32,7 @@ actor MenuBarExtractor {
     ///   - pid: Process ID of the target application
     ///   - bundleIdentifier: Bundle identifier for identification
     /// - Returns: The menu bar structure, or nil if extraction fails
-    func extractMenuBar(for pid: pid_t, bundleIdentifier: String) -> MirageMenuBar? {
+    func extractMenuBar(for pid: pid_t, bundleIdentifier: String) -> MirageWire.MirageMenuBar? {
         let appElement = AXUIElementCreateApplication(pid)
 
         // Get the menu bar element
@@ -58,12 +66,12 @@ actor MenuBarExtractor {
         // Skip the first child if it's the Apple menu (we don't want to expose that)
         let menuStartIndex = shouldSkipAppleMenu(children) ? 1 : 0
 
-        var menus: [MirageMenu] = []
+        var menus: [MirageWire.MirageMenu] = []
         for (index, menuBarItem) in children.enumerated() where index >= menuStartIndex {
             if let menu = extractMenu(from: menuBarItem, menuIndex: index) { menus.append(menu) }
         }
 
-        return MirageMenuBar(
+        return MirageWire.MirageMenuBar(
             bundleIdentifier: bundleIdentifier,
             menus: menus,
             version: UInt64(Date().timeIntervalSince1970 * 1000)
@@ -88,7 +96,7 @@ actor MenuBarExtractor {
     // MARK: - Menu Extraction
 
     /// Extracts a single top-level menu from a menu bar item.
-    private func extractMenu(from menuBarItem: AXUIElement, menuIndex: Int) -> MirageMenu? {
+    private func extractMenu(from menuBarItem: AXUIElement, menuIndex: Int) -> MirageWire.MirageMenu? {
         // Get the menu title
         var titleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(menuBarItem, kAXTitleAttribute as CFString, &titleRef)
@@ -107,33 +115,33 @@ actor MenuBarExtractor {
 
         guard submenuResult == .success, let submenus = submenuRef as? [AXUIElement], !submenus.isEmpty else {
             // No submenu - this shouldn't happen for normal menus
-            return MirageMenu(title: title, items: [], menuIndex: menuIndex)
+            return MirageWire.MirageMenu(title: title, items: [], menuIndex: menuIndex)
         }
 
         // The first child of a menu bar item is the actual menu
         guard let menuElement = submenus.first else {
-            return MirageMenu(title: title, items: [], menuIndex: menuIndex)
+            return MirageWire.MirageMenu(title: title, items: [], menuIndex: menuIndex)
         }
 
         // Get menu items
         var menuItemsRef: CFTypeRef?
         AXUIElementCopyAttributeValue(menuElement, kAXChildrenAttribute as CFString, &menuItemsRef)
 
-        guard let menuItemElements = menuItemsRef as? [AXUIElement] else { return MirageMenu(title: title, items: [], menuIndex: menuIndex) }
+        guard let menuItemElements = menuItemsRef as? [AXUIElement] else { return MirageWire.MirageMenu(title: title, items: [], menuIndex: menuIndex) }
 
-        var items: [MirageMenuItem] = []
+        var items: [MirageWire.MirageMenuItem] = []
         for (itemIndex, itemElement) in menuItemElements.enumerated() {
             let actionPath = [menuIndex, itemIndex]
             if let item = extractMenuItem(from: itemElement, actionPath: actionPath) { items.append(item) }
         }
 
-        return MirageMenu(title: title, items: items, menuIndex: menuIndex)
+        return MirageWire.MirageMenu(title: title, items: items, menuIndex: menuIndex)
     }
 
     // MARK: - Menu Item Extraction
 
     /// Extracts a single menu item, including any submenu items recursively.
-    private func extractMenuItem(from element: AXUIElement, actionPath: [Int]) -> MirageMenuItem? {
+    private func extractMenuItem(from element: AXUIElement, actionPath: [Int]) -> MirageWire.MirageMenuItem? {
         // Check if this is a separator
         var roleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
@@ -180,7 +188,7 @@ actor MenuBarExtractor {
         let isMixed = markChar == "-" || markChar == "\u{2212}" || markChar == "–"
 
         // Check for submenu
-        var submenuItems: [MirageMenuItem]?
+        var submenuItems: [MirageWire.MirageMenuItem]?
         var childrenRef: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
 
@@ -201,7 +209,7 @@ actor MenuBarExtractor {
             }
         }
 
-        return MirageMenuItem(
+        return MirageWire.MirageMenuItem(
             title: title,
             isEnabled: isEnabled,
             isSeparator: false,
@@ -214,7 +222,7 @@ actor MenuBarExtractor {
     }
 
     /// Extracts keyboard shortcut from a menu item element.
-    private func extractKeyboardShortcut(from element: AXUIElement) -> MirageKeyboardShortcut? {
+    private func extractKeyboardShortcut(from element: AXUIElement) -> MirageWire.MirageKeyboardShortcut? {
         // Get the command key character
         var cmdCharRef: CFTypeRef?
         let charResult = AXUIElementCopyAttributeValue(
@@ -249,20 +257,20 @@ actor MenuBarExtractor {
 
         let axModifiers = (modifiersRef as? UInt) ?? 0
 
-        // Convert AX modifiers to MirageModifierFlags
+        // Convert AX modifiers to MirageInput.MirageModifierFlags
         // AX modifier flags:
         // 1 << 0 = Shift
         // 1 << 1 = Option
         // 1 << 2 = Control
         // 1 << 3 is ignored
         // Command is implicit in menu shortcuts
-        var modifiers = MirageModifierFlags.command // Always has command for menu shortcuts
+        var modifiers = MirageInput.MirageModifierFlags.command // Always has command for menu shortcuts
 
         if axModifiers & (1 << 0) != 0 { modifiers.insert(.shift) }
         if axModifiers & (1 << 1) != 0 { modifiers.insert(.option) }
         if axModifiers & (1 << 2) != 0 { modifiers.insert(.control) }
 
-        return MirageKeyboardShortcut(key: key, modifiers: modifiers)
+        return MirageWire.MirageKeyboardShortcut(key: key, modifiers: modifiers)
     }
 
     /// Converts a virtual key code to a display string.

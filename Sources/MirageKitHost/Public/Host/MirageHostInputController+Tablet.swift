@@ -7,8 +7,16 @@
 //  Tablet field mapping for stylus-backed pointer events.
 //
 
-import CoreGraphics
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 
 #if os(macOS)
 import AppKit
@@ -18,14 +26,14 @@ extension MirageHostInputController {
     // MARK: - Tablet Mapping Helpers
 
     /// Returns whether a mouse event should be tagged as tablet/stylus input.
-    func appliesTabletSubtype(_ event: MirageMouseEvent) -> Bool {
+    func appliesTabletSubtype(_ event: MirageInput.MirageMouseEvent) -> Bool {
         event.stylus != nil
     }
 
     /// Applies tablet fields to a CoreGraphics event when the Mirage event carries stylus data.
     func applyTabletFieldsIfNeeded(
         _ cgEvent: CGEvent,
-        from event: MirageMouseEvent,
+        from event: MirageInput.MirageMouseEvent,
         type: CGEventType? = nil,
         point: CGPoint? = nil
     ) {
@@ -47,7 +55,7 @@ extension MirageHostInputController {
     /// Posts a pointer event while maintaining synthetic tablet proximity state.
     func postStylusAwarePointerEvent(
         _ cgEvent: CGEvent,
-        from event: MirageMouseEvent,
+        from event: MirageInput.MirageMouseEvent,
         type: CGEventType,
         at screenPoint: CGPoint
     ) {
@@ -73,8 +81,8 @@ extension MirageHostInputController {
     /// Applies synthetic tablet fields for pressure, tilt, rotation, position, and buttons.
     private func applyTabletFields(
         _ cgEvent: CGEvent,
-        from event: MirageMouseEvent,
-        stylus: MirageStylusEvent,
+        from event: MirageInput.MirageMouseEvent,
+        stylus: MirageInput.MirageStylusEvent,
         point: CGPoint?,
         pointerButtons: Int64?
     ) {
@@ -101,8 +109,8 @@ extension MirageHostInputController {
 
     /// Posts one batched stylus sample as a synthetic tablet pointer event.
     func postTabletPointerSample(
-        _ sample: MiragePointerSample,
-        batch: MiragePointerSampleBatch,
+        _ sample: MirageInput.MiragePointerSample,
+        batch: MirageInput.MiragePointerSampleBatch,
         type: CGEventType,
         at screenPoint: CGPoint
     ) {
@@ -118,8 +126,8 @@ extension MirageHostInputController {
 
     /// Builds a synthetic tablet pointer event from a Mirage mouse event.
     func makeTabletPointerEvent(
-        from event: MirageMouseEvent,
-        stylus: MirageStylusEvent,
+        from event: MirageInput.MirageMouseEvent,
+        stylus: MirageInput.MirageStylusEvent,
         type: CGEventType,
         at screenPoint: CGPoint
     ) -> CGEvent? {
@@ -146,12 +154,12 @@ extension MirageHostInputController {
 
     /// Builds a synthetic tablet pointer event from a batched pointer sample.
     func makeTabletPointerEvent(
-        from sample: MiragePointerSample,
-        batch: MiragePointerSampleBatch,
+        from sample: MirageInput.MiragePointerSample,
+        batch: MirageInput.MiragePointerSampleBatch,
         type: CGEventType,
         at screenPoint: CGPoint
     ) -> CGEvent? {
-        let event = MirageMouseEvent(
+        let event = MirageInput.MirageMouseEvent(
             button: batch.button,
             location: sample.location,
             clickCount: batch.clickCount,
@@ -226,7 +234,7 @@ extension MirageHostInputController {
     }
 
     /// Maps Mirage mouse buttons to the tablet button bitmask.
-    private func tabletButtonMask(for button: MirageMouseButton) -> Int64 {
+    private func tabletButtonMask(for button: MirageInput.MirageMouseButton) -> Int64 {
         switch button {
         case .left:
             1 << 0

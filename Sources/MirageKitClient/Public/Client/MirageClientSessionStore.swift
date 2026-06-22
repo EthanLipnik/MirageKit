@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Observation
-import MirageKit
 
 /// Manages active client stream sessions, readiness state, and presentation tiers.
 @Observable
@@ -107,12 +115,12 @@ public final class MirageClientSessionStore {
     public func createSession(
         streamID: StreamID,
         mediaStreamID: StreamID,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         hostName: String,
         appSessionID: UUID? = nil,
-        streamKind: MirageStreamKind = .app,
+        streamKind: MirageMedia.MirageStreamKind = .app,
         logicalTarget: MirageStreamLogicalTarget? = nil,
-        atlasRegion: MirageAppAtlasRegion? = nil,
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil,
         minSize: CGSize?
     ) -> StreamSessionID {
         let sessionID = StreamSessionID()
@@ -178,12 +186,12 @@ public final class MirageClientSessionStore {
     public func registerSession(
         streamID: StreamID,
         mediaStreamID: StreamID,
-        window: MirageWindow,
+        window: MirageMedia.MirageWindow,
         hostName: String,
         appSessionID: UUID? = nil,
-        streamKind: MirageStreamKind = .app,
+        streamKind: MirageMedia.MirageStreamKind = .app,
         logicalTarget: MirageStreamLogicalTarget? = nil,
-        atlasRegion: MirageAppAtlasRegion? = nil,
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil,
         minSize: CGSize?
     ) {
         _ = createSession(
@@ -247,8 +255,8 @@ public final class MirageClientSessionStore {
     /// Used when the host rebinds a slot to a different window while preserving stream ID.
     public func updateSessionWindowMetadata(
         streamID: StreamID,
-        window: MirageWindow,
-        atlasRegion: MirageAppAtlasRegion? = nil
+        window: MirageMedia.MirageWindow,
+        atlasRegion: MirageMedia.MirageAppAtlasRegion? = nil
     ) {
         guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
         session.window = window
@@ -259,7 +267,7 @@ public final class MirageClientSessionStore {
     /// Update only the atlas region for an existing logical stream.
     public func updateSessionAtlasRegion(
         streamID: StreamID,
-        atlasRegion: MirageAppAtlasRegion?
+        atlasRegion: MirageMedia.MirageAppAtlasRegion?
     ) {
         guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
         session.atlasRegion = atlasRegion
@@ -269,7 +277,7 @@ public final class MirageClientSessionStore {
     /// Apply a physical app-atlas layout to all logical sessions rendering from that media stream.
     public func updateSessionAtlasRegions(
         mediaStreamID: StreamID,
-        layout: MirageAppAtlasLayout
+        layout: MirageMedia.MirageAppAtlasLayout
     ) {
         for session in streamSessions.values where session.mediaStreamID == mediaStreamID {
             session.atlasRegion = layout.region(for: session.window.id)
@@ -331,7 +339,7 @@ public final class MirageClientSessionStore {
     }
 
     /// Applies host-provided presentation policies to the local session tier map.
-    public func applyHostStreamPolicies(_ policies: [MirageStreamPolicy]) {
+    public func applyHostStreamPolicies(_ policies: [MirageWire.MirageStreamPolicy]) {
         let newTiers = Dictionary(uniqueKeysWithValues: policies.map { policy in
             (policy.streamID, policy.tier.presentationTier)
         })
@@ -370,7 +378,7 @@ public final class MirageClientSessionStore {
     }
 }
 
-private extension MirageStreamRuntimeTier {
+private extension MirageWire.MirageStreamRuntimeTier {
     var presentationTier: StreamPresentationTier {
         switch self {
         case .activeLive:

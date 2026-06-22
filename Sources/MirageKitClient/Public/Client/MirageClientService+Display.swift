@@ -7,9 +7,17 @@
 //  Display resolution helpers and host notifications.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 #if canImport(AppKit)
 import AppKit
@@ -55,14 +63,14 @@ extension MirageClientService {
     -> CGSize {
         let displayScaleFactor = max(
             visionOSPreferredVirtualDisplayScaleFactor,
-            MirageStreamGeometry.clampedDisplayScaleFactor(displayScaleFactor)
+            MirageMedia.MirageStreamGeometry.clampedDisplayScaleFactor(displayScaleFactor)
         )
         let fallbackPixelSize = CGSize(
             width: max(2, maximumEncodedPixelSize.width),
             height: max(2, maximumEncodedPixelSize.height)
         )
         guard viewSize.width > 0, viewSize.height > 0 else {
-            return MirageStreamGeometry.normalizedLogicalSize(
+            return MirageMedia.MirageStreamGeometry.normalizedLogicalSize(
                 CGSize(
                     width: fallbackPixelSize.width / displayScaleFactor,
                     height: fallbackPixelSize.height / displayScaleFactor
@@ -79,7 +87,7 @@ extension MirageClientService {
             ? maximumEncodedPixelSize.height / budgetHeight
             : 1.0
         let encodedScale = min(1.0, widthScale, heightScale)
-        return MirageStreamGeometry.normalizedLogicalSize(
+        return MirageMedia.MirageStreamGeometry.normalizedLogicalSize(
             CGSize(
                 width: (budgetWidth * encodedScale) / displayScaleFactor,
                 height: (budgetHeight * encodedScale) / displayScaleFactor
@@ -89,7 +97,7 @@ extension MirageClientService {
 
     /// Converts a logical display resolution into the pixel size requested for the virtual display.
     public func virtualDisplayPixelResolution(for displayResolution: CGSize) -> CGSize {
-        let alignedResolution = MirageStreamGeometry.normalizedLogicalSize(displayResolution)
+        let alignedResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(displayResolution)
         guard alignedResolution.width > 0, alignedResolution.height > 0 else { return .zero }
 
         let requestedScale: CGFloat
@@ -97,8 +105,8 @@ extension MirageClientService {
         requestedScale = NSScreen.main?.backingScaleFactor ?? 2.0
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics
-        let nativePoints = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
-        let nativePixels = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePixelSize)
+        let nativePoints = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
+        let nativePixels = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePixelSize)
         if nativePoints.width > 0,
            nativePoints.height > 0,
            nativePixels.width > 0,
@@ -115,7 +123,7 @@ extension MirageClientService {
         requestedScale = 1.0
         #endif
 
-        return MirageStreamGeometry.resolve(
+        return MirageMedia.MirageStreamGeometry.resolve(
             logicalSize: alignedResolution,
             displayScaleFactor: requestedScale
         ).displayPixelSize
@@ -126,9 +134,9 @@ extension MirageClientService {
         explicitScaleFactor: CGFloat?
     )
     -> CGFloat? {
-        let alignedLogical = MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
+        let alignedLogical = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
         guard alignedLogical.width > 0, alignedLogical.height > 0 else { return nil }
-        let geometry = MirageStreamGeometry.resolve(
+        let geometry = MirageMedia.MirageStreamGeometry.resolve(
             logicalSize: alignedLogical,
             displayScaleFactor: platformDisplayScaleFactor(explicitScaleFactor: explicitScaleFactor)
         )
@@ -140,7 +148,7 @@ extension MirageClientService {
         displayPixelSize: CGSize,
         presentationSize: CGSize
     ) -> CGFloat? {
-        let presentationSize = MirageStreamGeometry.normalizedLogicalSize(presentationSize)
+        let presentationSize = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(presentationSize)
         guard displayPixelSize.width > 0,
               displayPixelSize.height > 0,
               presentationSize.width > 0,
@@ -154,7 +162,7 @@ extension MirageClientService {
         return max(1.0, scale)
     }
 
-    func acceptedDesktopDisplayPixelSize(from started: DesktopStreamStartedMessage) -> CGSize {
+    func acceptedDesktopDisplayPixelSize(from started: MirageWire.DesktopStreamStartedMessage) -> CGSize {
         if let width = started.desktopGeometryDisplayPixelWidth,
            let height = started.desktopGeometryDisplayPixelHeight,
            width > 0,
@@ -166,7 +174,7 @@ extension MirageClientService {
     }
 
     func acceptedDesktopDisplayScaleFactor(
-        from started: DesktopStreamStartedMessage,
+        from started: MirageWire.DesktopStreamStartedMessage,
         displayPixelSize: CGSize,
         presentationSize: CGSize
     ) -> CGFloat? {
@@ -187,14 +195,14 @@ extension MirageClientService {
         )
     }
 
-    public func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
-        let alignedViewSize = MirageStreamGeometry.normalizedLogicalSize(viewSize)
+    func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
+        let alignedViewSize = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(viewSize)
         guard alignedViewSize.width > 0, alignedViewSize.height > 0 else { return .zero }
 
         #if os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics
-        let screenPoints = MirageStreamGeometry.normalizedLogicalSize(metrics.pointSize)
-        let nativePoints = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
+        let screenPoints = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.pointSize)
+        let nativePoints = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
         if screenPoints.width > 0,
            screenPoints.height > 0,
            nativePoints.width > 0,
@@ -212,13 +220,13 @@ extension MirageClientService {
     public var mainDisplayResolution: CGSize {
         #if os(macOS)
         guard let mainScreen = NSScreen.main else { return CGSize(width: 2560, height: 1600) }
-        return MirageStreamGeometry.normalizedLogicalSize(mainScreen.frame.size)
+        return MirageMedia.MirageStreamGeometry.normalizedLogicalSize(mainScreen.frame.size)
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics
-        let nativePoints = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
+        let nativePoints = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
         if nativePoints.width > 0, nativePoints.height > 0 { return nativePoints }
         if Self.lastKnownViewSize.width > 0, Self.lastKnownViewSize.height > 0 {
-            return MirageStreamGeometry.normalizedLogicalSize(Self.lastKnownViewSize)
+            return MirageMedia.MirageStreamGeometry.normalizedLogicalSize(Self.lastKnownViewSize)
         }
         return .zero
         #else
@@ -231,7 +239,7 @@ extension MirageClientService {
         #if os(macOS)
         guard let mainScreen = NSScreen.main else { return CGSize(width: 2560, height: 1600) }
         let scale = mainScreen.backingScaleFactor
-        return MirageStreamGeometry.normalizedLogicalSize(
+        return MirageMedia.MirageStreamGeometry.normalizedLogicalSize(
             CGSize(
                 width: mainScreen.frame.width * scale,
                 height: mainScreen.frame.height * scale
@@ -239,10 +247,10 @@ extension MirageClientService {
         )
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics
-        let nativePixels = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePixelSize)
+        let nativePixels = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePixelSize)
         if nativePixels.width > 0, nativePixels.height > 0 { return nativePixels }
 
-        let cachedNativePixels = MirageStreamGeometry.normalizedLogicalSize(Self.lastKnownScreenNativePixelSize)
+        let cachedNativePixels = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(Self.lastKnownScreenNativePixelSize)
         if cachedNativePixels.width > 0, cachedNativePixels.height > 0 {
             return cachedNativePixels
         }
@@ -264,13 +272,13 @@ extension MirageClientService {
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
         disableResolutionCap: Bool = false
-    ) -> MirageStreamGeometry {
-        let alignedLogicalResolution = MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
+    ) -> MirageMedia.MirageStreamGeometry {
+        let alignedLogicalResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
 
-        return MirageStreamGeometry.resolve(
+        return MirageMedia.MirageStreamGeometry.resolve(
             logicalSize: alignedLogicalResolution,
             displayScaleFactor: platformDisplayScaleFactor(explicitScaleFactor: explicitScaleFactor),
-            requestedStreamScale: requestedStreamScale ?? MirageStreamGeometry.clampStreamScale(resolutionScale),
+            requestedStreamScale: requestedStreamScale ?? MirageMedia.MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight,
             disableResolutionCap: disableResolutionCap
@@ -286,8 +294,8 @@ extension MirageClientService {
         return NSScreen.main?.backingScaleFactor ?? 2.0
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics
-        let nativePoints = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
-        let nativePixels = MirageStreamGeometry.normalizedLogicalSize(metrics.nativePixelSize)
+        let nativePoints = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePointSize)
+        let nativePixels = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(metrics.nativePixelSize)
         if nativePoints.width > 0,
            nativePoints.height > 0,
            nativePixels.width > 0,
@@ -305,12 +313,12 @@ extension MirageClientService {
 
     /// Send display size change (points) to host when the client view bounds change.
     public func sendDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
 
-        let scaledResolution = MirageStreamGeometry.normalizedLogicalSize(newResolution)
+        let scaledResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(newResolution)
 
         let pixelResolution = virtualDisplayPixelResolution(for: scaledResolution)
-        let request = DisplayResolutionChangeMessage(
+        let request = MirageWire.DisplayResolutionChangeMessage(
             streamID: streamID,
             displayWidth: Int(scaledResolution.width),
             displayHeight: Int(scaledResolution.height)
@@ -338,17 +346,17 @@ extension MirageClientService {
         desktopGeometryRefreshTargetHz: Int?
     )
     async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
 
-        let scaledResolution = MirageStreamGeometry.normalizedLogicalSize(newResolution)
+        let scaledResolution = MirageMedia.MirageStreamGeometry.normalizedLogicalSize(newResolution)
         let clampedDisplayScaleFactor = max(1.0, requestedDisplayScaleFactor)
-        let clampedStreamScale = MirageStreamGeometry.clampStreamScale(requestedStreamScale)
-        let pixelResolution = MirageStreamGeometry.resolve(
+        let clampedStreamScale = MirageMedia.MirageStreamGeometry.clampStreamScale(requestedStreamScale)
+        let pixelResolution = MirageMedia.MirageStreamGeometry.resolve(
             logicalSize: scaledResolution,
             displayScaleFactor: clampedDisplayScaleFactor
         ).displayPixelSize
 
-        let request = DisplayResolutionChangeMessage(
+        let request = MirageWire.DisplayResolutionChangeMessage(
             streamID: streamID,
             displayWidth: Int(scaledResolution.width),
             displayHeight: Int(scaledResolution.height),
@@ -379,10 +387,10 @@ extension MirageClientService {
         scale: CGFloat
     )
     async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageCore.MirageError.protocolError("Not connected") }
 
-        let clampedScale = MirageStreamGeometry.clampStreamScale(scale)
-        let request = StreamScaleChangeMessage(
+        let clampedScale = MirageMedia.MirageStreamGeometry.clampStreamScale(scale)
+        let request = MirageWire.StreamScaleChangeMessage(
             streamID: streamID,
             streamScale: clampedScale
         )

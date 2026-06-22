@@ -5,14 +5,22 @@
 //  Created by Ethan Lipnik on 5/17/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 /// Builds bounded compact packets for high-rate continuous input.
 final class MirageContinuousInputBatcher: @unchecked Sendable {
     private static let maxPendingNonPencilSamples = 64
 
-    private var pendingBatches: [MirageContinuousInputBatch] = []
+    private var pendingBatches: [MirageInput.MirageContinuousInputBatch] = []
     private(set) var droppedNonPencilSamples: UInt64 = 0
 
     var isEmpty: Bool {
@@ -20,11 +28,11 @@ final class MirageContinuousInputBatcher: @unchecked Sendable {
     }
 
     var hasFullPacket: Bool {
-        pendingBatches.contains { $0.samples.count >= MirageContinuousInputBatch.maximumSamplesPerPacket }
+        pendingBatches.contains { $0.samples.count >= MirageInput.MirageContinuousInputBatch.maximumSamplesPerPacket }
     }
 
-    func enqueue(_ event: MirageInputEvent, streamID: StreamID) -> Bool {
-        guard let batches = MirageContinuousInputBatch.batches(from: event, streamID: streamID) else {
+    func enqueue(_ event: MirageInput.MirageInputEvent, streamID: StreamID) -> Bool {
+        guard let batches = MirageInput.MirageContinuousInputBatch.batches(from: event, streamID: streamID) else {
             return false
         }
 
@@ -35,7 +43,7 @@ final class MirageContinuousInputBatcher: @unchecked Sendable {
         return true
     }
 
-    func flush() -> [MirageContinuousInputBatch] {
+    func flush() -> [MirageInput.MirageContinuousInputBatch] {
         let batches = pendingBatches
         pendingBatches.removeAll(keepingCapacity: true)
         return batches
@@ -45,7 +53,7 @@ final class MirageContinuousInputBatcher: @unchecked Sendable {
         pendingBatches.removeAll(keepingCapacity: false)
     }
 
-    private func append(_ batch: MirageContinuousInputBatch) {
+    private func append(_ batch: MirageInput.MirageContinuousInputBatch) {
         if let last = pendingBatches.last,
            let merged = last.appending(batch) {
             pendingBatches[pendingBatches.count - 1] = merged
@@ -84,7 +92,7 @@ final class MirageContinuousInputBatcher: @unchecked Sendable {
         if remainingSamples.isEmpty {
             pendingBatches.remove(at: batchIndex)
         } else {
-            pendingBatches[batchIndex] = MirageContinuousInputBatch(
+            pendingBatches[batchIndex] = MirageInput.MirageContinuousInputBatch(
                 streamID: batch.streamID,
                 sequence: batch.sequence,
                 kind: batch.kind,

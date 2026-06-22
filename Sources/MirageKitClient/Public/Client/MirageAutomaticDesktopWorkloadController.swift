@@ -7,9 +7,17 @@
 //  Automatic desktop workload policy for pipeline-bound streams.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreGraphics
 import Foundation
-import MirageKit
 
 public enum MirageAdaptiveQualityPriority: String, Codable, CaseIterable, Sendable {
     case preserveResolutionAndBitrate
@@ -50,7 +58,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
 
     /// Consumes one metrics sample and returns a workload action when pressure is sustained.
     public mutating func advance(
-        snapshot: MirageClientMetricsSnapshot?,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot?,
         resizeCriticalSectionActive: Bool,
         minimumTargetFrameRate: Int = 30,
         maximumTargetFrameRate: Int = 60,
@@ -302,7 +310,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     }
 
     private static func isSevereClientPresentationCollapse(
-        snapshot: MirageClientMetricsSnapshot?,
+        snapshot: MirageDiagnostics.MirageClientMetricsSnapshot?,
         currentTier: MirageAutomaticDesktopWorkloadTier
     )
     -> Bool {

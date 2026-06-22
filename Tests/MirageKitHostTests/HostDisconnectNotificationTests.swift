@@ -12,8 +12,11 @@
 @testable import MirageKitClient
 @testable import MirageKitHost
 import Foundation
+import Loom
+import MirageConnectivity
 import Network
 import Testing
+import MirageWire
 
 @Suite("Host Disconnect Notification", .serialized)
 struct HostDisconnectNotificationTests {
@@ -52,7 +55,7 @@ struct HostDisconnectNotificationTests {
             sessionID: sessionID,
             client: client,
             controlChannel: serverControl,
-            transferEngine: LoomTransferEngine(session: pair.server),
+            transferEngine: MirageTransferEngine(session: pair.server),
             pathSnapshot: nil
         )
         host.connectedClients = [client]
@@ -70,7 +73,7 @@ struct HostDisconnectNotificationTests {
         do {
             let message = try await receiveTask.value
             #expect(message.type == .disconnect)
-            let disconnect = try message.decode(DisconnectMessage.self)
+            let disconnect = try message.decode(MirageWire.DisconnectMessage.self)
             #expect(disconnect.reason == .userRequested)
 
             await disconnectTask.value
@@ -118,7 +121,7 @@ struct HostDisconnectNotificationTests {
             sessionID: oldSessionID,
             client: oldClient,
             controlChannel: oldServerControl,
-            transferEngine: LoomTransferEngine(session: oldPair.server),
+            transferEngine: MirageTransferEngine(session: oldPair.server),
             pathSnapshot: nil
         )
         host.connectedClients = [oldClient]
@@ -137,7 +140,7 @@ struct HostDisconnectNotificationTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: 1),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(MirageKit.protocolVersion),
+                protocolVersion: Int(MirageWireProtocol.currentControlVersion),
                 deviceID: hostID,
                 deviceType: .mac
             )

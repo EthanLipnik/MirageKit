@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 
 @MainActor
@@ -15,11 +23,11 @@ public extension MirageHostService {
     func resolveEncoderConfiguration(
         keyFrameInterval: Int?,
         targetFrameRate: Int?,
-        colorDepth: MirageStreamColorDepth?,
+        colorDepth: MirageMedia.MirageStreamColorDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?,
-        upscalingMode: MirageUpscalingMode? = nil,
-        codec: MirageVideoCodec? = nil
+        upscalingMode: MirageMedia.MirageUpscalingMode? = nil,
+        codec: MirageMedia.MirageVideoCodec? = nil
     ) -> MirageEncoderConfiguration {
         var effectiveEncoderConfig = encoderConfig
         let requestedColorDepth = colorDepth
@@ -55,7 +63,7 @@ public extension MirageHostService {
             MirageLogger.host("Applying BGRA pixel format for MetalFX \(upscalingMode.displayName) upscaling")
         }
 
-        if let normalized = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        if let normalized = MirageMedia.MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: effectiveEncoderConfig.bitrate
         ) {
             effectiveEncoderConfig.bitrate = normalized

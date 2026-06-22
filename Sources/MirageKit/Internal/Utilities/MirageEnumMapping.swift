@@ -1,3 +1,10 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 //
 //  MirageEnumMapping.swift
 //  MirageKit

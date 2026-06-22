@@ -7,9 +7,17 @@
 //  Sizing helpers for stream context.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreVideo
 import Foundation
-import MirageKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -33,7 +41,7 @@ extension StreamContext {
         let effectiveEncoderMaxHeight = disableResolutionCap
             ? nil
             : encoderMaxHeight ?? Int(Self.maxEncodedHeight)
-        let plan = MirageStreamGeometry.resolveEncodedPlan(
+        let plan = MirageMedia.MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: baseSize,
             requestedStreamScale: requestedScale,
             encoderMaxWidth: effectiveEncoderMaxWidth,

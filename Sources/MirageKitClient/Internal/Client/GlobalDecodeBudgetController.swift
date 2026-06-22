@@ -5,8 +5,16 @@
 //  Created by Ethan Lipnik on 2/28/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 actor GlobalDecodeBudgetController {
     /// Maximum number of decode submissions allowed to run concurrently.

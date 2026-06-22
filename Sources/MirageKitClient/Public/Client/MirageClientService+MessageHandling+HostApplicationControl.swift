@@ -1,3 +1,12 @@
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 //
 //  MirageClientService+MessageHandling+HostApplicationControl.swift
 //  MirageKit
@@ -7,14 +16,13 @@
 //  Client host-application control message handling.
 //
 
-import MirageKit
 
 @MainActor
 extension MirageClientService {
     /// Decodes the host restart result and forwards it to client UI observers.
-    func handleHostApplicationRestartResult(_ message: ControlMessage) {
+    func handleHostApplicationRestartResult(_ message: MirageWire.ControlMessage) {
         do {
-            let restartResultMessage = try message.decode(HostApplicationRestartResultMessage.self)
+            let restartResultMessage = try message.decode(MirageWire.HostApplicationRestartResultMessage.self)
             onHostApplicationRestartResult?(
                 HostApplicationRestartResult(
                     accepted: restartResultMessage.accepted,

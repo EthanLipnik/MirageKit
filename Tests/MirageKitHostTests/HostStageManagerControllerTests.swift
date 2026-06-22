@@ -11,6 +11,7 @@
 @testable import MirageKitHost
 import CoreGraphics
 import Foundation
+import MirageWire
 import Testing
 
 @Suite("Host Stage Manager controller")
@@ -321,7 +322,7 @@ extension HostStageManagerControllerTests {
 
     static func pendingLockedAppStreamIntent(appSessionID: UUID) -> MirageHostService.PendingLockedAppStreamIntent {
         MirageHostService.PendingLockedAppStreamIntent(
-            request: SelectAppMessage(
+            request: MirageWire.SelectAppMessage(
                 appSessionID: appSessionID,
                 bundleIdentifier: "com.example.App",
                 targetFrameRate: 60,

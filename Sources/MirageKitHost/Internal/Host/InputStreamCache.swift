@@ -5,14 +5,22 @@
 //  Created by Ethan Lipnik on 1/5/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 
 struct AppStreamInputOverlayRegion: Equatable {
     /// Auxiliary child window that receives input when the region matches.
-    let window: MirageWindow
+    let window: MirageMedia.MirageWindow
     /// Child window bounds in the parent stream's normalized coordinate space.
     let normalizedRect: CGRect
     /// Higher values receive hit-test priority when regions overlap.
@@ -24,7 +32,7 @@ struct AppStreamInputOverlayRegion: Equatable {
 /// Cached stream entry with the window and client context needed for the fast input path.
 struct InputStreamCacheEntry {
     /// Parent stream window used as the default input target.
-    var window: MirageWindow
+    var window: MirageMedia.MirageWindow
     /// Client authorized to send input for this stream.
     var client: MirageConnectedClient
     /// Auxiliary overlay hit-test regions associated with this stream.
@@ -34,9 +42,9 @@ struct InputStreamCacheEntry {
 /// Input target resolved from a stream ID after auxiliary overlay hit testing.
 struct AppStreamResolvedInputTarget {
     /// Possibly rewritten input event for the resolved target window.
-    let event: MirageInputEvent
+    let event: MirageInput.MirageInputEvent
     /// Host window that should receive the event.
-    let window: MirageWindow
+    let window: MirageMedia.MirageWindow
     /// Client authorized for the stream.
     let client: MirageConnectedClient
 }
@@ -45,14 +53,14 @@ struct AppStreamResolvedInputTarget {
 enum AppStreamInputOverlayRouting {
     /// Routed event and destination host window.
     struct Result {
-        let event: MirageInputEvent
-        let window: MirageWindow
+        let event: MirageInput.MirageInputEvent
+        let window: MirageMedia.MirageWindow
     }
 
     /// Returns the destination window and rewrites pointer coordinates into child-region space when needed.
     static func route(
-        event: MirageInputEvent,
-        parentWindow: MirageWindow,
+        event: MirageInput.MirageInputEvent,
+        parentWindow: MirageMedia.MirageWindow,
         regions: [AppStreamInputOverlayRegion]
     ) -> Result {
         let sortedRegions = regions
@@ -101,7 +109,7 @@ enum AppStreamInputOverlayRouting {
     }
 
     /// Returns the normalized pointer location used to hit-test overlay regions.
-    private static func hitTestLocation(for event: MirageInputEvent) -> CGPoint? {
+    private static func hitTestLocation(for event: MirageInput.MirageInputEvent) -> CGPoint? {
         switch event {
         case let .mouseDown(event),
              let .mouseUp(event),
@@ -138,9 +146,9 @@ enum AppStreamInputOverlayRouting {
 
     /// Rewrites a pointer-like event from parent coordinates into an overlay region.
     private static func rewrite(
-        event: MirageInputEvent,
+        event: MirageInput.MirageInputEvent,
         through rect: CGRect
-    ) -> MirageInputEvent? {
+    ) -> MirageInput.MirageInputEvent? {
         switch event {
         case let .mouseDown(event):
             .mouseDown(rewrite(mouseEvent: event, through: rect))
@@ -185,8 +193,8 @@ enum AppStreamInputOverlayRouting {
     }
 
     /// Rewrites a mouse event location through an overlay region.
-    private static func rewrite(mouseEvent event: MirageMouseEvent, through rect: CGRect) -> MirageMouseEvent {
-        MirageMouseEvent(
+    private static func rewrite(mouseEvent event: MirageInput.MirageMouseEvent, through rect: CGRect) -> MirageInput.MirageMouseEvent {
+        MirageInput.MirageMouseEvent(
             button: event.button,
             location: map(location: event.location, through: rect),
             clickCount: event.clickCount,
@@ -198,8 +206,8 @@ enum AppStreamInputOverlayRouting {
     }
 
     /// Rewrites a scroll event location through an overlay region.
-    private static func rewrite(scrollEvent event: MirageScrollEvent, through rect: CGRect) -> MirageScrollEvent {
-        MirageScrollEvent(
+    private static func rewrite(scrollEvent event: MirageInput.MirageScrollEvent, through rect: CGRect) -> MirageInput.MirageScrollEvent {
+        MirageInput.MirageScrollEvent(
             deltaX: event.deltaX,
             deltaY: event.deltaY,
             location: event.location.map { map(location: $0, through: rect) },
@@ -212,8 +220,8 @@ enum AppStreamInputOverlayRouting {
     }
 
     /// Rewrites a magnify event location through an overlay region.
-    private static func rewrite(magnifyEvent event: MirageMagnifyEvent, through rect: CGRect) -> MirageMagnifyEvent {
-        MirageMagnifyEvent(
+    private static func rewrite(magnifyEvent event: MirageInput.MirageMagnifyEvent, through rect: CGRect) -> MirageInput.MirageMagnifyEvent {
+        MirageInput.MirageMagnifyEvent(
             magnification: event.magnification,
             location: event.location.map { map(location: $0, through: rect) },
             phase: event.phase,
@@ -223,8 +231,8 @@ enum AppStreamInputOverlayRouting {
     }
 
     /// Rewrites a rotate event location through an overlay region.
-    private static func rewrite(rotateEvent event: MirageRotateEvent, through rect: CGRect) -> MirageRotateEvent {
-        MirageRotateEvent(
+    private static func rewrite(rotateEvent event: MirageInput.MirageRotateEvent, through rect: CGRect) -> MirageInput.MirageRotateEvent {
+        MirageInput.MirageRotateEvent(
             rotation: event.rotation,
             location: event.location.map { map(location: $0, through: rect) },
             phase: event.phase,
@@ -234,8 +242,8 @@ enum AppStreamInputOverlayRouting {
     }
 
     /// Rewrites a swipe event location through an overlay region.
-    private static func rewrite(swipeEvent event: MirageSwipeEvent, through rect: CGRect) -> MirageSwipeEvent {
-        MirageSwipeEvent(
+    private static func rewrite(swipeEvent event: MirageInput.MirageSwipeEvent, through rect: CGRect) -> MirageInput.MirageSwipeEvent {
+        MirageInput.MirageSwipeEvent(
             deltaX: event.deltaX,
             deltaY: event.deltaY,
             location: event.location.map { map(location: $0, through: rect) },
@@ -247,17 +255,17 @@ enum AppStreamInputOverlayRouting {
 
     /// Rewrites every sample in a pointer batch through an overlay region.
     private static func rewrite(
-        pointerSampleBatch batch: MiragePointerSampleBatch,
+        pointerSampleBatch batch: MirageInput.MiragePointerSampleBatch,
         through rect: CGRect
-    ) -> MiragePointerSampleBatch {
-        MiragePointerSampleBatch(
+    ) -> MirageInput.MiragePointerSampleBatch {
+        MirageInput.MiragePointerSampleBatch(
             phase: batch.phase,
             button: batch.button,
             modifiers: batch.modifiers,
             clickCount: batch.clickCount,
             isButtonPressed: batch.isButtonPressed,
             samples: batch.samples.map { sample in
-                MiragePointerSample(
+                MirageInput.MiragePointerSample(
                     location: map(location: sample.location, through: rect),
                     pressure: sample.pressure,
                     stylus: sample.stylus,
@@ -293,7 +301,7 @@ final class InputStreamCache: @unchecked Sendable {
     private let lock = NSLock()
 
     /// Stores the current input mapping for a stream.
-    func set(_ streamID: StreamID, window: MirageWindow, client: MirageConnectedClient) {
+    func set(_ streamID: StreamID, window: MirageMedia.MirageWindow, client: MirageConnectedClient) {
         lock.lock()
         defer { lock.unlock() }
         cache[streamID] = InputStreamCacheEntry(window: window, client: client)
@@ -314,7 +322,7 @@ final class InputStreamCache: @unchecked Sendable {
     }
 
     /// Resolves the stream's current target window and rewrites the event for auxiliary overlays.
-    func resolveInputTarget(streamID: StreamID, event: MirageInputEvent) -> AppStreamResolvedInputTarget? {
+    func resolveInputTarget(streamID: StreamID, event: MirageInput.MirageInputEvent) -> AppStreamResolvedInputTarget? {
         lock.lock()
         defer { lock.unlock() }
         guard let entry = cache[streamID] else { return nil }
@@ -344,7 +352,7 @@ final class InputStreamCache: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard var entry = cache[streamID] else { return }
-        entry.window = MirageWindow(
+        entry.window = MirageMedia.MirageWindow(
             id: entry.window.id,
             title: entry.window.title,
             application: entry.window.application,

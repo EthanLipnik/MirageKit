@@ -7,10 +7,18 @@
 //  Loom-authenticated control session lifecycle and Mirage bootstrap.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 #if os(macOS)
 @MainActor
@@ -36,6 +44,8 @@ extension MirageHostService {
         delegate?.didDiscoverPeer(advertisement: context.peerAdvertisement)
 
         let peerIdentity = context.peerIdentity
+        let miragePeerIdentity = MirageAuthenticatedPeerIdentity(loomPeerIdentity: peerIdentity)
+        let trustEvaluation = MirageTrustEvaluationSnapshot(loomTrustEvaluation: context.trustEvaluation)
         let sessionID = session.id
         let transportKind = await session.transportKind
         let remoteEndpoint = await session.remoteEndpoint
@@ -68,8 +78,8 @@ extension MirageHostService {
             return
         }
 
-        await waitForDisconnectCompletionIfNeeded(for: peerIdentity)
-        await preemptExistingClientIfSuperseded(by: peerIdentity)
+        await waitForDisconnectCompletionIfNeeded(for: miragePeerIdentity)
+        await preemptExistingClientIfSuperseded(by: miragePeerIdentity)
 
         // Release stale slot reservation left by an incomplete cleanup.
         // Safe because preemptExistingClientIfSuperseded already handled any
@@ -138,7 +148,7 @@ extension MirageHostService {
                 do {
                     bootstrapPhase = "approval-rejection-control-channel"
                     let controlChannel = try await MirageControlChannel.accept(from: session)
-                    let authorizationFailureReason: MirageSessionBootstrapAuthorizationFailureReason? =
+                    let authorizationFailureReason: MirageWire.MirageSessionBootstrapAuthorizationFailureReason? =
                         origin == .remote ? .remoteAccessDisabled : nil
                     let rejection = makeRejectedBootstrapResponse(
                         reason: .unauthorized,
@@ -185,9 +195,9 @@ extension MirageHostService {
             if let busyClientContext = busyClientContext(forIncomingSessionID: sessionID) {
                 if let rejectionReason = busyHostTakeoverRejectionReason(
                     for: bootstrap,
-                    trustEvaluation: context.trustEvaluation,
+                    trustEvaluation: trustEvaluation,
                     existingClient: busyClientContext.client,
-                    incomingPeerIdentity: peerIdentity
+                    incomingPeerIdentity: miragePeerIdentity
                 ) {
                     MirageLogger.host(
                         "Connection from \(peerIdentity.name) rejected while host is busy reason=\(rejectionReason.rawValue)"
@@ -259,9 +269,12 @@ extension MirageHostService {
                 id: peerIdentity.deviceID,
                 name: peerIdentity.name,
                 deviceType: peerIdentity.deviceType,
+                mirageDeviceType: MirageConnectedClient.mirageDeviceType(from: peerIdentity.deviceType),
                 connectedAt: .now,
                 identityKeyID: peerIdentity.identityKeyID,
-                autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice,
+                authenticatedPeerIdentity: miragePeerIdentity,
+                trustEvaluation: trustEvaluation,
+                autoTrustGranted: trustEvaluation.shouldShowAutoTrustNotice,
                 connectionOrigin: origin,
                 peerAdvertisement: context.peerAdvertisement
             )
@@ -270,7 +283,7 @@ extension MirageHostService {
                 sessionID: sessionID,
                 client: client,
                 controlChannel: controlChannel,
-                transferEngine: LoomTransferEngine(session: session),
+                transferEngine: MirageTransferEngine(session: session),
                 pathSnapshot: pathSnapshot
             )
             connectedClients.append(client)
@@ -292,7 +305,7 @@ extension MirageHostService {
         } catch {
             if Task.isCancelled {
                 singleClientSlotReleaseReason = "bootstrap-cancelled-\(bootstrapPhase)"
-            } else if case let MirageError.protocolError(message) = error,
+            } else if case let MirageCore.MirageError.protocolError(message) = error,
                       message.hasPrefix("Timed out waiting") {
                 singleClientSlotReleaseReason = "bootstrap-timeout-\(bootstrapPhase)"
             } else {
@@ -300,7 +313,7 @@ extension MirageHostService {
             }
             if isExpectedBootstrapConnectionClosure(error) ||
                 isFatalConnectionError(error) ||
-                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageConnectionErrorClassifier.isLikelyUserDependent(error: error) {
                 MirageLogger.host("Mirage Loom control session closed during bootstrap: \(error.localizedDescription)")
             } else {
                 MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
@@ -324,4 +337,5 @@ private extension LoomPeerIdentity {
         )
     }
 }
+
 #endif

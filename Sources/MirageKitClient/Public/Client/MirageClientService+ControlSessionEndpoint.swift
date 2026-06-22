@@ -5,10 +5,18 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
 import Network
-import MirageKit
 
 private let experimentalSystemProximityRoutingEnvironmentKey = "MIRAGE_EXPERIMENTAL_SYSTEM_PROXIMITY_ROUTING"
 private let experimentalSystemProximityEndpointSource = "bonjour-system-proximity-service"
@@ -881,7 +889,7 @@ extension MirageClientService {
             return false
         }
 
-        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+        let hostNetwork = MirageConnectivity.MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
             from: host.advertisement
         )
         guard !localNetwork.allSubnetSignatures.isEmpty,
@@ -961,7 +969,7 @@ extension MirageClientService {
         to host: LoomPeer,
         localNetwork: ControlSessionNetworkDiagnostics
     ) -> Bool {
-        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+        let hostNetwork = MirageConnectivity.MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
             from: host.advertisement
         )
         let localWired = Set(localNetwork.wiredSubnetSignatures)
@@ -981,7 +989,7 @@ extension MirageClientService {
         to host: LoomPeer,
         localNetwork: ControlSessionNetworkDiagnostics
     ) -> Bool {
-        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+        let hostNetwork = MirageConnectivity.MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
             from: host.advertisement
         )
         let localWired = Set(localNetwork.wiredSubnetSignatures)

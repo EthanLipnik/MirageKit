@@ -8,7 +8,8 @@
 import CoreFoundation
 import CoreGraphics
 import Foundation
-import MirageKit
+import MirageCore
+import MirageMedia
 
 #if os(macOS)
 struct StreamQualityContract: Sendable, Equatable {

@@ -11,7 +11,12 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import CoreGraphics
+import Foundation
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageMedia
+import MirageWire
 
 @Suite("Desktop Stream Start Acceptance Decision")
 struct DesktopStreamStartAcceptanceDecisionTests {
@@ -52,12 +57,12 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.desktopDimensionTokenByStream[9] = 22
         service.desktopDimensionTokenByStream[11] = 5
 
-        let stopped = DesktopStreamStoppedMessage(
+        let stopped = MirageWire.DesktopStreamStoppedMessage(
             streamID: 9,
             desktopSessionID: desktopSessionID,
             reason: .clientRequested
         )
-        let envelope = try ControlMessage(type: .desktopStreamStopped, content: stopped)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStopped, content: stopped)
         service.handleDesktopStreamStopped(envelope)
 
         #expect(service.desktopDimensionTokenByStream[9] == nil)
@@ -136,7 +141,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let staleStarted = DesktopStreamStartedMessage(
+        let staleStarted = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: service.desktopSessionID!,
             width: 3200,
@@ -150,7 +155,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             transitionPhase: .resize,
             transitionOutcome: .resized
         )
-        let envelope = try ControlMessage(type: .desktopStreamStarted, content: staleStarted)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: staleStarted)
 
         await service.handleDesktopStreamStarted(envelope)
 
@@ -195,7 +200,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let staleStarted = DesktopStreamStartedMessage(
+        let staleStarted = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: service.desktopSessionID!,
             width: 2048,
@@ -211,7 +216,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryContractID: UUID()
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: staleStarted))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: staleStarted))
 
         #expect(service.desktopStreamResolution == initialResolution)
         #expect(service.desktopDimensionTokenByStream[streamID] == 4)
@@ -260,7 +265,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: service.desktopSessionID!,
             width: Int(hostEncodedPixelSize.width),
@@ -285,7 +290,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryRefreshTargetHz: 45
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamResolution == hostEncodedPixelSize)
         #expect(service.desktopStreamPresentationResolution == target.logicalResolution)
@@ -475,7 +480,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             )
         )
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: service.desktopSessionID!,
             width: 3024,
@@ -489,7 +494,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             transitionPhase: .resize,
             transitionOutcome: .resized
         )
-        let envelope = try ControlMessage(type: .desktopStreamStarted, content: started)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started)
 
         await service.handleDesktopStreamStarted(envelope)
 
@@ -637,7 +642,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             )
         )
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 3024,
@@ -653,7 +658,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopPresentationGeneration: 3
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamResolution == CGSize(width: 1984, height: 2192))
         #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 4)
@@ -683,7 +688,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             )
         )
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 3024,
@@ -699,7 +704,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopPresentationGeneration: 5
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamResolution == CGSize(width: 1984, height: 2192))
         #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 4)
@@ -721,7 +726,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.desktopResizeCoordinator.clearLocalPresentationState()
         service.desktopResizeCoordinator.activeTransition = nil
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 3024,
@@ -737,7 +742,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopPresentationGeneration: 2
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
         #expect(service.desktopDimensionTokenByStream[streamID] == 8)
@@ -764,7 +769,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             encoderMaxWidth: 2360,
             encoderMaxHeight: 1640
         )
-        let geometry = MirageStreamGeometry.resolve(
+        let geometry = MirageMedia.MirageStreamGeometry.resolve(
             logicalSize: target.logicalResolution,
             displayScaleFactor: target.displayScaleFactor,
             requestedStreamScale: target.requestedStreamScale,
@@ -778,7 +783,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.controllersByStream[streamID] = controller
         service.desktopResizeCoordinator.lastSentTarget = target
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: Int(geometry.displayPixelSize.width),
@@ -804,7 +809,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryRefreshTargetHz: 45
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamResolution == geometry.displayPixelSize)
         #expect(service.desktopDimensionTokenByStream[streamID] == 8)
@@ -837,7 +842,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             encoderMaxHeight: 1640
         )
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 3024,
@@ -856,7 +861,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryRefreshTargetHz: 45
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamResolution == CGSize(width: 1984, height: 2192))
         #expect(service.desktopDimensionTokenByStream[streamID] == nil)
@@ -878,7 +883,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.controllersByStream[streamID] = controller
         service.desktopDimensionTokenByStream[streamID] = 4
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 3024,
@@ -889,7 +894,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             dimensionToken: 5,
             acceptedMediaMaxPacketSize: 1400
         )
-        let envelope = try ControlMessage(type: .desktopStreamStarted, content: started)
+        let envelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started)
 
         await service.handleDesktopStreamStarted(envelope)
 
@@ -920,7 +925,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.desktopResizeCoordinator.lastSentTarget = startupTarget
         service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 2732,
@@ -934,7 +939,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             presentationHeight: 1024
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
 
@@ -1042,7 +1047,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: UUID(),
             width: 2048,
@@ -1058,7 +1063,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryContractID: UUID()
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamID == nil)
         #expect(service.desktopSessionID == nil)
@@ -1091,7 +1096,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: UUID(),
             width: 2048,
@@ -1106,7 +1111,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             presentationHeight: 768
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamID == nil)
         #expect(service.desktopSessionID == nil)
@@ -1137,7 +1142,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 2048,
@@ -1153,7 +1158,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             presentationHeight: 768
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamID == nil)
         #expect(service.desktopSessionID == nil)
@@ -1175,7 +1180,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: UUID(),
             width: 2732,
@@ -1197,7 +1202,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryRefreshTargetHz: 60
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamID == nil)
         #expect(service.desktopSessionID == nil)
@@ -1232,7 +1237,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: Int(hostDisplayPixelSize.width),
@@ -1255,7 +1260,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryRefreshTargetHz: 60
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamID == streamID)
         #expect(service.desktopSessionID == desktopSessionID)
@@ -1296,7 +1301,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 2048,
@@ -1319,7 +1324,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             desktopGeometryRefreshTargetHz: 60
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamID == streamID)
         #expect(service.desktopSessionID == desktopSessionID)
@@ -1357,7 +1362,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.desktopResizeCoordinator.queueLatestTarget(matchingQueuedTarget)
         service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 2752,
@@ -1373,7 +1378,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             presentationHeight: 1200
         )
 
-        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+        await service.handleDesktopStreamStarted(try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started))
 
         #expect(service.desktopStreamDisplayScaleFactor == 1.72)
         #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
@@ -1383,7 +1388,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.sessionStore.registerSession(
             streamID: streamID,
             mediaStreamID: streamID,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: WindowID(streamID),
                 title: "Desktop",
                 application: nil,
@@ -1433,12 +1438,12 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         service.desktopStreamMode = .unified
         service.desktopStreamResolution = CGSize(width: 2720, height: 2032)
 
-        let stopped = DesktopStreamStoppedMessage(
+        let stopped = MirageWire.DesktopStreamStoppedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             reason: .clientRequested
         )
-        let stoppedEnvelope = try ControlMessage(type: .desktopStreamStopped, content: stopped)
+        let stoppedEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStopped, content: stopped)
         service.handleDesktopStreamStopped(stoppedEnvelope)
 
         var callbackCount = 0
@@ -1446,7 +1451,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             callbackCount += 1
         }
 
-        let staleStarted = DesktopStreamStartedMessage(
+        let staleStarted = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: 2720,
@@ -1458,7 +1463,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             acceptedMediaMaxPacketSize: 1200,
             transitionPhase: .startup
         )
-        let staleEnvelope = try ControlMessage(type: .desktopStreamStarted, content: staleStarted)
+        let staleEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: staleStarted)
         await service.handleDesktopStreamStarted(staleEnvelope)
 
         #expect(service.retiredDesktopSessionIDs.contains(desktopSessionID))
@@ -1488,7 +1493,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         let sessionID = service.sessionStore.createSession(
             streamID: streamID,
             mediaStreamID: streamID,
-            window: MirageWindow(
+            window: MirageMedia.MirageWindow(
                 id: 3101,
                 title: "Desktop",
                 application: nil,
@@ -1502,7 +1507,7 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         )
         service.sessionStore.markFirstFramePresented(for: streamID)
 
-        let started = DesktopStreamStartedMessage(
+        let started = MirageWire.DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: newDesktopSessionID,
             width: 3024,
@@ -1514,15 +1519,15 @@ struct DesktopStreamStartAcceptanceDecisionTests {
             acceptedMediaMaxPacketSize: 1400,
             transitionPhase: .startup
         )
-        let startedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: started)
+        let startedEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStarted, content: started)
         await service.handleDesktopStreamStarted(startedEnvelope)
 
-        let lateStopped = DesktopStreamStoppedMessage(
+        let lateStopped = MirageWire.DesktopStreamStoppedMessage(
             streamID: streamID,
             desktopSessionID: oldDesktopSessionID,
             reason: .clientRequested
         )
-        let stoppedEnvelope = try ControlMessage(type: .desktopStreamStopped, content: lateStopped)
+        let stoppedEnvelope = try MirageWire.ControlMessage(type: .desktopStreamStopped, content: lateStopped)
         service.handleDesktopStreamStopped(stoppedEnvelope)
 
         #expect(service.desktopStreamID == streamID)
@@ -1539,8 +1544,8 @@ struct DesktopStreamStartAcceptanceDecisionTests {
         }
     }
 
-    private static func awdlRadioSnapshot() -> MirageNetworkPathSnapshot {
-        MirageNetworkPathClassifier.classify(
+    private static func awdlRadioSnapshot() -> MirageConnectivity.MirageNetworkPathSnapshot {
+        MirageConnectivity.MirageNetworkPathClassifier.classify(
             interfaceNames: ["awdl0"],
             usesWiFi: false,
             usesWired: false,

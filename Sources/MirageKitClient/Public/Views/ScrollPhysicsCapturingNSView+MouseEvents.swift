@@ -5,7 +5,15 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 import AppKit
 import QuartzCore
@@ -26,11 +34,11 @@ extension ScrollPhysicsCapturingNSView {
             location = normalizedLocation(from: event)
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.mouseDown(mouseEvent))
     }
@@ -46,11 +54,11 @@ extension ScrollPhysicsCapturingNSView {
             location = normalizedLocation(from: event)
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.mouseUp(mouseEvent))
     }
@@ -76,11 +84,11 @@ extension ScrollPhysicsCapturingNSView {
             }
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.mouseDragged(mouseEvent))
     }
@@ -110,11 +118,11 @@ extension ScrollPhysicsCapturingNSView {
 
         guard movedByDelta else { return }
 
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .left,
             location: location,
             clickCount: 0,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.mouseMoved(mouseEvent))
     }
@@ -144,11 +152,11 @@ extension ScrollPhysicsCapturingNSView {
             location = normalizedLocation(from: event)
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.rightMouseDown(mouseEvent))
     }
@@ -164,11 +172,11 @@ extension ScrollPhysicsCapturingNSView {
             location = normalizedLocation(from: event)
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.rightMouseUp(mouseEvent))
     }
@@ -194,11 +202,11 @@ extension ScrollPhysicsCapturingNSView {
             }
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
+        let mouseEvent = MirageInput.MirageMouseEvent(
             button: .right,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.rightMouseDragged(mouseEvent))
     }
@@ -216,11 +224,11 @@ extension ScrollPhysicsCapturingNSView {
             location = normalizedLocation(from: event)
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
-            button: MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
+        let mouseEvent = MirageInput.MirageMouseEvent(
+            button: MirageInput.MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.otherMouseDown(mouseEvent))
     }
@@ -236,11 +244,11 @@ extension ScrollPhysicsCapturingNSView {
             location = normalizedLocation(from: event)
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
-            button: MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
+        let mouseEvent = MirageInput.MirageMouseEvent(
+            button: MirageInput.MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.otherMouseUp(mouseEvent))
     }
@@ -266,11 +274,11 @@ extension ScrollPhysicsCapturingNSView {
             }
             updateLocalMouseLocation(location)
         }
-        let mouseEvent = MirageMouseEvent(
-            button: MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
+        let mouseEvent = MirageInput.MirageMouseEvent(
+            button: MirageInput.MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
             location: location,
             clickCount: event.clickCount,
-            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            modifiers: MirageInput.MirageModifierFlags(nsEventFlags: event.modifierFlags)
         )
         onMouseEvent?(.otherMouseDragged(mouseEvent))
     }

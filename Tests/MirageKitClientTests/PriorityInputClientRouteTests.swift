@@ -6,12 +6,16 @@
 //
 
 #if os(macOS)
+@testable import MirageConnectivity
 @testable import MirageKit
 @testable import MirageKitClient
 import CoreGraphics
 import Foundation
 import Network
 import Testing
+import MirageCore
+import MirageInput
+import MirageWire
 
 @Suite("Priority Input Client Route")
 struct PriorityInputClientRouteTests {
@@ -31,11 +35,11 @@ struct PriorityInputClientRouteTests {
         sender.updatePriorityRoute(route)
 
         sender.sendInputFireAndForget(
-            .keyDown(MirageKeyEvent(keyCode: 0x31)),
+            .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x31)),
             streamID: 11
         )
         sender.sendInputFireAndForget(
-            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 1)),
+            .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 1)),
             streamID: 11
         )
 
@@ -45,9 +49,9 @@ struct PriorityInputClientRouteTests {
         try await waitUntil("continuous priority send") {
             endpoint.continuousPayloadCount > 0
         }
-        let continuousEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
+        let continuousEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
         endpoint.yield(
-            MiragePriorityInputEnvelope(
+            MirageWire.MiragePriorityInputEnvelope(
                 kind: .ack,
                 eventID: continuousEnvelope.eventID,
                 streamID: continuousEnvelope.streamID,
@@ -55,9 +59,9 @@ struct PriorityInputClientRouteTests {
                 sentAtUptime: ProcessInfo.processInfo.systemUptime
             )
         )
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstProtectedPayload))
+        let sentEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstProtectedPayload))
         endpoint.yield(
-            MiragePriorityInputEnvelope(
+            MirageWire.MiragePriorityInputEnvelope(
                 kind: .ack,
                 eventID: sentEnvelope.eventID,
                 streamID: sentEnvelope.streamID,
@@ -96,7 +100,7 @@ struct PriorityInputClientRouteTests {
         sender.updatePriorityRoute(route)
 
         try await sender.sendInput(
-            .keyDown(MirageKeyEvent(keyCode: 0x24)),
+            .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x24)),
             streamID: 11
         )
 
@@ -115,13 +119,13 @@ struct PriorityInputClientRouteTests {
         defer { route.stop() }
 
         try route.sendRealtime(
-            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
+            event: .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
             streamID: 12
         )
         let sentPayload = try await waitForPayload(endpoint: endpoint)
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(sentPayload)
+        let sentEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(sentPayload)
         endpoint.yield(
-            MiragePriorityInputEnvelope(
+            MirageWire.MiragePriorityInputEnvelope(
                 kind: .ack,
                 eventID: sentEnvelope.eventID,
                 streamID: sentEnvelope.streamID,
@@ -149,13 +153,13 @@ struct PriorityInputClientRouteTests {
         defer { route.stop() }
 
         try route.sendRealtime(
-            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
+            event: .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
             streamID: 12
         )
         let sentPayload = try await waitForPayload(endpoint: endpoint)
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(sentPayload)
+        let sentEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(sentPayload)
         endpoint.yield(
-            MiragePriorityInputEnvelope(
+            MirageWire.MiragePriorityInputEnvelope(
                 kind: .ack,
                 eventID: sentEnvelope.eventID,
                 streamID: sentEnvelope.streamID,
@@ -170,7 +174,7 @@ struct PriorityInputClientRouteTests {
         try await Task.sleep(for: .milliseconds(650))
 
         try route.sendRealtime(
-            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 2)),
+            event: .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 2)),
             streamID: 12
         )
         try await Task.sleep(for: .milliseconds(80))
@@ -189,7 +193,7 @@ struct PriorityInputClientRouteTests {
         defer { route.stop() }
 
         try route.sendRealtime(
-            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
+            event: .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
             streamID: 14
         )
 
@@ -211,11 +215,11 @@ struct PriorityInputClientRouteTests {
         }
         defer { route.stop() }
 
-        try route.sendContinuousBatch(MirageContinuousInputBatch(
+        try route.sendContinuousBatch(MirageInput.MirageContinuousInputBatch(
             streamID: 17,
             kind: .mouseMoved,
             samples: [
-                MirageContinuousInputBatch.Sample(
+                MirageInput.MirageContinuousInputBatch.Sample(
                     timestamp: 1,
                     location: CGPoint(x: 0.2, y: 0.3)
                 ),
@@ -229,10 +233,10 @@ struct PriorityInputClientRouteTests {
             await fallbackRecorder.count == 1
         }
 
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
-        let sentBatch = try MirageContinuousInputBatch.deserialize(sentEnvelope.inputPayload)
+        let sentEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
+        let sentBatch = try MirageInput.MirageContinuousInputBatch.deserialize(sentEnvelope.inputPayload)
         let fallbackEnvelope = try await fallbackRecorder.firstEnvelope()
-        let fallbackBatch = try MirageContinuousInputBatch.deserialize(fallbackEnvelope.inputPayload)
+        let fallbackBatch = try MirageInput.MirageContinuousInputBatch.deserialize(fallbackEnvelope.inputPayload)
 
         #expect(sentEnvelope.kind == .continuousInput)
         #expect(sentBatch.kind == .mouseMoved)
@@ -252,11 +256,11 @@ struct PriorityInputClientRouteTests {
         }
         defer { route.stop() }
 
-        try route.sendContinuousBatch(MirageContinuousInputBatch(
+        try route.sendContinuousBatch(MirageInput.MirageContinuousInputBatch(
             streamID: 18,
             kind: .mouseMoved,
             samples: [
-                MirageContinuousInputBatch.Sample(
+                MirageInput.MirageContinuousInputBatch.Sample(
                     timestamp: 1,
                     location: CGPoint(x: 0.2, y: 0.3)
                 ),
@@ -265,8 +269,8 @@ struct PriorityInputClientRouteTests {
         try await waitUntil("continuous priority payload") {
             endpoint.firstContinuousPayload != nil
         }
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
-        endpoint.yield(MiragePriorityInputEnvelope(
+        let sentEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
+        endpoint.yield(MirageWire.MiragePriorityInputEnvelope(
             kind: .ack,
             eventID: sentEnvelope.eventID,
             streamID: sentEnvelope.streamID,
@@ -292,7 +296,7 @@ struct PriorityInputClientRouteTests {
 
         for index in 0 ..< 3 {
             try route.sendRealtime(
-                event: .mouseMoved(MirageMouseEvent(
+                event: .mouseMoved(MirageInput.MirageMouseEvent(
                     location: CGPoint(x: CGFloat(index), y: 0.3),
                     timestamp: TimeInterval(index)
                 )),
@@ -305,7 +309,7 @@ struct PriorityInputClientRouteTests {
         }
 
         let fallbackEnvelope = try await fallbackRecorder.firstEnvelope()
-        let inputMessage = try InputEventMessage.deserializePayload(fallbackEnvelope.inputPayload)
+        let inputMessage = try MirageWire.InputEventMessage.deserializePayload(fallbackEnvelope.inputPayload)
         #expect(endpoint.realtimePayloadCount == 3)
         #expect(route.snapshot().realtimeFallbackCount == 1)
         #expect(route.snapshot().realtimeCoalescedCount == 0)
@@ -322,7 +326,7 @@ struct PriorityInputClientRouteTests {
         defer { route.stop() }
 
         try await route.send(
-            event: .keyDown(MirageKeyEvent(keyCode: 0x24)),
+            event: .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x24)),
             streamID: 13,
             deliveryMode: .reliable
         )
@@ -343,7 +347,7 @@ struct PriorityInputClientRouteTests {
         defer { route.stop() }
 
         try await route.send(
-            event: .keyDown(MirageKeyEvent(keyCode: 0x24)),
+            event: .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x24)),
             streamID: 13,
             deliveryMode: .orderedBestEffort
         )
@@ -364,19 +368,19 @@ struct PriorityInputClientRouteTests {
 
         let sendTask = Task {
             try await route.send(
-                event: .keyDown(MirageKeyEvent(keyCode: 0x24)),
+                event: .keyDown(MirageInput.MirageKeyEvent(keyCode: 0x24)),
                 streamID: 13,
                 deliveryMode: .orderedBestEffort
             )
         }
 
-        try await waitUntil("ordered protected fallback", timeout: .milliseconds(250)) {
+        try await waitUntil("ordered protected fallback") {
             await fallbackRecorder.count == 1
         }
 
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstProtectedPayload))
+        let sentEnvelope = try MirageWire.MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstProtectedPayload))
         endpoint.yield(
-            MiragePriorityInputEnvelope(
+            MirageWire.MiragePriorityInputEnvelope(
                 kind: .ack,
                 eventID: sentEnvelope.eventID,
                 streamID: sentEnvelope.streamID,
@@ -463,7 +467,7 @@ struct PriorityInputClientRouteTests {
         defer { route.stop() }
 
         try route.sendRealtime(
-            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
+            event: .mouseMoved(MirageInput.MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
             streamID: 16
         )
 
@@ -640,7 +644,7 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
         stream
     }
 
-    func yield(_ envelope: MiragePriorityInputEnvelope) {
+    func yield(_ envelope: MirageWire.MiragePriorityInputEnvelope) {
         if let payload = try? envelope.serialize() {
             continuation.yield(payload)
         }
@@ -662,12 +666,12 @@ private actor PriorityFallbackRecorder {
         recordedModes
     }
 
-    func firstEnvelope() throws -> MiragePriorityInputEnvelope {
+    func firstEnvelope() throws -> MirageWire.MiragePriorityInputEnvelope {
         let data = try #require(payloads.first)
-        guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
-            throw MirageError.protocolError("Expected serialized priority input control message")
+        guard case let .success(message, _) = MirageWire.ControlMessage.deserialize(from: data) else {
+            throw MirageCore.MirageError.protocolError("Expected serialized priority input control message")
         }
-        return try MiragePriorityInputEnvelope.deserialize(message.payload)
+        return try MirageWire.MiragePriorityInputEnvelope.deserialize(message.payload)
     }
 }
 

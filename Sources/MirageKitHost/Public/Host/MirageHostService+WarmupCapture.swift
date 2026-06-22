@@ -5,8 +5,17 @@
 //  Created by Ethan Lipnik on 4/11/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import CoreGraphics
 #if os(macOS)
 @MainActor
 public extension MirageHostService {
@@ -16,22 +25,41 @@ public extension MirageHostService {
         frameRate: Int = 60
     ) async throws {
         let display = try await findMainSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
-        let captureEngine = WindowCaptureEngine(
+        let captureEngine = platformCaptureEngineFactoryBackend.makeCaptureEngine(
             configuration: encoderConfig,
+            capturePressureProfile: .baseline,
             latencyMode: .lowestLatency,
-            captureFrameRate: max(1, frameRate)
+            hostBufferingPolicy: .freshestFrame,
+            captureFrameRate: max(1, frameRate),
+            usesDisplayRefreshCadence: false
         )
 
+        let captureSourceBackend = MacOSHostCaptureSourceBackend(
+            captureEngineFactoryBackend: platformCaptureEngineFactoryBackend,
+            captureContentProviderBackend: platformCaptureContentProviderBackend
+        )
         do {
-            try await captureEngine.startDisplayCapture(
-                display: display.display,
-                showsCursor: false,
-                onFrame: { _ in }
+            try await captureSourceBackend.startCapture(
+                MirageHostCaptureRequest(
+                    source: .display(MirageHostDisplayID(display.display.displayID)),
+                    configuration: MirageHostCaptureConfiguration(
+                        logicalSize: CGSize(width: display.display.width, height: display.display.height),
+                        captureResolution: nil,
+                        showsCursor: false,
+                        targetFrameRate: max(1, frameRate),
+                        queueDepth: encoderConfig.captureQueueDepth ?? 1,
+                        capturesAudio: false,
+                        audioConfiguration: MirageMedia.MirageAudioConfiguration(enabled: false)
+                    )
+                ),
+                using: captureEngine,
+                onFrame: { _ in },
+                onAudio: nil
             )
             try await Task.sleep(for: duration)
-            await captureEngine.stopCapture()
+            await captureSourceBackend.stopCapture()
         } catch {
-            await captureEngine.stopCapture()
+            await captureSourceBackend.stopCapture()
             throw error
         }
     }

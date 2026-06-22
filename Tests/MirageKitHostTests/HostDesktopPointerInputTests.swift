@@ -7,8 +7,10 @@
 
 @testable import MirageKitHost
 import CoreGraphics
+import MirageInput
 import MirageKit
 import Testing
+import MirageWire
 
 #if os(macOS)
 @MainActor
@@ -28,7 +30,7 @@ struct HostDesktopPointerInputTests {
 
     @Test("Client cursor desktop streams publish cursor positions even when mirrored")
     func clientCursorMirroredDesktopPublishesCursorPositions() {
-        let presentation = MirageDesktopCursorPresentation(
+        let presentation = MirageWire.MirageDesktopCursorPresentation(
             source: .client,
             lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: false
@@ -45,7 +47,7 @@ struct HostDesktopPointerInputTests {
 
     @Test("Host cursor desktop streams publish cursor positions even when mirrored")
     func hostCursorMirroredDesktopPublishesCursorPositions() {
-        let presentation = MirageDesktopCursorPresentation(
+        let presentation = MirageWire.MirageDesktopCursorPresentation(
             source: .host,
             lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: false

@@ -5,9 +5,17 @@
 //  Created by Ethan Lipnik on 5/14/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import CoreFoundation
 import Foundation
-import MirageKit
 
 #if os(macOS)
 struct HostStreamTransportController: Equatable {
@@ -51,18 +59,18 @@ struct HostStreamTransportController: Equatable {
     private var lastAdvertisedAwdlResolutionScale = 1.0
 
     mutating func update(
-        with feedback: ReceiverMediaFeedbackMessage,
+        with feedback: MirageWire.ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
         requestedFrameRateCeiling: Int? = nil,
         targetBitrateBps: Int? = nil,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil,
+        transportPathKind: MirageCore.MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile? = nil,
         senderTelemetry: StreamPacketSender.TelemetrySnapshot? = nil,
         now: CFAbsoluteTime
     ) -> Decision? {
         guard feedback.sequence > latestFeedbackSequence else { return nil }
         latestFeedbackSequence = feedback.sequence
-        let mediaProfile = mediaPathProfile ?? MirageMediaPathProfile.classify(
+        let mediaProfile = mediaPathProfile ?? MirageMedia.MirageMediaPathProfile.classify(
             pathKind: transportPathKind,
             interfaceNames: []
         )
@@ -179,11 +187,11 @@ struct HostStreamTransportController: Equatable {
     }
 
     private mutating func updateAwdlMediaPolicy(
-        with feedback: ReceiverMediaFeedbackMessage,
+        with feedback: MirageWire.ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
         requestedFrameRateCeiling: Int?,
         targetBitrateBps: Int?,
-        mediaProfile: MirageMediaPathProfile
+        mediaProfile: MirageMedia.MirageMediaPathProfile
     ) -> MirageAwdlMediaController.Decision? {
         let signal = MirageAwdlMediaController.Signal(
             feedback: feedback,
@@ -199,9 +207,9 @@ struct HostStreamTransportController: Equatable {
 
     private static func senderPressureTrigger(
         telemetry: StreamPacketSender.TelemetrySnapshot?,
-        feedback: ReceiverMediaFeedbackMessage,
+        feedback: MirageWire.ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> PressureTrigger? {
         guard mediaPathProfile.usesAwdlRadioPolicy,
               let telemetry else {
@@ -224,7 +232,7 @@ struct HostStreamTransportController: Equatable {
     }
 
     private mutating func activateAwdlPacingIfNeeded(
-        mediaProfile: MirageMediaPathProfile,
+        mediaProfile: MirageMedia.MirageMediaPathProfile,
         now: CFAbsoluteTime,
         holdSeconds: CFAbsoluteTime
     ) -> CFAbsoluteTime {
@@ -315,9 +323,9 @@ struct HostStreamTransportController: Equatable {
     }
 
     private static func pressureTrigger(
-        feedback: ReceiverMediaFeedbackMessage,
+        feedback: MirageWire.ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
-        mediaPathProfile: MirageMediaPathProfile
+        mediaPathProfile: MirageMedia.MirageMediaPathProfile
     ) -> PressureTrigger? {
         let reassemblyBacklogStress = feedback.reassemblyBacklogFrames >= 8 ||
             feedback.reassemblyBacklogBytes >= 2_000_000

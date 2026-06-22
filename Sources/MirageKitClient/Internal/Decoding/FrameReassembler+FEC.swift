@@ -7,8 +7,16 @@
 //  Forward-error-correction helpers for fragmented video frames.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension FrameReassembler {
     nonisolated static let hardSingleFrameCompressedByteCap = 64 * 1024 * 1024
@@ -19,7 +27,7 @@ extension FrameReassembler {
         let bufferCapacity: Int
     }
 
-    func resolvedFrameByteCount(header: FrameHeader, maxPayloadSize: Int) -> Int {
+    func resolvedFrameByteCount(header: MirageWire.FrameHeader, maxPayloadSize: Int) -> Int {
         let byteCount = Int(header.frameByteCount)
         if byteCount > 0 { return byteCount }
         let fragments = Int(header.fragmentCount)
@@ -27,7 +35,7 @@ extension FrameReassembler {
     }
 
     func resolvedDataFragmentCount(
-        header: FrameHeader,
+        header: MirageWire.FrameHeader,
         frameByteCount: Int,
         maxPayloadSize: Int
     )
@@ -37,7 +45,7 @@ extension FrameReassembler {
         return Int(header.fragmentCount)
     }
 
-    func validatedFrameAssemblyPlan(header: FrameHeader) -> FrameAssemblyPlan? {
+    func validatedFrameAssemblyPlan(header: MirageWire.FrameHeader) -> FrameAssemblyPlan? {
         let totalFragmentCount = Int(header.fragmentCount)
         let fragmentIndex = Int(header.fragmentIndex)
         guard maxPayloadSize > 0,

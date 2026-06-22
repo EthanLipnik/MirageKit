@@ -5,21 +5,29 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 #if os(macOS)
 /// Coalesces high-rate input messages before dispatching them on the host input queue.
 final class HostInputMessageScheduler: @unchecked Sendable {
     /// Input message plus its stream affinity and scheduling priority.
     private struct PendingMessage {
-        let message: ControlMessage
+        let message: MirageWire.ControlMessage
         let streamID: StreamID?
         let priority: Priority
         let enqueuedAt: TimeInterval
 
         init(
-            message: ControlMessage,
+            message: MirageWire.ControlMessage,
             classification: (streamID: StreamID?, priority: Priority),
             enqueuedAt: TimeInterval = Date.timeIntervalSinceReferenceDate
         ) {
@@ -63,7 +71,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     private static let maxMessagesPerDrain = 16
 
     private let inputQueue: DispatchQueue
-    private let handler: @Sendable (ControlMessage) -> Void
+    private let handler: @Sendable (MirageWire.ControlMessage) -> Void
     private let lock = NSLock()
     private var pendingMessages: [PendingMessage] = []
     private var latestReplaceableInputTimestampByKey: [ReplaceableInputKey: TimeInterval] = [:]
@@ -71,14 +79,14 @@ final class HostInputMessageScheduler: @unchecked Sendable {
 
     init(
         inputQueue: DispatchQueue,
-        handler: @escaping @Sendable (ControlMessage) -> Void
+        handler: @escaping @Sendable (MirageWire.ControlMessage) -> Void
     ) {
         self.inputQueue = inputQueue
         self.handler = handler
     }
 
     /// Queues a control message and schedules the serial drain if needed.
-    func enqueue(_ message: ControlMessage) {
+    func enqueue(_ message: MirageWire.ControlMessage) {
         let pending = PendingMessage(message: message, classification: Self.classification(for: message))
         MirageInputLatencyTelemetry.shared.recordHostReceive(message: message)
 
@@ -105,11 +113,11 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     /// Queues a compact continuous batch in packet/sample order.
-    func enqueueContinuousBatch(_ batch: MirageContinuousInputBatch) {
+    func enqueueContinuousBatch(_ batch: MirageInput.MirageContinuousInputBatch) {
         let pendingMessages = batch.inputEvents().compactMap { event -> PendingMessage? in
-            let inputMessage = InputEventMessage(streamID: batch.streamID, event: event)
+            let inputMessage = MirageWire.InputEventMessage(streamID: batch.streamID, event: event)
             guard let payload = try? inputMessage.serializePayload() else { return nil }
-            let message = ControlMessage(type: .inputEvent, payload: payload)
+            let message = MirageWire.ControlMessage(type: .inputEvent, payload: payload)
             MirageInputLatencyTelemetry.shared.recordHostReceive(message: message)
             return PendingMessage(
                 message: message,
@@ -250,7 +258,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     private func shouldDropStaleReplaceableInput(_ pending: PendingMessage) -> Bool {
         guard case let .replaceable(kind) = pending.priority,
               let streamID = pending.streamID,
-              let inputMessage = try? InputEventMessage.deserializePayload(pending.message.payload) else {
+              let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(pending.message.payload) else {
             return false
         }
 
@@ -267,7 +275,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     /// Records ordered pointer boundaries so delayed realtime movement cannot overtake clicks/releases.
     private func recordReplaceableInputBoundaryIfNeeded(_ pending: PendingMessage) {
         guard let streamID = pending.streamID,
-              let inputMessage = try? InputEventMessage.deserializePayload(pending.message.payload) else {
+              let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(pending.message.payload) else {
             return
         }
 
@@ -281,7 +289,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         }
     }
 
-    private static func replaceableKindsInvalidated(by event: MirageInputEvent) -> [ReplaceableKind] {
+    private static func replaceableKindsInvalidated(by event: MirageInput.MirageInputEvent) -> [ReplaceableKind] {
         switch event {
         case .mouseDown, .mouseUp:
             [.mouseMoved, .mouseDragged]
@@ -297,8 +305,8 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     /// Classifies a control message for input coalescing and backlog trimming.
-    private static func classification(for message: ControlMessage) -> (streamID: StreamID?, priority: Priority) {
-        guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+    private static func classification(for message: MirageWire.ControlMessage) -> (streamID: StreamID?, priority: Priority) {
+        guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else {
             return (nil, .protected)
         }
 
@@ -327,8 +335,8 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     /// Classifies compact continuous samples without adjacent replacement.
-    private static func continuousClassification(for message: ControlMessage) -> (streamID: StreamID?, priority: Priority) {
-        guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+    private static func continuousClassification(for message: MirageWire.ControlMessage) -> (streamID: StreamID?, priority: Priority) {
+        guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload) else {
             return (nil, .protected)
         }
 
@@ -350,8 +358,8 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     /// Returns whether the message carries native scroll metadata that must be merged conservatively.
-    private static func hasNativeScrollMetadata(_ message: ControlMessage) -> Bool {
-        guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload),
+    private static func hasNativeScrollMetadata(_ message: MirageWire.ControlMessage) -> Bool {
+        guard let inputMessage = try? MirageWire.InputEventMessage.deserializePayload(message.payload),
               case let .scrollWheel(event) = inputMessage.event else {
             return false
         }
@@ -360,13 +368,13 @@ final class HostInputMessageScheduler: @unchecked Sendable {
 
     /// Merges adjacent native continuous scroll packets when their metadata is compatible.
     private static func mergedNativeContinuousScrollMessage(
-        olderMessage: ControlMessage,
-        newerMessage: ControlMessage
-    ) -> ControlMessage? {
+        olderMessage: MirageWire.ControlMessage,
+        newerMessage: MirageWire.ControlMessage
+    ) -> MirageWire.ControlMessage? {
         guard olderMessage.type == .inputEvent,
               newerMessage.type == .inputEvent,
-              let olderInputMessage = try? InputEventMessage.deserializePayload(olderMessage.payload),
-              let newerInputMessage = try? InputEventMessage.deserializePayload(newerMessage.payload),
+              let olderInputMessage = try? MirageWire.InputEventMessage.deserializePayload(olderMessage.payload),
+              let newerInputMessage = try? MirageWire.InputEventMessage.deserializePayload(newerMessage.payload),
               olderInputMessage.streamID == newerInputMessage.streamID,
               case let .scrollWheel(olderScrollEvent) = olderInputMessage.event,
               case let .scrollWheel(newerScrollEvent) = newerInputMessage.event,
@@ -376,12 +384,12 @@ final class HostInputMessageScheduler: @unchecked Sendable {
             return nil
         }
 
-        let mergedInputMessage = InputEventMessage(
+        let mergedInputMessage = MirageWire.InputEventMessage(
             streamID: newerInputMessage.streamID,
             event: .scrollWheel(mergedScrollEvent)
         )
         guard let payload = try? mergedInputMessage.serializePayload() else { return nil }
-        return ControlMessage(type: .inputEvent, payload: payload)
+        return MirageWire.ControlMessage(type: .inputEvent, payload: payload)
     }
 }
 #endif

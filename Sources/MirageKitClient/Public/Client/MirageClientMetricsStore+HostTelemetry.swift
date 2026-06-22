@@ -5,12 +5,20 @@
 //  Created by Ethan Lipnik on 5/12/26.
 //
 
-import Foundation
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
 import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
+import Foundation
 
 extension MirageClientMetricsStore {
     /// Updates host encode and capture metrics received over the control channel.
-    package func updateHostMetrics(_ metrics: StreamMetricsMessage) {
+    package func updateHostMetrics(_ metrics: MirageWire.StreamMetricsMessage) {
         updateSnapshot(for: metrics.streamID) { snapshot in
             snapshot.hostEncodedFPS = metrics.encodedFPS
             snapshot.hostIdleFPS = metrics.idleEncodedFPS
@@ -111,7 +119,7 @@ extension MirageClientMetricsStore {
     }
 
     /// Updates host pipeline timing and packet-sender metrics received over the control channel.
-    package func updateHostPipelineMetrics(_ metrics: StreamMetricsMessage) {
+    package func updateHostPipelineMetrics(_ metrics: MirageWire.StreamMetricsMessage) {
         updateSnapshot(for: metrics.streamID) { snapshot in
             snapshot.applyHostCaptureCadence(metrics.captureCadence)
             snapshot.hostSendQueueBytes = metrics.sendQueueBytes
@@ -129,11 +137,21 @@ extension MirageClientMetricsStore {
             snapshot.hostSenderLocalDeadlineDrops = metrics.senderLocalDeadlineDrops
             snapshot.hostGenerationAbortDrops = metrics.generationAbortDrops
             snapshot.hostNonKeyframeHoldDrops = metrics.nonKeyframeHoldDrops
-            snapshot.hostQueuedUnreliableDeadlineExpiredDrops = metrics.queuedUnreliableDeadlineExpiredDrops
-            snapshot.hostQueuedUnreliableQueueLimitDrops = metrics.queuedUnreliableQueueLimitDrops
-            snapshot.hostQueuedUnreliableSupersededDrops = metrics.queuedUnreliableSupersededDrops
-            snapshot.hostQueuedUnreliableUnsupportedTransportDrops = metrics.queuedUnreliableUnsupportedTransportDrops
-            snapshot.hostQueuedUnreliableClosedDrops = metrics.queuedUnreliableClosedDrops
+            if metrics.queuedUnreliableDeadlineExpiredDrops != nil ||
+                metrics.queuedUnreliableQueueLimitDrops != nil ||
+                metrics.queuedUnreliableSupersededDrops != nil ||
+                metrics.queuedUnreliableUnsupportedTransportDrops != nil ||
+                metrics.queuedUnreliableClosedDrops != nil {
+                snapshot.hostQueuedUnreliableDropCounts = MirageDiagnostics.MirageHostQueuedUnreliableDropCounts(
+                    deadlineExpired: metrics.queuedUnreliableDeadlineExpiredDrops ?? 0,
+                    queueLimit: metrics.queuedUnreliableQueueLimitDrops ?? 0,
+                    superseded: metrics.queuedUnreliableSupersededDrops ?? 0,
+                    unsupportedTransport: metrics.queuedUnreliableUnsupportedTransportDrops ?? 0,
+                    closed: metrics.queuedUnreliableClosedDrops ?? 0
+                )
+            } else {
+                snapshot.hostQueuedUnreliableDropCounts = nil
+            }
             snapshot.hostQueuedUnreliablePendingPackets = metrics.queuedUnreliablePendingPackets
             snapshot.hostQueuedUnreliableOutstandingPackets = metrics.queuedUnreliableOutstandingPackets
             snapshot.hostQueuedUnreliableQueuedBytes = metrics.queuedUnreliableQueuedBytes

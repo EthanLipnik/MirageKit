@@ -12,6 +12,9 @@ import Foundation
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
+import MirageConnectivity
+import MirageCore
+import MirageWire
 
 #if os(macOS)
 @Suite("Runtime Workload Safety")
@@ -199,7 +202,7 @@ struct RuntimeWorkloadSafetyTests {
 
             let capRequestEnvelope = try await serverReceiver.next()
             #expect(capRequestEnvelope.type == .streamEncoderSettingsChange)
-            let capRequest = try capRequestEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+            let capRequest = try capRequestEnvelope.decode(MirageWire.StreamEncoderSettingsChangeMessage.self)
             #expect(capRequest.streamID == streamID)
             #expect(capRequest.targetFrameRate == 30)
             #expect(service.runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] == 60)
@@ -255,7 +258,7 @@ struct RuntimeWorkloadSafetyTests {
 
             let restoreRequestEnvelope = try await serverReceiver.next()
             #expect(restoreRequestEnvelope.type == .streamEncoderSettingsChange)
-            let restoreRequest = try restoreRequestEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+            let restoreRequest = try restoreRequestEnvelope.decode(MirageWire.StreamEncoderSettingsChangeMessage.self)
             #expect(restoreRequest.streamID == streamID)
             #expect(restoreRequest.targetFrameRate == 60)
             #expect(service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] == nil)

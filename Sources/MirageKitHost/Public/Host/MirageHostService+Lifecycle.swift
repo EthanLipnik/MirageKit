@@ -7,14 +7,19 @@
 //  Host lifecycle and window refresh.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 import Foundation
 import Loom
-import Network
-import MirageKit
 
 #if os(macOS)
-import CoreGraphics
-import ScreenCaptureKit
 
 @MainActor
 public extension MirageHostService {
@@ -32,7 +37,9 @@ public extension MirageHostService {
             return
         }
 
-        await HostDesktopStreamTerminationTracker.shared.reportUncleanTerminationIfNeeded()
+        await HostDesktopStreamTerminationTracker.shared.reportUncleanTerminationIfNeeded(
+            virtualDisplayBackend: platformVirtualDisplayBackend
+        )
         state = .starting
         MirageLogger.host("Starting...")
 
@@ -73,13 +80,7 @@ public extension MirageHostService {
     }
 
     private nonisolated static func isRetryableListenerStartError(_ error: Error) -> Bool {
-        guard let nwError = error as? NWError else { return false }
-        switch nwError {
-        case let .posix(code):
-            return code == .EADDRINUSE || code == .EADDRNOTAVAIL
-        default:
-            return false
-        }
+        MirageConnectionErrorClassifier.isRetryableListenerStartError(error)
     }
 
     private nonisolated static func isScreenRecordingPermissionDenied(_ error: Error) -> Bool {
@@ -141,9 +142,9 @@ public extension MirageHostService {
         do {
             MirageLogger.host("Starting Loom authenticated listeners...")
             let ports = try await startAuthenticatedAdvertisingWithDirectPortFallback()
-            advertisedPeerAdvertisement = Self.advertisement(
-                advertisedPeerAdvertisement,
-                withDirectTransportPorts: ports
+            advertisedPeerAdvertisement = MirageConnectivity.MiragePeerAdvertisementMetadata.updatingDirectTransportPorts(
+                ports,
+                in: advertisedPeerAdvertisement
             )
             let controlPort = ports[.udp] ?? 0
             remoteControlPort = ports[.udp]
@@ -159,15 +160,14 @@ public extension MirageHostService {
 
             // Set up app streaming callbacks
             setupAppStreamManagerCallbacks()
-            await SharedVirtualDisplayManager.shared
-                .setGenerationChangeHandler { [weak self] context, previousGeneration in
-                    Task { @MainActor [weak self] in
-                        await self?.handleSharedDisplayGenerationChange(
-                            newContext: context,
-                            previousGeneration: previousGeneration
-                        )
-                    }
+            await platformVirtualDisplayBackend.setGenerationChangeHandler { [weak self] context, previousGeneration in
+                Task { @MainActor [weak self] in
+                    await self?.handleSharedDisplayGenerationChange(
+                        newContext: context,
+                        previousGeneration: previousGeneration
+                    )
                 }
+            }
         } catch {
             if Self.isRetryableListenerStartError(error) {
                 MirageLogger.host("Listener start failed: \(error)")
@@ -223,7 +223,7 @@ public extension MirageHostService {
             serviceName: serviceName,
             helloProvider: { [weak self] in
                 guard let self else {
-                    throw MirageError.protocolError("Host service deallocated during Loom hello creation")
+                    throw MirageCore.MirageError.protocolError("Host service deallocated during Loom hello creation")
                 }
                 return try await MainActor.run {
                     try self.makeSessionHelloRequest()
@@ -243,7 +243,7 @@ public extension MirageHostService {
         sessionRefreshTask = nil
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
         clearAllPendingAppWindowCloseAlertTokens()
-        await SharedVirtualDisplayManager.shared.setGenerationChangeHandler(nil)
+        await platformVirtualDisplayBackend.setGenerationChangeHandler(nil)
         removeScreenParametersObserver()
 
         stopCursorMonitoring()
@@ -280,56 +280,9 @@ public extension MirageHostService {
         remoteControlPort = nil
     }
 
-    /// Refreshes the host window catalog from ScreenCaptureKit and window metadata.
+    /// Refreshes the host window catalog through the platform backend.
     func refreshWindows() async throws {
-        let content = try await SCShareableContent.mirageHostContent()
-
-        // Fetch extended metadata for alpha and visibility filtering.
-        // Run off the main actor — CGWindowListCopyWindowInfo enumerates every
-        // window on the system and can block for seconds on busy machines.
-        let metadata = await Task.detached { fetchWindowMetadata() }.value
-
-        var windows: [MirageWindow] = []
-
-        for scWindow in content.windows {
-            // Skip small windows (hidden processes, system UI) - minimum 200x150
-            guard scWindow.frame.width >= 200, scWindow.frame.height >= 150 else { continue }
-
-            // Skip windows without titles (auxiliary panels, popovers, floating UI)
-            guard let title = scWindow.title, !title.isEmpty else { continue }
-
-            // Skip non-standard window layers (layer 0 = normal windows)
-            guard scWindow.windowLayer == 0 else { continue }
-
-            // Skip windows without an owning application
-            guard let scApp = scWindow.owningApplication else { continue }
-
-            // Skip invisible windows (alpha near zero) - keeps minimized windows which have normal alpha
-            if let windowMeta = metadata[CGWindowID(scWindow.windowID)], windowMeta.alpha < 0.01 { continue }
-
-            let app = MirageApplication(
-                id: scApp.processID,
-                bundleIdentifier: scApp.bundleIdentifier,
-                name: scApp.applicationName,
-                iconData: nil
-            )
-
-            let window = MirageWindow(
-                id: WindowID(scWindow.windowID),
-                title: scWindow.title,
-                application: app,
-                frame: scWindow.frame,
-                isOnScreen: scWindow.isOnScreen,
-                windowLayer: Int(scWindow.windowLayer)
-            )
-
-            windows.append(window)
-        }
-
-        // Collapse tabbed windows into single entries (tabs share the same frame)
-        let filteredWindows = detectAndCollapseTabGroups(windows, metadata: metadata)
-
-        availableWindows = filteredWindows.sorted { ($0.application?.name ?? "") < ($1.application?.name ?? "") }
+        availableWindows = try await platformWindowCatalogBackend.refreshWindows()
     }
 }
 

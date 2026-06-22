@@ -5,19 +5,27 @@
 //  Created by Ethan Lipnik on 5/9/26.
 //
 
-import MirageKit
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageKit
+import MirageKitClientPresentation
+import MirageMedia
+import MirageWire
 #if os(macOS)
 extension MirageHostService {
     /// Runs an operation while holding the shared virtual-display mutation lease.
-    func withHostDisplayMutation<T>(
+    func withHostDisplayMutation<T: Sendable>(
         kind: VirtualDisplayMutationKind,
-        operation: () async -> T
+        operation: @MainActor () async -> T
     ) async -> T {
-        let lease = await VirtualDisplayMutationCoordinator.shared.acquire(kind: kind)
-        let result = await operation()
-        await VirtualDisplayMutationCoordinator.shared.release(lease)
-        return result
+        await platformVirtualDisplayBackend.withDisplayMutation(
+            kind: kind,
+            operation: operation
+        )
     }
 }
 

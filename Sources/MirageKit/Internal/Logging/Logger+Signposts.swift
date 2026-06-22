@@ -5,12 +5,19 @@
 //  Created by Ethan Lipnik on 5/13/26.
 //
 
+import MirageConnectivity
+import MirageCore
+import MirageDiagnostics
+import MirageIdentity
+import MirageInput
+import MirageMedia
+import MirageWire
 import os
 
 public extension MirageLogger {
     /// Emit a one-shot signpost event for a category when that category is enabled.
     static func signpostEvent(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ name: StaticString,
         _ message: @autoclosure () -> String = "",
         fileID: String = #fileID,
@@ -35,7 +42,7 @@ public extension MirageLogger {
 
     /// Begin a signpost interval and return the token required to close it.
     static func beginInterval(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ name: StaticString,
         _ message: @autoclosure () -> String = "",
         fileID: String = #fileID,
@@ -94,7 +101,7 @@ public extension MirageLogger {
 
     /// Wrap synchronous work in a signpost interval.
     static func withInterval<T>(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ name: StaticString,
         _ message: @autoclosure () -> String = "",
         fileID: String = #fileID,
@@ -123,7 +130,7 @@ public extension MirageLogger {
 
     /// Wrap asynchronous work in a signpost interval.
     static func withInterval<T>(
-        _ category: MirageLogCategory,
+        _ category: MirageDiagnostics.MirageLogCategory,
         _ name: StaticString,
         _ message: @autoclosure () -> String = "",
         fileID: String = #fileID,
@@ -150,7 +157,7 @@ public extension MirageLogger {
         return try await operation()
     }
 
-    private static func signpostLog(for category: MirageLogCategory) -> OSLog {
+    private static func signpostLog(for category: MirageDiagnostics.MirageLogCategory) -> OSLog {
         signpostLogs[category] ?? OSLog(subsystem: subsystem, category: category.rawValue)
     }
 

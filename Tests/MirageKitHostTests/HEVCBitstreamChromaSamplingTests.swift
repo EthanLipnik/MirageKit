@@ -8,6 +8,7 @@
 @testable import MirageKitHost
 import MirageKit
 import Testing
+import Foundation
 
 #if os(macOS)
 @Suite("HEVC Bitstream Chroma Sampling")
