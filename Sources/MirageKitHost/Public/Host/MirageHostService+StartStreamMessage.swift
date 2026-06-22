@@ -61,6 +61,7 @@ extension MirageHostService {
             let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
             let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
+            let hostBufferDepth = request.resolvedHostBufferDepth
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
             let audioConfiguration = request.audioConfiguration ?? .default
@@ -73,6 +74,7 @@ extension MirageHostService {
             MirageLogger.host("Frame rate: \(targetFrameRate)fps")
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Host buffering policy: \(hostBufferingPolicy.rawValue)")
+            MirageLogger.host("Host buffer depth: \(hostBufferDepth.rawValue)")
 
             pendingLightsOutSetup = true
             await beginPendingAppStreamLightsOutSetup()
@@ -90,6 +92,7 @@ extension MirageHostService {
                 bitrate: request.bitrate,
                 latencyMode: latencyMode,
                 hostBufferingPolicy: hostBufferingPolicy,
+                hostBufferDepth: hostBufferDepth,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration,

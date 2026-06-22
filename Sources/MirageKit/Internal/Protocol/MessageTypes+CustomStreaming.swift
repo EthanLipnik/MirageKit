@@ -43,6 +43,9 @@ package struct StartCustomStreamMessage: Codable {
     /// Client-requested host-side capture-to-encode buffering policy.
     package var hostBufferingPolicy: MirageHostBufferingPolicy?
 
+    /// Client-requested host-side capture and encode buffer depth.
+    package var hostBufferDepth: MirageHostBufferDepth?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
@@ -139,6 +142,10 @@ package struct StartCustomStreamMessage: Codable {
 
     package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
         hostBufferingPolicy ?? .freshestFrame
+    }
+
+    package var resolvedHostBufferDepth: MirageHostBufferDepth {
+        hostBufferDepth ?? .standard
     }
 }
 

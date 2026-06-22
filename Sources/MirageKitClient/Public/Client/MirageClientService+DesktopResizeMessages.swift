@@ -143,6 +143,7 @@ extension MirageClientService {
             displayPixelSize: acceptedDisplayPixelSize,
             presentationSize: presentationSize
         )
+        updateDesktopVisibleBounds(from: started, clearsMissingBounds: true)
         desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
             logicalResolution: presentationSize,
             displayPixelSize: acceptedDisplayPixelSize

@@ -340,7 +340,7 @@ extension MirageHostService {
         let codec = streamStartSnapshot.codec
         let acceptedMediaMaxPacketSize = streamStartSnapshot.mediaMaxPacketSize
         desktopPresentationGeneration &+= 1
-        let message = DesktopStreamStartedMessage(
+        var message = DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
             width: Int(displayResolution.width),
@@ -367,10 +367,12 @@ extension MirageHostService {
             desktopGeometryEncodedPixelHeight: Int(geometryContract.encodedPixelResolution.height.rounded()),
             desktopGeometryRefreshTargetHz: geometryContract.refreshTargetHz ?? updatedTargetFrameRate
         )
+        let visibleBoundsSnapshot = await attachCurrentDesktopVisibleBounds(to: &message)
         if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
             MirageLogger.error(.host, "Failed to encode desktop resize completion for stream \(streamID)")
             return
         }
+        recordSentDesktopVisibleBounds(visibleBoundsSnapshot)
         if geometryContract.contractID == nil {
             clearCurrentDesktopGeometryContract()
         } else {

@@ -238,6 +238,7 @@ extension MirageHostService {
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
         let latencyMode: MirageStreamLatencyMode
         let hostBufferingPolicy: MirageHostBufferingPolicy
+        let hostBufferDepth: MirageHostBufferDepth
         let transportPathKind: MirageNetworkPathKind
         let mediaPathProfile: MirageMediaPathProfile
         let mediaPathDiagnosticSummary: String?

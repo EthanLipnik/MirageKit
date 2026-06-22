@@ -68,6 +68,10 @@ public final class MirageClientService {
     public internal(set) var desktopStreamPresentationResolution: CGSize?
     /// Effective backing scale of the host desktop stream.
     public internal(set) var desktopStreamDisplayScaleFactor: CGFloat?
+    /// Host-visible content-safe desktop bounds in display-local logical points.
+    public internal(set) var desktopVisibleBounds: CGRect?
+    /// Full logical display size used to interpret `desktopVisibleBounds`.
+    public internal(set) var desktopVisibleBoundsReferenceSize: CGSize?
     /// Effective host capture source for the current desktop stream.
     package internal(set) var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
     /// Whether the host currently accepts client-driven desktop resize requests.

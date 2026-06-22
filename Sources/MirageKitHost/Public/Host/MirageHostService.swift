@@ -413,6 +413,10 @@ public final class MirageHostService {
     var desktopCurrentGeometryDisplayScaleFactor: CGFloat?
     /// Refresh target for the current host-accepted desktop geometry, when supplied by the client.
     var desktopCurrentGeometryRefreshTargetHz: Int?
+    /// Periodic task that publishes host-visible desktop bounds to the client.
+    var desktopVisibleBoundsUpdateTask: Task<Void, Never>?
+    /// Last desktop visible-bounds snapshot sent to the client.
+    var lastSentDesktopVisibleBounds: DesktopVisibleBoundsSnapshot?
     /// Active desktop media-pipeline restart caused by a media route policy-class change.
     var desktopMediaPathPipelineRestartStreamID: StreamID?
     /// Debounced task refreshing desktop display topology.

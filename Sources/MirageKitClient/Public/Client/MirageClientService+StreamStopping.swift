@@ -361,6 +361,8 @@ public extension MirageClientService {
             desktopStreamResolution = nil
             desktopStreamPresentationResolution = nil
             desktopStreamDisplayScaleFactor = nil
+            desktopVisibleBounds = nil
+            desktopVisibleBoundsReferenceSize = nil
             desktopCaptureSource = .virtualDisplay
             desktopStreamAllowsClientResize = true
             desktopStreamMode = nil

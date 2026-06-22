@@ -85,6 +85,9 @@ package struct StartStreamMessage: Codable {
     /// Client-requested host-side capture-to-encode buffering policy.
     package var hostBufferingPolicy: MirageHostBufferingPolicy?
 
+    /// Client-requested host-side capture and encode buffer depth.
+    package var hostBufferDepth: MirageHostBufferDepth?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
@@ -149,6 +152,7 @@ package struct StartStreamMessage: Codable {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
+        hostBufferDepth: MirageHostBufferDepth? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -174,6 +178,7 @@ package struct StartStreamMessage: Codable {
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.hostBufferingPolicy = hostBufferingPolicy
+        self.hostBufferDepth = hostBufferDepth
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
@@ -191,6 +196,10 @@ package struct StartStreamMessage: Codable {
 
     package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
         hostBufferingPolicy ?? .freshestFrame
+    }
+
+    package var resolvedHostBufferDepth: MirageHostBufferDepth {
+        hostBufferDepth ?? .standard
     }
 }
 

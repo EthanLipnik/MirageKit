@@ -65,6 +65,8 @@ struct DesktopPipelineRestartSnapshot: Sendable {
     let requestedLatencyMode: MirageStreamLatencyMode
     let hostBufferingPolicy: MirageHostBufferingPolicy
     let requestedHostBufferingPolicy: MirageHostBufferingPolicy
+    let hostBufferDepth: MirageHostBufferDepth
+    let requestedHostBufferDepth: MirageHostBufferDepth
     let enteredBitrate: Int?
     let explicitEnteredBitrate: Int?
     let bitrateAdaptationCeiling: Int?
@@ -249,6 +251,8 @@ extension StreamContext {
             requestedLatencyMode: requestedLatencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             requestedHostBufferingPolicy: requestedHostBufferingPolicy,
+            hostBufferDepth: hostBufferDepth,
+            requestedHostBufferDepth: requestedHostBufferDepth,
             enteredBitrate: enteredTargetBitrate,
             explicitEnteredBitrate: explicitEnteredTargetBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,

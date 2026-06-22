@@ -30,7 +30,7 @@ extension MirageHostService {
         let encodedDimensions = streamStart.encodedDimensions
         let startupAttemptID = UUID()
         desktopPresentationGeneration &+= 1
-        let message = DesktopStreamStartedMessage(
+        var message = DesktopStreamStartedMessage(
             streamID: notification.streamID,
             desktopSessionID: notification.desktopSessionID,
             width: Int(startedDisplayResolution.width),
@@ -60,6 +60,7 @@ extension MirageHostService {
             associatedAppStartupRequestID: notification.associatedAppStartupRequestID,
             associatedBundleIdentifier: notification.associatedBundleIdentifier
         )
+        let visibleBoundsSnapshot = await attachCurrentDesktopVisibleBounds(to: &message)
 
         do {
             registerPendingStartupAttempt(
@@ -71,6 +72,12 @@ extension MirageHostService {
                 desktopGeometryContract: message.streamReadyDesktopGeometryContract
             )
             try await notification.activeClientContext.send(.desktopStreamStarted, content: message)
+            recordSentDesktopVisibleBounds(visibleBoundsSnapshot)
+            startDesktopVisibleBoundsUpdates(
+                streamID: notification.streamID,
+                desktopSessionID: notification.desktopSessionID,
+                clientContext: notification.activeClientContext
+            )
             recordCurrentDesktopGeometryContract(
                 contractID: notification.desktopGeometryContractID,
                 sceneIdentity: notification.desktopGeometrySceneIdentity,
@@ -410,6 +417,7 @@ extension MirageHostService {
         triggeredByExplicitStreamStop: Bool = true
     ) async {
         inputController.clearAllModifiers()
+        stopDesktopVisibleBoundsUpdates()
 
         guard let streamID = desktopStreamID else {
             if desktopStreamContext != nil || desktopVirtualDisplayID != nil || desktopStreamClientContext != nil {

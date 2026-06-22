@@ -218,6 +218,7 @@ extension MirageHostService {
                     capturePressureProfile: restartSnapshot.capturePressureProfile,
                     latencyMode: restartSnapshot.requestedLatencyMode,
                     hostBufferingPolicy: restartSnapshot.requestedHostBufferingPolicy,
+                    hostBufferDepth: restartSnapshot.requestedHostBufferDepth,
                     transportPathKind: policy.transportPathKind,
                     mediaPathProfile: policy.mediaPathProfile,
                     mediaPathDiagnosticSummary: policy.diagnosticSummary,

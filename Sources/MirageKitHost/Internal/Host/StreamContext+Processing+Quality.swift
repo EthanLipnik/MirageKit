@@ -23,6 +23,8 @@ extension StreamContext {
     private static let encoderThroughputCleanBacklogSampleRatio = 1.50
     private static let highRefreshQualityBudgetFrameRate = 60
     private static let highRefreshQualityBudgetThresholdFrameRate = 100
+    private static let highRefreshQualityRaiseCadenceRatio = 0.65
+    private static let highRefreshQualityRaiseMinimumFPS = 64.0
     private static let mostlyStillDirtyPercentage: Float = 1.0
     private static let lowMotionRampDirtyPercentage: Float = 6.0
     private static let lowMotionRampRequiredCleanFrames = 3
@@ -259,7 +261,8 @@ extension StreamContext {
                 streamKind: streamKind,
                 frameRate: currentFrameRate,
                 latencyMode: latencyMode,
-                hostBufferingPolicy: hostBufferingPolicy
+                hostBufferingPolicy: hostBufferingPolicy,
+                hostBufferDepth: hostBufferDepth
             )
             let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
             if maxInFlightFrames != lowLatencyLimit {
@@ -547,11 +550,21 @@ extension StreamContext {
         sourceStill: Bool,
         inputActive: Bool
     ) -> Bool {
-        if sourceStill && !inputActive { return true }
         let targetFPS = Double(max(1, currentFrameRate))
         let attemptFPS = encodeAttemptFPS > 0 ? encodeAttemptFPS : encodedFPS
         let completedFPS = encodedFPS > 0 ? encodedFPS : encodeAttemptFPS
         let observedFPS = min(attemptFPS, completedFPS)
+
+        if sourceStill && !inputActive {
+            guard currentFrameRate > Self.highRefreshQualityBudgetFrameRate else { return true }
+            guard observedFPS > 0 else { return false }
+            let raiseFloor = max(
+                Self.highRefreshQualityRaiseMinimumFPS,
+                targetFPS * Self.highRefreshQualityRaiseCadenceRatio
+            )
+            return observedFPS >= raiseFloor
+        }
+
         guard observedFPS > 0 else { return false }
         return observedFPS >= targetFPS * 0.90
     }

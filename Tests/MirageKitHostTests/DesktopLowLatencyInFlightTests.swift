@@ -63,8 +63,8 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.frameBufferDepth == 1)
     }
 
-    @Test("120 Hz desktop freshest-frame lowest-latency stays single-inflight")
-    func desktopFreshestFrame120HzLowestLatencyStaysSingleInflight() async {
+    @Test("120 Hz desktop freshest-frame lowest-latency keeps ProMotion cushion")
+    func desktopFreshestFrame120HzLowestLatencyKeepsProMotionCushion() async {
         let context = makeContext(
             targetFrameRate: 120,
             hostBufferingPolicy: .freshestFrame
@@ -72,9 +72,58 @@ struct DesktopLowLatencyInFlightTests {
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
 
+        #expect(await context.minInFlightFrames == 3)
+        #expect(await context.maxInFlightFrames == 3)
+        #expect(await context.maxInFlightFramesCap == 3)
+        #expect(await context.frameBufferDepth == 4)
+    }
+
+    @Test("120 Hz desktop freshest-frame lowest-latency minimal buffer stays single-inflight")
+    func desktopFreshestFrame120HzLowestLatencyMinimalBufferStaysSingleInflight() async {
+        let context = makeContext(
+            targetFrameRate: 120,
+            hostBufferingPolicy: .freshestFrame,
+            hostBufferDepth: .minimal
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
+
+        #expect(await context.minInFlightFrames == 1)
         #expect(await context.maxInFlightFrames == 1)
         #expect(await context.maxInFlightFramesCap == 1)
         #expect(await context.frameBufferDepth == 1)
+    }
+
+    @Test("120 Hz desktop freshest-frame lowest-latency high buffer increases ProMotion cushion")
+    func desktopFreshestFrame120HzLowestLatencyHighBufferIncreasesProMotionCushion() async {
+        let context = makeContext(
+            targetFrameRate: 120,
+            hostBufferingPolicy: .freshestFrame,
+            hostBufferDepth: .high
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
+
+        #expect(await context.minInFlightFrames == 4)
+        #expect(await context.maxInFlightFrames == 4)
+        #expect(await context.maxInFlightFramesCap == 4)
+        #expect(await context.frameBufferDepth == 5)
+    }
+
+    @Test("120 Hz desktop freshest-frame lowest-latency maximum buffer keeps bounded ProMotion depth")
+    func desktopFreshestFrame120HzLowestLatencyMaximumBufferKeepsBoundedProMotionDepth() async {
+        let context = makeContext(
+            targetFrameRate: 120,
+            hostBufferingPolicy: .freshestFrame,
+            hostBufferDepth: .maximum
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
+
+        #expect(await context.minInFlightFrames == 5)
+        #expect(await context.maxInFlightFrames == 5)
+        #expect(await context.maxInFlightFramesCap == 5)
+        #expect(await context.frameBufferDepth == 6)
     }
 
     @Test("60 Hz desktop freshest-frame balanced keeps two-frame cushion")
@@ -108,6 +157,23 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.frameBufferDepth == 3)
     }
 
+    @Test("120 Hz desktop freshest-frame balanced high buffer increases cushion")
+    func desktopFreshestFrame120HzBalancedHighBufferIncreasesCushion() async {
+        let context = makeContext(
+            latencyMode: .balanced,
+            targetFrameRate: 120,
+            hostBufferingPolicy: .freshestFrame,
+            hostBufferDepth: .high
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
+
+        #expect(await context.minInFlightFrames == 3)
+        #expect(await context.maxInFlightFrames == 4)
+        #expect(await context.maxInFlightFramesCap == 4)
+        #expect(await context.frameBufferDepth == 4)
+    }
+
     @Test("60 Hz desktop smoothest keeps smoothing capacity")
     func desktopSmoothestKeepsSmoothingCapacity() async {
         let context = makeContext(latencyMode: .smoothest)
@@ -120,6 +186,20 @@ struct DesktopLowLatencyInFlightTests {
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
 
         #expect(await context.maxInFlightFrames == 3)
+    }
+
+    @Test("120 Hz desktop smoothest maximum buffer increases smoothing capacity")
+    func desktopSmoothest120HzMaximumBufferIncreasesSmoothingCapacity() async {
+        let context = makeContext(
+            latencyMode: .smoothest,
+            targetFrameRate: 120,
+            hostBufferDepth: .maximum
+        )
+
+        #expect(await context.minInFlightFrames == 4)
+        #expect(await context.maxInFlightFrames == 4)
+        #expect(await context.maxInFlightFramesCap == 10)
+        #expect(await context.frameBufferDepth == 14)
     }
 
     @Test("AWDL desktop starts with sidecar-style host pipeline slack")
@@ -181,6 +261,7 @@ struct DesktopLowLatencyInFlightTests {
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         targetFrameRate: Int = 60,
         hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
+        hostBufferDepth: MirageHostBufferDepth = .standard,
         mediaPathProfile: MirageMediaPathProfile? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
@@ -200,6 +281,7 @@ struct DesktopLowLatencyInFlightTests {
             runtimeQualityAdjustmentEnabled: false,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            hostBufferDepth: hostBufferDepth,
             mediaPathProfile: mediaPathProfile
         )
     }

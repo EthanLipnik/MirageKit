@@ -142,6 +142,7 @@ public extension MirageClientService {
         request.bitrate = bitrateSemantics.requestedTargetBitrateBps
         request.latencyMode = encoderRequest.latencyMode
         request.hostBufferingPolicy = encoderRequest.hostBufferingPolicy
+        request.hostBufferDepth = encoderRequest.hostBufferDepth
         if currentMediaPathUsesAwdlRadioPolicy {
             let requestedLatency = request.latencyMode
             request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
@@ -551,6 +552,7 @@ extension MirageClientService {
             bitrate: bitrateSemantics.requestedTargetBitrateBps,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            hostBufferDepth: previousRequest.hostBufferDepth,
             allowRuntimeQualityAdjustment: previousRequest.allowRuntimeQualityAdjustment,
             allowEncoderCatchUpQualityAdjustment: previousRequest.allowEncoderCatchUpQualityAdjustment,
             disableResolutionCap: disableResolutionCapRequestValue,

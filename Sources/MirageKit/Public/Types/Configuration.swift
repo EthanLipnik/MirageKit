@@ -285,6 +285,8 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var latencyMode: MirageStreamLatencyMode?
     /// Preferred host-side capture-to-encode buffering policy.
     public var hostBufferingPolicy: MirageHostBufferingPolicy?
+    /// Preferred host-side capture and encode buffer depth.
+    public var hostBufferDepth: MirageHostBufferDepth?
     /// Whether the host may adjust quality while the stream is running.
     public var allowRuntimeQualityAdjustment: Bool?
     /// Whether the host may temporarily lower quality when encoding falls behind.
@@ -316,6 +318,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
+        hostBufferDepth: MirageHostBufferDepth? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         allowEncoderCatchUpQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
@@ -334,6 +337,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.hostBufferingPolicy = hostBufferingPolicy
+        self.hostBufferDepth = hostBufferDepth
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.allowEncoderCatchUpQualityAdjustment = allowEncoderCatchUpQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost

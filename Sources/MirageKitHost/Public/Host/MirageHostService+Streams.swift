@@ -37,6 +37,7 @@ public extension MirageHostService {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+        hostBufferDepth: MirageHostBufferDepth = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = false,
         disableResolutionCap: Bool = false,
@@ -66,6 +67,7 @@ public extension MirageHostService {
             bitrate: bitrate,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            hostBufferDepth: hostBufferDepth,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
             disableResolutionCap: disableResolutionCap,
             allowBestEffortRemap: allowBestEffortRemap,
@@ -96,6 +98,7 @@ public extension MirageHostService {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+        hostBufferDepth: MirageHostBufferDepth = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
@@ -223,6 +226,7 @@ public extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            hostBufferDepth: hostBufferDepth,
             transportPathKind: transportPathKind,
             mediaPathProfile: resolvedMediaPathPolicy.mediaPathProfile,
             mediaPathDiagnosticSummary: resolvedMediaPathPolicy.diagnosticSummary,
@@ -240,6 +244,7 @@ public extension MirageHostService {
             streamID: streamID,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            hostBufferDepth: hostBufferDepth,
             disableResolutionCap: disableResolutionCap,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment
         )
@@ -441,6 +446,7 @@ public extension MirageHostService {
         streamID: StreamID,
         latencyMode: MirageStreamLatencyMode,
         hostBufferingPolicy: MirageHostBufferingPolicy,
+        hostBufferDepth: MirageHostBufferDepth,
         disableResolutionCap: Bool,
         allowRuntimeQualityAdjustment: Bool?
     ) {
@@ -449,6 +455,7 @@ public extension MirageHostService {
         }
         MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
         MirageLogger.host("Host buffering policy for stream \(streamID): \(hostBufferingPolicy.rawValue)")
+        MirageLogger.host("Host buffer depth for stream \(streamID): \(hostBufferDepth.rawValue)")
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
         }

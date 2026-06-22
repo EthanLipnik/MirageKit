@@ -121,6 +121,7 @@ extension MirageHostService {
 
             let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
+            let hostBufferDepth = request.resolvedHostBufferDepth
             let audioConfiguration = request.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
             mediaPathClientEvidenceByStreamID[streamID] = HostStreamMediaPathClientEvidence(
                 policy: mediaPathPolicy
@@ -141,6 +142,7 @@ extension MirageHostService {
                 capturePressureProfile: .baseline,
                 latencyMode: latencyMode,
                 hostBufferingPolicy: hostBufferingPolicy,
+                hostBufferDepth: hostBufferDepth,
                 transportPathKind: mediaPathPolicy.transportPathKind,
                 mediaPathProfile: mediaPathPolicy.mediaPathProfile,
                 mediaPathDiagnosticSummary: mediaPathPolicy.diagnosticSummary,

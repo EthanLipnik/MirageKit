@@ -154,6 +154,7 @@ extension MirageHostService {
             disableResolutionCap: request.disableResolutionCap ?? false,
             latencyMode: request.latencyMode ?? .lowestLatency,
             hostBufferingPolicy: request.resolvedHostBufferingPolicy,
+            hostBufferDepth: request.resolvedHostBufferDepth,
             transportPathKind: mediaPathPolicy.transportPathKind,
             mediaPathProfile: mediaPathPolicy.mediaPathProfile,
             mediaPathDiagnosticSummary: mediaPathPolicy.diagnosticSummary,

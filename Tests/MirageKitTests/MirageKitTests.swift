@@ -345,6 +345,31 @@ struct MirageKitTests {
         #expect(decodedPayload.transitionOutcome == .rolledBack)
     }
 
+    @Test("Desktop-stream started serializes visible bounds")
+    func desktopStreamStartedSerializesVisibleBounds() throws {
+        var payload = DesktopStreamStartedMessage(
+            streamID: 74,
+            desktopSessionID: UUID(),
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1
+        )
+        payload.setDesktopVisibleBounds(
+            CGRect(x: 0, y: 38, width: 1512, height: 930),
+            referenceSize: CGSize(width: 1512, height: 982)
+        )
+        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+
+        #expect(decodedPayload.desktopVisibleBounds == CGRect(x: 0, y: 38, width: 1512, height: 930))
+        #expect(decodedPayload.desktopVisibleBoundsReferenceSize == CGSize(width: 1512, height: 982))
+    }
+
     @Test("Desktop-stream started serializes fallback capture policy")
     func desktopStreamStartedSerializesFallbackCapturePolicy() throws {
         let payload = DesktopStreamStartedMessage(

@@ -534,6 +534,82 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.activeQuality == originalQuality)
     }
 
+    @Test("Still ProMotion cadence near 70 fps does not raise automatic quality")
+    func stillProMotionCadenceNearSeventyDoesNotRaiseAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 54_100_000,
+            frameRate: 120,
+            bitrateAdaptationCeiling: 180_000_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setActiveQualityForRealtimeBudgetTest(0.42)
+        await context.markSourceStillForRealtimeBudgetTest(at: 10)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 120,
+            encodeAttemptFPS: 73,
+            encodedFPS: 73,
+            at: 10.05
+        )
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 120,
+            encodeAttemptFPS: 73,
+            encodedFPS: 73,
+            at: 11.2
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) == originalTarget)
+        #expect(await context.activeQuality == originalQuality)
+    }
+
+    @Test("Still ProMotion cadence with headroom raises automatic quality")
+    func stillProMotionCadenceWithHeadroomRaisesAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 54_100_000,
+            frameRate: 120,
+            bitrateAdaptationCeiling: 180_000_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setActiveQualityForRealtimeBudgetTest(0.42)
+        await context.markSourceStillForRealtimeBudgetTest(at: 10)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 120,
+            encodeAttemptFPS: 84,
+            encodedFPS: 84,
+            at: 10.05
+        )
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 120,
+            encodeAttemptFPS: 84,
+            encodedFPS: 84,
+            at: 11.2
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) > originalTarget)
+        #expect(await context.activeQuality > originalQuality)
+    }
+
     @Test("Still quality probe restores active quality to ceiling immediately")
     func stillQualityProbeRestoresActiveQualityToCeilingImmediately() async {
         let context = makeContext(

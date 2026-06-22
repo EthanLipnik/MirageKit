@@ -114,6 +114,7 @@ extension MirageClientService {
                previousDimensionToken == dimensionToken {
                 let normalizedFrameRate = MirageRenderModePolicy.normalizedTargetFPS(started.frameRate)
                 let currentFrameRate = refreshRateOverridesByStream[streamID]
+                updateDesktopVisibleBounds(from: started, clearsMissingBounds: false)
                 guard currentFrameRate != normalizedFrameRate else {
                     MirageLogger.client(
                         "Ignoring duplicate desktop cadence update for stream \(streamID): \(started.frameRate)Hz"
@@ -201,6 +202,7 @@ extension MirageClientService {
                 displayPixelSize: acceptedDisplayPixelSize,
                 presentationSize: presentationSize
             )
+            updateDesktopVisibleBounds(from: started, clearsMissingBounds: true)
             desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
                 logicalResolution: presentationSize,
                 displayPixelSize: acceptedDisplayPixelSize
@@ -380,6 +382,8 @@ extension MirageClientService {
             desktopStreamResolution = nil
             desktopStreamPresentationResolution = nil
             desktopStreamDisplayScaleFactor = nil
+            desktopVisibleBounds = nil
+            desktopVisibleBoundsReferenceSize = nil
             desktopCaptureSource = .virtualDisplay
             desktopStreamAllowsClientResize = true
             desktopStreamMode = nil
@@ -425,5 +429,21 @@ extension MirageClientService {
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream stopped: ")
         }
+    }
+
+    func updateDesktopVisibleBounds(
+        from started: DesktopStreamStartedMessage,
+        clearsMissingBounds: Bool
+    ) {
+        if let bounds = started.desktopVisibleBounds,
+           let referenceSize = started.desktopVisibleBoundsReferenceSize {
+            desktopVisibleBounds = bounds
+            desktopVisibleBoundsReferenceSize = referenceSize
+            return
+        }
+
+        guard clearsMissingBounds else { return }
+        desktopVisibleBounds = nil
+        desktopVisibleBoundsReferenceSize = nil
     }
 }

@@ -131,7 +131,7 @@ extension MirageHostService {
                 refreshTargetHz: streamStart.targetFrameRate
             )
             desktopPresentationGeneration &+= 1
-            let message = DesktopStreamStartedMessage(
+            var message = DesktopStreamStartedMessage(
                 streamID: streamID,
                 desktopSessionID: desktopSessionID,
                 width: Int(displayResolution.width),
@@ -158,12 +158,15 @@ extension MirageHostService {
                 desktopGeometryEncodedPixelHeight: Int(geometryContract.encodedPixelResolution.height),
                 desktopGeometryRefreshTargetHz: geometryContract.refreshTargetHz ?? streamStart.targetFrameRate
             )
+            let visibleBoundsSnapshot = await attachCurrentDesktopVisibleBounds(to: &message)
 
             if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
                 MirageLogger.error(.host, "Failed to encode desktop topology refresh for stream \(streamID)")
             } else if geometryContract.contractID == nil {
+                recordSentDesktopVisibleBounds(visibleBoundsSnapshot)
                 clearCurrentDesktopGeometryContract()
             } else {
+                recordSentDesktopVisibleBounds(visibleBoundsSnapshot)
                 recordCurrentDesktopGeometryContract(
                     contractID: geometryContract.contractID,
                     sceneIdentity: geometryContract.sceneIdentity,

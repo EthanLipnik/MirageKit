@@ -37,6 +37,10 @@ extension MirageClientService {
             request.hostBufferingPolicy = hostBufferingPolicy
             MirageLogger.client("Requesting host buffering policy: \(hostBufferingPolicy.rawValue)")
         }
+        if let hostBufferDepth = overrides.hostBufferDepth {
+            request.hostBufferDepth = hostBufferDepth
+            MirageLogger.client("Requesting host buffer depth: \(hostBufferDepth.rawValue)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -96,6 +100,10 @@ extension MirageClientService {
         if let hostBufferingPolicy = overrides.hostBufferingPolicy {
             request.hostBufferingPolicy = hostBufferingPolicy
             MirageLogger.client("Requesting host buffering policy: \(hostBufferingPolicy.rawValue)")
+        }
+        if let hostBufferDepth = overrides.hostBufferDepth {
+            request.hostBufferDepth = hostBufferDepth
+            MirageLogger.client("Requesting host buffer depth: \(hostBufferDepth.rawValue)")
         }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
@@ -163,6 +171,10 @@ extension MirageClientService {
             request.hostBufferingPolicy = hostBufferingPolicy
             MirageLogger.client("Requesting host buffering policy: \(hostBufferingPolicy.rawValue)")
         }
+        if let hostBufferDepth = overrides.hostBufferDepth {
+            request.hostBufferDepth = hostBufferDepth
+            MirageLogger.client("Requesting host buffer depth: \(hostBufferDepth.rawValue)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -214,6 +226,9 @@ extension MirageClientService {
         }
         if let hostBufferingPolicy = overrides.hostBufferingPolicy {
             request.hostBufferingPolicy = hostBufferingPolicy
+        }
+        if let hostBufferDepth = overrides.hostBufferDepth {
+            request.hostBufferDepth = hostBufferDepth
         }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment

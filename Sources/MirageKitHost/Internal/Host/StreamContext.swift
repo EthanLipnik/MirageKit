@@ -410,6 +410,10 @@ actor StreamContext {
     let hostBufferingPolicy: MirageHostBufferingPolicy
     /// Client/requested host buffering preference before media-path policy normalization.
     let requestedHostBufferingPolicy: MirageHostBufferingPolicy
+    /// Host-side capture and encode buffer depth preference.
+    let hostBufferDepth: MirageHostBufferDepth
+    /// Client/requested buffer depth before media-path policy normalization.
+    let requestedHostBufferDepth: MirageHostBufferDepth
     /// Classified transport path used for proximity-specific media policy.
     let transportPathKind: MirageNetworkPathKind
     /// Media behavior profile used for real-time pacing and admission policy.
@@ -476,6 +480,7 @@ actor StreamContext {
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+        hostBufferDepth: MirageHostBufferDepth = .standard,
         transportPathKind: MirageNetworkPathKind = .unknown,
         mediaPathProfile: MirageMediaPathProfile? = nil,
         mediaPathDiagnosticSummary: String? = nil,
@@ -505,6 +510,9 @@ actor StreamContext {
         let effectiveHostBufferingPolicy = resolvedMediaPathProfile.usesAwdlRadioPolicy
             ? MirageHostBufferingPolicy.stability
             : hostBufferingPolicy
+        let effectiveHostBufferDepth = resolvedMediaPathProfile.usesAwdlRadioPolicy
+            ? MirageHostBufferDepth.standard
+            : hostBufferDepth
         resolvedEncoderConfig.targetFrameRate = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
             requestedFrameRate: resolvedEncoderConfig.targetFrameRate,
             mediaPathProfile: resolvedMediaPathProfile
@@ -519,6 +527,8 @@ actor StreamContext {
         self.latencyMode = effectiveLatencyMode
         requestedHostBufferingPolicy = hostBufferingPolicy
         self.hostBufferingPolicy = effectiveHostBufferingPolicy
+        requestedHostBufferDepth = hostBufferDepth
+        self.hostBufferDepth = effectiveHostBufferDepth
         self.transportPathKind = transportPathKind
         self.mediaPathProfile = resolvedMediaPathProfile
         self.mediaPathDiagnosticSummary = mediaPathDiagnosticSummary ??
@@ -558,6 +568,7 @@ actor StreamContext {
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: effectiveLatencyMode,
             hostBufferingPolicy: effectiveHostBufferingPolicy,
+            hostBufferDepth: effectiveHostBufferDepth,
             mediaPathProfile: resolvedMediaPathProfile,
             useLowLatencyPipeline: useLowLatencyPipeline
         )

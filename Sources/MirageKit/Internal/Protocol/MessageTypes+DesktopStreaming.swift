@@ -70,6 +70,9 @@ package struct StartDesktopStreamMessage: Codable {
     /// Client-requested host-side capture-to-encode buffering policy.
     package var hostBufferingPolicy: MirageHostBufferingPolicy?
 
+    /// Client-requested host-side capture and encode buffer depth.
+    package var hostBufferDepth: MirageHostBufferDepth?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
@@ -167,6 +170,7 @@ package struct StartDesktopStreamMessage: Codable {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
+        hostBufferDepth: MirageHostBufferDepth? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         allowEncoderCatchUpQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
@@ -204,6 +208,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.hostBufferingPolicy = hostBufferingPolicy
+        self.hostBufferDepth = hostBufferDepth
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.allowEncoderCatchUpQualityAdjustment = allowEncoderCatchUpQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
@@ -249,6 +254,7 @@ package struct StartDesktopStreamMessage: Codable {
             bitrate: request.bitrate,
             latencyMode: request.latencyMode,
             hostBufferingPolicy: request.hostBufferingPolicy,
+            hostBufferDepth: request.hostBufferDepth,
             allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
             allowEncoderCatchUpQualityAdjustment: request.allowEncoderCatchUpQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost,
@@ -281,6 +287,10 @@ package struct StartDesktopStreamMessage: Codable {
 
     package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
         hostBufferingPolicy ?? .freshestFrame
+    }
+
+    package var resolvedHostBufferDepth: MirageHostBufferDepth {
+        hostBufferDepth ?? .standard
     }
 }
 
@@ -459,6 +469,24 @@ package struct DesktopStreamStartedMessage: Codable {
     /// Host-accepted refresh target for the geometry contract.
     package var desktopGeometryRefreshTargetHz: Int?
 
+    /// Display-local visible bounds X origin in logical points.
+    package var desktopVisibleBoundsX: CGFloat?
+
+    /// Display-local visible bounds Y origin in logical points.
+    package var desktopVisibleBoundsY: CGFloat?
+
+    /// Display-local visible bounds width in logical points.
+    package var desktopVisibleBoundsWidth: CGFloat?
+
+    /// Display-local visible bounds height in logical points.
+    package var desktopVisibleBoundsHeight: CGFloat?
+
+    /// Logical width of the full display coordinate space that contains the visible bounds.
+    package var desktopVisibleBoundsReferenceWidth: CGFloat?
+
+    /// Logical height of the full display coordinate space that contains the visible bounds.
+    package var desktopVisibleBoundsReferenceHeight: CGFloat?
+
     /// Client presentation role for this desktop stream.
     package var presentationRole: MirageDesktopPresentationRole?
 
@@ -477,6 +505,30 @@ package struct DesktopStreamStartedMessage: Codable {
             width: presentationWidth ?? width,
             height: presentationHeight ?? height
         )
+    }
+
+    /// Host-visible content-safe bounds in display-local logical points.
+    package var desktopVisibleBounds: CGRect? {
+        guard let x = desktopVisibleBoundsX,
+              let y = desktopVisibleBoundsY,
+              let width = desktopVisibleBoundsWidth,
+              let height = desktopVisibleBoundsHeight,
+              width > 0,
+              height > 0 else {
+            return nil
+        }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// Full logical display size used to interpret `desktopVisibleBounds`.
+    package var desktopVisibleBoundsReferenceSize: CGSize? {
+        guard let width = desktopVisibleBoundsReferenceWidth,
+              let height = desktopVisibleBoundsReferenceHeight,
+              width > 0,
+              height > 0 else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
     }
 
     /// Geometry contract the client should echo when acknowledging desktop startup readiness.
@@ -523,6 +575,12 @@ package struct DesktopStreamStartedMessage: Codable {
         desktopGeometryEncodedPixelWidth: Int? = nil,
         desktopGeometryEncodedPixelHeight: Int? = nil,
         desktopGeometryRefreshTargetHz: Int? = nil,
+        desktopVisibleBoundsX: CGFloat? = nil,
+        desktopVisibleBoundsY: CGFloat? = nil,
+        desktopVisibleBoundsWidth: CGFloat? = nil,
+        desktopVisibleBoundsHeight: CGFloat? = nil,
+        desktopVisibleBoundsReferenceWidth: CGFloat? = nil,
+        desktopVisibleBoundsReferenceHeight: CGFloat? = nil,
         presentationRole: MirageDesktopPresentationRole? = nil,
         associatedAppSessionID: UUID? = nil,
         associatedAppStartupRequestID: UUID? = nil,
@@ -554,10 +612,41 @@ package struct DesktopStreamStartedMessage: Codable {
         self.desktopGeometryEncodedPixelWidth = desktopGeometryEncodedPixelWidth
         self.desktopGeometryEncodedPixelHeight = desktopGeometryEncodedPixelHeight
         self.desktopGeometryRefreshTargetHz = desktopGeometryRefreshTargetHz
+        self.desktopVisibleBoundsX = desktopVisibleBoundsX
+        self.desktopVisibleBoundsY = desktopVisibleBoundsY
+        self.desktopVisibleBoundsWidth = desktopVisibleBoundsWidth
+        self.desktopVisibleBoundsHeight = desktopVisibleBoundsHeight
+        self.desktopVisibleBoundsReferenceWidth = desktopVisibleBoundsReferenceWidth
+        self.desktopVisibleBoundsReferenceHeight = desktopVisibleBoundsReferenceHeight
         self.presentationRole = presentationRole
         self.associatedAppSessionID = associatedAppSessionID
         self.associatedAppStartupRequestID = associatedAppStartupRequestID
         self.associatedBundleIdentifier = associatedBundleIdentifier
+    }
+
+    /// Applies host-visible content-safe bounds to the message.
+    package mutating func setDesktopVisibleBounds(_ bounds: CGRect?, referenceSize: CGSize?) {
+        guard let bounds,
+              let referenceSize,
+              bounds.width > 0,
+              bounds.height > 0,
+              referenceSize.width > 0,
+              referenceSize.height > 0 else {
+            desktopVisibleBoundsX = nil
+            desktopVisibleBoundsY = nil
+            desktopVisibleBoundsWidth = nil
+            desktopVisibleBoundsHeight = nil
+            desktopVisibleBoundsReferenceWidth = nil
+            desktopVisibleBoundsReferenceHeight = nil
+            return
+        }
+
+        desktopVisibleBoundsX = bounds.minX
+        desktopVisibleBoundsY = bounds.minY
+        desktopVisibleBoundsWidth = bounds.width
+        desktopVisibleBoundsHeight = bounds.height
+        desktopVisibleBoundsReferenceWidth = referenceSize.width
+        desktopVisibleBoundsReferenceHeight = referenceSize.height
     }
 }
 

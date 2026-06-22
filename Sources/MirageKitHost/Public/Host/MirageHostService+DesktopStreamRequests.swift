@@ -63,6 +63,7 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
             let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
+            let hostBufferDepth = request.resolvedHostBufferDepth
             let mediaPathPolicy = await effectiveMediaPathPolicyUsingLiveSession(
                 for: request,
                 clientContext: clientContext
@@ -81,6 +82,7 @@ extension MirageHostService {
             )
             MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Desktop stream host buffering policy: \(hostBufferingPolicy.rawValue)")
+            MirageLogger.host("Desktop stream host buffer depth: \(hostBufferDepth.rawValue)")
             let audioConfiguration = request.audioConfiguration ?? .default
             let usesHostResolution = request.useHostResolution == true
 
@@ -134,6 +136,7 @@ extension MirageHostService {
                 bitrate: request.bitrate,
                 latencyMode: latencyMode,
                 hostBufferingPolicy: hostBufferingPolicy,
+                hostBufferDepth: hostBufferDepth,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
                 allowEncoderCatchUpQualityAdjustment: request.allowEncoderCatchUpQualityAdjustment,
                 disableResolutionCap: request.disableResolutionCap ?? false,

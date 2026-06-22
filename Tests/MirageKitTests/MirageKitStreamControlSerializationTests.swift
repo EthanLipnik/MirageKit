@@ -83,6 +83,7 @@ struct MirageKitStreamControlSerializationTests {
             bitrate: 150_000_000,
             latencyMode: .smoothest,
             hostBufferingPolicy: .stability,
+            hostBufferDepth: .maximum,
             allowRuntimeQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -97,6 +98,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decoded.latencyMode == .smoothest)
         #expect(decoded.hostBufferingPolicy == .stability)
         #expect(decoded.resolvedHostBufferingPolicy == .stability)
+        #expect(decoded.hostBufferDepth == .maximum)
+        #expect(decoded.resolvedHostBufferDepth == .maximum)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
@@ -116,6 +119,7 @@ struct MirageKitStreamControlSerializationTests {
             bitrate: 200_000_000,
             latencyMode: .lowestLatency,
             hostBufferingPolicy: .freshestFrame,
+            hostBufferDepth: .high,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: true,
             disableResolutionCap: false,
@@ -129,6 +133,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.hostBufferingPolicy == .freshestFrame)
         #expect(decoded.resolvedHostBufferingPolicy == .freshestFrame)
+        #expect(decoded.hostBufferDepth == .high)
+        #expect(decoded.resolvedHostBufferDepth == .high)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
@@ -305,7 +311,7 @@ struct MirageKitStreamControlSerializationTests {
     @Test("Desktop stream restart copy preserves client path fields")
     func desktopStreamRestartCopyPreservesClientPathFields() {
         let contractID = UUID()
-        let request = StartDesktopStreamMessage(
+        var request = StartDesktopStreamMessage(
             scaleFactor: nil,
             displayWidth: 3008,
             displayHeight: 1692,
@@ -323,6 +329,7 @@ struct MirageKitStreamControlSerializationTests {
             desktopGeometryEncodedPixelHeight: 2064,
             desktopGeometryRefreshTargetHz: 60
         )
+        request.hostBufferDepth = .high
 
         let copy = StartDesktopStreamMessage(copying: request, startupRequestID: UUID())
 
@@ -331,6 +338,7 @@ struct MirageKitStreamControlSerializationTests {
         #expect(copy.clientPathSignature == request.clientPathSignature)
         #expect(copy.clientPolicyPathKind == request.clientPolicyPathKind)
         #expect(copy.clientPolicyMediaPathProfile == request.clientPolicyMediaPathProfile)
+        #expect(copy.hostBufferDepth == request.hostBufferDepth)
         #expect(copy.desktopGeometryContractID == contractID)
         #expect(copy.desktopGeometrySceneIdentity == "scene-main")
         #expect(copy.desktopGeometryDisplayPixelWidth == 2752)
@@ -429,6 +437,8 @@ struct MirageKitStreamControlSerializationTests {
         let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
         #expect(decodedStartStream.hostBufferingPolicy == nil)
         #expect(decodedStartStream.resolvedHostBufferingPolicy == .freshestFrame)
+        #expect(decodedStartStream.hostBufferDepth == nil)
+        #expect(decodedStartStream.resolvedHostBufferDepth == .standard)
 
         let selectAppEnvelope = try ControlMessage(
             type: .selectApp,
@@ -438,6 +448,8 @@ struct MirageKitStreamControlSerializationTests {
         let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
         #expect(decodedSelectApp.hostBufferingPolicy == nil)
         #expect(decodedSelectApp.resolvedHostBufferingPolicy == .freshestFrame)
+        #expect(decodedSelectApp.hostBufferDepth == nil)
+        #expect(decodedSelectApp.resolvedHostBufferDepth == .standard)
 
         let startDesktopEnvelope = try ControlMessage(
             type: .startDesktopStream,
@@ -452,6 +464,8 @@ struct MirageKitStreamControlSerializationTests {
         let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decodedStartDesktop.hostBufferingPolicy == nil)
         #expect(decodedStartDesktop.resolvedHostBufferingPolicy == .freshestFrame)
+        #expect(decodedStartDesktop.hostBufferDepth == nil)
+        #expect(decodedStartDesktop.resolvedHostBufferDepth == .standard)
 
         let customEnvelope = try ControlMessage(
             type: .startCustomStream,
@@ -466,6 +480,8 @@ struct MirageKitStreamControlSerializationTests {
         let decodedCustom = try decodedCustomEnvelope.decode(StartCustomStreamMessage.self)
         #expect(decodedCustom.hostBufferingPolicy == nil)
         #expect(decodedCustom.resolvedHostBufferingPolicy == .freshestFrame)
+        #expect(decodedCustom.hostBufferDepth == nil)
+        #expect(decodedCustom.resolvedHostBufferDepth == .standard)
     }
 
     @Test("Stream started message serializes accepted media packet sizing")
@@ -540,6 +556,7 @@ struct MirageKitStreamControlSerializationTests {
             bitrate: 500_000_000,
             latencyMode: .lowestLatency,
             hostBufferingPolicy: .freshestFrame,
+            hostBufferDepth: .maximum,
             allowRuntimeQualityAdjustment: false,
             allowEncoderCatchUpQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
@@ -556,6 +573,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.hostBufferingPolicy == .freshestFrame)
         #expect(decoded.resolvedHostBufferingPolicy == .freshestFrame)
+        #expect(decoded.hostBufferDepth == .maximum)
+        #expect(decoded.resolvedHostBufferDepth == .maximum)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.colorDepth == .pro)
