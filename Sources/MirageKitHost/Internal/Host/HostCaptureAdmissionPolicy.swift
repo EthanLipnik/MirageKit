@@ -74,6 +74,13 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
         let pending = max(0, pendingFrameCount)
         let capacity = max(1, frameCapacity)
         guard pending > 1 else { return false }
+        if latencyMode == .lowestLatency,
+           hostBufferingPolicy == .freshestFrame,
+           encoderLag.frameRate >= 90,
+           capacity > 1,
+           pending >= capacity {
+            return true
+        }
         guard isEncoderLagging(encoderLag, latencyMode: latencyMode) else { return false }
 
         let backlogMs = estimatedPreEncodeBacklogMs(

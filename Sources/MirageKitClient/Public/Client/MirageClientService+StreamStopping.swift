@@ -36,7 +36,8 @@ public extension MirageClientService {
 
         await forceStopWindowStreamLocally(
             streamID: streamID,
-            stopMediaStreamID: stopMediaStreamID
+            stopMediaStreamID: stopMediaStreamID,
+            bundleIdentifier: session.window.application?.bundleIdentifier
         )
     }
 }
@@ -221,8 +222,10 @@ public extension MirageClientService {
 
     func forceStopWindowStreamLocally(
         streamID: StreamID,
-        stopMediaStreamID: StreamID? = nil
+        stopMediaStreamID: StreamID? = nil,
+        bundleIdentifier: String? = nil
     ) async {
+        let removedBundleIdentifier = bundleIdentifier ?? appBundleIdentifierForLocalTeardown(streamID: streamID)
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
         sessionStore.removeSessions(renderingMediaStreamID: streamID)
@@ -258,8 +261,50 @@ public extension MirageClientService {
             await forceStopAppAtlasMediaStreamLocally(mediaStreamID: stopMediaStreamID)
         }
 
+        clearAppStreamStateIfInactive(bundleIdentifier: removedBundleIdentifier)
         await updateReassemblerSnapshot()
         await refreshSharedClipboardBridgeState()
+    }
+
+    internal func appBundleIdentifierForLocalTeardown(streamID: StreamID) -> String? {
+        sessionStore.sessionByStreamID(streamID)?.window.application?.bundleIdentifier ??
+            sessionStore.sessionByMediaStreamID(streamID)?.window.application?.bundleIdentifier ??
+            activeStreams.first {
+                $0.id == streamID || $0.mediaStreamID == streamID
+            }?.window.application?.bundleIdentifier
+    }
+
+    internal func clearAppStreamStateIfInactive(bundleIdentifier: String?) {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return }
+        guard !hasActiveAppStream(bundleIdentifier: bundleIdentifier) else { return }
+
+        if streamingAppBundleID?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame {
+            streamingAppBundleID = nil
+            pendingAppRequestedColorDepth = nil
+            pendingAppRequestedLatencyMode = nil
+            clearPendingStreamSetup(kind: .app)
+        }
+
+        if appWindowInventory?.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame {
+            appWindowInventory = nil
+        }
+    }
+
+    internal func hasActiveAppStream(bundleIdentifier: String) -> Bool {
+        let matchesBundle: (String?) -> Bool = {
+            $0?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+
+        if appStreamPlaceholderDesktopStreamID != nil,
+           matchesBundle(streamingAppBundleID) {
+            return true
+        }
+
+        return activeStreams.contains {
+            matchesBundle($0.window.application?.bundleIdentifier)
+        } || sessionStore.activeSessions.contains {
+            matchesBundle($0.window.application?.bundleIdentifier)
+        }
     }
 
     func appAtlasMediaStreamIDToStopAfterStopping(

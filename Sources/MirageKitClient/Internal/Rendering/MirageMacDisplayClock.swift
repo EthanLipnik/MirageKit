@@ -96,6 +96,13 @@ final class MirageMacDisplayClock: NSObject, @unchecked Sendable {
         return now - lastEmittedTickTime >= interval * 0.90
     }
 
+    nonisolated static func shouldRestartDisplayLink(
+        currentDisplayID: CGDirectDisplayID?,
+        newDisplayID: CGDirectDisplayID?
+    ) -> Bool {
+        currentDisplayID != newDisplayID
+    }
+
     nonisolated private static func frameRateRange(for targetFPS: Int) -> CAFrameRateRange {
         let preferred = Float(MirageStreamCadenceTarget.normalizedFPS(targetFPS))
         return CAFrameRateRange(minimum: preferred, maximum: preferred, preferred: preferred)

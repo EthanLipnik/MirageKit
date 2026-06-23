@@ -191,7 +191,8 @@ extension MirageClientService {
             if let streamID = removed.streamID {
                 await forceStopWindowStreamLocally(
                     streamID: streamID,
-                    stopMediaStreamID: removalPlan?.mediaStreamIDToStop
+                    stopMediaStreamID: removalPlan?.mediaStreamIDToStop,
+                    bundleIdentifier: removed.bundleIdentifier
                 )
             }
         } catch {

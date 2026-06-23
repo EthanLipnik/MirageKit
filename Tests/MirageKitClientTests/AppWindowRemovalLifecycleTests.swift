@@ -148,6 +148,8 @@ struct AppWindowRemovalLifecycleTests {
         )
         service.registeredStreamIDs.insert(mediaStreamID)
         service.fastPathState.addActiveStreamID(mediaStreamID)
+        service.streamingAppBundleID = "com.example.Editor"
+        service.appWindowInventory = appWindowInventory(appSessionID: appSessionID)
         service.onWindowRemovedFromStream = { [sessionStore = service.sessionStore] message in
             guard let streamID = message.streamID,
                   let session = sessionStore.sessionByStreamID(streamID) else {
@@ -172,6 +174,8 @@ struct AppWindowRemovalLifecycleTests {
         #expect(service.controllersByStream[mediaStreamID] != nil)
         #expect(service.registeredStreamIDs.contains(mediaStreamID))
         #expect(service.activeStreamIDsForFiltering.contains(mediaStreamID))
+        #expect(service.streamingAppBundleID == "com.example.Editor")
+        #expect(service.appWindowInventory != nil)
 
         let secondRemoved = WindowRemovedFromStreamMessage(
             bundleIdentifier: "com.example.Editor",
@@ -188,6 +192,8 @@ struct AppWindowRemovalLifecycleTests {
         #expect(service.controllersByStream[mediaStreamID] == nil)
         #expect(!service.registeredStreamIDs.contains(mediaStreamID))
         #expect(!service.activeStreamIDsForFiltering.contains(mediaStreamID))
+        #expect(service.streamingAppBundleID == nil)
+        #expect(service.appWindowInventory == nil)
     }
 
     @MainActor
@@ -246,6 +252,11 @@ struct AppWindowRemovalLifecycleTests {
         service.appAtlasLayoutsByMediaStreamID[mediaStreamID] = [:]
         service.lastKeyframeRequestTime[mediaStreamID] = CFAbsoluteTimeGetCurrent()
         service.receiverMediaFeedbackLastSendTime[mediaStreamID] = CFAbsoluteTimeGetCurrent()
+        service.streamingAppBundleID = "com.example.Editor"
+        service.appWindowInventory = appWindowInventory()
+        service.pendingStreamSetupKind = .app
+        service.pendingAppRequestedColorDepth = .pro
+        service.pendingAppRequestedLatencyMode = .balanced
 
         await service.stopViewing(session)
 
@@ -258,6 +269,11 @@ struct AppWindowRemovalLifecycleTests {
         #expect(service.appAtlasLayoutsByMediaStreamID[mediaStreamID] == nil)
         #expect(service.lastKeyframeRequestTime[mediaStreamID] == nil)
         #expect(service.receiverMediaFeedbackLastSendTime[mediaStreamID] == nil)
+        #expect(service.streamingAppBundleID == nil)
+        #expect(service.appWindowInventory == nil)
+        #expect(service.pendingStreamSetupKind == nil)
+        #expect(service.pendingAppRequestedColorDepth == nil)
+        #expect(service.pendingAppRequestedLatencyMode == nil)
     }
 
     @MainActor
@@ -307,6 +323,24 @@ struct AppWindowRemovalLifecycleTests {
             frame: CGRect(x: 0, y: 0, width: 1600, height: 1200),
             isOnScreen: true,
             windowLayer: 0
+        )
+    }
+
+    private func appWindowInventory(appSessionID: UUID? = nil) -> AppWindowInventoryMessage {
+        AppWindowInventoryMessage(
+            bundleIdentifier: "com.example.Editor",
+            appSessionID: appSessionID,
+            maxVisibleSlots: 1,
+            slots: [],
+            hiddenWindows: [
+                AppWindowInventoryMessage.WindowMetadata(
+                    windowID: 900,
+                    title: "Editor",
+                    width: 1600,
+                    height: 1200,
+                    isResizable: true
+                )
+            ]
         )
     }
 }

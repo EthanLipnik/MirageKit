@@ -373,6 +373,11 @@ extension MirageClientService {
             MirageLogger.client("Desktop stream stopped: stream=\(streamID), reason=\(stopped.reason)")
 
             retiredDesktopSessionIDs.insert(stopped.desktopSessionID)
+            let stoppedAppPlaceholderBundleIdentifier: String? = if appStreamPlaceholderDesktopStreamID == streamID {
+                streamingAppBundleID
+            } else {
+                nil
+            }
             if appStreamPlaceholderDesktopStreamID == streamID {
                 appStreamPlaceholderDesktopStreamID = nil
                 appStreamPlaceholderAppSessionID = nil
@@ -425,6 +430,7 @@ extension MirageClientService {
             if hadLocalDesktopState {
                 onDesktopStreamStopped?(streamID, stopped.reason)
             }
+            clearAppStreamStateIfInactive(bundleIdentifier: stoppedAppPlaceholderBundleIdentifier)
             Task { await self.refreshSharedClipboardBridgeState() }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream stopped: ")
