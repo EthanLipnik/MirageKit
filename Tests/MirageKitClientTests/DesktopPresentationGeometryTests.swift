@@ -133,6 +133,24 @@ struct DesktopPresentationGeometryTests {
         #expect(prefersAspectFit)
     }
 
+    @Test("Disabled window-driven resize suppresses desktop resize with local aspect fit")
+    func disabledWindowDrivenResizeSuppressesDesktopResizeWithLocalAspectFit() {
+        let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
+            isDesktopStream: true,
+            useHostResolution: false,
+            windowDrivenResizeEnabled: false,
+            desktopCaptureSource: .virtualDisplay,
+            desktopStreamAllowsClientResize: true,
+            keyboardAvoidanceEnabled: true,
+            softwareKeyboardVisible: false,
+            localKeyboardOcclusionActive: false
+        )
+        let prefersAspectFit = MirageStreamPresentationPolicy.prefersLocalAspectFitPresentation()
+
+        #expect(suppressesResize)
+        #expect(prefersAspectFit)
+    }
+
     @Test("Keyboard avoidance suppresses window resize and uses local aspect fit")
     func keyboardAvoidanceSuppressesWindowResizeAndUsesLocalAspectFit() {
         let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(

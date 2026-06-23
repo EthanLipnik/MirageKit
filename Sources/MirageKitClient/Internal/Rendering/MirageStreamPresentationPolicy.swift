@@ -44,6 +44,7 @@ enum MirageStreamPresentationPolicy {
     static func suppressesWindowDrivenResizeForLocalPresentation(
         isDesktopStream: Bool,
         useHostResolution: Bool,
+        windowDrivenResizeEnabled: Bool = true,
         desktopCaptureSource: MirageDesktopCaptureSource,
         desktopStreamAllowsClientResize: Bool,
         keyboardAvoidanceEnabled: Bool,
@@ -56,6 +57,9 @@ enum MirageStreamPresentationPolicy {
             softwareKeyboardVisible: softwareKeyboardVisible,
             localKeyboardOcclusionActive: localKeyboardOcclusionActive
         ) {
+            return true
+        }
+        if !windowDrivenResizeEnabled {
             return true
         }
 

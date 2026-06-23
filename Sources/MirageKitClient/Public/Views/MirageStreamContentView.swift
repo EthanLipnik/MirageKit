@@ -97,6 +97,8 @@ public struct MirageStreamContentView: View {
     public let onCursorLockRecaptureRequested: (() -> Void)?
     /// Whether app streams should use the host window resolution directly.
     public let useHostResolution: Bool
+    /// Whether local window size changes should request host-side stream resizing.
+    public let windowDrivenResizeEnabled: Bool
     /// Whether macOS system shortcuts should be forwarded through Input Monitoring.
     public let macSystemShortcutForwardingEnabled: Bool
     /// Whether keyboard occlusion should make local presentation avoid the keyboard on touch platforms.
@@ -203,6 +205,7 @@ public struct MirageStreamContentView: View {
         onCursorLockEscapeRequested: (() -> Void)? = nil,
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         useHostResolution: Bool = false,
+        windowDrivenResizeEnabled: Bool = true,
         macSystemShortcutForwardingEnabled: Bool = false,
         keyboardAvoidanceEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
@@ -241,6 +244,7 @@ public struct MirageStreamContentView: View {
         self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.useHostResolution = useHostResolution
+        self.windowDrivenResizeEnabled = windowDrivenResizeEnabled
         self.macSystemShortcutForwardingEnabled = macSystemShortcutForwardingEnabled
         self.keyboardAvoidanceEnabled = keyboardAvoidanceEnabled
         self.maxDrawableSize = maxDrawableSize
@@ -320,6 +324,7 @@ extension MirageStreamContentView {
             MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
                 isDesktopStream: isDesktopStream,
                 useHostResolution: useHostResolution,
+                windowDrivenResizeEnabled: windowDrivenResizeEnabled,
                 desktopCaptureSource: clientService.desktopCaptureSource,
                 desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
                 keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
