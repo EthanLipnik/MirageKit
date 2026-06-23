@@ -39,6 +39,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore?
 
+    /// Host display dimensions in points for desktop cursor presentation and movement.
+    public var hostDisplayPointSize: CGSize?
+
     /// Session identifier for the active desktop stream rendered by this view.
     public var desktopSessionID: UUID?
 
@@ -152,6 +155,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
+        hostDisplayPointSize: CGSize? = nil,
         desktopSessionID: UUID? = nil,
         hasPresentedFrameForActivationRecovery: Bool = false,
         onBecomeActive: (() -> Void)? = nil,
@@ -196,6 +200,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
+        self.hostDisplayPointSize = hostDisplayPointSize
         self.desktopSessionID = desktopSessionID
         self.hasPresentedFrameForActivationRecovery = hasPresentedFrameForActivationRecovery
         self.onBecomeActive = onBecomeActive
@@ -335,6 +340,7 @@ package struct MirageStreamViewControllerState {
     let hideSystemCursor: Bool
     let cursorStore: MirageClientCursorStore?
     let cursorPositionStore: MirageClientCursorPositionStore?
+    let hostDisplayPointSize: CGSize?
     let desktopSessionID: UUID?
     let hasPresentedFrameForActivationRecovery: Bool
     let cursorLockEnabled: Bool
@@ -365,6 +371,7 @@ package struct MirageStreamViewControllerState {
         hideSystemCursor = representable.hideSystemCursor
         cursorStore = representable.cursorStore
         cursorPositionStore = representable.cursorPositionStore
+        hostDisplayPointSize = representable.hostDisplayPointSize
         desktopSessionID = representable.desktopSessionID
         hasPresentedFrameForActivationRecovery = representable.hasPresentedFrameForActivationRecovery
         cursorLockEnabled = representable.cursorLockEnabled

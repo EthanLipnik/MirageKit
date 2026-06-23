@@ -577,6 +577,13 @@ actor StreamContext {
         maxInFlightFrames = bufferPolicy.initialInFlightFrames
         frameBufferDepth = bufferPolicy.bufferDepth
         frameInbox = StreamFrameInbox(capacity: bufferPolicy.bufferDepth)
+        MirageLogger.stream(
+            "Stream \(streamID) buffer policy: requestedDepth=\(hostBufferDepth.rawValue) " +
+                "effectiveDepth=\(effectiveHostBufferDepth.rawValue) latency=\(effectiveLatencyMode.rawValue) " +
+                "hostBuffering=\(effectiveHostBufferingPolicy.rawValue) frameBufferDepth=\(bufferPolicy.bufferDepth) " +
+                "initialInFlight=\(bufferPolicy.initialInFlightFrames) " +
+                "minInFlight=\(bufferPolicy.minimumInFlightFrames) cap=\(bufferPolicy.maxInFlightFramesCap)"
+        )
         maxEncodeTimeMs = resolvedEncoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
         let cappedFrameQuality = min(resolvedEncoderConfig.frameQuality, self.compressionQualityCeiling)

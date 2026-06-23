@@ -18,13 +18,13 @@ struct HostHighRefreshFrameAdmissionStateTests {
         let first = state.evaluateAdmission(
             currentFrameRate: 120,
             frameCaptureTime: 10.000,
-            reason: "encoder-over-target-budget",
+            reason: "encoder-over-floor-budget",
             now: 10.006
         )
         let second = state.evaluateAdmission(
             currentFrameRate: 120,
             frameCaptureTime: 10.008,
-            reason: "encoder-over-target-budget",
+            reason: "encoder-over-floor-budget",
             now: 10.014
         )
 

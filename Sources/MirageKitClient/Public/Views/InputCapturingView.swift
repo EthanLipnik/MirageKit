@@ -81,6 +81,25 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Host display dimensions in points for 1:1 cursor delta normalization.
+    public var hostDisplayPointSize: CGSize? {
+        didSet {
+            guard hostDisplayPointSize != oldValue else { return }
+            updateLockedCursorViewPosition()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
+    /// Reference stream size for desktop aspect-fit cursor presentation.
+    public var desktopPresentationReferenceSize: CGSize? {
+        didSet {
+            guard desktopPresentationReferenceSize != oldValue else { return }
+            updateVirtualCursorViewPosition()
+            updateLockedCursorViewPosition()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
     /// Pixel-space crop override for logical app windows packed into a shared media stream.
     public var contentRectOverride: CGRect? {
         didSet {

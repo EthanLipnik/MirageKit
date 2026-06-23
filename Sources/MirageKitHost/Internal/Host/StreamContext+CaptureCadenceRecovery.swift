@@ -79,7 +79,11 @@ extension StreamContext {
         let targetFPS = Double(max(1, currentFrameRate))
         let rawFPS = metrics.rawScreenCallbackFPS ?? metrics.completeFrameFPS ?? metrics.observedSCKFPS
         let observedFPS = metrics.observedSCKFPS ?? metrics.renderableFrameFPS ?? metrics.completeFrameFPS
-        guard let effectiveFPS = effectiveHighRefreshSourceFPS(rawFPS: rawFPS, observedFPS: observedFPS) else {
+        guard let effectiveFPS = effectiveHighRefreshSourceFPS(
+            metrics: metrics,
+            rawFPS: rawFPS,
+            observedFPS: observedFPS
+        ) else {
             highRefreshCaptureCadenceRecoveryState.reset()
             return
         }
@@ -135,8 +139,18 @@ extension StreamContext {
         }
     }
 
-    private func effectiveHighRefreshSourceFPS(rawFPS: Double?, observedFPS: Double?) -> Double? {
-        switch (rawFPS, observedFPS) {
+    func effectiveHighRefreshSourceFPS(
+        metrics: StreamCaptureCadenceMetrics,
+        rawFPS: Double?,
+        observedFPS: Double?
+    ) -> Double? {
+        if let raw = rawFPS,
+           let observed = observedFPS,
+           highRefreshCadenceSampleIsIdleHeavy(metrics: metrics, rawFPS: raw, observedFPS: observed) {
+            return raw
+        }
+
+        return switch (rawFPS, observedFPS) {
         case (.some(let raw), .some(let observed)):
             min(raw, observed)
         case (.some(let raw), .none):
@@ -146,6 +160,22 @@ extension StreamContext {
         case (.none, .none):
             nil
         }
+    }
+
+    private func highRefreshCadenceSampleIsIdleHeavy(
+        metrics: StreamCaptureCadenceMetrics,
+        rawFPS: Double,
+        observedFPS: Double
+    ) -> Bool {
+        guard rawFPS > 0,
+              observedFPS < rawFPS * 0.50,
+              let sampleDurationSeconds = metrics.sampleDurationSeconds,
+              sampleDurationSeconds >= 0.75,
+              let idleFrameCount = metrics.idleFrameCount else {
+            return false
+        }
+        let idleFPS = Double(idleFrameCount) / sampleDurationSeconds
+        return idleFPS >= max(8.0, Double(max(1, currentFrameRate)) * 0.10)
     }
 
     private func retuneHighRefreshCaptureCadence(

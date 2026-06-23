@@ -40,6 +40,21 @@ struct HostCaptureQueueDepthPolicyTests {
         #expect(depth == 8)
     }
 
+    @Test("High buffer requests capped SCK queue depth")
+    func highBufferRequestsCappedSCKQueueDepth() {
+        let depth = WindowCaptureEngine.resolveSCKQueueDepth(
+            width: 2752,
+            height: 2064,
+            frameRate: 120,
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            overrideDepth: MirageHostBufferDepth.high.captureQueueDepth
+        )
+
+        #expect(depth == 8)
+        #expect(MirageHostBufferDepth.maximum.captureQueueDepth == 8)
+    }
+
     @Test("Stability lowest-latency keeps existing SCK queue default")
     func stabilityLowestLatencyKeepsExistingSCKQueueDefault() {
         let depth = WindowCaptureEngine.resolveSCKQueueDepth(

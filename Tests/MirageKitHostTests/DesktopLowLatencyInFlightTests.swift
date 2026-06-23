@@ -104,10 +104,10 @@ struct DesktopLowLatencyInFlightTests {
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
 
-        #expect(await context.minInFlightFrames == 4)
-        #expect(await context.maxInFlightFrames == 4)
-        #expect(await context.maxInFlightFramesCap == 4)
-        #expect(await context.frameBufferDepth == 5)
+        #expect(await context.minInFlightFrames == 5)
+        #expect(await context.maxInFlightFrames == 5)
+        #expect(await context.maxInFlightFramesCap == 5)
+        #expect(await context.frameBufferDepth == 6)
     }
 
     @Test("120 Hz desktop freshest-frame lowest-latency maximum buffer keeps bounded ProMotion depth")
@@ -120,10 +120,10 @@ struct DesktopLowLatencyInFlightTests {
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
 
-        #expect(await context.minInFlightFrames == 5)
-        #expect(await context.maxInFlightFrames == 5)
-        #expect(await context.maxInFlightFramesCap == 5)
-        #expect(await context.frameBufferDepth == 6)
+        #expect(await context.minInFlightFrames == 6)
+        #expect(await context.maxInFlightFrames == 6)
+        #expect(await context.maxInFlightFramesCap == 6)
+        #expect(await context.frameBufferDepth == 8)
     }
 
     @Test("60 Hz desktop freshest-frame balanced keeps two-frame cushion")
@@ -168,10 +168,10 @@ struct DesktopLowLatencyInFlightTests {
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
 
-        #expect(await context.minInFlightFrames == 3)
-        #expect(await context.maxInFlightFrames == 4)
-        #expect(await context.maxInFlightFramesCap == 4)
-        #expect(await context.frameBufferDepth == 4)
+        #expect(await context.minInFlightFrames == 4)
+        #expect(await context.maxInFlightFrames == 5)
+        #expect(await context.maxInFlightFramesCap == 5)
+        #expect(await context.frameBufferDepth == 5)
     }
 
     @Test("60 Hz desktop smoothest keeps smoothing capacity")
@@ -196,10 +196,10 @@ struct DesktopLowLatencyInFlightTests {
             hostBufferDepth: .maximum
         )
 
-        #expect(await context.minInFlightFrames == 4)
-        #expect(await context.maxInFlightFrames == 4)
+        #expect(await context.minInFlightFrames == 5)
+        #expect(await context.maxInFlightFrames == 5)
         #expect(await context.maxInFlightFramesCap == 10)
-        #expect(await context.frameBufferDepth == 14)
+        #expect(await context.frameBufferDepth == 16)
     }
 
     @Test("AWDL desktop starts with sidecar-style host pipeline slack")

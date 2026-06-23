@@ -171,6 +171,7 @@ private extension MirageStreamContentView {
             },
             cursorStore: clientService.cursorStore,
             cursorPositionStore: clientService.cursorPositionStore,
+            hostDisplayPointSize: isDesktopStream ? hostDisplayPointSize : nil,
             desktopSessionID: activeDesktopSessionID,
             hasPresentedFrameForActivationRecovery: session.hasPresentedFrame,
             onBecomeActive: {

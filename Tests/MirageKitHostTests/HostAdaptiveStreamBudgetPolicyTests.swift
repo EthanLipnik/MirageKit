@@ -610,6 +610,44 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(await context.activeQuality > originalQuality)
     }
 
+    @Test("Still ProMotion cadence with high-refresh headroom raises automatic quality")
+    func stillProMotionCadenceWithHighRefreshHeadroomRaisesAutomaticQuality() async {
+        let context = makeContext(
+            bitrate: 54_100_000,
+            frameRate: 120,
+            bitrateAdaptationCeiling: 180_000_000,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let outputSize = CGSize(width: 2752, height: 2064)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setActiveQualityForRealtimeBudgetTest(0.42)
+        await context.markSourceStillForRealtimeBudgetTest(at: 10)
+        let originalTarget = context.currentTargetBitrateBps ?? 0
+        let originalQuality = await context.activeQuality
+
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 120,
+            encodeAttemptFPS: 95,
+            encodedFPS: 95,
+            at: 10.05
+        )
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 10,
+            captureFPS: 120,
+            encodeAttemptFPS: 95,
+            encodedFPS: 95,
+            at: 11.2
+        )
+
+        #expect((context.currentTargetBitrateBps ?? 0) > originalTarget)
+        #expect(await context.activeQuality > originalQuality)
+    }
+
     @Test("Still quality probe restores active quality to ceiling immediately")
     func stillQualityProbeRestoresActiveQualityToCeilingImmediately() async {
         let context = makeContext(
@@ -1480,6 +1518,35 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(log.contains("clientPath=wifi/localWiFi"))
         #expect(log.contains("clientPolicy=vpn/vpnOrOverlay"))
         #expect(log.contains("resolved=vpn/vpnOrOverlay"))
+    }
+
+    @Test("Idle-heavy ProMotion cadence recovery uses raw callback cadence")
+    func idleHeavyProMotionCadenceRecoveryUsesRawCallbackCadence() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            frameRate: 120,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi
+        )
+        let metrics = StreamCaptureCadenceMetrics(
+            sampleDurationSeconds: 1.0,
+            rawScreenCallbackCount: 100,
+            completeFrameCount: 6,
+            renderableFrameCount: 86,
+            idleFrameCount: 80,
+            rawScreenCallbackFPS: 100,
+            completeFrameFPS: 6,
+            renderableFrameFPS: 86,
+            observedSCKFPS: 6
+        )
+
+        let effectiveFPS = await context.effectiveHighRefreshSourceFPS(
+            metrics: metrics,
+            rawFPS: 100,
+            observedFPS: 6
+        )
+
+        #expect(effectiveFPS == 100)
     }
 
     @Test("Stream context does not treat automatic target bitrate as manual cap")

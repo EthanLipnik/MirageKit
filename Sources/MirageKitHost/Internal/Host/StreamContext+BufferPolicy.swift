@@ -146,12 +146,13 @@ extension StreamContext {
                 maxInFlightFramesCap: cap
             )
         case .high, .maximum:
-            let increment = hostBufferDepth == .high ? 1 : 2
+            let increment = bufferDepthIncrement(for: hostBufferDepth)
+            let inFlightIncrement = inFlightDepthIncrement(for: hostBufferDepth)
             let limits = maximumBufferLimits(frameRate: frameRate, latencyMode: latencyMode)
             let baseCap = max(1, policy.maxInFlightFramesCap)
-            let cap = min(limits.maxInFlightFramesCap, baseCap + increment)
-            let minimum = min(cap, max(1, policy.minimumInFlightFrames + increment))
-            let initial = min(cap, max(minimum, policy.initialInFlightFrames + increment))
+            let cap = min(limits.maxInFlightFramesCap, baseCap + inFlightIncrement)
+            let minimum = min(cap, max(1, policy.minimumInFlightFrames + inFlightIncrement))
+            let initial = min(cap, max(minimum, policy.initialInFlightFrames + inFlightIncrement))
             let depth = min(limits.bufferDepth, max(cap, policy.bufferDepth + increment))
             return StreamBufferPolicy(
                 bufferDepth: depth,
@@ -181,9 +182,9 @@ extension StreamContext {
     ) -> (bufferDepth: Int, maxInFlightFramesCap: Int) {
         switch latencyMode {
         case .lowestLatency:
-            frameRate >= 90 ? (6, 5) : (3, 3)
+            frameRate >= 90 ? (8, 6) : (3, 3)
         case .balanced:
-            frameRate >= 90 ? (8, 6) : (5, 4)
+            frameRate >= 90 ? (10, 8) : (5, 4)
         case .smoothest:
             (16, 10)
         }
@@ -202,9 +203,31 @@ extension StreamContext {
             let limits = minimalBufferLimits(latencyMode: latencyMode)
             return min(max(1, limit), limits.maxInFlightFramesCap)
         case .high, .maximum:
-            let increment = hostBufferDepth == .high ? 1 : 2
+            let increment = inFlightDepthIncrement(for: hostBufferDepth)
             let limits = maximumBufferLimits(frameRate: frameRate, latencyMode: latencyMode)
             return min(limits.maxInFlightFramesCap, max(1, limit + increment))
+        }
+    }
+
+    private static func bufferDepthIncrement(for hostBufferDepth: MirageHostBufferDepth) -> Int {
+        switch hostBufferDepth {
+        case .minimal, .standard:
+            0
+        case .high:
+            2
+        case .maximum:
+            4
+        }
+    }
+
+    private static func inFlightDepthIncrement(for hostBufferDepth: MirageHostBufferDepth) -> Int {
+        switch hostBufferDepth {
+        case .minimal, .standard:
+            0
+        case .high:
+            2
+        case .maximum:
+            3
         }
     }
 

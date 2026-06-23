@@ -12,7 +12,14 @@ import UIKit
 extension InputCapturingView {
     /// Returns the video content rect used to convert between local points and normalized host coordinates.
     func resolvedPresentationContentRect() -> CGRect {
-        sampleBufferView.resolvedPresentedContentRect(in: bounds)
+        if let desktopPresentationReferenceSize {
+            return DesktopPresentationGeometry.resolvedContentRect(
+                referenceSize: desktopPresentationReferenceSize,
+                in: bounds
+            )
+        }
+
+        return sampleBufferView.resolvedPresentedContentRect(in: bounds)
     }
 
     /// Converts a local UIKit point into the normalized stream coordinate space.

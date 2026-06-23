@@ -38,7 +38,11 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
         let pending = max(0, pendingFrameCount)
 
         if backpressureActive {
-            return pending >= max(1, capacity - 1)
+            let dropThreshold = backpressureDropThreshold(
+                capacity: capacity,
+                encoderLag: encoderLag
+            )
+            return pending >= dropThreshold
         }
 
         if let encoderLag, isEncoderLagging(encoderLag, latencyMode: latencyMode) {
@@ -68,17 +72,27 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
         encoderLag: EncoderLagSnapshot
     ) -> Bool {
         let pending = max(0, pendingFrameCount)
+        let capacity = max(1, frameCapacity)
         guard pending > 1 else { return false }
         guard isEncoderLagging(encoderLag, latencyMode: latencyMode) else { return false }
-
-        if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
-            return true
-        }
 
         let backlogMs = estimatedPreEncodeBacklogMs(
             pendingFrameCount: pending,
             encoderLag: encoderLag
         )
+        if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
+            guard encoderLag.frameRate >= 90, capacity > 1 else { return true }
+            let queuedBacklogMs = estimatedQueuedFrameBacklogMs(
+                pendingFrameCount: pending,
+                encoderLag: encoderLag
+            )
+            return pending >= max(2, capacity) ||
+                queuedBacklogMs >= preEncodeBacklogCapMs(
+                    latencyMode: latencyMode,
+                    frameRate: encoderLag.frameRate
+                )
+        }
+
         if backlogMs >= preEncodeBacklogCapMs(
             latencyMode: latencyMode,
             frameRate: encoderLag.frameRate
@@ -86,7 +100,6 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
             return true
         }
 
-        let capacity = max(1, frameCapacity)
         switch latencyMode {
         case .lowestLatency:
             return pending >= max(2, capacity)
@@ -114,6 +127,14 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
             max(frameBudgetMs(frameRate: encoderLag.frameRate), encoderLag.averageEncodeMs)
     }
 
+    static func estimatedQueuedFrameBacklogMs(
+        pendingFrameCount: Int,
+        encoderLag: EncoderLagSnapshot
+    ) -> Double {
+        Double(max(0, pendingFrameCount)) *
+            max(frameBudgetMs(frameRate: encoderLag.frameRate), encoderLag.averageEncodeMs)
+    }
+
     static func preEncodeBacklogCapMs(
         latencyMode: MirageStreamLatencyMode,
         frameRate: Int
@@ -121,6 +142,7 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
         let budget = frameBudgetMs(frameRate: frameRate)
         switch latencyMode {
         case .lowestLatency:
+            if frameRate >= 90 { return max(64, budget * 6) }
             return max(24, budget * 1.5)
         case .balanced:
             return max(140, budget * 8)
@@ -162,8 +184,26 @@ struct HostCaptureAdmissionPolicy: Sendable, Equatable {
         )
     }
 
+    private static func backpressureDropThreshold(
+        capacity: Int,
+        encoderLag: EncoderLagSnapshot?
+    ) -> Int {
+        guard let encoderLag,
+              encoderLag.frameRate >= 90,
+              capacity > 1 else {
+            return max(1, capacity - 1)
+        }
+        return capacity
+    }
+
     private static func frameBudgetMs(frameRate: Int) -> Double {
-        1_000.0 / Double(max(1, frameRate))
+        1_000.0 / Double(admissionBudgetFrameRate(for: frameRate))
+    }
+
+    private static func admissionBudgetFrameRate(for frameRate: Int) -> Int {
+        let frameRate = max(1, frameRate)
+        guard frameRate > 60 else { return frameRate }
+        return 60
     }
 
     private static func encodeBudgetMultiplier(for latencyMode: MirageStreamLatencyMode) -> Double {

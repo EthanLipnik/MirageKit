@@ -106,6 +106,11 @@ public final class MirageStreamViewController: UIViewController {
         captureView.hideSystemCursor = state.hideSystemCursor
         captureView.cursorStore = state.cursorStore
         captureView.cursorPositionStore = state.cursorPositionStore
+        captureView.hostDisplayPointSize = state.hostDisplayPointSize
+        captureView.desktopPresentationReferenceSize = MirageStreamPresentationPolicy.localAspectFitReferenceSize(
+            prefersLocalAspectFitPresentation: state.prefersLocalAspectFitPresentation,
+            hostDisplayPointSize: state.hostDisplayPointSize
+        )
         captureView.desktopSessionID = state.desktopSessionID
         captureView.hasPresentedFrameForActivationRecovery = state.hasPresentedFrameForActivationRecovery
         captureView.allowsExtendedCursorBounds = state.allowsExtendedDesktopCursorBounds

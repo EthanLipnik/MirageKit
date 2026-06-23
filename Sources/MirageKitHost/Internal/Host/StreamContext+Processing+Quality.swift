@@ -22,7 +22,6 @@ extension StreamContext {
     private static let encoderThroughputCleanBacklogMinimumMs = 80.0
     private static let encoderThroughputCleanBacklogSampleRatio = 1.50
     private static let highRefreshQualityBudgetFrameRate = 60
-    private static let highRefreshQualityBudgetThresholdFrameRate = 100
     private static let highRefreshQualityRaiseCadenceRatio = 0.65
     private static let highRefreshQualityRaiseMinimumFPS = 64.0
     private static let mostlyStillDirtyPercentage: Float = 1.0
@@ -74,7 +73,7 @@ extension StreamContext {
     }
 
     func runtimeQualityBudgetFrameRate() -> Int {
-        guard currentFrameRate >= Self.highRefreshQualityBudgetThresholdFrameRate,
+        guard currentFrameRate > Self.highRefreshQualityBudgetFrameRate,
               !mediaPathProfile.usesAwdlRadioPolicy else {
             return max(1, currentFrameRate)
         }
@@ -1146,7 +1145,6 @@ extension StreamContext {
             return nil
         }
 
-        let targetFrameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
         let protectedFrameBudgetMs = 1_000.0 / Double(HostHighRefreshFrameAdmissionState.protectedFloorFPS)
         let staleFrameAgeMs = max(0, (now - frame.captureTime) * 1_000)
         if staleFrameAgeMs >= protectedFrameBudgetMs {
@@ -1154,12 +1152,12 @@ extension StreamContext {
         }
 
         let averageEncodeMs = encoderAverageEncodeMsSnapshot
-        if averageEncodeMs >= max(targetFrameBudgetMs * 1.15, targetFrameBudgetMs + 2.0) {
-            return "encoder-over-target-budget"
+        if averageEncodeMs >= max(protectedFrameBudgetMs * 1.15, protectedFrameBudgetMs + 2.0) {
+            return "encoder-over-floor-budget"
         }
 
         let encodeBacklogMs = max(latestEncodeStartCaptureAgeMs, worstEncodeStartCaptureAgeMs)
-        if encodeBacklogMs >= max(protectedFrameBudgetMs, targetFrameBudgetMs * 2.0) {
+        if encodeBacklogMs >= protectedFrameBudgetMs * 2.0 {
             return "encoder-backlog"
         }
 
@@ -1176,7 +1174,7 @@ extension StreamContext {
         }
 
         if inFlightCount >= maxInFlightFrames,
-           averageEncodeMs >= targetFrameBudgetMs * 0.90 {
+           averageEncodeMs >= protectedFrameBudgetMs * 0.90 {
             return "encoder-in-flight"
         }
 

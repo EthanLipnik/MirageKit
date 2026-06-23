@@ -300,7 +300,6 @@ extension MirageStreamContentView {
     /// Prefer the host-confirmed presentation size so Retina-off 1x streams do
     /// not accidentally use the local Retina backing scale.
     var hostDisplayPointSize: CGSize? {
-        #if os(macOS)
         if let presentationSize = clientService.desktopStreamPresentationResolution,
            presentationSize.width > 0,
            presentationSize.height > 0 {
@@ -313,9 +312,6 @@ extension MirageStreamContentView {
             width: resolution.width / max(1.0, scale),
             height: resolution.height / max(1.0, scale)
         )
-        #else
-        return nil
-        #endif
     }
 
     /// Whether local presentation state should temporarily prevent window-size driven resize requests.

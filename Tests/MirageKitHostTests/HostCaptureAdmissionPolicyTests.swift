@@ -38,6 +38,34 @@ struct HostCaptureAdmissionPolicyTests {
         #expect(shouldDrop)
     }
 
+    @Test("ProMotion freshest-frame backpressure uses expanded buffer before dropping")
+    func proMotionFreshestFrameBackpressureUsesExpandedBufferBeforeDropping() {
+        let encoderLag = HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+            averageEncodeMs: 13,
+            inFlightCount: 3,
+            frameRate: 120
+        )
+        let admitsUntilFull = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 4,
+            frameCapacity: 5,
+            backpressureActive: true,
+            encoderLag: encoderLag
+        )
+        let dropsWhenFull = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 5,
+            frameCapacity: 5,
+            backpressureActive: true,
+            encoderLag: encoderLag
+        )
+
+        #expect(!admitsUntilFull)
+        #expect(dropsWhenFull)
+    }
+
     @Test("Stability buffering preserves full-inbox drop-new behavior")
     func stabilityBufferingDropsWhenInboxIsFull() {
         let shouldDrop = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
@@ -80,6 +108,75 @@ struct HostCaptureAdmissionPolicyTests {
                 averageEncodeMs: 30,
                 inFlightCount: 1,
                 frameRate: 60
+            )
+        )
+
+        #expect(shouldDrainNewest)
+    }
+
+    @Test("ProMotion freshest-frame preserves FIFO for small buffered jitter")
+    func proMotionFreshestFramePreservesFIFOForSmallBufferedJitter() {
+        let shouldDrainNewest = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 2,
+            frameCapacity: 5,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 13,
+                inFlightCount: 4,
+                frameRate: 120
+            )
+        )
+
+        #expect(!shouldDrainNewest)
+    }
+
+    @Test("ProMotion freshest-frame treats 60fps encode cadence as healthy")
+    func proMotionFreshestFrameTreatsSixtyFPSEncodeCadenceAsHealthy() {
+        let encoderLag = HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+            averageEncodeMs: 13,
+            inFlightCount: 4,
+            frameRate: 120
+        )
+
+        #expect(!HostCaptureAdmissionPolicy.isEncoderLagging(encoderLag, latencyMode: .lowestLatency))
+        #expect(!HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 2,
+            frameCapacity: 6,
+            encoderLag: encoderLag
+        ))
+    }
+
+    @Test("ProMotion freshest-frame drains newest when queued backlog exceeds budget")
+    func proMotionFreshestFrameDrainsNewestWhenQueuedBacklogExceedsBudget() {
+        let shouldDrainNewest = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 4,
+            frameCapacity: 6,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 30,
+                inFlightCount: 0,
+                frameRate: 120
+            )
+        )
+
+        #expect(shouldDrainNewest)
+    }
+
+    @Test("ProMotion freshest-frame drains newest when expanded buffer is full")
+    func proMotionFreshestFrameDrainsNewestWhenExpandedBufferIsFull() {
+        let shouldDrainNewest = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 5,
+            frameCapacity: 5,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 13,
+                inFlightCount: 2,
+                frameRate: 120
             )
         )
 

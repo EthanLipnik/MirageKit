@@ -91,6 +91,31 @@ struct DesktopPresentationGeometryTests {
         #expect(aspectFitReference == hostDisplaySize)
     }
 
+    @Test("Cursor content rect follows the accepted presentation reference after rotation")
+    func cursorContentRectFollowsAcceptedPresentationReferenceAfterRotation() {
+        let landscapeBounds = CGRect(x: 0, y: 0, width: 932, height: 430)
+        let stalePortraitReference = CGSize(width: 430, height: 932)
+        let acceptedLandscapeReference = CGSize(width: 932, height: 430)
+
+        let staleRect = DesktopPresentationGeometry.resolvedContentRect(
+            referenceSize: stalePortraitReference,
+            in: landscapeBounds
+        )
+        let updatedRect = DesktopPresentationGeometry.resolvedContentRect(
+            referenceSize: acceptedLandscapeReference,
+            in: landscapeBounds
+        )
+        let rightEdgePoint = ScrollPhysicsCapturingNSView.localPoint(
+            forNormalizedCursorPosition: CGPoint(x: 1, y: 0.5),
+            in: landscapeBounds,
+            contentRect: updatedRect
+        )
+
+        #expect(staleRect.width < landscapeBounds.width * 0.25)
+        #expect(updatedRect == landscapeBounds)
+        #expect(rightEdgePoint.x == landscapeBounds.maxX)
+    }
+
     @Test("No keyboard allows window-driven resize with local aspect fit")
     func noKeyboardAllowsResizeWithLocalAspectFit() {
         let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(

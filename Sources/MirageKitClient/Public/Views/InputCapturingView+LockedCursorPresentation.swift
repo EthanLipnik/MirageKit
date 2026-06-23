@@ -95,9 +95,10 @@ extension InputCapturingView {
 
     func applyLockedCursorDelta(_ translation: CGPoint) {
         let contentRect = resolvedPresentationContentRect()
-        let normalizationSize = contentRect.width > 0 && contentRect.height > 0
+        let fallbackNormalizationSize = contentRect.width > 0 && contentRect.height > 0
             ? contentRect.size
             : bounds.size
+        let normalizationSize = hostDisplayPointSize ?? fallbackNormalizationSize
         revealCursorAfterCursorDrivenMovement()
         lockedCursorPosition = LockedCursorPositionResolver.applyRelativeDelta(
             currentPosition: lockedCursorPosition,

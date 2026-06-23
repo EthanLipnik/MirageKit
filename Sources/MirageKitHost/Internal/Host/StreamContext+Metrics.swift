@@ -72,6 +72,8 @@ extension StreamContext {
                 telemetry: captureTelemetry,
                 policy: capturePolicy
             )
+            let captureAdmissionDrops = captureDroppedIntervalCount +
+                (captureTelemetry?.admissionDropCount ?? 0)
             await applyHighRefreshCaptureCadenceRecoveryIfNeeded(
                 metrics: captureCadenceMetrics,
                 policy: capturePolicy,
@@ -149,7 +151,7 @@ extension StreamContext {
                 awdlResolutionScale: nil,
                 awdlQualityReductionAllowed: awdlPolicy?.qualityReductionAllowed,
                 awdlHostPacingBudgetBps: awdlPolicy?.hostPacingBudgetBps,
-                captureAdmissionDrops: captureDroppedIntervalCount,
+                captureAdmissionDrops: captureAdmissionDrops,
                 transportAdmissionSkips: transportAdmissionSkippedIntervalCount,
                 transportAdmissionMode: transportAdmissionPressureState.mode.rawValue,
                 transportAdmissionReason: transportAdmissionPressureState.reason,

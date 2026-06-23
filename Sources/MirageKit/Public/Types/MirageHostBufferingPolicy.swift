@@ -21,7 +21,7 @@ public enum MirageHostBufferDepth: String, CaseIterable, Identifiable, Sendable,
     case minimal
     /// Use Mirage's default buffer policy for the selected latency mode.
     case standard
-    /// Add a small cushion for high-refresh streams.
+    /// Add a deeper cushion for high-refresh streams.
     case high
     /// Add the largest bounded cushion Mirage exposes for custom streams.
     case maximum
@@ -46,7 +46,7 @@ public enum MirageHostBufferDepth: String, CaseIterable, Identifiable, Sendable,
         case .standard:
             "Mirage's default buffer depth for the selected latency mode."
         case .high:
-            "Adds a small capture and encoder cushion for higher refresh rates."
+            "Adds a deeper capture and encoder cushion for higher refresh rates."
         case .maximum:
             "Uses the largest bounded buffer cushion for custom high-refresh streams."
         }
@@ -57,7 +57,7 @@ public enum MirageHostBufferDepth: String, CaseIterable, Identifiable, Sendable,
         case .minimal, .standard:
             nil
         case .high:
-            6
+            8
         case .maximum:
             8
         }
