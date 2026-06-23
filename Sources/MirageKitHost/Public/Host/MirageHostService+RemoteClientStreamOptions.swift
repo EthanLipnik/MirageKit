@@ -34,11 +34,11 @@ public extension MirageHostService {
         await sendRemoteClientStreamOptionsCommand(command, operation: "desktop cursor update")
     }
 
-    /// Sends an active desktop cursor lock mode change to the connected client.
+    /// Sends an active desktop Lock Client Cursor mode change to the connected client.
     func setRemoteClientDesktopCursorLockMode(_ mode: MirageDesktopCursorLockMode) async {
         remoteClientDesktopCursorLockMode = mode
         let command = RemoteClientStreamOptionsCommandMessage(desktopCursorLockMode: mode)
-        await sendRemoteClientStreamOptionsCommand(command, operation: "desktop cursor lock mode update")
+        await sendRemoteClientStreamOptionsCommand(command, operation: "desktop Lock Client Cursor mode update")
     }
 
     /// Requests that the client stop the active app stream for the bundle identifier.

@@ -141,7 +141,20 @@ actor WindowCaptureEngine {
         admissionDropper = dropper
     }
 
-    func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) async {
+    func setCapturedAudioHandler(
+        _ handler: (@Sendable (CapturedAudioBuffer) -> Void)?,
+        audioChannelCount: Int? = nil
+    )
+    async {
+        let requestedAudioChannelCount = audioChannelCount ?? captureSessionConfig?.audioChannelCount
+        if let captureSessionConfig {
+            self.captureSessionConfig = captureSessionConfig.withAudioChannelCount(
+                resolvedAudioCaptureChannelCount(
+                    isAudioEnabled: handler != nil,
+                    requestedChannelCount: requestedAudioChannelCount
+                )
+            )
+        }
         capturedAudioHandler = handler
         streamOutput?.setAudioHandler(handler)
         guard handler != nil else {

@@ -11,7 +11,7 @@ import AppKit
 import QuartzCore
 
 extension ScrollPhysicsCapturingNSView {
-    // MARK: - Cursor Lock
+    // MARK: - Lock Client Cursor
 
     var shouldHideSystemCursor: Bool {
         guard isInputProcessingActive else { return false }

@@ -82,6 +82,15 @@ extension ApplicationScanner {
             }
         }
 
+        await includeAlwaysIncludedApplications(
+            seenPaths: &seenPaths,
+            runningAppPathsByBundle: runningAppPathsByBundle,
+            defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+            missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
+            byBundle: &byBundle,
+            onPreferredCandidate: onPreferredCandidate
+        )
+
         return Array(byBundle.values)
     }
 
@@ -139,6 +148,44 @@ extension ApplicationScanner {
         }
 
         return ProcessCandidateResult(canonicalURL: canonicalURL, preferredCandidate: preferredCandidate)
+    }
+
+    /// Adds Launch Services-resolved default apps that should remain present even when directory scanning misses them.
+    func includeAlwaysIncludedApplications(
+        seenPaths: inout Set<String>,
+        runningAppPathsByBundle: [String: Set<String>],
+        defaultAppPathByBundleIdentifier: inout [String: String],
+        missingDefaultAppPathBundleIdentifiers: inout Set<String>,
+        byBundle: inout [String: AppCandidate],
+        onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
+    ) async {
+        for bundleIdentifier in MirageInstalledApp.alwaysIncludedBundleIdentifiers.sorted() {
+            if Task.isCancelled { return }
+            guard let appPath = defaultAppPath(
+                forBundleIdentifier: bundleIdentifier,
+                cachedPaths: &defaultAppPathByBundleIdentifier,
+                missingBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers
+            ) else {
+                continue
+            }
+
+            let url = URL(fileURLWithPath: appPath, isDirectory: true)
+            guard let result = processCandidate(
+                at: url,
+                allowBundleContents: false,
+                seenPaths: &seenPaths,
+                runningAppPathsByBundle: runningAppPathsByBundle,
+                defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
+                byBundle: &byBundle
+            ) else {
+                continue
+            }
+
+            if let preferredCandidate = result.preferredCandidate {
+                await onPreferredCandidate?(preferredCandidate)
+            }
+        }
     }
 
     /// Recursively scans bundle contents when a top-level app is allowed to expose nested apps.

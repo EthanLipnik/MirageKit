@@ -15,6 +15,10 @@ import GameController
 // MARK: - Modifier State
 
 extension InputCapturingView {
+    var softwareActiveModifiers: MirageModifierFlags {
+        softwareMomentaryModifiers.union(softwareLockedModifiers)
+    }
+
     /// Get current modifier state from held keyboard keys
     var keyboardModifiers: MirageModifierFlags {
         var modifiers: MirageModifierFlags = []
@@ -22,7 +26,7 @@ extension InputCapturingView {
             if let modifier = Self.modifierKeyMap[keyCode] { modifiers.insert(modifier) }
         }
         if capsLockEnabled { modifiers.insert(.capsLock) }
-        modifiers.formUnion(softwareHeldModifiers)
+        modifiers.formUnion(softwareActiveModifiers)
         return modifiers
     }
 
@@ -126,13 +130,14 @@ extension InputCapturingView {
 
     /// Clear all held modifiers with a snapshot update
     func resetAllModifiers() {
-        guard !heldModifierKeys.isEmpty || !softwareHeldModifiers.isEmpty || capsLockEnabled || !lastSentModifiers
+        guard !heldModifierKeys.isEmpty || !softwareActiveModifiers.isEmpty || capsLockEnabled || !lastSentModifiers
             .isEmpty else {
             return
         }
         stopModifierRefresh()
         heldModifierKeys.removeAll()
-        softwareHeldModifiers = []
+        softwareMomentaryModifiers = []
+        softwareLockedModifiers = []
         capsLockEnabled = false
         #if canImport(GameController)
         gcClaimedKeyCodes.removeAll()

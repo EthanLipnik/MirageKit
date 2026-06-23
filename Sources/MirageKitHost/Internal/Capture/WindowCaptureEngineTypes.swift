@@ -121,6 +121,25 @@ extension WindowCaptureEngine {
             self.includedWindows = includedWindows
             self.excludedWindows = excludedWindows
         }
+
+        func withAudioChannelCount(_ audioChannelCount: Int?) -> Self {
+            Self(
+                windowID: windowID,
+                applicationPID: applicationPID,
+                displayID: displayID,
+                window: window,
+                application: application,
+                display: display,
+                outputScale: outputScale,
+                resolution: resolution,
+                sourceRect: sourceRect,
+                destinationRect: destinationRect,
+                showsCursor: showsCursor,
+                audioChannelCount: audioChannelCount,
+                includedWindows: includedWindows,
+                excludedWindows: excludedWindows
+            )
+        }
     }
 }
 #endif

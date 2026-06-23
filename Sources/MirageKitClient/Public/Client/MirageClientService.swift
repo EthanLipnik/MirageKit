@@ -270,7 +270,7 @@ public final class MirageClientService {
     /// Callback when the host requests a desktop cursor presentation change on the client.
     public var onRemoteClientDesktopCursorPresentationCommand: ((MirageDesktopCursorPresentation) -> Void)?
 
-    /// Callback when the host requests a desktop cursor lock mode change on the client.
+    /// Callback when the host requests a desktop Lock Client Cursor mode change on the client.
     public var onRemoteClientDesktopCursorLockModeCommand: ((MirageDesktopCursorLockMode) -> Void)?
 
     /// Callback when the host requests the client stop a specific app stream.

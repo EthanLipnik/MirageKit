@@ -29,7 +29,7 @@ public enum MiragePointerSampleBatchPhase: UInt8, Codable, Sendable, Hashable {
 /// One ordered stylus-backed pointer sample in normalized stream coordinates.
 public struct MiragePointerSample: Codable, Sendable, Hashable {
     /// Location in normalized stream coordinates.
-    /// Secondary desktop cursor-lock input may temporarily exceed `0...1`.
+    /// Secondary desktop Lock Client Cursor input may temporarily exceed `0...1`.
     public let location: CGPoint
 
     /// Pressure scalar for contact samples. Hover samples use `0`.

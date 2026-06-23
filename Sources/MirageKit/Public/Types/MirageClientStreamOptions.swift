@@ -35,7 +35,7 @@ public enum MirageDesktopCursorLockMode: String, CaseIterable, Codable, Sendable
     /// Never lock the local cursor automatically.
     case off
 
-    /// User-facing label for cursor-lock settings.
+    /// User-facing label for Lock Client Cursor settings.
     public var displayName: String {
         switch self {
         case .on:
@@ -47,18 +47,18 @@ public enum MirageDesktopCursorLockMode: String, CaseIterable, Codable, Sendable
         }
     }
 
-    /// User-facing explanation for client cursor-lock settings.
+    /// User-facing explanation for Lock Client Cursor settings.
     public var footerDescription: String {
         let summary = switch self {
         case .on:
-            "Desktop streams lock the cursor."
+            "Desktop streams lock the client cursor."
         case .secondaryOnly:
-            "Secondary displays lock the cursor."
+            "Secondary displays lock the client cursor."
         case .off:
-            "Desktop streams leave the cursor unlocked."
+            "Desktop streams leave the client cursor unlocked."
         }
 
-        let appStreamNote = "App streams never lock the cursor."
+        let appStreamNote = "App streams never lock the client cursor."
 
         guard self != .off else {
             return summary + " " + appStreamNote
@@ -67,7 +67,7 @@ public enum MirageDesktopCursorLockMode: String, CaseIterable, Codable, Sendable
         return summary
             + " "
             + appStreamNote
-            + " Mirage unlocks the cursor if relative mouse input is unavailable."
+            + " Mirage unlocks the client cursor if relative mouse input is unavailable."
     }
 
     /// Returns whether this policy locks the local cursor for a desktop stream mode.

@@ -185,6 +185,7 @@ extension MirageHostService {
                 sourceStreamID: streamID,
                 configuration: audioConfiguration
             )
+            cancelAudioFirstSampleWatchdog(for: clientID)
             await PowerAssertionManager.shared.enable()
 
             let videoStream = try await clientContext.controlChannel.session.openStream(
@@ -234,6 +235,7 @@ extension MirageHostService {
                     }
                 }
             )
+            refreshAudioFirstSampleWatchdogIfNeeded(clientID: clientID, streamID: streamID)
 
             let loginWindow = lockedAppLoginWindow(request: request)
             registerActiveStreamSession(

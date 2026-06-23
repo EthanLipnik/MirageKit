@@ -91,7 +91,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
         }
     }
 
-    /// Returns the stored cursor-lock preference for the supplied source, or the active source.
+    /// Returns the stored Lock Client Cursor preference for the supplied source, or the active source.
     public func lockClientCursorPreference(for source: MirageDesktopCursorSource? = nil) -> Bool {
         switch source ?? self.source {
         case .client, .simulated:
@@ -101,7 +101,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
         }
     }
 
-    /// Updates the cursor-lock preference for the supplied source, or the active source.
+    /// Updates the Lock Client Cursor preference for the supplied source, or the active source.
     public mutating func setLockClientCursorPreference(
         _ isEnabled: Bool,
         for source: MirageDesktopCursorSource? = nil
@@ -114,7 +114,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
         }
     }
 
-    /// Whether the user can toggle cursor locking for the current source and desktop stream mode.
+    /// Whether the user can toggle Lock Client Cursor for the current source and desktop stream mode.
     public func canToggleLockClientCursor(for mode: MirageDesktopStreamMode) -> Bool {
         switch source {
         case .client, .simulated:

@@ -139,7 +139,7 @@ extension MirageHostInputController {
     }
 
     /// Convert normalized stream coordinates to screen coordinates using display bounds.
-    /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
+    /// Secondary desktop Lock Client Cursor travel may temporarily exceed `0...1`.
     func screenPoint(_ normalized: CGPoint, in bounds: CGRect) -> CGPoint {
         CGPoint(
             x: bounds.origin.x + normalized.x * bounds.width,

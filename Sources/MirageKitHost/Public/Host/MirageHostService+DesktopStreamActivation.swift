@@ -74,6 +74,10 @@ extension MirageHostService {
                 excludedWindows: excludedWindows,
                 audioConfiguration: &effectiveAudioConfiguration
             )
+            refreshAudioFirstSampleWatchdogIfNeeded(
+                clientID: activeClientContext.client.id,
+                streamID: streamID
+            )
         } catch {
             MirageLogger.error(
                 .host,
@@ -106,6 +110,7 @@ extension MirageHostService {
                 sourceStreamID: streamID,
                 configuration: effectiveAudioConfiguration
             )
+            cancelAudioFirstSampleWatchdog(for: clientContext.client.id)
         } catch {
             MirageLogger.host(
                 "Desktop audio activation failed; retrying desktop stream without audio: " +

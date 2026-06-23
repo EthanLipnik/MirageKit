@@ -155,9 +155,9 @@ extension InputCapturingView {
 
     func updateCursorLockMode() {
         updateVirtualTrackpadMode()
-        // Locked cursor mode uses the dedicated locked-pointer recognizers.
+        // Lock Client Cursor mode uses the dedicated locked-pointer recognizers.
         // The generic indirect long-press recognizer can still receive absolute
-        // pointer coordinates from UIKit, which can yank the locked cursor to an edge.
+        // pointer coordinates from UIKit, which can yank Lock Client Cursor to an edge.
         longPressGesture.isEnabled = !cursorLockEnabled
         if cursorLockEnabled {
             updateMouseInputHandler()
@@ -185,7 +185,7 @@ extension InputCapturingView {
             stopLockedCursorSmoothing()
             setLockedCursorVisible(false)
             // Force UIKit to re-query the pointer style so the system cursor
-            // becomes visible again now that cursor lock is off.
+            // becomes visible again now that Lock Client Cursor is off.
             invalidatePointerInteraction(reason: "cursorLockDisabled")
         }
     }

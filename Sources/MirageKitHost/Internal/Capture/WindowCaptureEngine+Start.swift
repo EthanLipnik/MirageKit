@@ -401,7 +401,7 @@ extension WindowCaptureEngine {
     }
 
     /// Resolves the requested audio channel count to the range supported by the capture pipeline.
-    private func resolvedAudioCaptureChannelCount(
+    func resolvedAudioCaptureChannelCount(
         isAudioEnabled: Bool,
         requestedChannelCount: Int?
     ) -> Int? {

@@ -37,8 +37,11 @@ extension InputCapturingView {
         }
 
         let accessoryView = SoftwareKeyboardAccessoryView()
-        accessoryView.onModifierToggle = { [weak self] key, isSelected in
-            self?.toggleSoftwareModifier(key, isSelected: isSelected)
+        accessoryView.onModifierTap = { [weak self] key, tapCount in
+            self?.handleSoftwareModifierTap(key, tapCount: tapCount)
+        }
+        accessoryView.onModifierHold = { [weak self] key in
+            self?.handleSoftwareModifierHold(key)
         }
         accessoryView.onDismissKeyboard = { [weak self] in
             self?.dismissSoftwareKeyboard()
@@ -51,7 +54,7 @@ extension InputCapturingView {
             accessoryView.leadingAnchor.constraint(equalTo: leadingAnchor),
             accessoryView.trailingAnchor.constraint(equalTo: trailingAnchor),
             accessoryView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            accessoryView.heightAnchor.constraint(equalToConstant: 44),
+            accessoryView.heightAnchor.constraint(equalToConstant: accessoryView.intrinsicContentSize.height),
         ])
         #else
         inputView.softwareInputAccessoryView = accessoryView
@@ -132,22 +135,43 @@ extension InputCapturingView {
     }
 
     func updateSoftwareModifierButtons() {
-        let visualUpdates = softwareKeyboardAccessoryView?.setSelectedModifiers(softwareHeldModifiers) ?? 0
+        let visualUpdates = softwareKeyboardAccessoryView?.setSelectedModifiers(softwareActiveModifiers) ?? 0
         recordSoftwareModifierSyncResult(visualUpdates: visualUpdates)
     }
 
-    func toggleSoftwareModifier(_ key: SoftwareModifierKey, isSelected: Bool) {
-        if isSelected { softwareHeldModifiers.insert(key.modifier) } else {
-            softwareHeldModifiers.remove(key.modifier)
+    func handleSoftwareModifierTap(_ key: SoftwareModifierKey, tapCount: Int) {
+        if softwareLockedModifiers.contains(key.modifier) {
+            softwareLockedModifiers.remove(key.modifier)
+            softwareMomentaryModifiers.remove(key.modifier)
+        } else if tapCount >= 2 {
+            softwareMomentaryModifiers.remove(key.modifier)
+            softwareLockedModifiers.insert(key.modifier)
+        } else if softwareMomentaryModifiers.contains(key.modifier) {
+            softwareMomentaryModifiers.remove(key.modifier)
+        } else {
+            softwareMomentaryModifiers.insert(key.modifier)
         }
         updateSoftwareModifierButtons()
         sendModifierStateIfNeeded(force: true)
     }
 
+    func handleSoftwareModifierHold(_ key: SoftwareModifierKey) {
+        softwareMomentaryModifiers.remove(key.modifier)
+        softwareLockedModifiers.insert(key.modifier)
+        updateSoftwareModifierButtons()
+        sendModifierStateIfNeeded(force: true)
+    }
+
+    func clearMomentarySoftwareModifiersAfterSoftwareKey() {
+        guard !softwareMomentaryModifiers.isEmpty else { return }
+        softwareMomentaryModifiers = []
+        sendModifierStateIfNeeded(force: true)
+    }
+
     func handleSoftwareKeyboardInsertText(_ text: String) {
         sendModifierStateIfNeeded(force: true)
-        let modifiers = keyboardModifiers
         for scalar in text {
+            let modifiers = keyboardModifiers
             let character = String(scalar)
             if character == "\n" {
                 sendSoftwareKeyEvent(
@@ -156,6 +180,7 @@ extension InputCapturingView {
                     charactersIgnoringModifiers: "\n",
                     modifiers: modifiers
                 )
+                clearMomentarySoftwareModifiersAfterSoftwareKey()
                 continue
             }
             guard let event = MirageClientKeyEventBuilder.softwareKeyEvent(
@@ -168,6 +193,7 @@ extension InputCapturingView {
                 charactersIgnoringModifiers: event.charactersIgnoringModifiers,
                 modifiers: event.modifiers
             )
+            clearMomentarySoftwareModifiersAfterSoftwareKey()
         }
     }
 
@@ -175,6 +201,7 @@ extension InputCapturingView {
         sendModifierStateIfNeeded(force: true)
         let modifiers = keyboardModifiers
         sendSoftwareKeyEvent(keyCode: 0x33, characters: nil, charactersIgnoringModifiers: nil, modifiers: modifiers)
+        clearMomentarySoftwareModifiersAfterSoftwareKey()
     }
 
     func handleSoftwareKeyboardPaste() {
@@ -223,7 +250,8 @@ extension InputCapturingView {
             return
         }
 
-        softwareHeldModifiers = []
+        softwareMomentaryModifiers = []
+        softwareLockedModifiers = []
         updateSoftwareModifierButtons()
         sendModifierStateIfNeeded(force: true)
         refreshCursorUpdates(force: true)

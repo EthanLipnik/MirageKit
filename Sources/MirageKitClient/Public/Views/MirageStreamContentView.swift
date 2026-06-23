@@ -87,13 +87,13 @@ public struct MirageStreamContentView: View {
     public let dictationMode: MirageDictationMode
     /// Dictation locale selection.
     public let dictationLocalePreference: MirageDictationLocalePreference
-    /// Optional override for desktop cursor lock enablement.
+    /// Optional override for desktop Lock Client Cursor enablement.
     public let desktopCursorLockEnabledOverride: Bool?
     /// Whether a temporary cursor unlock can be recaptured.
     public let desktopCursorLockCanRecapture: Bool
-    /// Handler invoked when cursor lock should escape temporarily.
+    /// Handler invoked when Lock Client Cursor should escape temporarily.
     public let onCursorLockEscapeRequested: (() -> Void)?
-    /// Handler invoked when cursor lock should be recaptured.
+    /// Handler invoked when Lock Client Cursor should be recaptured.
     public let onCursorLockRecaptureRequested: (() -> Void)?
     /// Whether app streams should use the host window resolution directly.
     public let useHostResolution: Bool

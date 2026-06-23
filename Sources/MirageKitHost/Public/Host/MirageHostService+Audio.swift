@@ -251,6 +251,15 @@ extension MirageHostService {
         if streamID > 0, let context = streamsByID[streamID] {
             await context.setCapturedAudioHandler(nil)
         }
+        if streamID > 0,
+           let coordinator = appAtlasCoordinatorsByClientID[clientID],
+           coordinator.mediaStreamID == streamID {
+            await coordinator.setCapturedAudioHandler(
+                nil,
+                audioChannelCount: audioConfigurationByClientID[clientID]?.channelLayout.channelCount ??
+                    MirageAudioChannelLayout.stereo.channelCount
+            )
+        }
         sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
         audioSendErrorReportedByClientID.remove(clientID)
         let hadStartedMessage = audioStartedMessageByClientID.removeValue(forKey: clientID) != nil
@@ -360,28 +369,57 @@ extension MirageHostService {
     }
 
     func setAudioSourceCaptureHandler(clientID: UUID, streamID: StreamID) async {
+        let audioHandler = makeCapturedAudioHandler(clientID: clientID, streamID: streamID)
+        let audioChannelCount = audioConfigurationByClientID[clientID]?.channelLayout.channelCount ??
+            MirageAudioChannelLayout.stereo.channelCount
+
         for active in activeStreams where active.client.id == clientID {
             if active.id == streamID {
                 guard let context = streamsByID[active.id] else { continue }
-                await context.setCapturedAudioHandler { [weak self] captured in
-                    guard let self else { return }
-                    dispatchControlWork(clientID: clientID) { [weak self] in
-                        guard let self else { return }
-                        await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
-                    }
-                }
+                await context.setCapturedAudioHandler(audioHandler)
             } else if let context = streamsByID[active.id] {
                 await context.setCapturedAudioHandler(nil)
             }
         }
 
         if let desktopStreamID, desktopStreamID == streamID, let context = streamsByID[desktopStreamID] {
-            await context.setCapturedAudioHandler { [weak self] captured in
+            await context.setCapturedAudioHandler(audioHandler)
+        }
+
+        if let coordinator = appAtlasCoordinatorsByClientID[clientID] {
+            if coordinator.mediaStreamID == streamID {
+                await coordinator.setCapturedAudioHandler(
+                    audioHandler,
+                    audioChannelCount: audioChannelCount
+                )
+            } else {
+                await coordinator.setCapturedAudioHandler(
+                    nil,
+                    audioChannelCount: audioChannelCount
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func restartAudioSourceCaptureForRecovery(clientID: UUID, streamID: StreamID, reason: String) async -> Bool {
+        if let coordinator = appAtlasCoordinatorsByClientID[clientID],
+           coordinator.mediaStreamID == streamID {
+            return await coordinator.restartAudioCaptureForRecovery(reason: reason)
+        }
+        guard let context = streamsByID[streamID] else { return false }
+        return await context.restartCaptureForAudioRecovery(reason: reason)
+    }
+
+    private func makeCapturedAudioHandler(
+        clientID: UUID,
+        streamID: StreamID
+    ) -> @Sendable (CapturedAudioBuffer) -> Void {
+        { [weak self] captured in
+            guard let self else { return }
+            dispatchControlWork(clientID: clientID) { [weak self] in
                 guard let self else { return }
-                dispatchControlWork(clientID: clientID) { [weak self] in
-                    guard let self else { return }
-                    await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
-                }
+                await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
             }
         }
     }

@@ -233,6 +233,7 @@ extension MirageHostService {
                 sourceStreamID: mediaStreamID,
                 configuration: audioConfiguration
             )
+            cancelAudioFirstSampleWatchdog(for: clientID)
             await PowerAssertionManager.shared.enable()
         } catch {
             streamsByID.removeValue(forKey: mediaStreamID)
@@ -312,6 +313,10 @@ extension MirageHostService {
             }
         )
         appAtlasCoordinatorsByClientID[clientContext.client.id] = coordinator
+        if audioConfiguration.enabled,
+           audioSourceStreamByClientID[clientID] == mediaStreamID {
+            await setAudioSourceCaptureHandler(clientID: clientID, streamID: mediaStreamID)
+        }
         retainMediaPathClientEvidence = true
         return coordinator
     }

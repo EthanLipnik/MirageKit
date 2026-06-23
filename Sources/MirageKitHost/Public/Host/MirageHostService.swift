@@ -72,10 +72,10 @@ public final class MirageHostService {
     /// Latest client-owned stream-options display mode mirrored back to the host UI.
     public internal(set) var remoteClientStreamOptionsDisplayMode: MirageStreamOptionsDisplayMode = .inStream
 
-    /// Whether the connected client currently exposes desktop cursor lock controls.
+    /// Whether the connected client currently exposes desktop Lock Client Cursor controls.
     public internal(set) var remoteClientDesktopCursorLockAvailable = false
 
-    /// Latest client-owned desktop cursor lock mode mirrored back to the host UI.
+    /// Latest client-owned desktop Lock Client Cursor mode mirrored back to the host UI.
     public internal(set) var remoteClientDesktopCursorLockMode: MirageDesktopCursorLockMode = .off
 
     /// Callback fired when host battery-policy support changes.

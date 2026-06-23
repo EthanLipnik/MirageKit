@@ -37,6 +37,9 @@ actor AppAtlasMediaCoordinator {
     /// ScreenCaptureKit capture contexts keyed by real host window ID.
     var capturesByWindowID: [WindowID: AppAtlasWindowCaptureContext] = [:]
     var auxiliaryCapturesByWindowID: [WindowID: AppAtlasWindowCaptureContext] = [:]
+    var capturedAudioHandler: (@Sendable (CapturedAudioBuffer) -> Void)?
+    var audioCaptureChannelCount = MirageAudioChannelLayout.stereo.channelCount
+    var audioCaptureWindowID: WindowID?
 
     /// Logical app-stream identity maps that connect client stream IDs to host windows.
     var logicalWindowsByWindowID: [WindowID: AppAtlasLogicalWindow] = [:]
@@ -117,6 +120,37 @@ actor AppAtlasMediaCoordinator {
         )
     }
 
+    /// Updates the single window capture that supplies app-atlas audio.
+    func setCapturedAudioHandler(
+        _ handler: (@Sendable (CapturedAudioBuffer) -> Void)?,
+        audioChannelCount: Int
+    )
+    async {
+        capturedAudioHandler = handler
+        audioCaptureChannelCount = Self.clampedAudioCaptureChannelCount(audioChannelCount)
+        if handler == nil {
+            audioCaptureWindowID = nil
+        }
+        await updateAudioCaptureRouting()
+    }
+
+    /// Restarts the capture that currently supplies app-atlas audio.
+    @discardableResult
+    func restartAudioCaptureForRecovery(reason: String) async -> Bool {
+        guard capturedAudioHandler != nil else { return false }
+        if let audioCaptureWindowID,
+           let capture = capturesByWindowID[audioCaptureWindowID] {
+            return await capture.restartCaptureForAudioRecovery(reason: reason)
+        }
+
+        await updateAudioCaptureRouting()
+        guard let audioCaptureWindowID,
+              let capture = capturesByWindowID[audioCaptureWindowID] else {
+            return false
+        }
+        return await capture.restartCaptureForAudioRecovery(reason: reason)
+    }
+
     /// Adds a logical window to the atlas and starts its capture.
     func addWindow(
         streamID: StreamID,
@@ -182,6 +216,10 @@ actor AppAtlasMediaCoordinator {
         }
 
         let captureContext = AppAtlasWindowCaptureContext()
+        let startsAudioCapture = capturedAudioHandler != nil && audioCaptureWindowID == nil && capturesByWindowID.isEmpty
+        if startsAudioCapture {
+            audioCaptureWindowID = windowID
+        }
         let target = streamTargetDimensions(windowFrame: windowWrapper.window.frame)
         let pixelSize = CGSize(width: target.width, height: target.height)
         var logicalWindow = AppAtlasLogicalWindow(
@@ -209,10 +247,15 @@ actor AppAtlasMediaCoordinator {
                     Task(priority: .userInitiated) {
                         await self?.recordFrame(frame, windowID: windowID)
                     }
-                }
+                },
+                onAudio: startsAudioCapture ? capturedAudioHandler : nil,
+                audioChannelCount: startsAudioCapture ? audioCaptureChannelCount : nil
             )
         } catch {
             capturesByWindowID.removeValue(forKey: windowID)
+            if audioCaptureWindowID == windowID {
+                audioCaptureWindowID = nil
+            }
             await captureContext.stop()
             throw error
         }
@@ -252,6 +295,9 @@ actor AppAtlasMediaCoordinator {
             capturesByWindowID.removeValue(forKey: windowID)
             logicalWindowsByWindowID.removeValue(forKey: windowID)
             latestFramesByWindowID.removeValue(forKey: windowID)
+            if audioCaptureWindowID == windowID {
+                audioCaptureWindowID = nil
+            }
             if let oldWindowID, let oldCapture {
                 capturesByWindowID[oldWindowID] = oldCapture
                 if let oldLogicalWindow {
@@ -268,7 +314,11 @@ actor AppAtlasMediaCoordinator {
             throw error
         }
 
+        if oldWindowID == audioCaptureWindowID {
+            audioCaptureWindowID = nil
+        }
         await oldCapture?.stop()
+        await updateAudioCaptureRouting()
         return try await attachment(for: logicalWindow)
     }
 
@@ -279,7 +329,11 @@ actor AppAtlasMediaCoordinator {
         logicalWindowsByWindowID.removeValue(forKey: windowID)
         latestFramesByWindowID.removeValue(forKey: windowID)
         let capture = capturesByWindowID.removeValue(forKey: windowID)
+        if audioCaptureWindowID == windowID {
+            audioCaptureWindowID = nil
+        }
         await capture?.stop()
+        await updateAudioCaptureRouting()
         do {
             try await recomputeLayoutAndNotify(reason: "window removed")
         } catch {
@@ -303,6 +357,8 @@ actor AppAtlasMediaCoordinator {
         latestAuxiliaryFramesByWindowID.removeAll()
         auxiliaryOverlaysByWindowID.removeAll()
         auxiliaryWindowIDsByParentWindowID.removeAll()
+        capturedAudioHandler = nil
+        audioCaptureWindowID = nil
         frameSink = nil
         compositor = nil
         currentLayout = nil
@@ -322,6 +378,52 @@ actor AppAtlasMediaCoordinator {
     /// Returns the current public atlas layout, if the media stream is active.
     func atlasLayouts() -> [MirageAppAtlasLayout] {
         currentPublicLayout.map { [$0] } ?? []
+    }
+
+    private nonisolated static func clampedAudioCaptureChannelCount(_ channelCount: Int) -> Int {
+        min(max(channelCount, 1), 8)
+    }
+
+    /// Keeps exactly one primary window capture connected to the shared audio pipeline.
+    private func updateAudioCaptureRouting() async {
+        let selectedWindowID: WindowID?
+        if capturedAudioHandler == nil {
+            selectedWindowID = nil
+        } else {
+            selectedWindowID = selectedAudioCaptureWindowID()
+        }
+        audioCaptureWindowID = selectedWindowID
+
+        let captureSnapshots = capturesByWindowID.map { ($0.key, $0.value) }
+        for (windowID, capture) in captureSnapshots {
+            let handler = windowID == selectedWindowID ? capturedAudioHandler : nil
+            await capture.setCapturedAudioHandler(
+                handler,
+                audioChannelCount: handler == nil ? nil : audioCaptureChannelCount
+            )
+        }
+    }
+
+    /// Chooses a stable primary window capture to supply app-atlas audio.
+    private func selectedAudioCaptureWindowID() -> WindowID? {
+        if let audioCaptureWindowID, capturesByWindowID[audioCaptureWindowID] != nil {
+            return audioCaptureWindowID
+        }
+
+        let attachedWindow = logicalWindowsByWindowID.values
+            .filter { capturesByWindowID[$0.windowID] != nil }
+            .sorted { lhs, rhs in
+                if lhs.streamID == rhs.streamID {
+                    return lhs.windowID < rhs.windowID
+                }
+                return lhs.streamID < rhs.streamID
+            }
+            .first
+        if let attachedWindow {
+            return attachedWindow.windowID
+        }
+
+        return capturesByWindowID.keys.sorted().first
     }
 
     /// Stores the latest primary window frame and recomputes layout when source geometry changes.

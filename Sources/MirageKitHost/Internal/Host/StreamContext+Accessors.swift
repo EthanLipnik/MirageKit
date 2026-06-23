@@ -128,9 +128,10 @@ extension StreamContext {
         requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(channelCount)
     }
 
-    func restartCaptureForAudioRecovery(reason: String) async {
-        guard let captureEngine else { return }
-        await captureEngine.restartCapture(reason: reason)
+    @discardableResult
+    func restartCaptureForAudioRecovery(reason: String) async -> Bool {
+        guard let captureEngine else { return false }
+        return await captureEngine.restartCapture(reason: reason)
     }
 
     /// Returns the capture cadence currently in force for a requested target frame rate.

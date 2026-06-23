@@ -62,3 +62,15 @@ public struct MirageInstalledApp: Identifiable, Hashable, Sendable, Codable {
         lhs.bundleIdentifier == rhs.bundleIdentifier
     }
 }
+
+public extension MirageInstalledApp {
+    /// Bundle identifiers that should remain visible in app lists when Launch Services can resolve them.
+    static let alwaysIncludedBundleIdentifiers: Set<String> = [
+        "com.apple.safari",
+    ]
+
+    /// Returns whether a bundle identifier belongs to an always-included app-list entry.
+    static func isAlwaysIncludedBundleIdentifier(_ bundleIdentifier: String) -> Bool {
+        alwaysIncludedBundleIdentifiers.contains(bundleIdentifier.lowercased())
+    }
+}

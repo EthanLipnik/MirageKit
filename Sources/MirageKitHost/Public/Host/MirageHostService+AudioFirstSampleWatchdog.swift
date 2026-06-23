@@ -12,7 +12,7 @@ import MirageKit
 
 #if os(macOS)
 
-private let hostAudioFirstSampleTimeout: Duration = .seconds(2)
+private let hostAudioFirstSampleTimeout: Duration = .seconds(5)
 
 @MainActor
 extension MirageHostService {
@@ -50,6 +50,17 @@ extension MirageHostService {
         audioFirstSampleRetryAttemptedByClientID.remove(clientID)
     }
 
+    /// Restarts the first-sample watchdog after the source capture is known to be running.
+    func refreshAudioFirstSampleWatchdogIfNeeded(clientID: UUID, streamID: StreamID) {
+        guard audioConfigurationByClientID[clientID]?.enabled == true,
+              audioPipelinesByClientID[clientID] != nil,
+              audioSourceStreamByClientID[clientID] == streamID,
+              audioLastSampleTimeByClientID[clientID] == nil else {
+            return
+        }
+        scheduleAudioFirstSampleWatchdog(clientID: clientID, streamID: streamID)
+    }
+
     private func handleAudioFirstSampleWatchdogTimeout(
         clientID: UUID,
         streamID: StreamID,
@@ -75,7 +86,17 @@ extension MirageHostService {
                 "Audio capture produced no first sample for client \(clientID), stream \(streamID); " +
                     "restarting capture once with audio enabled"
             )
-            await streamsByID[streamID]?.restartCaptureForAudioRecovery(reason: "audio_first_sample_timeout")
+            let restarted = await restartAudioSourceCaptureForRecovery(
+                clientID: clientID,
+                streamID: streamID,
+                reason: "audio_first_sample_timeout"
+            )
+            if !restarted {
+                MirageLogger.host(
+                    "Audio first-sample recovery found no restartable capture source for client \(clientID), " +
+                        "stream \(streamID)"
+                )
+            }
             scheduleAudioFirstSampleWatchdog(clientID: clientID, streamID: streamID)
             return
         }

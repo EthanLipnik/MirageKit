@@ -117,13 +117,13 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether locked desktop cursor input may move beyond the streamed view bounds.
     public var allowsExtendedDesktopCursorBounds: Bool
 
-    /// Whether the stream can recapture cursor lock after a temporary local unlock.
+    /// Whether the stream can recapture Lock Client Cursor after a temporary local unlock.
     public var cursorLockCanRecapture: Bool
 
     /// Callback when the client should temporarily unlock cursor capture.
     public var onCursorLockEscapeRequested: (() -> Void)?
 
-    /// Callback when the client should recapture cursor lock after a temporary unlock.
+    /// Callback when the client should recapture Lock Client Cursor after a temporary unlock.
     public var onCursorLockRecaptureRequested: (() -> Void)?
 
     /// Whether Mirage should render its synthetic local cursor presentation.

@@ -20,19 +20,19 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// Poll interval for observing modifier-state changes outside key events.
     static let modifierPollInterval: TimeInterval = 0.1
 
-    /// Minimum interval between non-forced locked-cursor view refreshes.
+    /// Minimum interval between non-forced Lock Client Cursor view refreshes.
     static let lockedCursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
 
     /// Duration after local cursor input during which host cursor updates are ignored.
     static let cursorLocalHoldInterval: CFTimeInterval = 0.12
 
-    /// Per-frame interpolation factor for locked cursor smoothing.
+    /// Per-frame interpolation factor for Lock Client Cursor smoothing.
     static let lockedCursorLerpAlpha: CGFloat = 0.25
 
-    /// Normalized distance that snaps the locked cursor directly to the host target.
+    /// Normalized distance that snaps Lock Client Cursor directly to the host target.
     static let lockedCursorSnapThreshold: CGFloat = 0.08
 
-    /// Normalized distance below which locked cursor smoothing stops.
+    /// Normalized distance below which Lock Client Cursor smoothing stops.
     static let lockedCursorStopThreshold: CGFloat = 0.002
 
     struct CursorSystemHooks {
@@ -114,7 +114,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     /// Host display dimensions in points for 1:1 cursor delta normalization.
-    /// When set, locked-cursor deltas are normalized by these dimensions instead
+    /// When set, Lock Client Cursor deltas are normalized by these dimensions instead
     /// of the local view bounds, giving native macOS cursor feel regardless of
     /// the client window size.
     var hostDisplayPointSize: CGSize?
@@ -149,7 +149,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
-    /// Whether cursor lock can be recaptured after a temporary local unlock.
+    /// Whether Lock Client Cursor can be recaptured after a temporary local unlock.
     var canRecaptureCursorLock: Bool = false
 
     /// Callback when unmodified Escape should temporarily unlock cursor capture.
@@ -158,7 +158,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// Callback when the next click should recapture cursor capture.
     var onCursorLockRecaptureRequested: (() -> Void)?
 
-    /// Whether Mirage should render its synthetic locked-cursor overlay.
+    /// Whether Mirage should render its synthetic Lock Client Cursor overlay.
     var syntheticCursorEnabled: Bool = true {
         didSet {
             guard syntheticCursorEnabled != oldValue else { return }
@@ -222,10 +222,10 @@ final class ScrollPhysicsCapturingNSView: NSView {
     var modifierPollTimer: Timer?
 
     /// Last known mouse location in stream space for scroll events.
-    /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
+    /// Secondary desktop Lock Client Cursor travel may temporarily exceed `0...1`.
     var lastMouseLocation: CGPoint?
 
-    /// Locked cursor view for secondary display mode
+    /// Lock Client Cursor view for secondary display mode.
     let lockedCursorView = NSImageView(frame: .zero)
     var lastReportedContainerSize: CGSize = .zero
     var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)

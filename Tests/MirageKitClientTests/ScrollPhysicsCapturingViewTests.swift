@@ -108,7 +108,7 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
-    @Test("Input capturing view disables the generic pointer long press while cursor lock is active")
+    @Test("Input capturing view disables the generic pointer long press while Lock Client Cursor is active")
     func inputCapturingViewDisablesGenericPointerLongPressWhenCursorLocked() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
 
@@ -186,7 +186,7 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
-    @Test("Cursor lock seeds synthetic cursor visibility")
+    @Test("Lock Client Cursor seeds synthetic cursor visibility")
     func cursorLockSeedsSyntheticCursorVisibility() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.syntheticCursorEnabled = true
@@ -329,7 +329,7 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(view.lastCursorPosition == CGPoint(x: 0.2, y: 0.75))
     }
 
-    @Test("Cursor-locked drag cursor keeps trackpad gestures enabled")
+    @Test("Lock Client Cursor drag cursor keeps trackpad gestures enabled")
     func cursorLockedDragCursorKeepsTrackpadGesturesEnabled() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .dragCursor
@@ -350,7 +350,7 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(view.virtualCursorLongPressGesture.isEnabled)
     }
 
-    @Test("Cursor-locked drag cursor scroll keeps the existing locked cursor position")
+    @Test("Lock Client Cursor drag cursor scroll keeps the existing client cursor position")
     func cursorLockedDragCursorScrollKeepsLockedCursorPosition() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .dragCursor
@@ -712,7 +712,7 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(view.lastCursorPosition == view.virtualCursorPosition)
     }
 
-    @Test("Cursor locked direct scroll begin moves the locked cursor immediately")
+    @Test("Lock Client Cursor direct scroll begin moves the client cursor immediately")
     func cursorLockedDirectScrollBeginMovesLockedCursorImmediately() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         view.directTouchInputMode = .normal
@@ -729,7 +729,7 @@ struct ScrollPhysicsCapturingViewTests {
 
         let event = try #require(events.first)
         guard case let .mouseMoved(mouseEvent) = event else {
-            Issue.record("Expected cursor locked direct scroll begin to emit mouseMoved")
+            Issue.record("Expected Lock Client Cursor direct scroll begin to emit mouseMoved")
             return
         }
         #expect(mouseEvent.location == expectedLocation)

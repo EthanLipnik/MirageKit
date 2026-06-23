@@ -45,7 +45,9 @@ actor AppAtlasWindowCaptureContext {
         hostBufferingPolicy: MirageHostBufferingPolicy,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
         targetFrameRate: Int,
-        onFrame: @escaping @Sendable (CapturedFrame) -> Void
+        onFrame: @escaping @Sendable (CapturedFrame) -> Void,
+        onAudio: (@Sendable (CapturedAudioBuffer) -> Void)? = nil,
+        audioChannelCount: Int? = nil
     ) async throws {
         guard !isCapturing else { return }
 
@@ -63,9 +65,27 @@ actor AppAtlasWindowCaptureContext {
             application: applicationWrapper.application,
             display: displayWrapper.display,
             outputScale: 1.0,
-            onFrame: onFrame
+            onFrame: onFrame,
+            onAudio: onAudio,
+            audioChannelCount: audioChannelCount
         )
         isCapturing = true
+    }
+
+    /// Updates audio delivery for a running window capture.
+    func setCapturedAudioHandler(
+        _ handler: (@Sendable (CapturedAudioBuffer) -> Void)?,
+        audioChannelCount: Int?
+    )
+    async {
+        await captureEngine?.setCapturedAudioHandler(handler, audioChannelCount: audioChannelCount)
+    }
+
+    /// Restarts this capture when audio was enabled but no samples arrived.
+    @discardableResult
+    func restartCaptureForAudioRecovery(reason: String) async -> Bool {
+        guard let captureEngine else { return false }
+        return await captureEngine.restartCapture(reason: reason)
     }
 
     /// Stops capture and releases the underlying window capture engine.

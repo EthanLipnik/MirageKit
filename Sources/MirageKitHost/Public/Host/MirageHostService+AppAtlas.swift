@@ -79,6 +79,10 @@ extension MirageHostService {
             applicationWrapper: SCApplicationWrapper(application: scApplication),
             displayWrapper: SCDisplayWrapper(display: captureSource.display)
         )
+        refreshAudioFirstSampleWatchdogIfNeeded(
+            clientID: clientContext.client.id,
+            streamID: attachment.mediaStreamID
+        )
 
         let session = MirageStreamSession(
             id: logicalStreamID,
@@ -173,6 +177,10 @@ extension MirageHostService {
             windowWrapper: SCWindowWrapper(window: scWindow),
             applicationWrapper: SCApplicationWrapper(application: scApplication),
             displayWrapper: SCDisplayWrapper(display: captureSource.display)
+        )
+        refreshAudioFirstSampleWatchdogIfNeeded(
+            clientID: clientContext.client.id,
+            streamID: attachment.mediaStreamID
         )
 
         inputController.endTrafficLightProtection(windowID: currentWindowID)

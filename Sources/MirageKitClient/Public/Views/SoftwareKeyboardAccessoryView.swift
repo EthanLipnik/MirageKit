@@ -12,8 +12,12 @@ import UIKit
 
 /// Modifier toolbar shown with the software keyboard for host-side shortcut input.
 final class SoftwareKeyboardAccessoryView: UIView {
-    var onModifierToggle: ((SoftwareModifierKey, Bool) -> Void)?
+    var onModifierTap: ((SoftwareModifierKey, Int) -> Void)?
+    var onModifierHold: ((SoftwareModifierKey) -> Void)?
     var onDismissKeyboard: (() -> Void)?
+
+    private static let accessoryHeight: CGFloat = 52
+    private static let buttonMinimumHeight: CGFloat = 36
 
     private let stackView = UIStackView()
     private let spacerView = UIView()
@@ -35,10 +39,10 @@ final class SoftwareKeyboardAccessoryView: UIView {
         setup()
     }
 
-    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: 44) }
+    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: Self.accessoryHeight) }
 
     override func sizeThatFits(_ size: CGSize) -> CGSize {
-        CGSize(width: size.width, height: 44)
+        CGSize(width: size.width, height: Self.accessoryHeight)
     }
 
     /// Applies the current held-modifier state and returns the number of buttons that changed.
@@ -54,7 +58,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
     }
 
     private func setup() {
-        frame = CGRect(origin: .zero, size: CGSize(width: 0, height: 44))
+        frame = CGRect(origin: .zero, size: CGSize(width: 0, height: Self.accessoryHeight))
         autoresizingMask = [.flexibleWidth]
         backgroundColor = .clear
         isOpaque = false
@@ -64,19 +68,23 @@ final class SoftwareKeyboardAccessoryView: UIView {
         stackView.spacing = 8
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.isLayoutMarginsRelativeArrangement = true
-        stackView.layoutMargins = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        stackView.layoutMargins = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
 
         for key in keys {
             let button = UIButton(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
             button.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
             button.configuration = buttonConfiguration(title: key.title, isSelected: false)
-            button.addAction(UIAction { [weak self] _ in
-                guard let self else { return }
-                let isSelected = !(button.isSelected)
-                button.isSelected = isSelected
-                updateButton(button, isSelected: isSelected)
-                onModifierToggle?(key, isSelected)
-            }, for: .touchUpInside)
+            button.addTarget(self, action: #selector(handleModifierButtonTap(_:for:)), for: .touchUpInside)
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.buttonMinimumHeight).isActive = true
+            button.setContentCompressionResistancePriority(.required, for: .vertical)
+            button.setContentHuggingPriority(.required, for: .vertical)
+
+            let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleModifierButtonLongPress(_:)))
+            longPress.minimumPressDuration = 0.35
+            longPress.cancelsTouchesInView = true
+            button.addGestureRecognizer(longPress)
+
             updateButton(button, isSelected: false)
             buttons[key.modifier] = button
             stackView.addArrangedSubview(button)
@@ -87,9 +95,13 @@ final class SoftwareKeyboardAccessoryView: UIView {
         stackView.addArrangedSubview(spacerView)
 
         doneButton.configuration = buttonConfiguration(title: "Done", isSelected: false)
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
         doneButton.addAction(UIAction { [weak self] _ in
             self?.onDismissKeyboard?()
         }, for: .touchUpInside)
+        doneButton.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.buttonMinimumHeight).isActive = true
+        doneButton.setContentCompressionResistancePriority(.required, for: .vertical)
+        doneButton.setContentHuggingPriority(.required, for: .vertical)
         stackView.addArrangedSubview(doneButton)
 
         addSubview(stackView)
@@ -99,6 +111,29 @@ final class SoftwareKeyboardAccessoryView: UIView {
             stackView.topAnchor.constraint(equalTo: topAnchor),
             stackView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    @objc
+    private func handleModifierButtonTap(_ sender: UIButton, for event: UIEvent) {
+        guard let key = key(for: sender) else { return }
+        let tapCount = event.allTouches?.map(\.tapCount).max() ?? 1
+        onModifierTap?(key, tapCount)
+    }
+
+    @objc
+    private func handleModifierButtonLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began,
+              let button = recognizer.view as? UIButton,
+              let key = key(for: button) else {
+            return
+        }
+        onModifierHold?(key)
+    }
+
+    private func key(for button: UIButton) -> SoftwareModifierKey? {
+        keys.first { key in
+            buttons[key.modifier] === button
+        }
     }
 
     private func updateButton(_ button: UIButton, isSelected: Bool) {
@@ -117,7 +152,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
         #endif
         configuration.title = title
         configuration.cornerStyle = .capsule
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 10, bottom: 7, trailing: 10)
         configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var updated = attributes
             updated.font = .systemFont(ofSize: 15, weight: .semibold)

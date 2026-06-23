@@ -55,7 +55,7 @@ struct RemoteClientStreamOptionsTests {
         #expect(receivedStopDesktopStream == true)
     }
 
-    @Test("Remote client stream-option state preserves cursor lock availability")
+    @Test("Remote client stream-option state preserves Lock Client Cursor availability")
     func remoteClientStatePreservesCursorLockAvailability() throws {
         let state = RemoteClientStreamOptionsStateMessage(
             displayMode: .inStream,

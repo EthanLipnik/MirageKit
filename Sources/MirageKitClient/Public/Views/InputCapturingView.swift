@@ -211,7 +211,7 @@ public class InputCapturingView: UIView {
         }
     }
 
-    /// Whether cursor lock can be recaptured after a temporary local unlock.
+    /// Whether Lock Client Cursor can be recaptured after a temporary local unlock.
     public var canRecaptureCursorLock: Bool = false
 
     /// Callback when unmodified Escape should temporarily unlock cursor capture.
@@ -515,7 +515,8 @@ public class InputCapturingView: UIView {
     var isSoftwareKeyboardShown: Bool = false
     var isSoftwareKeyboardResponderActive: Bool = false
     var softwareKeyboardDismissalPending = false
-    var softwareHeldModifiers: MirageModifierFlags = []
+    var softwareMomentaryModifiers: MirageModifierFlags = []
+    var softwareLockedModifiers: MirageModifierFlags = []
     var suppressedOnInputEventRebindCount: UInt64 = 0
     var lastOnInputEventRebindLogTime: CFAbsoluteTime = 0
     let onInputEventRebindLogInterval: CFTimeInterval = 5.0
@@ -561,7 +562,7 @@ public class InputCapturingView: UIView {
     var swallowingDirectTwoFingerDragForCursorRecapture = false
 
     /// Track last cursor position for scroll events in stream space.
-    /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
+    /// Secondary desktop Lock Client Cursor travel may temporarily exceed `0...1`.
     var lastCursorPosition: CGPoint?
     /// Normalized contact anchor used while native direct-touch scrolling is active.
     var directTouchScrollAnchorLocation: CGPoint?

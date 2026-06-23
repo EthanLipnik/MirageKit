@@ -280,6 +280,7 @@ public extension MirageHostService {
                 sourceStreamID: streamID,
                 configuration: resolvedAudioConfiguration
             )
+            cancelAudioFirstSampleWatchdog(for: client.id)
         } catch {
             await cleanupFailedStreamStart(
                 streamID: streamID,
@@ -376,6 +377,7 @@ public extension MirageHostService {
                 clientScaleFactorOverride: clientScaleFactor,
                 targetContentAspectRatioOverride: sizePreset.contentAspectRatio
             )
+            refreshAudioFirstSampleWatchdogIfNeeded(clientID: client.id, streamID: streamID)
         } catch {
             await cleanupFailedStreamStart(
                 streamID: streamID,

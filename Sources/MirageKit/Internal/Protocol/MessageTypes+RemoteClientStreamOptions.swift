@@ -15,9 +15,9 @@ package struct RemoteClientStreamOptionsStateMessage: Codable {
     package let displayMode: MirageStreamOptionsDisplayMode
     /// Whether the client is currently showing the in-stream status overlay.
     package let statusOverlayEnabled: Bool
-    /// Whether the connected client currently allows desktop cursor lock controls.
+    /// Whether the connected client currently allows desktop Lock Client Cursor controls.
     package let desktopCursorLockAvailable: Bool
-    /// Current desktop cursor lock mode configured on the client.
+    /// Current desktop Lock Client Cursor mode configured on the client.
     package let desktopCursorLockMode: MirageDesktopCursorLockMode
 
     package init(
@@ -41,7 +41,7 @@ package struct RemoteClientStreamOptionsCommandMessage: Codable {
     package let statusOverlayEnabled: Bool?
     /// Optional desktop cursor presentation to apply for the active desktop stream.
     package let desktopCursorPresentation: MirageDesktopCursorPresentation?
-    /// Optional desktop cursor lock mode to apply on the client.
+    /// Optional desktop Lock Client Cursor mode to apply on the client.
     package let desktopCursorLockMode: MirageDesktopCursorLockMode?
     /// Optional app-stream bundle identifier the client should stop.
     package let stopAppBundleIdentifier: String?

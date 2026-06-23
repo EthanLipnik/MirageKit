@@ -11,9 +11,9 @@ import Testing
 
 #if os(macOS)
 @MainActor
-@Suite("Desktop Cursor Lock Lifecycle")
+@Suite("Desktop Lock Client Cursor Lifecycle")
 struct DesktopCursorLockLifecycleTests {
-    @Test("Disabling cursor lock restores cursor association and visibility")
+    @Test("Disabling Lock Client Cursor restores cursor association and visibility")
     func disablingCursorLockRestoresAssociationAndVisibility() {
         let restoreLocation = CGPoint(x: 1340, y: 720)
         var associations: [Bool] = []
@@ -49,7 +49,7 @@ struct DesktopCursorLockLifecycleTests {
         )
     }
 
-    @Test("Disabling input restores the pre-lock cursor position")
+    @Test("Disabling input restores the pre-capture cursor position")
     func disablingInputRestoresPreLockCursorPosition() {
         let restoreLocation = CGPoint(x: 980, y: 410)
         var associations: [Bool] = []
@@ -244,7 +244,7 @@ struct DesktopCursorLockLifecycleTests {
         }
     }
 
-    @Test("Real Mac cursor lock keeps the system cursor visible")
+    @Test("Real Mac Lock Client Cursor keeps the system cursor visible")
     func realMacCursorLockKeepsSystemCursorVisible() {
         var hideCount = 0
 
@@ -267,7 +267,7 @@ struct DesktopCursorLockLifecycleTests {
         #expect(hideCount == 0)
     }
 
-    @Test("Real Mac cursor lock applies host cursor updates to the macOS cursor")
+    @Test("Real Mac Lock Client Cursor applies host cursor updates to the macOS cursor")
     func realMacCursorLockAppliesHostCursorUpdates() {
         let streamID: StreamID = 16
         let cursorStore = MirageClientCursorStore()
@@ -303,7 +303,7 @@ struct DesktopCursorLockLifecycleTests {
         #expect(appliedCursorTypes.contains(.closedHand))
     }
 
-    @Test("Real Mac cursor lock warps using global display coordinates")
+    @Test("Real Mac Lock Client Cursor warps using global display coordinates")
     func realMacCursorLockWarpsUsingGlobalDisplayCoordinates() {
         var warps: [CGPoint] = []
 
@@ -334,7 +334,7 @@ struct DesktopCursorLockLifecycleTests {
         }
     }
 
-    @Test("Locked cursor delta keeps AppKit negative-up Y motion aligned with stream space")
+    @Test("Lock Client Cursor delta keeps AppKit negative-up Y motion aligned with stream space")
     func lockedCursorDeltaKeepsAppKitNegativeUpYMotionAlignedWithStreamSpace() {
         let updated = LockedCursorPositionResolver.applyRelativeDelta(
             currentPosition: CGPoint(x: 0.5, y: 0.5),
